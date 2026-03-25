@@ -1,0 +1,40 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Types>
+  <Type>
+    <Name>Omnicit.PIM.DirectoryEligibilitySchedule</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>PrincipalDisplayName</Name>
+        <GetScriptBlock>
+          $this.principal.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>RoleName</Name>
+        <GetScriptBlock>
+          $this.roleDefinition.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>Scope</Name>
+        <GetScriptBlock>
+          if ($this.directoryScopeId -eq '/') {
+            'Directory'
+          } else {
+            $this.directoryScope.displayName + ' (AU)'
+          }
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>EndDateTime</Name>
+        <GetScriptBlock>
+          if ($this.scheduleInfo.expiration.type -eq 'noExpiration') {
+            'Never'
+          } else {
+            $this.scheduleInfo.expiration.endDateTime
+          }
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+</Types>

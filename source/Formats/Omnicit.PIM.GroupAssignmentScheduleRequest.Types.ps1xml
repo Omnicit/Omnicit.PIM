@@ -1,0 +1,28 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Types>
+  <Type>
+    <Name>Omnicit.PIM.GroupAssignmentScheduleRequest</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>GroupDisplayName</Name>
+        <GetScriptBlock>
+          $this.group.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>EndDateTime</Name>
+        <GetScriptBlock>
+          $exp = $this.scheduleInfo.expiration
+          if ($exp -and $exp.type -eq 'AfterDuration') {
+            try {
+              ([datetime]$this.scheduleInfo.startDateTime) +
+                [System.Xml.XmlConvert]::ToTimeSpan($exp.duration)
+            } catch { $null }
+          } else {
+            $exp.endDateTime
+          }
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+</Types>

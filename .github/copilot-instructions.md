@@ -1,0 +1,164 @@
+﻿# Omnicit.PIM Copilot Instructions
+
+## Project Overview
+
+**Omnicit.PIM** is a PowerShell 7.2+ (Core-only) module for Azure Privileged Identity Management (PIM) self-activation across three pillars:
+- **Directory Roles** — Entra ID / Azure AD roles (via Microsoft Graph)
+- **Azure RBAC Roles** — Azure resource roles (via `Az.Resources`)
+- **Entra ID Groups** — PIM for Groups (via Microsoft Graph)
+
+Original author: Justin Grote (@justinwgrote); overhauled by Omnicit.
+
+## Module Layout
+
+```
+Source/
+  Omnicit.PIM.psd1          # Manifest — source of truth for exports, aliases, required modules
+  Omnicit.PIM.psm1          # Loader: Classes → Private → Public (this order is intentional)
+  Classes/                  # Argument completers (IArgumentCompleter). Loaded FIRST.
+  Private/                  # Internal helpers (not exported)
+  Public/                   # Exported cmdlets — one file per function, filename == function name
+  Formats/                  # *.Types.ps1xml and *.Format.ps1xml output formatters
+```
+
+## Build and Test
+
+```powershell
+# Bootstrap build dependencies (first time only)
+./build.ps1 -ResolveDependency -Tasks noop
+
+# Build the module (Clean → Build → Changelog)
+./build.ps1
+
+# Run Pester tests + PSScriptAnalyzer (70% coverage threshold)
+./build.ps1 -AutoRestore -Tasks test
+
+# Build + package as NuGet
+./build.ps1 -Tasks pack
+
+# Import from source for local development
+Import-Module ./Source/Omnicit.PIM.psd1 -Force
+```
+
+Build output lands in `output/module/<version>/`. Uses **Sampler** + **ModuleBuilder** orchestration via `build.yaml`.
+
+## Code Style
+
+- **PSScriptAnalyzer** runs in CI — all rules, no suppressions.
+- One function per file; filename must equal function name.
+- `[CmdletBinding(SupportsShouldProcess)]` on every Enable/Disable function.
+- Use `$PSCmdlet` for `ShouldProcess` calls, not `$PSCmdlet.ShouldContinue`.
+
+## Naming & Command Conventions
+
+| Concept | Pattern | Example |
+|---|---|---|
+| Canonical function prefix | `OPIM` | `Get-OPIMDirectoryRole` |
+| Canonical short aliases | `PIM` | `Get-PIMRole`, `Get-PIMADRole` |
+| Directory Role noun | `DirectoryRole` | `Enable-OPIMDirectoryRole` |
+| Azure RBAC noun | `AzureRole` | `Enable-OPIMAzureRole` |
+| PIM Groups noun | `EntraIDGroup` | `Enable-OPIMEntraIDGroup` |
+| Filename | `Verb-OPIMNoun.ps1` | `Disable-OPIMDirectoryRole.ps1` |
+
+- **Never use `*` in `FunctionsToExport`** — always list explicitly.
+- **Aliases** must be registered in both `Omnicit.PIM.psm1` (alias map) and `AliasesToExport` in the manifest.
+
+## API Mapping (important — terminology differs from PIM UI)
+
+### Directory Roles (Graph)
+| Graph resource | PIM concept |
+|---|---|
+| `roleEligibilitySchedules` | Roles eligible to activate (inactive) |
+| `roleAssignmentScheduleInstances` | Currently active role assignments |
+| `roleAssignmentScheduleRequests` | Activate (`SelfActivate`) or deactivate (`SelfDeactivate`) |
+
+For `SelfDeactivate` supply the `roleAssignmentScheduleInstance` ID, **not** the schedule ID.
+
+### Azure RBAC (Az.Resources)
+| Cmdlet | PIM concept |
+|---|---|
+| `Get-AzRoleEligibilitySchedule` | Eligible (inactive) RBAC roles |
+| `Get-AzRoleAssignmentScheduleInstance` | Active RBAC assignments |
+| `New-AzRoleAssignmentScheduleRequest` | Activate or deactivate |
+
+### PIM for Groups (Graph — `identityGovernance/privilegedAccess/group/`)
+| Graph resource | PIM concept |
+|---|---|
+| `eligibilitySchedules` | Eligible (inactive) group assignments |
+| `assignmentScheduleInstances` | Active group assignments |
+| `assignmentScheduleRequests` | `selfActivate` / `selfDeactivate` |
+
+`accessId` is `member` or `owner`.
+
+## Standard Parameter Patterns
+
+### Enable-OPIM* (activation)
+- `-RoleName` / `-GroupName` — tab-completable; backed by IArgumentCompleter class in `Classes/`
+- `-Hours` [int] — default 1; users can override via `$PSDefaultParameterValues`
+- `-Until` [DateTime] — explicit end time; takes precedence over `-Hours`
+- `-NotBefore` [DateTime] — activation start (default: now)
+- `-Justification`, `-TicketNumber`, `-TicketSystem` — optional PIM policy fields
+- `-Wait` [switch] — poll until provisioned (Directory Roles only)
+- Always support `-WhatIf`/`-Confirm` via `[CmdletBinding(SupportsShouldProcess)]`
+
+### Disable-OPIM* (deactivation)
+- `-RoleName` / `-GroupName` — tab-completable to *active* roles
+- Always support `-WhatIf`/`-Confirm`
+
+### Get-OPIM*
+- `-All` [switch] — list all principals (requires elevated permissions)
+- `-Activated` [switch] — show only active assignments
+- `-Identity` [string] — retrieve by schedule ID
+- `-Filter` [string] — pass-through OData filter
+
+## Error Handling
+
+- All Graph API errors go through `Convert-GraphHttpException` in `Private/` — converts raw HTTP exceptions to typed PowerShell `ErrorRecord` objects with parsed `error.code` and `error.message`.
+- Use `Write-CmdletError` (private) to emit non-terminating errors consistently.
+- Special error codes to handle: `InsufficientPermissions` (suggest `-All` is required), `ActiveDurationTooShort` (5-min cooldown between activate/deactivate).
+
+## Key Implementation Details
+
+- **Duration formatting** — Use `[System.Xml.XmlConvert]::ToString([timespan]...)` for ISO 8601 durations required by PIM APIs, e.g. `PT1H`.
+- **Current user ID** — Use `Get-MyId` (private) which caches the result in `$SCRIPT:_MyIDCache`.
+- **Tab completers** — Return strings in the format `'Display Name -> Scope (schedule-id)'`. `Resolve-RoleByName` (private) parses this string back to the schedule object.
+- **Parallel polling** — `Wait-OPIMDirectoryRole` uses `ForEach-Object -AsJob -Parallel` with `ConcurrentDictionary` for concurrent multi-role waiting.
+- **directoryScopeId expand workaround** — Graph v1.0 cannot `$expand=directoryScope` in the same query; `Restore-GraphProperty` makes a second request to rehydrate scope display names.
+- **Format load order** — `FormatsToProcess` is disabled in the manifest (PowerShell bug [#17345](https://github.com/PowerShell/PowerShell/issues/17345)); formats are loaded via `Update-FormatData -PrependPath` in `Omnicit.PIM.psm1`.
+
+## Checklist: Adding a New Function
+
+1. Create `Source/Public/Verb-OPIMNoun.ps1` — function name must match file name.
+2. Add to `FunctionsToExport` in `Omnicit.PIM.psd1`.
+3. If tab completion is needed, add an `IArgumentCompleter` class in `Source/Classes/`.
+4. Add `*.Types.ps1xml` and `*.Format.ps1xml` in `Source/Formats/` and register in `TypesToProcess` in the manifest.
+5. Register short aliases in `Omnicit.PIM.psm1` and add them to `AliasesToExport` in the manifest.
+
+## Dependencies
+
+| Module | Version | Used for |
+|---|---|---|
+| `Az.Resources` | ≥ 9.0.3 | Azure RBAC PIM (`Get/Enable/Disable-OPIMAzureRole`) |
+| `Microsoft.Graph.Authentication` | ≥ 2.36.0 | All Graph calls via `Invoke-MgGraphRequest` |
+
+**Do not add other `Microsoft.Graph.*` SDK modules** — the module intentionally uses raw `Invoke-MgGraphRequest` to avoid typed SDK coupling and SDK version drift.
+
+## Running the Module Locally
+
+See [README.md](../README.md) for full usage examples, connection scopes, `Install-OPIMConfiguration`, and `TenantMap` shortcuts.
+
+## Common Pitfalls
+
+- **`DefaultCommandPrefix` is absent** — the manifest does NOT use `DefaultCommandPrefix = 'OPIM'`. Function names carry the prefix explicitly. Adding it would double-prefix to `OPIM-OPIMFoo`.
+- **`Write-CmdletError -Message` expects `[Exception]`**, not a string. Wrap bare strings: `[System.Exception]::new('message')`.
+- **Output tagging is required** — never return raw `Invoke-MgGraphRequest` hashtables (the default `Key/Value` formatter applies). Always convert to `[PSCustomObject]` and tag:
+  ```powershell
+  $out = [PSCustomObject]$response
+  $out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.SomeTypeName')
+  ```
+  The type name must match a `.Format.ps1xml` and `.Types.ps1xml` pair in `Source/Formats/`.
+- **`TypesToProcess` is active; `FormatsToProcess` is disabled** — formats are loaded via `Update-FormatData -PrependPath` in `Omnicit.PIM.psm1` (workaround for PS bug [#17345](https://github.com/PowerShell/PowerShell/issues/17345)).
+- **Parallel runspaces require explicit Graph import** — `Wait-OPIMDirectoryRole` calls `Import-Module 'Microsoft.Graph.Authentication'` inside `ForEach-Object -Parallel`. Any new parallel block must do the same.
+- **`Invoke-MgGraphRequest` must always use `-Verbose:$false -ErrorAction Stop`** — suppresses SDK noise and ensures exceptions are catchable.
+- **`Az.Resources` manifest version is the source of truth** — the required version is `9.0.3`, not the older `5.6.0` sometimes cited in older docs.
+- **PowerShell 7.2+ Core only** — `CompatiblePSEditions = @('Core')`. Do not suggest Windows PowerShell 5.x or Desktop-compatible code.

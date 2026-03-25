@@ -1,0 +1,20 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Types>
+  <Type>
+    <Name>Omnicit.PIM.GroupAssignmentScheduleInstance</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>GroupDisplayName</Name>
+        <GetScriptBlock>
+          $this.group.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>PrincipalDisplayName</Name>
+        <GetScriptBlock>
+          $this.principal.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+</Types>
