@@ -6,6 +6,7 @@
 BuiltModuleSubdirectory: module
 CopyPaths:
   - en-US
+  - Formats
 #  - DSCResources
   # - Modules
 Encoding: UTF8
@@ -15,8 +16,8 @@ Encoding: UTF8
 # PowerShell session (parent scope) before running the task `build`.
 #SemVer: '99.0.0-preview1'
 
-# Suffix to add to Root module PSM1 after merge (here, the Set-Alias exporting IB tasks)
-# suffix: suffix.ps1
+# Suffix to add to Root module PSM1 after merge
+suffix: suffix.ps1
 # prefix: prefix.ps1
 VersionedOutputDirectory: true
 
