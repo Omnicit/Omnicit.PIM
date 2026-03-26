@@ -88,41 +88,47 @@ Get-OPIMEntraIDGroup -Activated | Disable-OPIMEntraIDGroup
 
 ---
 
-## Install-OPIMConfiguration
+## Enable-OPIMMyRoles / pim
 
-A convenience function to set up quality-of-life shortcuts in your PowerShell profile.
+`Enable-OPIMMyRoles` (alias: `pim`) is the all-in-one activation command. It connects to
+Microsoft Graph (and Azure if Azure roles are configured) and activates all eligible directory
+roles, PIM group assignments, and Azure RBAC roles for the current user.
 
 ```powershell
-# Add the Activate-MyPIM function and 'pim' alias to your profile
-Install-OPIMConfiguration -ProfileAlias
+# Activate all eligible roles/groups for 1 hour (prompts for Graph login if not connected)
+pim
 
-# Preview what -ProfileAlias would do without making changes
-Install-OPIMConfiguration -ProfileAlias -WhatIf
+# Activate using a named tenant alias looked up in TenantMap.psd1, for 4 hours
+pim -TenantAlias contoso -Hours 4 -Justification 'Incident response'
 
-# Register a tenant alias (TenantAlias is the key — the GUID can be updated later)
-Install-OPIMConfiguration -TenantMap -TenantAlias contoso -TenantId '00000000-0000-0000-0000-000000000000'
+# Wait until directory role activations are fully provisioned
+pim -TenantAlias corp -Wait
+```
+
+The default activation duration is 1 hour. Override persistently:
+
+```powershell
+$PSDefaultParameterValues['Enable-OPIM*:Hours'] = 4
+```
+
+---
+
+## Install-OPIMConfiguration
+
+Manages the `TenantMap.psd1` file used by `Enable-OPIMMyRoles` / `pim` to resolve tenant
+aliases and optionally filter which roles/groups are activated per tenant.
+
+```powershell
+# Register a tenant alias (TenantAlias is the key — the GUID can be updated later with -Force)
+Install-OPIMConfiguration -TenantAlias contoso -TenantId '00000000-0000-0000-0000-000000000000'
 
 # Store specific directory roles as the default activation set for a tenant
 Get-OPIMDirectoryRole | Where-Object { $_.roleDefinition.displayName -like 'Compliance*' } |
     Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>'
 
-# Set a default activation duration of 4 hours in your profile
-Install-OPIMConfiguration -DefaultParameters -Duration 4
+# Preview without writing
+Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>' -WhatIf
 ```
-
-After running `-ProfileAlias`, a new `pim` shortcut becomes available in your sessions:
-
-```powershell
-# Activate all eligible directory roles and PIM groups for 1 hour
-pim
-
-# Activate using a named tenant alias, for 4 hours with a justification
-pim -TenantAlias contoso -Duration 4 -Justification 'Incident response'
-```
-
-> **Tip:** The path to your `TenantMap.psd1` is stored in `$OPIMTenantMapPath` at the top of the
-> profile block written by `-ProfileAlias`. Edit that variable in your profile if you keep the
-> file in a non-default location.
 
 ---
 
@@ -242,8 +248,9 @@ Get-OPIMEntraIDGroup |
 # One-off override
 pim -TenantAlias contoso -TenantMapPath 'D:\config\MyTenants.psd1'
 
-# Permanent: edit the $OPIMTenantMapPath variable at the top of the block in $PROFILE.CurrentUserAllHosts
-$OPIMTenantMapPath = 'D:\config\MyTenants.psd1'
+# Permanent: add to your profile
+$PSDefaultParameterValues['Enable-OPIMMyRoles:TenantMapPath'] = 'D:\config\MyTenants.psd1'
+$PSDefaultParameterValues['Install-OPIMConfiguration:TenantMapPath'] = 'D:\config\MyTenants.psd1'
 ```
 
 ### Multi-tenant workflow example
@@ -251,14 +258,11 @@ $OPIMTenantMapPath = 'D:\config\MyTenants.psd1'
 ```powershell
 # ── First-time setup (run once) ───────────────────────────────────────────────
 
-# 1. Write the Activate-MyPIM / pim alias to your profile
-Install-OPIMConfiguration -ProfileAlias
-
-# 2. Register tenant aliases (-TenantMap is optional; implied by -TenantAlias + -TenantId)
+# 1. Register tenant aliases
 Install-OPIMConfiguration -TenantAlias corp    -TenantId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
 Install-OPIMConfiguration -TenantAlias partner -TenantId 'yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy'
 
-# 3. Connect to the corp tenant and configure default roles
+# 2. Connect to the corp tenant and configure default roles
 Connect-MgGraph -TenantId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Scopes `
     'RoleEligibilitySchedule.ReadWrite.Directory', `
     'RoleAssignmentSchedule.ReadWrite.Directory', `
@@ -276,10 +280,10 @@ Get-OPIMEntraIDGroup -AccessType member |
 # ── Daily use ─────────────────────────────────────────────────────────────────
 
 # Activate only the stored roles in corp tenant
-pim -TenantAlias corp -Duration 8 -Justification 'Daily operations'
+pim -TenantAlias corp -Hours 8 -Justification 'Daily operations'
 
 # Activate everything eligible in partner tenant (no stored role list)
-pim -TenantAlias partner -Duration 2 -Justification 'Partner review'
+pim -TenantAlias partner -Hours 2 -Justification 'Partner review'
 ```
 
 ---
@@ -300,6 +304,7 @@ For backwards compatibility and convenience, short `PIM`-prefixed aliases are av
 | `Get-OPIMEntraIDGroup` | `Get-PIMGroup` |
 | `Enable-OPIMEntraIDGroup` | `Enable-PIMGroup` |
 | `Disable-OPIMEntraIDGroup` | `Disable-PIMGroup` |
+| `Enable-OPIMMyRoles` | `pim` |
 
 ---
 
@@ -311,7 +316,7 @@ The default activation period is 1 hour. Override per-call with `-Hours`, or mak
 $PSDefaultParameterValues['Enable-OPIM*:Hours'] = 4
 ```
 
-Or use `Install-OPIMConfiguration -DefaultParameters -Duration 4` to write this to your profile automatically.
+Or add to your profile:  `$PSDefaultParameterValues['Enable-OPIM*:Hours'] = 4`
 
 ---
 
