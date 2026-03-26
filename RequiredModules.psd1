@@ -20,6 +20,11 @@
     Sampler                     = 'latest'
     'Sampler.GitHubTasks'       = 'latest'
 
+    # Runtime dependencies — must be present so Sampler's package_module_nupkg task
+    # can bundle them alongside the module in the NuGet package.
+    'Az.Resources'                    = '9.0.3'
+    'Microsoft.Graph.Authentication'  = '2.36.0'
+
 
 }
 
