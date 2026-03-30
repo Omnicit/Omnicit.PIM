@@ -16,20 +16,30 @@
     List only eligible PIM group memberships (not ownerships).
     .OUTPUTS
     System.Collections.Hashtable (tagged as Omnicit.PIM.GroupEligibilitySchedule or Omnicit.PIM.GroupAssignmentScheduleInstance)
+    .PARAMETER All
+    Fetch group assignment schedules for all principals, not just your own account.
+    Requires elevated Graph permissions to read other users' group eligibility assignments.
+    .PARAMETER Activated
+    Only return currently activated group assignment schedule instances instead of eligible
+    (inactive) group eligibility schedules.
+    .PARAMETER Identity
+    The schedule item ID used to retrieve a single specific group assignment record by its unique identifier.
+    When supplied, an OData filter of id eq '<Identity>' is applied automatically.
+    .PARAMETER Filter
+    An OData filter string appended to the Graph API request to narrow the result set.
+    Ignored when -Identity is specified.
+    .PARAMETER AccessType
+    Limits results to a specific access type. Accepts member or owner. When omitted both
+    membership and ownership eligibility schedules are returned.
     #>
     [Alias('Get-PIMGroup')]
     [CmdletBinding()]
     [OutputType([System.Collections.Hashtable])]
     param(
-        #Fetch assignments for all principals, not just yourself. Requires additional permissions.
         [Switch]$All,
-        #Only return currently activated group assignment instances.
         [Parameter(ParameterSetName = 'Activated')][Switch]$Activated,
-        #The schedule item ID to retrieve a specific record.
         [String]$Identity,
-        #An OData filter string to limit results. Ignored if -Identity is specified.
         [String]$Filter,
-        #Limit results to a specific access type: member or owner.
         [ValidateSet('member', 'owner')]
         [String]$AccessType
     )

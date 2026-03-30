@@ -1,0 +1,224 @@
+Describe 'Install-OPIMConfiguration' {
+    BeforeAll {
+        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
+        Import-Module Omnicit.PIM -Force
+        Mock -ModuleName Omnicit.PIM Write-Host { }
+        Mock -ModuleName Omnicit.PIM Set-Content { }
+        Mock -ModuleName Omnicit.PIM New-Item { }
+    }
+    AfterAll {
+        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
+    }
+
+    Context 'When creating a new tenant alias with no existing TenantMap file' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'calls Set-Content once to write the PSD1' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Scope It
+        }
+
+        It 'does not call New-Item when the directory already exists' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            Should -Invoke New-Item -ModuleName Omnicit.PIM -Times 0 -Scope It
+        }
+
+        It 'writes the TenantId into the PSD1 content' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Match '00000000-0000-0000-0000-000000000001'
+        }
+
+        It 'writes the tenant alias key into the PSD1 content' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Match "'contoso'"
+        }
+    }
+
+    Context 'When a directory role object is piped' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+
+            $script:dirRole = [PSCustomObject]@{
+                id               = 'elig-001'
+                roleDefinitionId = 'role-def-001'
+                directoryScopeId = '/'
+            }
+            $script:dirRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'writes the roleDefinitionId into the DirectoryRoles list' {
+            $script:dirRole | Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Match 'role-def-001'
+        }
+    }
+
+    Context 'When a group object is piped' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+
+            $script:groupObj = [PSCustomObject]@{
+                id       = 'elig-grp-001'
+                groupId  = 'group-001'
+                accessId = 'member'
+            }
+            $script:groupObj.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupEligibilitySchedule')
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'writes the groupId_accessId key into the EntraIDGroups list' {
+            $script:groupObj | Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Match 'group-001_member'
+        }
+    }
+
+    Context 'When an Azure role object is piped' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+
+            $script:azRole = [PSCustomObject]@{
+                Name             = 'azure-elig-001'
+                RoleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/role-def-az-001'
+                ScopeId          = '/subscriptions/sub-001'
+            }
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'writes the Azure role Name into the AzureRoles list' {
+            $script:azRole | Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Match 'azure-elig-001'
+        }
+    }
+
+    Context 'When an unrecognised InputObject type is piped' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
+        }
+
+        It 'silently ignores the unknown object and still calls Set-Content' {
+            [PSCustomObject]@{ SomeProperty = 'value' } | Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Scope It
+        }
+    }
+
+    Context 'When the tenant alias already exists and -Force is not specified' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    contoso = @{ TenantId = '00000000-0000-0000-0000-000000000099' }
+                }
+            }
+        }
+
+        It 'writes a warning that mentions the alias name' {
+            $warnings = @()
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WarningVariable warnings -WarningAction SilentlyContinue
+            $warnings | Should -Not -BeNullOrEmpty
+            $warnings[0] | Should -Match 'contoso'
+        }
+
+        It 'does not call Set-Content' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WarningAction SilentlyContinue
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
+        }
+    }
+
+    Context 'When the tenant alias already exists and -Force is specified' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    contoso = @{ TenantId = '00000000-0000-0000-0000-000000000099' }
+                }
+            }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'calls Set-Content to overwrite the existing entry' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Force
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Scope It
+        }
+
+        It 'writes the new TenantId into the PSD1 content' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Force
+            $script:writtenContent | Should -Match '00000000-0000-0000-0000-000000000001'
+        }
+    }
+
+    Context 'When stored categories not supplied via pipeline retain their existing values' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    contoso = @{
+                        TenantId       = '00000000-0000-0000-0000-000000000099'
+                        DirectoryRoles = @('existing-role-def-001')
+                        EntraIDGroups  = @('group-existing_member')
+                    }
+                }
+            }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'retains the existing DirectoryRoles when no directory role is piped' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000099' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Force
+            $script:writtenContent | Should -Match 'existing-role-def-001'
+        }
+
+        It 'retains the existing EntraIDGroups when no group is piped' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000099' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Force
+            $script:writtenContent | Should -Match 'group-existing_member'
+        }
+    }
+
+    Context 'When the TenantMap directory does not exist' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -notlike '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
+        }
+
+        It 'calls New-Item to create the directory' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\NewDir\TenantMap.psd1'
+            Should -Invoke New-Item -ModuleName Omnicit.PIM -Times 1 -Scope It -ParameterFilter { $ItemType -eq 'Directory' }
+        }
+    }
+
+    Context 'When -WhatIf is specified' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
+        }
+
+        It 'does not call Set-Content' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
+        }
+    }
+}

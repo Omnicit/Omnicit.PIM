@@ -3,8 +3,23 @@ using namespace System.Management.Automation
 function Convert-GraphHttpException {
     <#
     .SYNOPSIS
-    Parses raw Graph API HTTP error responses into structured ErrorRecords.
-    Works with raw Invoke-MgGraphRequest errors without requiring typed Graph SDK classes.
+    Converts a raw Graph API HTTP exception into a structured PowerShell ErrorRecord.
+
+    .DESCRIPTION
+    Attempts to extract the JSON error body from the HTTP response content or from the exception
+    message and constructs a new ErrorRecord with the parsed error code and message. The original
+    exception is preserved as the InnerException of the new record. If no parseable JSON body is
+    found, the original ErrorRecord is returned unchanged. Does not require typed Graph SDK classes.
+
+    .PARAMETER errorRecord
+    The ErrorRecord wrapping the raw HTTP exception thrown by Invoke-MgGraphRequest. The function
+    inspects the exception's Response.Content and falls back to the exception message to locate
+    the JSON error payload containing error.code and error.message fields.
+
+    .EXAMPLE
+    Convert-GraphHttpException -errorRecord $_
+
+    Converts the current pipeline ErrorRecord to a structured Graph ErrorRecord inside a catch block.
     #>
     [OutputType([ErrorRecord])]
     param(

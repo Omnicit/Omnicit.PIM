@@ -31,32 +31,33 @@
     .EXAMPLE
     pim -TenantAlias fabrikam -Wait
     Activate all configured roles for the 'fabrikam' tenant and wait until directory roles are provisioned.
+    .PARAMETER TenantAlias
+    Short alias for the target tenant matched against TenantMap.psd1. Run Install-OPIMConfiguration
+    to create or update tenant aliases. When omitted uses the current MgGraph context.
+    .PARAMETER Hours
+    Activation duration in hours applied to all role and group activations. Defaults to 1.
+    Make it persistent with: $PSDefaultParameterValues['Enable-OPIM*:Hours'] = 4
+    .PARAMETER Justification
+    Free-text justification passed to all activation requests. May be required by your PIM policy.
+    .PARAMETER TicketNumber
+    Ticket or work item number passed to all activation requests for auditing purposes.
+    .PARAMETER TicketSystem
+    Name of the ticket system that issued the above ticket number, e.g. ServiceNow or Jira.
+    .PARAMETER TenantMapPath
+    Path to the TenantMap.psd1 file managed by Install-OPIMConfiguration.
+    Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
+    .PARAMETER Wait
+    Wait until all directory role activations are fully provisioned before returning.
     #>
     [Alias('pim')]
     [CmdletBinding()]
     param(
-        # Short alias for the target tenant, matched against TenantMap.psd1.
-        # Run Install-OPIMConfiguration to create or update tenant aliases.
         [string]$TenantAlias,
-
-        # Activation duration in hours. Defaults to 1.
-        # Make it persistent: $PSDefaultParameterValues['Enable-OPIM*:Hours'] = 4
         [ValidateRange(1, 24)][int]$Hours = 1,
-
-        # Justification passed to all activation requests. May be required by your PIM policy.
         [string]$Justification,
-
-        # Ticket number for auditing purposes.
         [string]$TicketNumber,
-
-        # Ticket system associated with the above ticket number.
         [string]$TicketSystem,
-
-        # Path to TenantMap.psd1 managed by Install-OPIMConfiguration.
-        # Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
         [string]$TenantMapPath = "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1",
-
-        # Wait until directory role activations are fully provisioned before returning.
         [Switch]$Wait
     )
 

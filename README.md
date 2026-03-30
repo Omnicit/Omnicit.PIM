@@ -351,6 +351,51 @@ Use `-Activated` on the `Get-OPIM*` cmdlets to see currently active assignments.
 
 ---
 
+---
+
+## Development
+
+### Build system overview
+
+This module uses [Sampler](https://github.com/gaelcolas/Sampler) + [ModuleBuilder](https://github.com/PoshCode/ModuleBuilder) for compilation. The key distinction between source mode and compiled mode is:
+
+| | Source mode | Compiled mode |
+|---|---|---|
+| Import | `Import-Module ./Source/Omnicit.PIM.psd1 -Force` | `Import-Module ./output/module/Omnicit.PIM/<ver>/Omnicit.PIM.psd1` |
+| Functions | Dot-sourced at runtime by `Omnicit.PIM.psm1` | Merged into a single `Omnicit.PIM.psm1` by ModuleBuilder |
+| Type data | Loaded by `Omnicit.PIM.psm1` | Loaded by `suffix.ps1` (appended to built psm1) |
+| Format data | Loaded by `Omnicit.PIM.psm1` | Loaded by `suffix.ps1` (appended to built psm1) |
+
+### Source `Omnicit.PIM.psm1`
+
+The source psm1 is a **source-mode-only** loader. Its contents are **discarded** during a build. ModuleBuilder replaces it entirely with a compiled file that merges all `Classes/`, `Private/`, and `Public/` files in load order.
+
+Do not put runtime initialization logic here expecting it to run in the compiled module. Use `suffix.ps1` instead.
+
+### `suffix.ps1` (and `prefix.ps1`)
+
+ModuleBuilder appends `suffix.ps1` to the compiled psm1 verbatim (configured in `build.yaml` as `suffix: suffix.ps1`). This is the correct place for any initialization that must run at module import time in the compiled module — type data registration, format data registration, alias setup, etc.
+
+A `prefix.ps1` (not currently used) would be prepended to the compiled psm1 in the same way.
+
+### Common commands
+
+```powershell
+# Bootstrap dependencies (first time)
+./build.ps1 -ResolveDependency -Tasks noop
+
+# Compile the module
+./build.ps1
+
+# Run Pester tests + PSScriptAnalyzer
+./build.ps1 -AutoRestore -Tasks test
+
+# Import from source for interactive development
+Import-Module ./Source/Omnicit.PIM.psd1 -Force
+```
+
+---
+
 ## Attribution
 
 This module is a fork/overhaul of [JAz.PIM](https://github.com/JustinGrote/JAz.PIM) by [Justin Grote @justinwgrote](https://github.com/justinwgrote), released under the [MIT License](LICENSE).

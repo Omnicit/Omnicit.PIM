@@ -33,28 +33,31 @@ function Install-OPIMConfiguration {
     .EXAMPLE
     Get-OPIMDirectoryRole | Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>' -Force
     Replace the existing DirectoryRoles list for 'contoso', keeping other stored categories.
+    .PARAMETER TenantAlias
+    Short alias for the tenant (e.g. 'contoso'). Used with Enable-OPIMMyRoles -TenantAlias to select the tenant.
+    .PARAMETER TenantId
+    Azure Tenant ID (GUID) that the alias maps to. Must be a valid GUID format.
+    .PARAMETER TenantMapPath
+    Path to the TenantMap.psd1 configuration file. Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
+    .PARAMETER Force
+    Overwrite an existing tenant alias entry including all stored role lists without the duplicate-entry warning.
+    .PARAMETER InputObject
+    Role, group, or Azure role eligibility objects piped from Get-OPIMDirectoryRole, Get-OPIMEntraIDGroup, or Get-OPIMAzureRole. Objects not matching a known Omnicit.PIM type are silently ignored.
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
-        # The short alias for the tenant (e.g. 'contoso'). Used with 'pim -TenantAlias <alias>'.
         [Parameter(Mandatory)]
         [string]$TenantAlias,
 
-        # The Azure Tenant ID (GUID) for the alias.
         [Parameter(Mandatory)]
         [ValidatePattern('^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$',
             ErrorMessage = "'{0}' does not look like a valid GUID.")]
         [string]$TenantId,
 
-        # Path to the TenantMap.psd1 file. Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
         [string]$TenantMapPath = "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1",
 
-        # Overwrite an existing entry including all stored role lists without the duplicate-entry warning.
         [Switch]$Force,
 
-        # Role, group, or Azure role eligibility objects piped from Get-OPIMDirectoryRole,
-        # Get-OPIMEntraIDGroup, or Get-OPIMAzureRole. Only objects matching a known OPIM type
-        # are collected; others are silently ignored.
         [Parameter(ValueFromPipeline)]
         $InputObject
     )

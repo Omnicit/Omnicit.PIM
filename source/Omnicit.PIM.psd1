@@ -63,17 +63,10 @@ PowerShellVersion = '7.2'
 # ScriptsToProcess = @()
 
 # Type files (.ps1xml) to be loaded when importing this module
-    TypesToProcess   = @(
-        'Formats/Omnicit.PIM.DirectoryEligibilitySchedule.Types.ps1xml'
-        'Formats/Omnicit.PIM.DirectoryAssignmentScheduleInstance.Types.ps1xml'
-        'Formats/Omnicit.PIM.DirectoryAssignmentScheduleRequest.Types.ps1xml'
-        'Formats/Omnicit.PIM.GroupEligibilitySchedule.Types.ps1xml'
-        'Formats/Omnicit.PIM.GroupAssignmentScheduleInstance.Types.ps1xml'
-        'Formats/Omnicit.PIM.GroupAssignmentScheduleRequest.Types.ps1xml'
-        'Formats/RoleAssignmentScheduleRequest.Types.ps1xml'
-        'Formats/Omnicit.PIM.AzureEligibilitySchedule.Types.ps1xml'
-        'Formats/Omnicit.PIM.AzureAssignmentScheduleInstance.Types.ps1xml'
-    )
+    # Disabled: TypesToProcess re-registers type members on every Import-Module -Force but Remove-Module does NOT
+    # clean type data, so the second test file import fails with "member is already present" errors,
+    # preventing all public functions from loading. Types are loaded via Update-TypeData -AppendPath in the psm1 instead.
+    TypesToProcess = @()
 
 # Format files (.ps1xml) to be loaded when importing this module
     # Disabled: FormatsToProcess uses AppendPath internally, so Az.Resources formats (loaded via RequiredModules)

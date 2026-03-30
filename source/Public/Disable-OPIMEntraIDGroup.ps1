@@ -13,15 +13,17 @@
     Tab complete active PIM group assignments.
     .OUTPUTS
     System.Collections.Hashtable (tagged as Omnicit.PIM.GroupAssignmentScheduleRequest)
+    .PARAMETER Group
+    Active PIM group assignment schedule instance object piped from Get-OPIMEntraIDGroup -Activated.
+    .PARAMETER GroupName
+    Name of the active PIM group assignment to deactivate. Supports tab completion to currently active group assignments.
     #>
     [Alias('Disable-PIMGroup')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'GroupName')]
     [OutputType([System.Collections.Hashtable])]
     param(
-        #Active group assignment object from Get-OPIMEntraIDGroup -Activated.
         [Parameter(ParameterSetName = 'GroupObject', Mandatory, ValueFromPipeline)]
         $Group,
-        #Name of the active group assignment to deactivate. Supports tab completion.
         [ArgumentCompleter([GroupActivatedCompleter])]
         [Parameter(ParameterSetName = 'GroupName', Mandatory, Position = 0)]
         [String]$GroupName

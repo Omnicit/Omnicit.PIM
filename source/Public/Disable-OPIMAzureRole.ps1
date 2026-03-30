@@ -12,14 +12,16 @@ function Disable-OPIMAzureRole {
     .EXAMPLE
     Disable-OPIMAzureRole <tab>
     Tab complete active Azure roles.
+    .PARAMETER Role
+    Active Azure RBAC role assignment schedule instance object piped from Get-OPIMAzureRole -Activated.
+    .PARAMETER RoleName
+    Name of the active Azure role to deactivate. Supports tab completion to currently active roles.
     #>
     [Alias('Disable-PIMResourceRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
     param(
-        #Active role schedule object from Get-OPIMAzureRole -Activated.
         [Parameter(ParameterSetName = 'RoleObject', Mandatory, ValueFromPipeline)]
         $Role,
-        #Name of the active Azure role to deactivate. Supports tab completion.
         [ArgumentCompleter([AzureActivatedRoleCompleter])]
         [Parameter(ParameterSetName = 'RoleName', Mandatory, Position = 0)]
         [String]$RoleName

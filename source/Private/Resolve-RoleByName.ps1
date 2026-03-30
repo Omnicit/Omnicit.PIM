@@ -1,8 +1,35 @@
 function Resolve-RoleByName ($RoleName, [Switch]$AD, [Switch]$Group, [Switch]$Activated) {
     <#
     .SYNOPSIS
-    Resolves a tab-completed role name string to the matching schedule object.
-    The RoleName string must contain the schedule ID in parentheses, e.g. 'Global Administrator (abc-123)'.
+    Resolves a tab-completed role name string to the matching PIM schedule object.
+
+    .DESCRIPTION
+    Parses the schedule ID from a tab-completion string in the format 'Display Name (schedule-id)'
+    and looks up the corresponding schedule object using Get-OPIMDirectoryRole, Get-OPIMAzureRole,
+    or Get-OPIMEntraIDGroup depending on the switch parameters provided. Throws if the schedule ID
+    cannot be found or if more than one match is returned.
+
+    .PARAMETER RoleName
+    A role or group name string in the format produced by the module's IArgumentCompleter classes:
+    'Display Name (schedule-id)'. The schedule ID is extracted from the parenthesised suffix.
+    This parameter is designed for tab-completion use and should not be typed manually.
+
+    .PARAMETER AD
+    When specified, resolves against Entra ID directory role eligibility schedules by calling
+    Get-OPIMDirectoryRole and matching on the schedule id property.
+
+    .PARAMETER Group
+    When specified, resolves against PIM for Groups eligibility schedules by calling
+    Get-OPIMEntraIDGroup and matching on the schedule id property.
+
+    .PARAMETER Activated
+    When specified, passes -Activated to the underlying Get-OPIM* call so that only currently
+    active assignments are considered rather than eligible (inactive) ones.
+
+    .EXAMPLE
+    Resolve-RoleByName -RoleName 'Global Administrator (abc-123)' -AD
+
+    Looks up the Entra ID directory role eligibility schedule whose id is 'abc-123'.
     #>
     if (-not $RoleName) { throw 'RoleName was null. This is a bug.' }
 

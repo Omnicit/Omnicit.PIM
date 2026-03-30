@@ -16,15 +16,17 @@
     Deactivate the first active role.
     .OUTPUTS
     System.Collections.Hashtable (tagged as Omnicit.PIM.DirectoryAssignmentScheduleRequest)
+    .PARAMETER Role
+    Active directory role assignment schedule instance object piped from Get-OPIMDirectoryRole -Activated.
+    .PARAMETER RoleName
+    Name of the active directory role to deactivate. Supports tab completion to currently active roles.
     #>
     [Alias('Disable-PIMADRole', 'Disable-PIMRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
     [OutputType([System.Collections.Hashtable])]
     param(
-        #Active role schedule instance object from Get-OPIMDirectoryRole -Activated.
         [Parameter(ParameterSetName = 'RoleObject', Mandatory, ValueFromPipeline)]
         $Role,
-        #Name of the active role to deactivate. Supports tab completion.
         [ArgumentCompleter([DirectoryActivatedRoleCompleter])]
         [Parameter(ParameterSetName = 'RoleName', Mandatory, Position = 0)]
         [String]$RoleName

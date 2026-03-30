@@ -22,30 +22,42 @@ function Enable-OPIMAzureRole {
     .EXAMPLE
     Get-OPIMAzureRole | Select-Object -First 1 | Enable-OPIMAzureRole -Hours 4
     Activate the first eligible Azure role for 4 hours.
+    .PARAMETER Role
+    Eligible Azure RBAC role schedule object piped from Get-OPIMAzureRole. Used when activating
+    by object rather than by tab-completed name. Mutually exclusive with -RoleName.
+    .PARAMETER RoleName
+    Tab-completable name of the eligible Azure role in the format produced by the argument completer.
+    Accepts multiple values. Mutually exclusive with -Role.
+    .PARAMETER Justification
+    Free-text justification for the activation request. May be required by your PIM policy.
+    .PARAMETER TicketNumber
+    Ticket or work item number associated with this activation for auditing purposes.
+    .PARAMETER TicketSystem
+    Name of the ticket system that issued the above ticket number, e.g. ServiceNow or Jira.
+    .PARAMETER Hours
+    Activation duration in hours. Defaults to 1. Ignored when -Until is specified.
+    .PARAMETER NotBefore
+    Date and time when the role activation begins. Defaults to the current date and time.
+    .PARAMETER Until
+    Explicit end date and time for the activation. Takes precedence over -Hours when specified.
+    Aliased as -NotAfter.
+    .PARAMETER Wait
+    Wait for the activation request to be provisioned and appear before returning.
     #>
     [Alias('Enable-PIMResourceRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
     param(
-        #Eligible role object from Get-OPIMAzureRole.
         [Parameter(ParameterSetName = 'RoleObject', Mandatory, ValueFromPipeline)]
         $Role,
-        #Friendly name of the eligible Azure role. Supports tab completion. Accepts multiple values.
         [Parameter(Position = 0, ParameterSetName = 'RoleName', Mandatory)]
         [ArgumentCompleter([AzureEligibleRoleCompleter])]
         [string[]]$RoleName,
-        #Justification for the activation. May be required by your PIM policy.
         [string]$Justification,
-        #Ticket number associated with this activation.
         [string]$TicketNumber,
-        #Ticket system containing the above ticket number.
         [string]$TicketSystem,
-        #Duration in hours. Defaults to 1 hour.
         [ValidateNotNullOrEmpty()][int]$Hours = 1,
-        #Date and time when the role activation begins. Defaults to now.
         [ValidateNotNullOrEmpty()][DateTime]$NotBefore = [DateTime]::Now,
-        #Explicit end date/time for the role activation. Takes precedence over -Hours when specified.
         [DateTime][Alias('NotAfter')]$Until,
-        #Wait for the activation request to appear before returning.
         [Switch]$Wait
     )
     process {

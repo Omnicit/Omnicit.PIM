@@ -1,3 +1,21 @@
+# ============================================================
+# SOURCE-MODE LOADER — FOR LOCAL DEVELOPMENT ONLY
+# ============================================================
+# This file is used exclusively when importing the module directly from source:
+#
+#   Import-Module ./Source/Omnicit.PIM.psd1 -Force
+#
+# It is NOT part of the compiled (built) module. During a build (./build.ps1),
+# ModuleBuilder merges all Classes/, Private/, and Public/ .ps1 files into a
+# single Omnicit.PIM.psm1, prepends any `using namespace` statements, and
+# appends suffix.ps1. The contents of this source psm1 are therefore discarded
+# and replaced entirely by that merged output.
+#
+# Initialization that must run in the compiled module (type data, format data)
+# belongs in source/suffix.ps1, which is appended by ModuleBuilder as
+# configured in build.yaml (`suffix: suffix.ps1`).
+# ============================================================
+
 # Load order: Classes (completers/types) -> Private (helpers) -> Public (exported functions)
 $PublicFunctions = [System.Collections.Generic.List[string]]::new()
 foreach ($ScriptPathItem in 'Classes', 'Private', 'Public') {
@@ -13,11 +31,20 @@ foreach ($ScriptPathItem in 'Classes', 'Private', 'Public') {
 
 Export-ModuleMember -Function $PublicFunctions
 
+# TypesToProcess is disabled in the manifest: Remove-Module does not clean type data, so re-importing in the
+# same session fails with "member already present" errors. Loading here with -ErrorAction SilentlyContinue
+# silently skips already-registered members on subsequent imports.
+Get-ChildItem "$PSScriptRoot\Formats\*.Types.PS1XML" | ForEach-Object {
+    Update-TypeData -AppendPath $PSItem -ErrorAction SilentlyContinue
+}
+
 # FormatsToProcess in the manifest uses Update-FormatData -AppendPath, which means RequiredModules (Az.Resources)
 # loaded before this psm1 take format precedence. Using -PrependPath here ensures our formats win, which is
 # required for the RoleAssignmentScheduleRequest Az-native type. The manifest FormatsToProcess remains
 # disabled because it would lose to Az's format definitions.
 # Ref: https://github.com/PowerShell/PowerShell/issues/17345 (closed for inactivity, not fixed — confirmed still an issue Feb 2025)
+# -ErrorAction SilentlyContinue prevents stale format-file paths registered from a previous build version
+# (cleaned from output/) from causing a terminating error on session-wide format refresh.
 Get-ChildItem "$PSScriptRoot\Formats\*.Format.PS1XML" | ForEach-Object {
-    Update-FormatData -PrependPath $PSItem
+    Update-FormatData -PrependPath $PSItem -ErrorAction SilentlyContinue
 }

@@ -18,23 +18,29 @@ function Wait-OPIMDirectoryRole {
     Enable all eligible roles and wait for each to be active (via the -Wait switch on Enable-OPIMDirectoryRole).
     .OUTPUTS
     System.Collections.Hashtable (tagged as Omnicit.PIM.DirectoryAssignmentScheduleInstance) when -PassThru is used.
+    .PARAMETER RoleRequest
+    Role activation request object piped from Enable-OPIMDirectoryRole. Contains the schedule request details used to poll for provisioning status.
+    .PARAMETER Interval
+    Polling interval in seconds between Graph API status checks. Default is 1 second.
+    .PARAMETER Timeout
+    Maximum number of seconds to wait for a role activation to complete before timing out. Default is 600 seconds (10 minutes).
+    .PARAMETER ThrottleLimit
+    Maximum number of concurrent role activation polls to run in parallel. Default is 5.
+    .PARAMETER PassThru
+    When specified, returns the activated role schedule instances (tagged as Omnicit.PIM.DirectoryAssignmentScheduleInstance) after all activations complete.
+    .PARAMETER NoSummary
+    Skip the 1-second summary pause before returning results.
     #>
     [Alias('Wait-PIMADRole', 'Wait-PIMRole')]
     [OutputType([System.Collections.Hashtable])]
     [CmdletBinding()]
     param (
-        #Role activation request from Enable-OPIMDirectoryRole.
         [Parameter(Mandatory, ValueFromPipeline)]
         $RoleRequest,
-        #Polling interval in seconds. Default is 1 second.
         [double]$Interval = 1,
-        #Maximum seconds to wait before timing out. Default is 10 minutes (600 seconds).
         $Timeout = 600,
-        #Maximum concurrent role activation polls.
         $ThrottleLimit = 5,
-        #When specified, returns the activated role schedule instances after all activations complete.
         [Switch]$PassThru,
-        #Skip the 1-second summary pause before returning.
         [Switch]$NoSummary
     )
     begin {
@@ -44,7 +50,7 @@ function Wait-OPIMDirectoryRole {
     process {
         if ($RoleRequest.scheduleInfo.expiration.endDateTime) {
             $localEndTime = [datetime]$RoleRequest.scheduleInfo.expiration.endDateTime
-            if ($localEndTime -lt [DateTime]::UtcNow) {
+            if ($localEndTime.ToUniversalTime() -lt [DateTime]::UtcNow) {
                 Write-CmdletError -Message ([System.Exception]::new("$($RoleRequest.RoleName) role end date already expired at $($localEndTime.ToLocalTime()). Skipping."))
                 return
             }
@@ -52,6 +58,8 @@ function Wait-OPIMDirectoryRole {
         $RoleRequests.Add($RoleRequest)
     }
     end {
+        if ($RoleRequests.Count -eq 0) { return }
+
         [ConcurrentDictionary[Int, hashtable]]$info = [ConcurrentDictionary[Int, hashtable]]::new()
 
         $waitJobs = $RoleRequests | ForEach-Object -ThrottleLimit $ThrottleLimit -AsJob -Parallel {

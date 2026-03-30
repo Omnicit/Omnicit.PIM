@@ -16,31 +16,43 @@
     Activate all eligible group memberships for 4 hours with justification.
     .OUTPUTS
     System.Collections.Hashtable (tagged as Omnicit.PIM.GroupAssignmentScheduleRequest)
+    .PARAMETER Group
+    Eligible group schedule object piped from Get-OPIMEntraIDGroup. Used when activating
+    by object rather than by tab-completed name. Mutually exclusive with -GroupName.
+    .PARAMETER GroupName
+    Tab-completable name of the eligible group assignment in the format produced by the argument completer.
+    Accepts multiple values. Mutually exclusive with -Group.
+    .PARAMETER Justification
+    Free-text justification for the activation request. May be required by your PIM policy.
+    .PARAMETER TicketNumber
+    Ticket or work item number associated with this activation for auditing purposes.
+    .PARAMETER TicketSystem
+    Name of the ticket system that issued the above ticket number, e.g. ServiceNow or Jira.
+    .PARAMETER Hours
+    Activation duration in hours. Defaults to 1. Ignored when -Until is specified.
+    .PARAMETER NotBefore
+    Date and time when the group activation begins. Defaults to the current date and time.
+    .PARAMETER Until
+    Explicit end date and time for the activation. Takes precedence over -Hours when specified.
+    Aliased as -NotAfter.
+    .PARAMETER Wait
+    Wait until the group assignment is fully provisioned and active before returning.
     #>
     [Alias('Enable-PIMGroup')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'GroupName')]
     [OutputType([System.Collections.Hashtable])]
     param(
-        #Eligible group schedule object from Get-OPIMEntraIDGroup.
         [Parameter(ParameterSetName = 'GroupObject', Mandatory, ValueFromPipeline)]
         $Group,
-        #Friendly name of the eligible group assignment. Supports tab completion. Accepts multiple values.
         [Parameter(Position = 0, ParameterSetName = 'GroupName', Mandatory)]
         [ArgumentCompleter([GroupEligibleCompleter])]
         [string[]]$GroupName,
-        #Justification for the activation. May be required by your PIM policy.
         [string]$Justification,
-        #Ticket number associated with this activation.
         [string]$TicketNumber,
-        #Ticket system containing the above ticket number.
         [string]$TicketSystem,
-        #Duration in hours. Defaults to 1 hour.
         [ValidateNotNullOrEmpty()][int]$Hours = 1,
-        #Date and time when the activation begins. Defaults to now.
         [ValidateNotNullOrEmpty()][DateTime]$NotBefore = [DateTime]::Now,
-        #Explicit end date/time for the activation. Takes precedence over -Hours when specified.
         [DateTime][Alias('NotAfter')]$Until,
-        #Wait until the group assignment is fully active before returning.
         [Switch]$Wait
     )
     process {

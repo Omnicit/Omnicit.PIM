@@ -16,7 +16,8 @@ applyTo: "tests/**/*.ps1"
 ```powershell
 Describe 'Enable-OPIMDirectoryRole' {
     BeforeAll {
-        Import-Module "$PSScriptRoot/../../Source/Omnicit.PIM.psd1" -Force
+        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
+        Import-Module Omnicit.PIM -Force
     }
 
     Context 'When called with -RoleName (happy path)' {
@@ -76,6 +77,21 @@ Mock Invoke-MgGraphRequest {
 Mock Get-AzRoleEligibilitySchedule { return @() }
 Mock Get-AzRoleAssignmentScheduleInstance { return @() }
 Mock New-AzRoleAssignmentScheduleRequest { }
+```
+
+To simulate a terminating error from an Az.Resources cmdlet with a specific `FullyQualifiedErrorId`, use `$PSCmdlet.ThrowTerminatingError()` — **not** `throw [ErrorRecord]`. Pester mock wrappers have `[CmdletBinding()]`, so `$PSCmdlet` is available. Using `throw [ErrorRecord]` causes PowerShell to re-wrap the exception on catch, losing the original `ErrorId`:
+
+```powershell
+Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
+    $PSCmdlet.ThrowTerminatingError(
+        [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('Insufficient permissions'),
+            'InsufficientPermissions',
+            [System.Management.Automation.ErrorCategory]::PermissionDenied,
+            $null
+        )
+    )
+}
 ```
 
 ### Private helpers
@@ -168,6 +184,34 @@ AfterAll {
 Adjust the relative path depth to match the test file location:
 - `tests/Unit/Public/` → `../../../Source/Omnicit.PIM.psd1`
 - `tests/Unit/Private/` → `../../../Source/Omnicit.PIM.psd1`
+
+## Testing Private Functions
+
+Private functions (in `Source/Private/`) are not exported, so they cannot be called directly from outside the module. Wrap the entire body of each `It` block in `InModuleScope Omnicit.PIM { }` to reach them:
+
+```powershell
+It 'returns the expected value' {
+    InModuleScope Omnicit.PIM {
+        # Call the private function directly here
+        $result = Get-MyId
+        $result | Should -BeOfType [Guid]
+    }
+}
+```
+
+> `InModuleScope` is required to **call** a private function. It is **not** required for public function tests — use `-ModuleName Omnicit.PIM` on `Mock` only for those.
+
+### Resetting module-scoped state
+
+Some private functions use `$SCRIPT:*` variables as caches (e.g., `Get-MyId` uses `$SCRIPT:_MyIDCache`). Always reset these at the start of each `It` (or in a `BeforeEach`) to prevent cross-test state leakage:
+
+```powershell
+BeforeEach {
+    InModuleScope Omnicit.PIM { $SCRIPT:_MyIDCache = $null }
+}
+```
+
+Only apply this when the function under test explicitly uses a module-scoped variable — do not add it as a blanket pattern to every test file.
 
 ## Common Pitfalls
 

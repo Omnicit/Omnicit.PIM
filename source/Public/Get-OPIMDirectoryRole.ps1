@@ -16,18 +16,26 @@
     List eligible directory roles for all users (requires privileged permissions).
     .OUTPUTS
     System.Collections.Hashtable (tagged as Omnicit.PIM.DirectoryEligibilitySchedule or Omnicit.PIM.DirectoryAssignmentScheduleInstance)
+    .PARAMETER All
+    Fetch role schedules for all principals in the directory, not just your own account.
+    Requires elevated Graph permissions such as PrivilegedEligibilitySchedule.Read.AzureADGroup.
+    .PARAMETER Activated
+    Only return currently activated role assignment schedule instances instead of eligible
+    (inactive) role eligibility schedules.
+    .PARAMETER Identity
+    The schedule item ID used to retrieve a single specific role record by its unique identifier.
+    When supplied, an OData filter of id eq '<Identity>' is applied automatically.
+    .PARAMETER Filter
+    An OData filter string appended to the Graph API request to narrow the result set.
+    Ignored when -Identity is specified.
     #>
     [Alias('Get-PIMADRole', 'Get-PIMRole')]
     [CmdletBinding()]
     [OutputType([System.Collections.Hashtable])]
     param(
-        #Fetch roles for all principals, not just yourself. Requires additional permissions.
         [Switch]$All,
-        #Only return currently activated role assignment instances.
         [Parameter(ParameterSetName = 'Activated')][Switch]$Activated,
-        #The schedule item ID to retrieve a specific role record.
         $Identity,
-        #An OData filter string to limit results. Ignored if -Identity is specified.
         [String]$Filter
     )
     process {
@@ -76,7 +84,7 @@
             if ($item.directoryScopeId -eq '/') {
                 $item['directoryScope'] = @{ id = '/' }
             } else {
-                $item['directoryScope'] = Invoke-MgGraphRequest -Verbose:$false -Method Get -Uri "v1.0/directory/$($item.directoryScopeId)"
+                $item['directoryScope'] = Invoke-MgGraphRequest -Verbose:$false -Method Get -Uri "v1.0/directory$($item.directoryScopeId)"
             }
             # Cast to PSCustomObject so custom Format views are used instead of the
             # built-in hashtable Key/Value formatter.
