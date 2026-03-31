@@ -34,7 +34,7 @@
     #>
     [Alias('Get-PIMGroup')]
     [CmdletBinding()]
-    [OutputType([System.Collections.Hashtable])]
+    [OutputType([PSCustomObject])]
     param(
         [Switch]$All,
         [Parameter(ParameterSetName = 'Activated')][Switch]$Activated,
@@ -44,50 +44,51 @@
         [String]$AccessType
     )
     process {
-        $base = 'v1.0/identityGovernance/privilegedAccess/group'
-        [string]$type = if ($Activated) {
+        $Base = 'v1.0/identityGovernance/privilegedAccess/group'
+        [string]$Type = if ($Activated) {
             'assignmentScheduleInstances'
         } else {
             'eligibilitySchedules'
         }
-        [string]$userFilter = if (-not $All) {
+        [string]$UserFilter = if (-not $All) {
             "/filterByCurrentUser(on='principal')"
         } else {
             [String]::Empty
         }
 
-        $filterParts = [System.Collections.Generic.List[string]]::new()
-        if ($Identity)   { $filterParts.Add("id eq '$Identity'") }
-        if ($AccessType) { $filterParts.Add("accessId eq '$AccessType'") }
-        if ($Filter)     { $filterParts.Add($Filter) }
+        $FilterParts = [System.Collections.Generic.List[string]]::new()
+        if ($Identity)   { $FilterParts.Add("id eq '$Identity'") }
+        if ($AccessType) { $FilterParts.Add("accessId eq '$AccessType'") }
+        if ($Filter)     { $FilterParts.Add($Filter) }
 
-        [string]$odataFilter = if ($filterParts.Count -gt 0) {
-            '&$filter=' + ($filterParts -join ' and ')
+        [string]$OdataFilter = if ($FilterParts.Count -gt 0) {
+            '&$filter=' + ($FilterParts -join ' and ')
         } else {
             [String]::Empty
         }
 
-        $requestUri = "${base}/${type}${userFilter}?`$expand=group,principal${odataFilter}"
+        $RequestUri = "${Base}/${Type}${UserFilter}?`$expand=group,principal${OdataFilter}"
 
         try {
-            $items = Invoke-MgGraphRequest -Uri $requestUri -ErrorAction Stop -Verbose:$false |
+            $Items = Invoke-MgGraphRequest -Uri $RequestUri -ErrorAction Stop -Verbose:$false |
                 Select-Object -ExpandProperty Value
         } catch {
-            throw (Convert-GraphHttpException $PSItem)
+            $PSCmdlet.WriteError((Convert-GraphHttpException $PSItem))
+            return
         }
 
-        $typeName = if ($Activated) {
+        $TypeName = if ($Activated) {
             'Omnicit.PIM.GroupAssignmentScheduleInstance'
         } else {
             'Omnicit.PIM.GroupEligibilitySchedule'
         }
 
-        foreach ($item in $items) {
+        foreach ($Item in $Items) {
             # Cast to PSCustomObject so custom Format views are used instead of the
             # built-in hashtable Key/Value formatter.
-            $obj = [PSCustomObject]$item
-            $obj.PSObject.TypeNames.Insert(0, $typeName)
-            $obj
+            $Obj = [PSCustomObject]$Item
+            $Obj.PSObject.TypeNames.Insert(0, $TypeName)
+            $Obj
         }
     }
 }

@@ -26,40 +26,44 @@ function Convert-GraphHttpException {
         [ErrorRecord]$errorRecord
     )
 
-    $ex = $errorRecord.Exception
+    $Ex = $errorRecord.Exception
 
     # Try to read the HTTP response body
-    $responseContent = $null
-    if ($ex.Response -and $ex.Response.Content) {
+    $ResponseContent = $null
+    if ($Ex.Response -and $Ex.Response.Content) {
         try {
-            $responseContent = $ex.Response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-        } catch {}
+            $ResponseContent = $Ex.Response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        } catch {
+            Write-Verbose "Could not read HTTP response content: $_"
+        }
     }
 
     # Fallback: sometimes the JSON payload is already in the exception message
-    if (-not $responseContent -and $ex.Message -like '*"error"*') {
-        $responseContent = $ex.Message
+    if (-not $ResponseContent -and $Ex.Message -like '*"error"*') {
+        $ResponseContent = $Ex.Message
     }
 
-    if ($responseContent) {
+    if ($ResponseContent) {
         try {
-            $parsed    = $responseContent | ConvertFrom-Json
-            $errorInfo = $parsed.error
-            if ($errorInfo) {
-                $code      = $errorInfo.code
-                $message   = $errorInfo.message
-                $detail    = "$code`: $message"
-                $newEx     = [System.Exception]::new($detail, $ex)
-                $errRecord = [ErrorRecord]::new(
-                    $newEx,
-                    $code,
+            $Parsed    = $ResponseContent | ConvertFrom-Json
+            $ErrorInfo = $Parsed.error
+            if ($ErrorInfo) {
+                $Code      = $ErrorInfo.code
+                $Message   = $ErrorInfo.message
+                $Detail    = "$Code`: $Message"
+                $NewEx     = [System.Exception]::new($Detail, $Ex)
+                $ErrRecord = [ErrorRecord]::new(
+                    $NewEx,
+                    $Code,
                     [System.Management.Automation.ErrorCategory]::OperationStopped,
                     $null
                 )
-                $errRecord.ErrorDetails = [System.Management.Automation.ErrorDetails]::new($detail)
-                return $errRecord
+                $ErrRecord.ErrorDetails = [System.Management.Automation.ErrorDetails]::new($Detail)
+                return $ErrRecord
             }
-        } catch {}
+        } catch {
+            Write-Verbose "Could not parse Graph error JSON from response body: $_"
+        }
     }
 
     return $errorRecord

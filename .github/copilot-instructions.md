@@ -48,6 +48,8 @@ Build output lands in `output/module/<version>/`. Uses **Sampler** + **ModuleBui
 - One function per file; filename must equal function name.
 - `[CmdletBinding(SupportsShouldProcess)]` on every Enable/Disable function.
 - Use `$PSCmdlet` for `ShouldProcess` calls, not `$PSCmdlet.ShouldContinue`.
+- **PascalCase for all variables** — `$Response`, `$Request`, `$FakeRole`, `$ScheduleId`. Exceptions: automatic variables (`$PSCmdlet`, `$PSItem`, `$_`), preference variables (`$ErrorActionPreference`), boolean/null literals (`$null`, `$true`, `$false`), and the module-scope cache (`$script:_MyIDCache`).
+- **`[OutputType([PSCustomObject])]`** on every function that returns type-tagged objects. Do not use `[OutputType([System.Collections.Hashtable])]`.
 
 ## Naming & Command Conventions
 
@@ -114,14 +116,40 @@ For `SelfDeactivate` supply the `roleAssignmentScheduleInstance` ID, **not** the
 ## Error Handling
 
 - All Graph API errors go through `Convert-GraphHttpException` in `Private/` — converts raw HTTP exceptions to typed PowerShell `ErrorRecord` objects with parsed `error.code` and `error.message`.
-- Use `Write-CmdletError` (private) to emit non-terminating errors consistently.
+- **All functions emit non-terminating errors** via `$PSCmdlet.WriteError()`. Never use bare `throw` in public functions — it terminates the pipeline and prevents `-ErrorAction SilentlyContinue` from working. After `WriteError`, exit with `return` (in `process`) or `continue` (inside a `foreach` loop over multiple roles).
+- Use `Write-CmdletError` (private) to emit non-terminating errors consistently from private helpers.
 - Special error codes to handle: `InsufficientPermissions` (suggest `-All` is required), `ActiveDurationTooShort` (5-min cooldown between activate/deactivate).
+- **`ErrorDetails` must be set via `[System.Management.Automation.ErrorDetails]::new('message')`**, not via plain string assignment. Plain string assignment is accepted by PowerShell but the type is incorrect.
+- **Error flow in `foreach` loops** (Enable-* with multiple roles) — use `continue` to skip the failed role and proceed to the next:
+  ```powershell
+  foreach ($Role in $ResolvedRoles) {
+      ...
+      try { ... } catch {
+          $PSCmdlet.WriteError($Err)
+          continue   # <-- not return; try next role
+      }
+  }
+  ```
+- **Error flow in `process` blocks** (single-item Disable-*, Get-*) — use `return` to exit the current pipeline object:
+  ```powershell
+  process {
+      try { ... } catch {
+          $PSCmdlet.WriteError($Err)
+          return   # <-- not continue
+      }
+  }
+  ```
+- **Graph vs Az.Resources error patterns are different by design** — Graph errors arrive as `HttpRequestException` and must go through `Convert-GraphHttpException`. Az.Resources errors arrive through `$PSItem` from `catch` blocks and are passed directly to `$PSCmdlet.WriteError()` after inspecting `$PSItem.FullyQualifiedErrorId`.
 
 ## Key Implementation Details
 
 - **Duration formatting** — Use `[System.Xml.XmlConvert]::ToString([timespan]...)` for ISO 8601 durations required by PIM APIs, e.g. `PT1H`.
 - **Current user ID** — Use `Get-MyId` (private) which caches the result in `$SCRIPT:_MyIDCache`.
-- **Tab completers** — Return strings in the format `'Display Name -> Scope (schedule-id)'`. `Resolve-RoleByName` (private) parses this string back to the schedule object.
+- **Tab completers** — Return strings in a format that includes the schedule ID in trailing parentheses. Format differs by pillar:
+  - Directory roles: `'DisplayName -> ScopeName (id)'` (scope omitted for root `/`)
+  - Azure RBAC roles: `'RoleName -> ScopeDisplayName (Name)'` (ID is `.Name`, not `.id`)
+  - PIM Groups: `'GroupName - accessId (id)'` (dash separator, not arrow)
+  `Resolve-RoleByName` (private) parses the trailing `(id)` back to find the schedule object. The ID property differs: Directory/Groups use `.id`, Azure uses `.Name`.
 - **Parallel polling** — `Wait-OPIMDirectoryRole` uses `ForEach-Object -AsJob -Parallel` with `ConcurrentDictionary` for concurrent multi-role waiting.
 - **directoryScopeId expand workaround** — Graph v1.0 cannot `$expand=directoryScope` in the same query; `Restore-GraphProperty` makes a second request to rehydrate scope display names.
 - **Format load order** — `FormatsToProcess` is disabled in the manifest (PowerShell bug [#17345](https://github.com/PowerShell/PowerShell/issues/17345)); formats are loaded via `Update-FormatData -PrependPath` in `Omnicit.PIM.psm1`.
@@ -132,7 +160,7 @@ For `SelfDeactivate` supply the `roleAssignmentScheduleInstance` ID, **not** the
 2. Add to `FunctionsToExport` in `Omnicit.PIM.psd1`.
 3. If tab completion is needed, add an `IArgumentCompleter` class in `Source/Classes/`.
 4. Add `*.Types.ps1xml` and `*.Format.ps1xml` in `Source/Formats/` and register in `TypesToProcess` in the manifest.
-5. Register short aliases in `Omnicit.PIM.psm1` and add them to `AliasesToExport` in the manifest.
+5. Declare aliases via the `[Alias()]` attribute on the function. The source-mode psm1 uses `Export-ModuleMember -Function $PublicFunctions -Alias *` to export them. The build process (ModuleBuilder) populates `AliasesToExport` in the manifest from the `[Alias()]` attributes automatically.
 
 ## Dependencies
 
@@ -153,12 +181,18 @@ See [README.md](../README.md) for full usage examples, connection scopes, `Insta
 - **`Write-CmdletError -Message` expects `[Exception]`**, not a string. Wrap bare strings: `[System.Exception]::new('message')`.
 - **Output tagging is required** — never return raw `Invoke-MgGraphRequest` hashtables (the default `Key/Value` formatter applies). Always convert to `[PSCustomObject]` and tag:
   ```powershell
-  $out = [PSCustomObject]$response
-  $out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.SomeTypeName')
+  $Out = [PSCustomObject]$Response
+  $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.SomeTypeName')
   ```
   The type name must match a `.Format.ps1xml` and `.Types.ps1xml` pair in `Source/Formats/`.
 - **`TypesToProcess` is active; `FormatsToProcess` is disabled** — formats are loaded via `Update-FormatData -PrependPath` in `Omnicit.PIM.psm1` (workaround for PS bug [#17345](https://github.com/PowerShell/PowerShell/issues/17345)).
 - **Parallel runspaces require explicit Graph import** — `Wait-OPIMDirectoryRole` calls `Import-Module 'Microsoft.Graph.Authentication'` inside `ForEach-Object -Parallel`. Any new parallel block must do the same.
-- **`Invoke-MgGraphRequest` must always use `-Verbose:$false -ErrorAction Stop`** — suppresses SDK noise and ensures exceptions are catchable.
+- **`Invoke-MgGraphRequest` must always use `-Verbose:$false -ErrorAction Stop`** — suppresses SDK noise and ensures exceptions are catchable. This applies to ALL calls including secondary rehydration calls.
+- **`ErrorRecord.ErrorDetails` requires `[ErrorDetails]::new()`** — `$Err.ErrorDetails = 'plain string'` is silently ignored in some PowerShell versions. Always use:
+  ```powershell
+  $Err.ErrorDetails = [System.Management.Automation.ErrorDetails]::new('Your message here.')
+  ```
+- **Never use bare `throw` in public functions** — always emit via `$PSCmdlet.WriteError()` followed by `return` or `continue`. `throw` terminates the pipeline and bypasses `-ErrorAction SilentlyContinue`.
+- **Local variable `$Filter` shadows the `-Filter` parameter** — in functions that have a `-Filter` parameter and also build an internal OData filter string, name the local variable `$OdataFilter` to avoid the collision.
 - **`Az.Resources` manifest version is the source of truth** — the required version is `9.0.3`, not the older `5.6.0` sometimes cited in older docs.
 - **PowerShell 7.2+ Core only** — `CompatiblePSEditions = @('Core')`. Do not suggest Windows PowerShell 5.x or Desktop-compatible code.

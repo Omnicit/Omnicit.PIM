@@ -48,7 +48,7 @@
     #>
     [Alias('Enable-PIMADRole', 'Enable-PIMRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
-    [OutputType([System.Collections.Hashtable])]
+    [OutputType([PSCustomObject])]
     param(
         [Parameter(ParameterSetName = 'RoleObject', Mandatory, ValueFromPipeline)]
         $Role,
@@ -67,76 +67,87 @@
         [System.Collections.Generic.List[PSObject]]$_pendingWait = [System.Collections.Generic.List[PSObject]]::new()
     }
     process {
-        $resolvedRoles = if ($RoleName) {
+        $ResolvedRoles = if ($RoleName) {
             $RoleName | ForEach-Object { Resolve-RoleByName -AD $_ }
         } else {
             @($Role)
         }
 
-        foreach ($Role in $resolvedRoles) {
-            $scheduleInfo = @{
+        foreach ($Role in $ResolvedRoles) {
+            $ScheduleInfo = @{
                 startDateTime = $NotBefore.ToString('o')
                 expiration    = @{}
             }
 
-            $expiration = $scheduleInfo.expiration
+            $Expiration = $ScheduleInfo.expiration
             if ($Until) {
-                $expiration.type        = 'AfterDateTime'
-                $expiration.endDateTime = $Until.ToString('o')
-                [string]$roleExpireTime = $Until
+                $Expiration.type        = 'AfterDateTime'
+                $Expiration.endDateTime = $Until.ToString('o')
+                [string]$RoleExpireTime = $Until
             } else {
-                $expiration.type     = 'AfterDuration'
-                $expiration.duration = [System.Xml.XmlConvert]::ToString([TimeSpan]::FromHours($Hours))
-                [string]$roleExpireTime = $NotBefore.AddHours($Hours)
+                $Expiration.type     = 'AfterDuration'
+                $Expiration.duration = [System.Xml.XmlConvert]::ToString([TimeSpan]::FromHours($Hours))
+                [string]$RoleExpireTime = $NotBefore.AddHours($Hours)
             }
 
-            $request = @{
+            $Request = @{
                 action           = 'SelfActivate'
                 justification    = $Justification
                 roleDefinitionId = $Role.roleDefinitionId
                 directoryScopeId = $Role.directoryScopeId
                 principalId      = $Role.principalId
-                scheduleInfo     = $scheduleInfo
+                scheduleInfo     = $ScheduleInfo
                 ticketInfo       = @{
                     ticketNumber = $TicketNumber
                     ticketSystem = $TicketSystem
                 }
             }
 
-            $userPrincipalName = $Role.principal.userPrincipalName
+            $UserPrincipalName = $Role.principal.userPrincipalName
             if ($PSCmdlet.ShouldProcess(
-                    $userPrincipalName,
-                    "Activate $($Role.roleDefinition.displayName) for scope $($Role.directoryScopeId) from $NotBefore to $roleExpireTime"
+                    $UserPrincipalName,
+                    "Activate $($Role.roleDefinition.displayName) for scope $($Role.directoryScopeId) from $NotBefore to $RoleExpireTime"
                 )) {
-                $response = try {
-                    Invoke-MgGraphRequest -Method POST -Uri 'v1.0/roleManagement/directory/roleAssignmentScheduleRequests' -Body $request -Verbose:$false -ErrorAction Stop
+                $Response = try {
+                    Invoke-MgGraphRequest -Method POST -Uri 'v1.0/roleManagement/directory/roleAssignmentScheduleRequests' -Body $Request -Verbose:$false -ErrorAction Stop
                 } catch {
-                    $err = Convert-GraphHttpException $PSItem
-                    if (-not ($err.FullyQualifiedErrorId -like 'RoleAssignmentRequestPolicyValidationFailed*')) {
-                        $PSCmdlet.WriteError($err)
+                    $Err = Convert-GraphHttpException $PSItem
+                    $AllMsgs = "$($Err.FullyQualifiedErrorId) $($Err.Exception.Message) $($PSItem.Exception.Message)"
+                    if ($AllMsgs -notmatch 'RoleAssignmentRequestPolicyValidationFailed') {
+                        $PSCmdlet.WriteError($Err)
                         continue
                     }
-                    if ($err -match 'JustificationRule') {
-                        $err.ErrorDetails = 'Your PIM policy requires a justification for this role. Use the -Justification parameter.'
+                    if ($AllMsgs -match 'JustificationRule') {
+                        $JustMsg = 'Your PIM policy requires a justification for this role. Use the -Justification parameter.'
+                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new($JustMsg, $Err.Exception),
+                            'RoleAssignmentRequestPolicyValidationFailed',
+                            [System.Management.Automation.ErrorCategory]::OperationStopped, $null))
+                        continue
                     }
-                    if ($err -match 'ExpirationRule') {
-                        $err.ErrorDetails = 'Your PIM policy requires a shorter expiration. Use -NotAfter to specify an earlier time.'
+                    if ($AllMsgs -match 'ExpirationRule') {
+                        $ExpMsg = 'Your PIM policy requires a shorter expiration. Use -NotAfter to specify an earlier time.'
+                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new($ExpMsg, $Err.Exception),
+                            'RoleAssignmentRequestPolicyValidationFailed',
+                            [System.Management.Automation.ErrorCategory]::OperationStopped, $null))
+                        continue
                     }
-                    $PSCmdlet.WriteError($err)
+                    $PSCmdlet.WriteError($Err)
                     continue
                 }
 
                 # Rehydrate expanded navigation properties from the eligibility schedule
-                'roleDefinition', 'principal', 'directoryScope' | Restore-GraphProperty $request $response $Role
+                'roleDefinition', 'principal', 'directoryScope' | Restore-GraphProperty $Request $Response $Role
 
                 # Convert to PSCustomObject so custom Format views apply (hashtable uses Key/Value formatter).
-                $out = [PSCustomObject]$response
-                $out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleRequest')
+                $Out = [PSCustomObject]$Response
+                $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleRequest')
 
                 if ($Wait) {
-                    $_pendingWait.Add($out)
+                    $_pendingWait.Add($Out)
                 } else {
-                    $out
+                    $Out
                 }
             }
         }

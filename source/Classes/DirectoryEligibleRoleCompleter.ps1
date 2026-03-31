@@ -14,17 +14,17 @@ class DirectoryEligibleRoleCompleter : IArgumentCompleter {
         $ErrorActionPreference = 'Stop'
         try {
             Write-Progress -Id 51806 -Activity 'Get Eligible Directory Roles' -Status 'Fetching from Azure' -PercentComplete 1
-            [List[CompletionResult]]$result = Get-OPIMDirectoryRole | ForEach-Object {
-                $scope = if ($PSItem.directoryScopeId -ne '/') {
+            [List[CompletionResult]]$Result = Get-OPIMDirectoryRole | ForEach-Object {
+                $Scope = if ($PSItem.directoryScopeId -ne '/') {
                     "-> $($PSItem.directoryScope.displayName) "
                 }
-                "'{0} $scope({1})'" -f $PSItem.roleDefinition.displayName, $PSItem.id
+                "'{0} $Scope({1})'" -f $PSItem.roleDefinition.displayName, $PSItem.id
             } | Where-Object {
                 if (-not $wordToComplete) { return $true }
                 $PSItem.replace("'", '') -like "$($wordToComplete.replace("'",''))*"
             }
             Write-Progress -Id 51806 -Activity 'Get Eligible Directory Roles' -Completed
-            return $result
+            return $Result
         } catch {
             Write-Host ''
             Write-Host -Fore Red "Completer Error: $PSItem"

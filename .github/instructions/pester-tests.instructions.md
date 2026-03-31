@@ -100,26 +100,26 @@ Private helpers are in module scope — mock them by module:
 
 ```powershell
 Mock -ModuleName Omnicit.PIM Get-MyId { return 'user-object-id-001' }
-Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $fakeRoleObject }
+Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeRoleObject }
 Mock -ModuleName Omnicit.PIM Restore-GraphProperty { return $InputObject }
 ```
 
 ## Constructing Pipeline Input Objects
 
-Use typed `PSCustomObject` matching the module's type names to simulate piped input (e.g., from `Get-OPIMDirectoryRole`):
+Use typed `PSCustomObject` matching the module's type names to simulate piped input (e.g., from `Get-OPIMDirectoryRole`). **Use PascalCase for all local variables.**
 
 ```powershell
-$eligibleRole = [PSCustomObject]@{
+$FakeEligibleRole = [PSCustomObject]@{
     id               = 'elig-001'
     roleDefinitionId = 'role-def-001'
     directoryScopeId = '/'
     roleDefinition   = [PSCustomObject]@{ displayName = 'Global Administrator' }
     principal        = [PSCustomObject]@{ displayName = 'Jane Doe' }
 }
-$eligibleRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
+$FakeEligibleRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
 
 # Pipe it:
-$result = $eligibleRole | Enable-OPIMDirectoryRole -Justification 'Testing'
+$Result = $FakeEligibleRole | Enable-OPIMDirectoryRole -Justification 'Testing'
 ```
 
 **Type names to use:**
@@ -135,7 +135,7 @@ $result = $eligibleRole | Enable-OPIMDirectoryRole -Justification 'Testing'
 Always verify the output carries the correct type tag (never assert raw hashtable):
 
 ```powershell
-$result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryAssignmentScheduleRequest'
+$Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryAssignmentScheduleRequest'
 ```
 
 ## Testing ShouldProcess / -WhatIf
@@ -151,39 +151,64 @@ It 'does not call the API when -WhatIf is specified' {
 
 ## Testing Error Paths
 
+### Graph API non-terminating errors (Get-*, Enable-*, Disable-* with Graph)
+
+All public functions emit **non-terminating** errors. Never use `Should -Throw` for testing expected API errors:
+
 ```powershell
 It 'writes a non-terminating error on InsufficientPermissions' {
-    Mock Invoke-MgGraphRequest {
+    Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
         throw [System.Net.Http.HttpRequestException]::new(
             '{"error":{"code":"InsufficientPermissions","message":"Use -All"}}'
         )
-    }
+    } -ParameterFilter { $Uri -like '*eligibilitySchedules*' }
 
-    { Get-OPIMDirectoryRole } | Should -Not -Throw
-    # Optionally capture error stream:
-    $errors = @()
-    Get-OPIMDirectoryRole -ErrorVariable errors -ErrorAction SilentlyContinue
-    $errors.Count | Should -BeGreaterThan 0
+    $Errors = @()
+    Get-OPIMDirectoryRole -ErrorVariable Errors -ErrorAction SilentlyContinue
+    $Errors.Count | Should -BeGreaterThan 0
+}
+```
+
+### Azure RBAC (Az.Resources) errors — two valid mock patterns
+
+**Pattern 1** — `Write-Error -ErrorAction Stop` (simpler, used when `FullyQualifiedErrorId` is checked with `.Split(',')[0]`):
+```powershell
+Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
+    Write-Error -Message 'Insufficient permissions' `
+        -ErrorId 'InsufficientPermissions' `
+        -Category PermissionDenied `
+        -ErrorAction Stop
+}
+```
+
+**Pattern 2** — `$PSCmdlet.ThrowTerminatingError()` (required when `FullyQualifiedErrorId` must be exact without suffix, or when testing Enable-* policy violations):
+```powershell
+Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
+    $PSCmdlet.ThrowTerminatingError(
+        [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('Policy validation failed: JustificationRule'),
+            'RoleAssignmentRequestPolicyValidationFailed',
+            [System.Management.Automation.ErrorCategory]::InvalidOperation,
+            $null
+        )
+    )
 }
 ```
 
 ## Module Import in BeforeAll
 
-Always import from source (not the built output) so tests run against the current code:
+Import by name so tests run against the installed/built module:
 
 ```powershell
 BeforeAll {
-    Import-Module "$PSScriptRoot/../../Source/Omnicit.PIM.psd1" -Force
+    Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
+    Import-Module Omnicit.PIM -Force
 }
 
 AfterAll {
     Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
 }
 ```
-
-Adjust the relative path depth to match the test file location:
-- `tests/Unit/Public/` → `../../../Source/Omnicit.PIM.psd1`
-- `tests/Unit/Private/` → `../../../Source/Omnicit.PIM.psd1`
 
 ## Testing Private Functions
 
@@ -193,8 +218,8 @@ Private functions (in `Source/Private/`) are not exported, so they cannot be cal
 It 'returns the expected value' {
     InModuleScope Omnicit.PIM {
         # Call the private function directly here
-        $result = Get-MyId
-        $result | Should -BeOfType [Guid]
+        $Result = Get-MyId
+        $Result | Should -BeOfType [Guid]
     }
 }
 ```
@@ -203,11 +228,11 @@ It 'returns the expected value' {
 
 ### Resetting module-scoped state
 
-Some private functions use `$SCRIPT:*` variables as caches (e.g., `Get-MyId` uses `$SCRIPT:_MyIDCache`). Always reset these at the start of each `It` (or in a `BeforeEach`) to prevent cross-test state leakage:
+Some private functions use `$script:*` variables as caches (e.g., `Get-MyId` uses `$script:_MyIDCache`). Always reset these at the start of each `It` (or in a `BeforeEach`) to prevent cross-test state leakage:
 
 ```powershell
 BeforeEach {
-    InModuleScope Omnicit.PIM { $SCRIPT:_MyIDCache = $null }
+    InModuleScope Omnicit.PIM { $script:_MyIDCache = $null }
 }
 ```
 
@@ -220,3 +245,6 @@ Only apply this when the function under test explicitly uses a module-scoped var
 - **ISO 8601 durations** — if asserting the request body, duration is formatted as `PT1H` not `01:00:00`. Use `[System.Xml.XmlConvert]::ToString(...)` to generate expected values.
 - **`$PSCmdlet.ShouldProcess`** is called inside the function; test `-WhatIf` behavior via `Should -Invoke` assertion count, not by catching exceptions.
 - **`-ParameterFilter` on `Invoke-MgGraphRequest`** — without it, all Graph calls (including scope-rehydration second calls) match the same mock, which may cause unexpected behavior in multi-call scenarios.
+- **PascalCase all test variables** — `$FakeRole`, `$FakeResponse`, `$Errors`, `$Result`, etc. Exceptions: `$PSCmdlet`, `$PSItem`, `$_`, `$null`, `$true`, `$false`, preference variables.
+- **Never use `Should -Throw` to test API errors in public functions** — all public functions emit non-terminating errors. Use `-ErrorVariable` + `-ErrorAction SilentlyContinue` to capture and assert errors.
+- **`$script:_MyIDCache` vs `$SCRIPT:_MyIDCache`** — PowerShell is case-insensitive, but use lowercase `$script:` prefix for consistency. The module-scoped cache variable is `$script:_MyIDCache`.

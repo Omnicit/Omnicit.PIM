@@ -40,13 +40,13 @@ Describe 'Get-OPIMEntraIDGroup' {
         }
 
         It 'returns one object' {
-            $result = Get-OPIMEntraIDGroup
-            $result | Should -HaveCount 1
+            $Result = Get-OPIMEntraIDGroup
+            $Result | Should -HaveCount 1
         }
 
         It 'returns an object tagged with Omnicit.PIM.GroupEligibilitySchedule' {
-            $result = Get-OPIMEntraIDGroup
-            $result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.GroupEligibilitySchedule'
+            $Result = Get-OPIMEntraIDGroup
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.GroupEligibilitySchedule'
         }
     }
 
@@ -76,8 +76,8 @@ Describe 'Get-OPIMEntraIDGroup' {
         }
 
         It 'returns an object tagged with Omnicit.PIM.GroupAssignmentScheduleInstance' {
-            $result = Get-OPIMEntraIDGroup -Activated
-            $result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.GroupAssignmentScheduleInstance'
+            $Result = Get-OPIMEntraIDGroup -Activated
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.GroupAssignmentScheduleInstance'
         }
 
         It 'does not call eligibilitySchedules' {
@@ -184,8 +184,8 @@ Describe 'Get-OPIMEntraIDGroup' {
         }
 
         It 'returns no objects' {
-            $result = Get-OPIMEntraIDGroup
-            $result | Should -BeNullOrEmpty
+            $Result = Get-OPIMEntraIDGroup
+            $Result | Should -BeNullOrEmpty
         }
     }
 
@@ -198,19 +198,22 @@ Describe 'Get-OPIMEntraIDGroup' {
             } -ParameterFilter { $Uri -like '*eligibilitySchedules*' }
 
             Mock -ModuleName Omnicit.PIM Convert-GraphHttpException {
-                $ex = [System.Exception]::new('Access denied')
+                $Ex = [System.Exception]::new('Access denied')
                 return [System.Management.Automation.ErrorRecord]::new(
-                    $ex, 'InsufficientPermissions', [System.Management.Automation.ErrorCategory]::PermissionDenied, $null
+                    $Ex, 'InsufficientPermissions', [System.Management.Automation.ErrorCategory]::PermissionDenied, $null
                 )
             }
         }
 
-        It 'throws a terminating error' {
-            { Get-OPIMEntraIDGroup } | Should -Throw
+        It 'writes a non-terminating error' {
+            $Errors = @()
+            Get-OPIMEntraIDGroup -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
         }
 
         It 'passes the raw exception to Convert-GraphHttpException' {
-            { Get-OPIMEntraIDGroup } | Should -Throw
+            $Errors = @()
+            Get-OPIMEntraIDGroup -ErrorVariable Errors -ErrorAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.PIM Convert-GraphHttpException -Times 1 -Scope It
         }
     }

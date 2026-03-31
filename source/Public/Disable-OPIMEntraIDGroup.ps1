@@ -20,7 +20,7 @@
     #>
     [Alias('Disable-PIMGroup')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'GroupName')]
-    [OutputType([System.Collections.Hashtable])]
+    [OutputType([PSCustomObject])]
     param(
         [Parameter(ParameterSetName = 'GroupObject', Mandatory, ValueFromPipeline)]
         $Group,
@@ -31,36 +31,41 @@
     process {
         if ($GroupName) { $Group = Resolve-RoleByName -Group -Activated $GroupName }
 
-        $request = @{
+        $Request = @{
             action      = 'selfDeactivate'
             accessId    = $Group.accessId
             groupId     = $Group.groupId
             principalId = $Group.principalId
         }
 
-        $displayName = $Group.group.displayName
+        $DisplayName = $Group.group.displayName
         if ($PSCmdlet.ShouldProcess(
-                "$displayName ($($Group.accessId))",
+                "$DisplayName ($($Group.accessId))",
                 'Deactivate PIM Group'
             )) {
-            $response = try {
-                Invoke-MgGraphRequest -Method POST -Uri 'v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests' -Body $request -Verbose:$false -ErrorAction Stop
+            $Response = try {
+                Invoke-MgGraphRequest -Method POST -Uri 'v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests' -Body $Request -Verbose:$false -ErrorAction Stop
             } catch {
-                $err = Convert-GraphHttpException $PSItem
-                if (-not ($err.FullyQualifiedErrorId -like 'ActiveDurationTooShort*')) {
-                    $PSCmdlet.WriteError($err)
+                $Err = Convert-GraphHttpException $PSItem
+                $IsActiveToShort = ($Err.FullyQualifiedErrorId -like 'ActiveDurationTooShort*') -or
+                                   ($PSItem.Exception.Message -match 'ActiveDurationTooShort')
+                if (-not $IsActiveToShort) {
+                    $PSCmdlet.WriteError($Err)
                     return
                 }
-                $err.ErrorDetails = 'You must wait at least 5 minutes after activating a group before you can deactivate it.'
-                $PSCmdlet.WriteError($err)
+                $CooldownMsg = 'You must wait at least 5 minutes after activating a group before you can deactivate it.'
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new($CooldownMsg, $Err.Exception),
+                    'ActiveDurationTooShort',
+                    [System.Management.Automation.ErrorCategory]::ResourceUnavailable, $null))
                 return
             }
 
-            if (-not $response.group) { $response['group'] = $Group.group }
+            if (-not $Response.group) { $Response['group'] = $Group.group }
             # Convert to PSCustomObject so custom Format views apply (hashtable uses Key/Value formatter).
-            $out = [PSCustomObject]$response
-            $out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleRequest')
-            return $out
+            $Out = [PSCustomObject]$Response
+            $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleRequest')
+            return $Out
         }
     }
 }

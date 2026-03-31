@@ -14,14 +14,14 @@ class GroupEligibleCompleter : IArgumentCompleter {
         $ErrorActionPreference = 'Stop'
         try {
             Write-Progress -Id 51806 -Activity 'Get Eligible PIM Groups' -Status 'Fetching from Azure' -PercentComplete 1
-            [List[CompletionResult]]$result = Get-OPIMEntraIDGroup | ForEach-Object {
+            [List[CompletionResult]]$Result = Get-OPIMEntraIDGroup | ForEach-Object {
                 "'{0} - {1} ({2})'" -f $PSItem.group.displayName, $PSItem.accessId, $PSItem.id
             } | Where-Object {
                 if (-not $wordToComplete) { return $true }
                 $PSItem.replace("'", '') -like "$($wordToComplete.replace("'",''))*"
             }
             Write-Progress -Id 51806 -Activity 'Get Eligible PIM Groups' -Completed
-            return $result
+            return $Result
         } catch {
             Write-Host ''
             Write-Host -Fore Red "Completer Error: $PSItem"

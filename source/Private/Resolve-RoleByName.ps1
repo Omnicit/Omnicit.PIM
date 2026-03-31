@@ -34,26 +34,26 @@ function Resolve-RoleByName ($RoleName, [Switch]$AD, [Switch]$Group, [Switch]$Ac
     if (-not $RoleName) { throw 'RoleName was null. This is a bug.' }
 
     # Extract the GUID from the end of the completion string: 'Name (guid)'
-    $guidExtractRegex = '.+\(([\w-]+)\)', '$1'
-    $scheduleId       = $RoleName -replace $guidExtractRegex
-    if (-not $scheduleId) {
+    $GuidExtractRegex = '.+\(([\w-]+)\)', '$1'
+    $ScheduleId       = $RoleName -replace $GuidExtractRegex
+    if (-not $ScheduleId) {
         throw "RoleName '$RoleName' is in an unexpected format. Expected 'Display Name (schedule-id)'. The -RoleName parameter is meant to be used with tab completion, not typed manually."
     }
 
-    $role = if ($Group) {
-        Get-OPIMEntraIDGroup -Activated:$Activated | Where-Object { $_.id -eq $scheduleId }
+    $Role = if ($Group) {
+        Get-OPIMEntraIDGroup -Activated:$Activated | Where-Object { $_.id -eq $ScheduleId }
     } elseif ($AD) {
-        Get-OPIMDirectoryRole -Activated:$Activated | Where-Object { $_.id -eq $scheduleId }
+        Get-OPIMDirectoryRole -Activated:$Activated | Where-Object { $_.id -eq $ScheduleId }
     } else {
-        Get-OPIMAzureRole -Activated:$Activated | Where-Object { $_.Name -eq $scheduleId }
+        Get-OPIMAzureRole -Activated:$Activated | Where-Object { $_.Name -eq $ScheduleId }
     }
 
-    if (-not $role) {
-        throw "Schedule ID '$scheduleId' from '$RoleName' was not found as an eligible role for this user. If you used tab completion and this is unexpected, please report it as a bug."
+    if (-not $Role) {
+        throw "Schedule ID '$ScheduleId' from '$RoleName' was not found as an eligible role for this user. If you used tab completion and this is unexpected, please report it as a bug."
     }
-    if (@($role).Count -gt 1) {
-        throw "Multiple roles found for schedule ID '$scheduleId'. This is a bug — please report it."
+    if (@($Role).Count -gt 1) {
+        throw "Multiple roles found for schedule ID '$ScheduleId'. This is a bug -- please report it."
     }
 
-    return $role
+    return $Role
 }

@@ -39,18 +39,18 @@ Describe 'Get-OPIMDirectoryRole' {
         }
 
         It 'returns one object' {
-            $result = Get-OPIMDirectoryRole
-            $result | Should -HaveCount 1
+            $Result = Get-OPIMDirectoryRole
+            $Result | Should -HaveCount 1
         }
 
         It 'returns an object tagged with Omnicit.PIM.DirectoryEligibilitySchedule' {
-            $result = Get-OPIMDirectoryRole
-            $result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryEligibilitySchedule'
+            $Result = Get-OPIMDirectoryRole
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryEligibilitySchedule'
         }
 
         It 'sets the directoryScope property to the root scope shortcut without a second API call' {
-            $result = Get-OPIMDirectoryRole
-            $result.directoryScope.id | Should -Be '/'
+            $Result = Get-OPIMDirectoryRole
+            $Result.directoryScope.id | Should -Be '/'
             Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It
         }
     }
@@ -84,8 +84,8 @@ Describe 'Get-OPIMDirectoryRole' {
         }
 
         It 'sets the directoryScope property from the second API response' {
-            $result = Get-OPIMDirectoryRole
-            $result.directoryScope.displayName | Should -Be 'Admin Unit 1'
+            $Result = Get-OPIMDirectoryRole
+            $Result.directoryScope.displayName | Should -Be 'Admin Unit 1'
         }
     }
 
@@ -115,8 +115,8 @@ Describe 'Get-OPIMDirectoryRole' {
         }
 
         It 'returns an object tagged with Omnicit.PIM.DirectoryAssignmentScheduleInstance' {
-            $result = Get-OPIMDirectoryRole -Activated
-            $result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryAssignmentScheduleInstance'
+            $Result = Get-OPIMDirectoryRole -Activated
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryAssignmentScheduleInstance'
         }
     }
 
@@ -145,9 +145,9 @@ Describe 'Get-OPIMDirectoryRole' {
         }
 
         It 'filters out non-Activated items and returns only the Activated entry' {
-            $result = Get-OPIMDirectoryRole -Activated
-            $result | Should -HaveCount 1
-            $result[0].assignmentType | Should -Be 'Activated'
+            $Result = Get-OPIMDirectoryRole -Activated
+            $Result | Should -HaveCount 1
+            $Result[0].assignmentType | Should -Be 'Activated'
         }
     }
 
@@ -218,8 +218,8 @@ Describe 'Get-OPIMDirectoryRole' {
         }
 
         It 'returns no objects' {
-            $result = Get-OPIMDirectoryRole
-            $result | Should -BeNullOrEmpty
+            $Result = Get-OPIMDirectoryRole
+            $Result | Should -BeNullOrEmpty
         }
     }
 
@@ -232,19 +232,22 @@ Describe 'Get-OPIMDirectoryRole' {
             } -ParameterFilter { $Uri -like '*roleEligibilitySchedules*' }
 
             Mock -ModuleName Omnicit.PIM Convert-GraphHttpException {
-                $ex = [System.Exception]::new('Access denied')
+                $Ex = [System.Exception]::new('Access denied')
                 return [System.Management.Automation.ErrorRecord]::new(
-                    $ex, 'InsufficientPermissions', [System.Management.Automation.ErrorCategory]::PermissionDenied, $null
+                    $Ex, 'InsufficientPermissions', [System.Management.Automation.ErrorCategory]::PermissionDenied, $null
                 )
             }
         }
 
-        It 'throws a terminating error' {
-            { Get-OPIMDirectoryRole } | Should -Throw
+        It 'writes a non-terminating error' {
+            $Errors = @()
+            Get-OPIMDirectoryRole -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
         }
 
         It 'passes the raw exception to Convert-GraphHttpException' {
-            { Get-OPIMDirectoryRole } | Should -Throw
+            $Errors = @()
+            Get-OPIMDirectoryRole -ErrorVariable Errors -ErrorAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.PIM Convert-GraphHttpException -Times 1 -Scope It
         }
     }

@@ -20,23 +20,23 @@ function Get-MyId ($user) {
     #>
 
     #module scoped cache of the user's GUID
-    if (-not $SCRIPT:_MyIDCache) { $SCRIPT:_MyIDCache = [Collections.Generic.Dictionary[String, Guid]]@{} }
+    if (-not $script:_MyIDCache) { $script:_MyIDCache = [Collections.Generic.Dictionary[String, Guid]]@{} }
 
     if (-not $user) {
-        $context = Get-MgContext
-        if (-not $context) { throw 'You are not connected to Microsoft Graph. Please run connect-mggraph first.' }
-        $user = $context.Account
+        $Context = Get-MgContext
+        if (-not $Context) { throw 'You are not connected to Microsoft Graph. Please run connect-mggraph first.' }
+        $user = $Context.Account
     }
 
     #Cache Hit
-    $result = $SCRIPT:_MyIDCache[$user]
-    if ($null -ne $result) {
-        return $result
+    $Result = $script:_MyIDCache[$user]
+    if ($null -ne $Result) {
+        return $Result
     }
 
     #Cache Miss
-    $response = Invoke-MgGraphRequest -Uri 'v1.0/me' -Body @{select = 'userPrincipalName,id' }
-    if ($response.userprincipalname -notmatch $context.account) { throw 'The userPrincipalName in the response does not match your Mg context. This is probably a bug, please report it.' }
-    $SCRIPT:_MYIDCache[$response.userPrincipalName] = $response.id
-    return [guid]($response.id)
+    $Response = Invoke-MgGraphRequest -Uri 'v1.0/me' -Body @{select = 'userPrincipalName,id' } -Verbose:$false -ErrorAction Stop
+    if ($Response.userprincipalname -notmatch $Context.Account) { throw 'The userPrincipalName in the response does not match your Mg context. This is probably a bug, please report it.' }
+    $script:_MyIDCache[$Response.userPrincipalName] = $Response.id
+    return [guid]($Response.id)
 }

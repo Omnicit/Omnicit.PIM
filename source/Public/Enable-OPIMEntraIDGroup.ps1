@@ -40,7 +40,7 @@
     #>
     [Alias('Enable-PIMGroup')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'GroupName')]
-    [OutputType([System.Collections.Hashtable])]
+    [OutputType([PSCustomObject])]
     param(
         [Parameter(ParameterSetName = 'GroupObject', Mandatory, ValueFromPipeline)]
         $Group,
@@ -56,81 +56,91 @@
         [Switch]$Wait
     )
     process {
-        $resolvedGroups = if ($GroupName) {
+        $ResolvedGroups = if ($GroupName) {
             $GroupName | ForEach-Object { Resolve-RoleByName -Group $_ }
         } else {
             @($Group)
         }
 
-        foreach ($Group in $resolvedGroups) {
-
-        $scheduleInfo = @{
-            startDateTime = $NotBefore.ToString('o')
-            expiration    = @{}
-        }
-        $expiration = $scheduleInfo.expiration
-        if ($Until) {
-            $expiration.type        = 'AfterDateTime'
-            $expiration.endDateTime = $Until.ToString('o')
-            [string]$expireTime     = $Until
-        } else {
-            $expiration.type    = 'AfterDuration'
-            $expiration.duration = [System.Xml.XmlConvert]::ToString([TimeSpan]::FromHours($Hours))
-            [string]$expireTime  = $NotBefore.AddHours($Hours)
-        }
-
-        $request = @{
-            action       = 'selfActivate'
-            accessId     = $Group.accessId
-            groupId      = $Group.groupId
-            principalId  = $Group.principalId
-            justification = $Justification
-            scheduleInfo = $scheduleInfo
-            ticketInfo   = @{
-                ticketNumber = $TicketNumber
-                ticketSystem = $TicketSystem
+        foreach ($Group in $ResolvedGroups) {
+            $ScheduleInfo = @{
+                startDateTime = $NotBefore.ToString('o')
+                expiration    = @{}
             }
-        }
+            $Expiration = $ScheduleInfo.expiration
+            if ($Until) {
+                $Expiration.type        = 'AfterDateTime'
+                $Expiration.endDateTime = $Until.ToString('o')
+                [string]$ExpireTime     = $Until
+            } else {
+                $Expiration.type     = 'AfterDuration'
+                $Expiration.duration = [System.Xml.XmlConvert]::ToString([TimeSpan]::FromHours($Hours))
+                [string]$ExpireTime  = $NotBefore.AddHours($Hours)
+            }
 
-        $displayName = $Group.group.displayName
-        if ($PSCmdlet.ShouldProcess(
-                "$displayName ($($Group.accessId))",
-                "Activate PIM Group from $NotBefore to $expireTime"
-            )) {
-            $response = try {
-                Invoke-MgGraphRequest -Method POST -Uri 'v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests' -Body $request -Verbose:$false -ErrorAction Stop
-            } catch {
-                $err = Convert-GraphHttpException $PSItem
-                if (-not ($err.FullyQualifiedErrorId -like 'RoleAssignmentRequestPolicyValidationFailed*')) {
-                    $PSCmdlet.WriteError($err)
+            $Request = @{
+                action        = 'selfActivate'
+                accessId      = $Group.accessId
+                groupId       = $Group.groupId
+                principalId   = $Group.principalId
+                justification = $Justification
+                scheduleInfo  = $ScheduleInfo
+                ticketInfo    = @{
+                    ticketNumber = $TicketNumber
+                    ticketSystem = $TicketSystem
+                }
+            }
+
+            $DisplayName = $Group.group.displayName
+            if ($PSCmdlet.ShouldProcess(
+                    "$DisplayName ($($Group.accessId))",
+                    "Activate PIM Group from $NotBefore to $ExpireTime"
+                )) {
+                $Response = try {
+                    Invoke-MgGraphRequest -Method POST -Uri 'v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests' -Body $Request -Verbose:$false -ErrorAction Stop
+                } catch {
+                    $Err = Convert-GraphHttpException $PSItem
+                    $AllMsgs = "$($Err.FullyQualifiedErrorId) $($Err.Exception.Message) $($PSItem.Exception.Message)"
+                    if ($AllMsgs -notmatch 'RoleAssignmentRequestPolicyValidationFailed') {
+                        $PSCmdlet.WriteError($Err)
+                        continue
+                    }
+                    if ($AllMsgs -match 'JustificationRule') {
+                        $JustMsg = 'Your PIM policy requires a justification for this group. Use the -Justification parameter.'
+                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new($JustMsg, $Err.Exception),
+                            'RoleAssignmentRequestPolicyValidationFailed',
+                            [System.Management.Automation.ErrorCategory]::OperationStopped, $null))
+                        continue
+                    }
+                    if ($AllMsgs -match 'ExpirationRule') {
+                        $ExpMsg = 'Your PIM policy requires a shorter expiration. Use -NotAfter to specify an earlier time.'
+                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new($ExpMsg, $Err.Exception),
+                            'RoleAssignmentRequestPolicyValidationFailed',
+                            [System.Management.Automation.ErrorCategory]::OperationStopped, $null))
+                        continue
+                    }
+                    $PSCmdlet.WriteError($Err)
                     continue
                 }
-                if ($err -match 'JustificationRule') {
-                    $err.ErrorDetails = 'Your PIM policy requires a justification for this group. Use the -Justification parameter.'
+
+                # Rehydrate group info from the eligibility schedule
+                if (-not $Response.group) { $Response['group'] = $Group.group }
+
+                if ($Wait) {
+                    $PollId = $Response.id
+                    do {
+                        Start-Sleep 2
+                        $Status = (Invoke-MgGraphRequest -Verbose:$false -Uri "v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests/$PollId" -ErrorAction Stop).status
+                    } while ($Status -like 'Pending*')
                 }
-                if ($err -match 'ExpirationRule') {
-                    $err.ErrorDetails = 'Your PIM policy requires a shorter expiration. Use -NotAfter to specify an earlier time.'
-                }
-                $PSCmdlet.WriteError($err)
-                continue
+
+                # Convert to PSCustomObject so custom Format views apply (hashtable uses Key/Value formatter).
+                $Out = [PSCustomObject]$Response
+                $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleRequest')
+                $Out
             }
-
-            # Rehydrate group info from the eligibility schedule
-            if (-not $response.group) { $response['group'] = $Group.group }
-
-            if ($Wait) {
-                $pollId = $response.id
-                do {
-                    Start-Sleep 2
-                    $status = (Invoke-MgGraphRequest -Verbose:$false -Uri "v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests/$pollId" -ErrorAction Stop).status
-                } while ($status -like 'Pending*')
-            }
-
-            # Convert to PSCustomObject so custom Format views apply (hashtable uses Key/Value formatter).
-            $out = [PSCustomObject]$response
-            $out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleRequest')
-            $out
         }
-        } # end foreach
     }
 }

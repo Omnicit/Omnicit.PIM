@@ -23,7 +23,7 @@
     #>
     [Alias('Disable-PIMADRole', 'Disable-PIMRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
-    [OutputType([System.Collections.Hashtable])]
+    [OutputType([PSCustomObject])]
     param(
         [Parameter(ParameterSetName = 'RoleObject', Mandatory, ValueFromPipeline)]
         $Role,
@@ -34,7 +34,7 @@
     process {
         if ($RoleName) { $Role = Resolve-RoleByName -AD -Activated $RoleName }
 
-        $request = @{
+        $Request = @{
             action           = 'SelfDeactivate'
             roleDefinitionId = $Role.roleDefinitionId
             directoryScopeId = $Role.directoryScopeId
@@ -46,31 +46,36 @@
                 $('{0} ({1})' -f $Role.roleDefinition.displayName, $Role.directoryScopeId),
                 'Deactivate Directory Role'
             )) {
-            $response = try {
-                Invoke-MgGraphRequest -Method POST -Uri 'v1.0/roleManagement/directory/roleAssignmentScheduleRequests' -Body $request -Verbose:$false -ErrorAction Stop
+            $Response = try {
+                Invoke-MgGraphRequest -Method POST -Uri 'v1.0/roleManagement/directory/roleAssignmentScheduleRequests' -Body $Request -Verbose:$false -ErrorAction Stop
             } catch {
-                $err = Convert-GraphHttpException $PSItem
-                if (-not ($err.FullyQualifiedErrorId -like 'ActiveDurationTooShort*')) {
-                    $PSCmdlet.WriteError($err)
+                $Err = Convert-GraphHttpException $PSItem
+                $IsActiveToShort = ($Err.FullyQualifiedErrorId -like 'ActiveDurationTooShort*') -or
+                                   ($PSItem.Exception.Message -match 'ActiveDurationTooShort')
+                if (-not $IsActiveToShort) {
+                    $PSCmdlet.WriteError($Err)
                     return
                 }
-                $err.ErrorDetails = 'You must wait at least 5 minutes after activating a role before you can deactivate it.'
-                $PSCmdlet.WriteError($err)
+                $CooldownMsg = 'You must wait at least 5 minutes after activating a role before you can deactivate it.'
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new($CooldownMsg, $Err.Exception),
+                    'ActiveDurationTooShort',
+                    [System.Management.Automation.ErrorCategory]::ResourceUnavailable, $null))
                 return
             }
 
             # Rehydrate expanded navigation properties from the active schedule instance
-            'roleDefinition', 'principal', 'directoryScope' | Restore-GraphProperty $request $response $Role
+            'roleDefinition', 'principal', 'directoryScope' | Restore-GraphProperty $Request $Response $Role
 
             # Set a meaningful expiration to the createdDateTime for display
-            if (-not $response.scheduleInfo) { $response['scheduleInfo'] = @{ expiration = @{} } }
-            $response.scheduleInfo.expiration.type        = 'afterDateTime'
-            $response.scheduleInfo.expiration.endDateTime = $response.createdDateTime
+            if (-not $Response.scheduleInfo) { $Response['scheduleInfo'] = @{ expiration = @{} } }
+            $Response.scheduleInfo.expiration.type        = 'afterDateTime'
+            $Response.scheduleInfo.expiration.endDateTime = $Response.createdDateTime
 
             # Convert to PSCustomObject so custom Format views apply (hashtable uses Key/Value formatter).
-            $out = [PSCustomObject]$response
-            $out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleRequest')
-            return $out
+            $Out = [PSCustomObject]$Response
+            $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleRequest')
+            return $Out
         }
     }
 }

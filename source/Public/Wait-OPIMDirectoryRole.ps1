@@ -46,6 +46,7 @@ function Wait-OPIMDirectoryRole {
     begin {
         [List[PSObject]]$RoleRequests = [List[PSObject]]::new()
         $parentId = Get-Random
+        $effectiveTimeout = $Timeout
     }
     process {
         if ($RoleRequest.scheduleInfo.expiration.endDateTime) {
@@ -71,13 +72,13 @@ function Wait-OPIMDirectoryRole {
 
             function Get-Timestamp ($created = $created) {
                 $since = [datetime]::UtcNow - $created
-                if ($since.TotalSeconds -gt $USING:Timeout) {
-                    throw "$name`: Exceeded timeout of $($USING:Timeout) seconds waiting for role request to complete"
+                if ($since.TotalSeconds -gt $USING:effectiveTimeout) {
+                    throw "$name`: Exceeded timeout of $($USING:effectiveTimeout) seconds waiting for role request to complete"
                 }
                 ' - ' + [int]($since.TotalSeconds) + ' secs elapsed'
             }
 
-            function Set-JobStatus ($Status, $PercentComplete, $jobInfo = $jobInfo) {
+            function Write-JobStatus ($Status, $PercentComplete, $jobInfo = $jobInfo) {
                 if ($Status)          { $jobInfo.Status = $Status.PadRight(30) + " $(Get-Timestamp)" }
                 if ($PercentComplete) { $jobInfo.PercentComplete = $PercentComplete }
             }
@@ -95,7 +96,7 @@ function Wait-OPIMDirectoryRole {
                 do {
                     $uri    = "https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignmentScheduleRequests/filterByCurrentUser(on='principal')?`$select=status&`$filter=id eq '$($requestItem.id)'"
                     $status = (Invoke-MgGraphRequest -Verbose:$false -ErrorAction Stop -Method Get -Uri $uri).value.status
-                    Set-JobStatus $status -PercentComplete 30
+                    Write-JobStatus $status -PercentComplete 30
                     Start-Sleep $USING:Interval
                 } while ($status -like 'Pending*')
 
@@ -108,14 +109,14 @@ function Wait-OPIMDirectoryRole {
             # Now wait for the assignment schedule instance to appear in the directory
             $activatedRole = $null
             do {
-                Set-JobStatus 'Activating' -PercentComplete 60
+                Write-JobStatus 'Activating' -PercentComplete 60
                 $uri           = "https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignmentScheduleInstances/filterByCurrentUser(on='principal')?`$select=startDateTime&`$filter=roleAssignmentScheduleId eq '$($requestItem.targetScheduleId)'"
                 $activatedRole = (Invoke-MgGraphRequest -Verbose:$false -Method Get -Uri $uri).Value
                 Start-Sleep $USING:Interval
             } until ($activatedRole)
 
             $activatedStart = ([datetime]$activatedRole.startDateTime).ToLocalTime()
-            Set-JobStatus "Activated at $activatedStart" -PercentComplete 100
+            Write-JobStatus "Activated at $activatedStart" -PercentComplete 100
         }
 
         try {

@@ -88,95 +88,95 @@ function Install-OPIMConfiguration {
     }
     end {
         # ── Ensure TenantMap directory and file exist ─────────────────────────
-        $tenantMapDir = Split-Path $TenantMapPath -Parent
-        if (-not (Test-Path $tenantMapDir)) {
-            if ($PSCmdlet.ShouldProcess($tenantMapDir, 'Create TenantMap directory')) {
-                New-Item -ItemType Directory -Path $tenantMapDir -Force | Out-Null
+        $TenantMapDir = Split-Path $TenantMapPath -Parent
+        if (-not (Test-Path $TenantMapDir)) {
+            if ($PSCmdlet.ShouldProcess($TenantMapDir, 'Create TenantMap directory')) {
+                New-Item -ItemType Directory -Path $TenantMapDir -Force | Out-Null
             }
         }
 
-        $mapData = if (Test-Path $TenantMapPath) {
+        $MapData = if (Test-Path $TenantMapPath) {
             Import-PowerShellDataFile $TenantMapPath
         } else {
             @{}
         }
 
-        $isNew = -not $mapData.ContainsKey($TenantAlias)
+        $IsNew = -not $MapData.ContainsKey($TenantAlias)
 
-        if (-not $isNew -and -not $Force) {
+        if (-not $IsNew -and -not $Force) {
             Write-Warning "Tenant alias '$TenantAlias' already exists in $TenantMapPath. Use -Force to overwrite."
             return
         }
 
         # ── Build the new entry ───────────────────────────────────────────────
         # Categories not supplied via pipeline retain their existing stored values.
-        $existingEntry = if ($mapData[$TenantAlias] -is [hashtable]) { $mapData[$TenantAlias] } else { @{} }
+        $ExistingEntry = if ($MapData[$TenantAlias] -is [hashtable]) { $MapData[$TenantAlias] } else { @{} }
 
-        $entry = [ordered]@{ TenantId = $TenantId }
+        $Entry = [ordered]@{ TenantId = $TenantId }
 
-        $resolvedDirRoles  = if ($_directoryRoleIds.Count) { @($_directoryRoleIds) } elseif ($existingEntry.DirectoryRoles) { @($existingEntry.DirectoryRoles) }
-        $resolvedGroups    = if ($_groupIds.Count)         { @($_groupIds)         } elseif ($existingEntry.EntraIDGroups)  { @($existingEntry.EntraIDGroups)  }
-        $resolvedAzureRole = if ($_azureRoleNames.Count)   { @($_azureRoleNames)   } elseif ($existingEntry.AzureRoles)     { @($existingEntry.AzureRoles)     }
+        $ResolvedDirRoles  = if ($_directoryRoleIds.Count) { @($_directoryRoleIds) } elseif ($ExistingEntry.DirectoryRoles) { @($ExistingEntry.DirectoryRoles) }
+        $ResolvedGroups    = if ($_groupIds.Count)         { @($_groupIds)         } elseif ($ExistingEntry.EntraIDGroups)  { @($ExistingEntry.EntraIDGroups)  }
+        $ResolvedAzureRole = if ($_azureRoleNames.Count)   { @($_azureRoleNames)   } elseif ($ExistingEntry.AzureRoles)     { @($ExistingEntry.AzureRoles)     }
 
-        if ($resolvedDirRoles)  { $entry.DirectoryRoles = $resolvedDirRoles  }
-        if ($resolvedGroups)    { $entry.EntraIDGroups  = $resolvedGroups    }
-        if ($resolvedAzureRole) { $entry.AzureRoles     = $resolvedAzureRole }
+        if ($ResolvedDirRoles)  { $Entry.DirectoryRoles = $ResolvedDirRoles  }
+        if ($ResolvedGroups)    { $Entry.EntraIDGroups  = $ResolvedGroups    }
+        if ($ResolvedAzureRole) { $Entry.AzureRoles     = $ResolvedAzureRole }
 
         # ── Verbose diff report ───────────────────────────────────────────────
-        if ($isNew) {
+        if ($IsNew) {
             Write-Verbose "Adding new tenant alias '$TenantAlias' (TenantId: $TenantId)"
-            foreach ($roleKey in 'DirectoryRoles', 'EntraIDGroups', 'AzureRoles') {
-                if ($entry[$roleKey]) {
-                    Write-Host "  $TenantAlias/$roleKey : Adding $($entry[$roleKey].Count) item(s)  — $($entry[$roleKey] -join ', ')" -ForegroundColor Green
+            foreach ($RoleKey in 'DirectoryRoles', 'EntraIDGroups', 'AzureRoles') {
+                if ($Entry[$RoleKey]) {
+                    Write-Information "  $TenantAlias/$RoleKey : Adding $($Entry[$RoleKey].Count) item(s) - $($Entry[$RoleKey] -join ', ')"
                 }
             }
         } else {
-            $oldTenantId = if ($existingEntry.TenantId) { $existingEntry.TenantId } else { [string]$mapData[$TenantAlias] }
+            $OldTenantId = if ($ExistingEntry.TenantId) { $ExistingEntry.TenantId } else { [string]$MapData[$TenantAlias] }
             Write-Verbose "Updating tenant alias '$TenantAlias'"
-            if ($oldTenantId -ne $TenantId) {
-                Write-Host "  $TenantAlias/TenantId : $oldTenantId  ->  $TenantId" -ForegroundColor Yellow
+            if ($OldTenantId -ne $TenantId) {
+                Write-Information "  $TenantAlias/TenantId : $OldTenantId  ->  $TenantId"
             }
-            foreach ($roleKey in 'DirectoryRoles', 'EntraIDGroups', 'AzureRoles') {
-                $oldVals = [string[]]@($existingEntry[$roleKey])
-                $newVals = [string[]]@($entry[$roleKey])
-                $added   = $newVals | Where-Object { $_ -and $_ -notin $oldVals }
-                $removed = $oldVals | Where-Object { $_ -and $_ -notin $newVals }
-                $kept    = $newVals | Where-Object { $_ -and $_ -in $oldVals }
-                if ($added)   { Write-Host "  $TenantAlias/$roleKey : Adding   $($added.Count) item(s)   — $($added   -join ', ')" -ForegroundColor Green  }
-                if ($removed) { Write-Host "  $TenantAlias/$roleKey : Removing $($removed.Count) item(s) — $($removed -join ', ')" -ForegroundColor Red    }
-                if ($kept -and -not $added -and -not $removed) {
-                    Write-Verbose "  $TenantAlias/$roleKey : No changes ($($kept.Count) item(s) unchanged)"
+            foreach ($RoleKey in 'DirectoryRoles', 'EntraIDGroups', 'AzureRoles') {
+                $OldVals = [string[]]@($ExistingEntry[$RoleKey])
+                $NewVals = [string[]]@($Entry[$RoleKey])
+                $Added   = $NewVals | Where-Object { $_ -and $_ -notin $OldVals }
+                $Removed = $OldVals | Where-Object { $_ -and $_ -notin $NewVals }
+                $Kept    = $NewVals | Where-Object { $_ -and $_ -in $OldVals }
+                if ($Added)   { Write-Information "  $TenantAlias/$RoleKey : Adding   $($Added.Count) item(s) - $($Added   -join ', ')" }
+                if ($Removed) { Write-Information "  $TenantAlias/$RoleKey : Removing $($Removed.Count) item(s) - $($Removed -join ', ')" }
+                if ($Kept -and -not $Added -and -not $Removed) {
+                    Write-Verbose "  $TenantAlias/$RoleKey : No changes ($($Kept.Count) item(s) unchanged)"
                 }
             }
         }
 
-        $mapData[$TenantAlias] = $entry
+        $MapData[$TenantAlias] = $Entry
 
         # ── Serialize to PSD1 ─────────────────────────────────────────────────
-        $sb = [System.Text.StringBuilder]::new()
-        [void]$sb.AppendLine('@{')
-        foreach ($kv in $mapData.GetEnumerator() | Sort-Object Key) {
-            $v = $kv.Value
-            [void]$sb.AppendLine("    '$($kv.Key)' = @{")
+        $Sb = [System.Text.StringBuilder]::new()
+        [void]$Sb.AppendLine('@{')
+        foreach ($Kv in $MapData.GetEnumerator() | Sort-Object Key) {
+            $V = $Kv.Value
+            [void]$Sb.AppendLine("    '$($Kv.Key)' = @{")
             # Support both legacy flat-string format and current nested hashtable/OrderedDictionary
-            $tenantIdVal = if ($v -is [System.Collections.IDictionary]) { $v.TenantId } else { $v }
-            [void]$sb.AppendLine("        TenantId       = '$tenantIdVal'")
-            if ($v -is [System.Collections.IDictionary]) {
-                foreach ($roleKey in 'DirectoryRoles', 'EntraIDGroups', 'AzureRoles') {
-                    if ($v[$roleKey]) {
-                        $vals = ($v[$roleKey] | ForEach-Object { "'$_'" }) -join ', '
-                        [void]$sb.AppendLine("        $(($roleKey).PadRight(14)) = @($vals)")
+            $TenantIdVal = if ($V -is [System.Collections.IDictionary]) { $V.TenantId } else { $V }
+            [void]$Sb.AppendLine("        TenantId       = '$TenantIdVal'")
+            if ($V -is [System.Collections.IDictionary]) {
+                foreach ($RoleKey in 'DirectoryRoles', 'EntraIDGroups', 'AzureRoles') {
+                    if ($V[$RoleKey]) {
+                        $Vals = ($V[$RoleKey] | ForEach-Object { "'$_'" }) -join ', '
+                        [void]$Sb.AppendLine("        $(($RoleKey).PadRight(14)) = @($Vals)")
                     }
                 }
             }
-            [void]$sb.AppendLine('    }')
+            [void]$Sb.AppendLine('    }')
         }
-        [void]$sb.AppendLine('}')
+        [void]$Sb.AppendLine('}')
 
-        $action = if ($isNew) { 'Add' } else { 'Update' }
-        if ($PSCmdlet.ShouldProcess($TenantMapPath, "$action tenant alias '$TenantAlias'")) {
-            $sb.ToString() | Set-Content -Path $TenantMapPath -Encoding UTF8
-            Write-Host "$($action)d tenant alias '$TenantAlias' in $TenantMapPath" -ForegroundColor Green
+        $Action = if ($IsNew) { 'Add' } else { 'Update' }
+        if ($PSCmdlet.ShouldProcess($TenantMapPath, "$Action tenant alias '$TenantAlias'")) {
+            $Sb.ToString() | Set-Content -Path $TenantMapPath -Encoding UTF8
+            Write-Information "$($Action)d tenant alias '$TenantAlias' in $TenantMapPath"
         }
     }
 }

@@ -29,7 +29,7 @@ foreach ($ScriptPathItem in 'Classes', 'Private', 'Public') {
         }
 }
 
-Export-ModuleMember -Function $PublicFunctions
+Export-ModuleMember -Function $PublicFunctions -Alias *
 
 # TypesToProcess is disabled in the manifest: Remove-Module does not clean type data, so re-importing in the
 # same session fails with "member already present" errors. Loading here with -ErrorAction SilentlyContinue

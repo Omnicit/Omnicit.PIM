@@ -32,17 +32,17 @@ function Get-OPIMAzureRole {
         [Parameter(ParameterSetName = 'Activated')][Switch]$Activated
     )
     process {
-        $filter = if (-not $All) { 'asTarget()' }
+        $OdataFilter = if (-not $All) { 'asTarget()' }
         try {
             if ($Activated) {
-                Get-AzRoleAssignmentScheduleInstance -Scope $Scope -Filter $filter -ErrorAction Stop |
+                Get-AzRoleAssignmentScheduleInstance -Scope $Scope -Filter $OdataFilter -ErrorAction Stop |
                     Where-Object AssignmentType -EQ 'Activated' |
                     ForEach-Object {
                         $_.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
                         $_
                     }
             } else {
-                Get-AzRoleEligibilitySchedule -Scope $Scope -Filter $filter -ErrorAction Stop |
+                Get-AzRoleEligibilitySchedule -Scope $Scope -Filter $OdataFilter -ErrorAction Stop |
                     ForEach-Object {
                         $_.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
                         $_
@@ -53,13 +53,16 @@ function Get-OPIMAzureRole {
                 $PSCmdlet.WriteError($PSItem)
                 return
             }
-            $message = if ($All) {
+            $Message = if ($All) {
                 "You do not have sufficient rights to view all roles at scope ($Scope). This typically requires Owner or UserAccessAdministrator rights."
             } else {
                 "Insufficient permissions to list roles at scope ($Scope). If you are trying to view all users' roles, use -All (requires Owner or UserAccessAdministrator)."
             }
-            $PSItem.ErrorDetails = [System.Management.Automation.ErrorDetails]::new($message)
-            $PSCmdlet.WriteError($PSItem)
+            Write-CmdletError -Message ([System.Exception]::new($Message, $PSItem.Exception)) `
+                -ErrorId 'InsufficientPermissions' `
+                -Category PermissionDenied `
+                -Details $Message `
+                -cmdlet $PSCmdlet
             return
         }
     }

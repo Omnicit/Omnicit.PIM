@@ -9,7 +9,7 @@ Describe 'Get-OPIMAzureRole' {
 
     Context 'When called with default parameters (eligible roles)' {
         BeforeAll {
-            $fakeEligible = [PSCustomObject]@{
+            $FakeEligible = [PSCustomObject]@{
                 Name                      = 'elig-001'
                 RoleDefinitionId          = '/providers/Microsoft.Authorization/roleDefinitions/role-def-001'
                 RoleDefinitionDisplayName = 'Contributor'
@@ -17,7 +17,7 @@ Describe 'Get-OPIMAzureRole' {
                 ScopeDisplayName          = 'My Subscription'
                 PrincipalId               = 'principal-001'
             }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule { return $fakeEligible } -ParameterFilter { $Filter -eq 'asTarget()' }
+            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule { return $FakeEligible } -ParameterFilter { $Filter -eq 'asTarget()' }
         }
 
         It 'calls Get-AzRoleEligibilitySchedule with the asTarget() filter' {
@@ -26,14 +26,14 @@ Describe 'Get-OPIMAzureRole' {
         }
 
         It 'returns objects tagged with Omnicit.PIM.AzureEligibilitySchedule' {
-            $result = Get-OPIMAzureRole
-            $result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureEligibilitySchedule'
+            $Result = Get-OPIMAzureRole
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureEligibilitySchedule'
         }
     }
 
     Context 'When -Activated is specified' {
         BeforeAll {
-            $fakeActive = [PSCustomObject]@{
+            $FakeActive = [PSCustomObject]@{
                 Name                      = 'active-001'
                 AssignmentType            = 'Activated'
                 RoleDefinitionId          = '/providers/Microsoft.Authorization/roleDefinitions/role-def-001'
@@ -42,7 +42,7 @@ Describe 'Get-OPIMAzureRole' {
                 ScopeDisplayName          = 'My Subscription'
                 PrincipalId               = 'principal-001'
             }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance { return $fakeActive } -ParameterFilter { $Filter -eq 'asTarget()' }
+            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance { return $FakeActive } -ParameterFilter { $Filter -eq 'asTarget()' }
             Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule { }
         }
 
@@ -57,30 +57,30 @@ Describe 'Get-OPIMAzureRole' {
         }
 
         It 'returns objects tagged with Omnicit.PIM.AzureAssignmentScheduleInstance' {
-            $result = Get-OPIMAzureRole -Activated
-            $result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureAssignmentScheduleInstance'
+            $Result = Get-OPIMAzureRole -Activated
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureAssignmentScheduleInstance'
         }
     }
 
     Context 'When -Activated returns mixed assignment types' {
         BeforeAll {
-            $fakeActive = [PSCustomObject]@{
+            $FakeActive = [PSCustomObject]@{
                 Name           = 'active-001'
                 AssignmentType = 'Activated'
                 PrincipalId    = 'principal-001'
             }
-            $fakeInherited = [PSCustomObject]@{
+            $FakeInherited = [PSCustomObject]@{
                 Name           = 'inherited-001'
                 AssignmentType = 'Assigned'
                 PrincipalId    = 'principal-001'
             }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance { return @($fakeInherited, $fakeActive) }
+            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance { return @($FakeInherited, $FakeActive) }
         }
 
         It 'filters out non-Activated assignment types and returns only Activated entries' {
-            $result = Get-OPIMAzureRole -Activated
-            $result | Should -HaveCount 1
-            $result[0].AssignmentType | Should -Be 'Activated'
+            $Result = Get-OPIMAzureRole -Activated
+            $Result | Should -HaveCount 1
+            $Result[0].AssignmentType | Should -Be 'Activated'
         }
     }
 
@@ -118,56 +118,48 @@ Describe 'Get-OPIMAzureRole' {
         }
 
         It 'returns no objects' {
-            $result = Get-OPIMAzureRole
-            $result | Should -BeNullOrEmpty
+            $Result = Get-OPIMAzureRole
+            $Result | Should -BeNullOrEmpty
         }
     }
 
     Context 'When the API returns an InsufficientPermissions error' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
-                $PSCmdlet.ThrowTerminatingError(
-                    [System.Management.Automation.ErrorRecord]::new(
-                        [System.Exception]::new('Insufficient permissions'),
-                        'InsufficientPermissions',
-                        [System.Management.Automation.ErrorCategory]::PermissionDenied,
-                        $null
-                    )
-                )
+                Write-Error -Message 'Insufficient permissions' `
+                    -ErrorId 'InsufficientPermissions' `
+                    -Category PermissionDenied `
+                    -ErrorAction Stop
             }
         }
 
         It 'writes a non-terminating error' {
-            $errors = @()
-            Get-OPIMAzureRole -ErrorVariable errors -ErrorAction SilentlyContinue
-            $errors.Count | Should -BeGreaterThan 0
+            $Errors = @()
+            Get-OPIMAzureRole -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
         }
 
         It 'includes guidance to use -All in the error message' {
-            $errors = @()
-            Get-OPIMAzureRole -ErrorVariable errors -ErrorAction SilentlyContinue
-            $errors[0].ErrorDetails.Message | Should -Match '\-All'
+            $Errors = @()
+            Get-OPIMAzureRole -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors[-1].ErrorDetails.Message | Should -Match '\-All'
         }
     }
 
     Context 'When -All is specified and the API returns an InsufficientPermissions error' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
-                $PSCmdlet.ThrowTerminatingError(
-                    [System.Management.Automation.ErrorRecord]::new(
-                        [System.Exception]::new('Insufficient permissions'),
-                        'InsufficientPermissions',
-                        [System.Management.Automation.ErrorCategory]::PermissionDenied,
-                        $null
-                    )
-                )
+                Write-Error -Message 'Insufficient permissions' `
+                    -ErrorId 'InsufficientPermissions' `
+                    -Category PermissionDenied `
+                    -ErrorAction Stop
             }
         }
 
         It 'writes a non-terminating error with Owner or UserAccessAdministrator guidance' {
-            $errors = @()
-            Get-OPIMAzureRole -All -ErrorVariable errors -ErrorAction SilentlyContinue
-            $errors[0].ErrorDetails.Message | Should -Match 'Owner or UserAccessAdministrator'
+            $Errors = @()
+            Get-OPIMAzureRole -All -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors[-1].ErrorDetails.Message | Should -Match 'Owner or UserAccessAdministrator'
         }
     }
 
@@ -182,9 +174,9 @@ Describe 'Get-OPIMAzureRole' {
         }
 
         It 'writes a non-terminating error' {
-            $errors = @()
-            Get-OPIMAzureRole -ErrorVariable errors -ErrorAction SilentlyContinue
-            $errors.Count | Should -BeGreaterThan 0
+            $Errors = @()
+            Get-OPIMAzureRole -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
         }
     }
 

@@ -31,7 +31,7 @@
     #>
     [Alias('Get-PIMADRole', 'Get-PIMRole')]
     [CmdletBinding()]
-    [OutputType([System.Collections.Hashtable])]
+    [OutputType([PSCustomObject])]
     param(
         [Switch]$All,
         [Parameter(ParameterSetName = 'Activated')][Switch]$Activated,
@@ -39,12 +39,12 @@
         [String]$Filter
     )
     process {
-        [string]$userFilter = if (-not $All) {
+        [string]$UserFilter = if (-not $All) {
             "/filterByCurrentUser(on='principal')"
         } else {
             [String]::Empty
         }
-        [string]$type = if ($Activated) {
+        [string]$Type = if ($Activated) {
             'roleAssignmentScheduleInstances'
         } else {
             'roleEligibilitySchedules'
@@ -53,44 +53,45 @@
         if ($Identity) {
             $Filter = "id eq '$Identity'"
         }
-        [string]$objectFilter = if ($Filter) {
+        [string]$ObjectFilter = if ($Filter) {
             "&`$filter=$Filter"
         } else {
             [String]::Empty
         }
 
-        $requestUri = "v1.0/roleManagement/directory/${type}${userFilter}?`$expand=principal,roledefinition${objectFilter}"
+        $RequestUri = "v1.0/roleManagement/directory/${Type}${UserFilter}?`$expand=principal,roledefinition${ObjectFilter}"
 
         try {
-            $items = Invoke-MgGraphRequest -Uri $requestUri -ErrorAction Stop -Verbose:$false |
+            $Items = Invoke-MgGraphRequest -Uri $RequestUri -ErrorAction Stop -Verbose:$false |
                 Select-Object -ExpandProperty Value
         } catch {
-            throw (Convert-GraphHttpException $PSItem)
+            $PSCmdlet.WriteError((Convert-GraphHttpException $PSItem))
+            return
         }
 
         if ($Activated) {
-            $items = $items | Where-Object { $_.assignmentType -eq 'Activated' }
+            $Items = $Items | Where-Object { $_.assignmentType -eq 'Activated' }
         }
 
-        $typeName = if ($Activated) {
+        $TypeName = if ($Activated) {
             'Omnicit.PIM.DirectoryAssignmentScheduleInstance'
         } else {
             'Omnicit.PIM.DirectoryEligibilitySchedule'
         }
 
-        foreach ($item in $items) {
+        foreach ($Item in $Items) {
             # Rehydrate directoryScope — v1.0 API does not support $expand for directoryScopeId
             # Ref: https://github.com/microsoftgraph/microsoft-graph-docs/issues/16936
-            if ($item.directoryScopeId -eq '/') {
-                $item['directoryScope'] = @{ id = '/' }
+            if ($Item.directoryScopeId -eq '/') {
+                $Item['directoryScope'] = @{ id = '/' }
             } else {
-                $item['directoryScope'] = Invoke-MgGraphRequest -Verbose:$false -Method Get -Uri "v1.0/directory$($item.directoryScopeId)"
+                $Item['directoryScope'] = Invoke-MgGraphRequest -Verbose:$false -ErrorAction Stop -Method Get -Uri "v1.0/directory$($Item.directoryScopeId)"
             }
             # Cast to PSCustomObject so custom Format views are used instead of the
             # built-in hashtable Key/Value formatter.
-            $obj = [PSCustomObject]$item
-            $obj.PSObject.TypeNames.Insert(0, $typeName)
-            $obj
+            $Obj = [PSCustomObject]$Item
+            $Obj.PSObject.TypeNames.Insert(0, $TypeName)
+            $Obj
         }
     }
 }

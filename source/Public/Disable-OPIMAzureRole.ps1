@@ -29,7 +29,7 @@ function Disable-OPIMAzureRole {
     process {
         if ($RoleName) { $Role = Resolve-RoleByName -Activated $RoleName }
 
-        $roleDeactivateParams = @{
+        $RoleDeactivateParams = @{
             Name                            = New-Guid
             Scope                           = $Role.ScopeId
             PrincipalId                     = $Role.PrincipalId
@@ -43,14 +43,19 @@ function Disable-OPIMAzureRole {
                 'Deactivate Azure Role'
             )) {
             try {
-                New-AzRoleAssignmentScheduleRequest @roleDeactivateParams -ErrorAction Stop
+                New-AzRoleAssignmentScheduleRequest @RoleDeactivateParams -ErrorAction Stop
             } catch {
-                if (-not ($PSItem.FullyQualifiedErrorId -like 'ActiveDurationTooShort*')) {
+                $IsActiveToShort = ($PSItem.FullyQualifiedErrorId -like 'ActiveDurationTooShort*') -or
+                                   ($PSItem.Exception.Message -match 'ActiveDurationTooShort')
+                if (-not $IsActiveToShort) {
                     $PSCmdlet.WriteError($PSItem)
                     return
                 }
-                $PSItem.ErrorDetails = 'You must wait at least 5 minutes after activating a role before you can deactivate it.'
-                $PSCmdlet.WriteError($PSItem)
+                $CooldownMsg = 'You must wait at least 5 minutes after activating a role before you can deactivate it.'
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new($CooldownMsg, $PSItem.Exception),
+                    'ActiveDurationTooShort',
+                    [System.Management.Automation.ErrorCategory]::ResourceUnavailable, $null))
                 return
             }
         }

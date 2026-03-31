@@ -61,14 +61,14 @@ function Enable-OPIMAzureRole {
         [Switch]$Wait
     )
     process {
-        $resolvedRoles = if ($RoleName) {
+        $ResolvedRoles = if ($RoleName) {
             $RoleName | ForEach-Object { Resolve-RoleByName $_ }
         } else {
             @($Role)
         }
 
-        foreach ($Role in $resolvedRoles) {
-            $roleActivateParams = @{
+        foreach ($Role in $ResolvedRoles) {
+            $RoleActivateParams = @{
                 Name                            = New-Guid
                 Scope                           = $Role.ScopeId
                 PrincipalId                     = $Role.PrincipalId
@@ -79,34 +79,44 @@ function Enable-OPIMAzureRole {
             }
 
             if ($Until) {
-                $roleActivateParams.ExpirationType         = 'AfterDateTime'
-                $roleActivateParams.ExpirationEndDateTime  = $Until
-                [string]$roleExpireTime = $Until
+                $RoleActivateParams.ExpirationType         = 'AfterDateTime'
+                $RoleActivateParams.ExpirationEndDateTime  = $Until
+                [string]$RoleExpireTime = $Until
             } else {
-                $roleActivateParams.ExpirationType        = 'AfterDuration'
-                $roleActivateParams.ExpirationDuration    = [XmlConvert]::ToString([TimeSpan]::FromHours($Hours))
-                [string]$roleExpireTime = $NotBefore.AddHours($Hours)
+                $RoleActivateParams.ExpirationType        = 'AfterDuration'
+                $RoleActivateParams.ExpirationDuration    = [XmlConvert]::ToString([TimeSpan]::FromHours($Hours))
+                [string]$RoleExpireTime = $NotBefore.AddHours($Hours)
             }
 
-            if ($TicketNumber) { $roleActivateParams.TicketNumber = $TicketNumber }
-            if ($TicketSystem)  { $roleActivateParams.TicketSystem  = $TicketSystem }
+            if ($TicketNumber) { $RoleActivateParams.TicketNumber = $TicketNumber }
+            if ($TicketSystem)  { $RoleActivateParams.TicketSystem  = $TicketSystem }
 
             if ($PSCmdlet.ShouldProcess(
                     "$($Role.RoleDefinitionDisplayName) on $($Role.ScopeDisplayName) ($($Role.ScopeId))",
-                    "Activate Azure Role from $NotBefore to $roleExpireTime"
+                    "Activate Azure Role from $NotBefore to $RoleExpireTime"
                 )) {
                 try {
-                    $response = New-AzRoleAssignmentScheduleRequest @roleActivateParams -ErrorAction Stop
+                    $Response = New-AzRoleAssignmentScheduleRequest @RoleActivateParams -ErrorAction Stop
                 } catch {
-                    if (-not ($PSItem.FullyQualifiedErrorId -like 'RoleAssignmentRequestPolicyValidationFailed*')) {
-                        $PSCmdlet.WriteError($PSItem)
+                    $ExMsg = $PSItem.Exception.Message
+                    if ($null -ne $PSItem.Exception.InnerException) {
+                        $ExMsg += ' ' + $PSItem.Exception.InnerException.Message
+                    }
+                    if ($ExMsg -match 'JustificationRule') {
+                        $JustMsg = 'Your PIM policy requires a justification for this role. Use the -Justification parameter.'
+                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new($JustMsg, $PSItem.Exception),
+                            'RoleAssignmentRequestPolicyValidationFailed',
+                            [System.Management.Automation.ErrorCategory]::OperationStopped, $null))
                         continue
                     }
-                    if ($PSItem -match 'JustificationRule') {
-                        $PSItem.ErrorDetails = 'Your PIM policy requires a justification for this role. Use the -Justification parameter.'
-                    }
-                    if ($PSItem -match 'ExpirationRule') {
-                        $PSItem.ErrorDetails = 'Your PIM policy requires a shorter expiration. Use -NotAfter to specify an earlier time.'
+                    if ($ExMsg -match 'ExpirationRule') {
+                        $ExpMsg = 'Your PIM policy requires a shorter expiration. Use -NotAfter to specify an earlier time.'
+                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new($ExpMsg, $PSItem.Exception),
+                            'RoleAssignmentRequestPolicyValidationFailed',
+                            [System.Management.Automation.ErrorCategory]::OperationStopped, $null))
+                        continue
                     }
                     $PSCmdlet.WriteError($PSItem)
                     continue
@@ -114,11 +124,11 @@ function Enable-OPIMAzureRole {
 
                 if ($Wait) {
                     do {
-                        $roleActivation = Get-AzRoleAssignmentScheduleRequest -Name $response.Name -Scope $response.Scope -ErrorAction Stop
-                    } while (-not $roleActivation)
+                        $RoleActivation = Get-AzRoleAssignmentScheduleRequest -Name $Response.Name -Scope $Response.Scope -ErrorAction Stop
+                    } while (-not $RoleActivation)
                 }
 
-                $response
+                $Response
             }
         }
     }

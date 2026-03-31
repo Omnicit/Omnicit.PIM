@@ -33,6 +33,10 @@ function Write-CmdletError {
     Switch that promotes the error to a terminating error via ThrowTerminatingError. Without this
     switch the error is emitted as a non-terminating error via WriteError.
 
+    .PARAMETER Details
+    Optional plain-text detail message attached to the ErrorRecord as ErrorDetails.Message. Shown
+    in some hosts in addition to the exception message for extra context.
+
     .EXAMPLE
     Write-CmdletError -Message ([System.Exception]::new('Role not found')) -ErrorId 'RoleNotFound' -cmdlet $PSCmdlet
 
@@ -44,7 +48,8 @@ function Write-CmdletError {
         [ErrorCategory]$Category = 'InvalidOperation',
         $TargetObject = $PSItem,
         $cmdlet = $PSCmdlet,
-        [Switch]$Terminating
+        [Switch]$Terminating,
+        [String]$Details
     )
     process {
         $errorRecord = [ErrorRecord]::new(
@@ -53,6 +58,9 @@ function Write-CmdletError {
             $Category,
             $TargetObject
         )
+        if ($Details) {
+            $errorRecord.ErrorDetails = [ErrorDetails]::new($Details)
+        }
         if ($Terminating) {
             $cmdlet.ThrowTerminatingError(
                 $ErrorRecord

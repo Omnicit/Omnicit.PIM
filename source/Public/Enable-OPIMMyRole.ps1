@@ -1,4 +1,4 @@
-﻿function Enable-OPIMMyRoles {
+﻿function Enable-OPIMMyRole {
     <#
     .SYNOPSIS
     Connect to Microsoft Graph and activate all eligible PIM roles and groups for the current user.
@@ -49,7 +49,7 @@
     .PARAMETER Wait
     Wait until all directory role activations are fully provisioned before returning.
     #>
-    [Alias('pim')]
+    [Alias('pim', 'Enable-OPIMMyRoles')]
     [CmdletBinding()]
     param(
         [string]$TenantAlias,
@@ -61,7 +61,7 @@
         [Switch]$Wait
     )
 
-    $graphScopes = @(
+    $GraphScopes = @(
         'RoleEligibilitySchedule.ReadWrite.Directory'
         'RoleAssignmentSchedule.ReadWrite.Directory'
         'PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup'
@@ -70,61 +70,61 @@
     )
 
     # ── Resolve tenant config and connect ─────────────────────────────────────
-    $config = $null
+    $Config = $null
     if ($TenantAlias) {
         if (-not (Test-Path $TenantMapPath)) {
             throw "TenantMap file not found at '$TenantMapPath'. Run: Install-OPIMConfiguration -TenantAlias <alias> -TenantId <guid>"
         }
-        $map    = Import-PowerShellDataFile $TenantMapPath
-        $config = $map[$TenantAlias]
-        if (-not $config) {
-            $available = ($map.Keys | Sort-Object) -join ', '
-            throw "Tenant alias '$TenantAlias' not found in '$TenantMapPath'. Available aliases: $available"
+        $Map    = Import-PowerShellDataFile $TenantMapPath
+        $Config = $Map[$TenantAlias]
+        if (-not $Config) {
+            $Available = ($Map.Keys | Sort-Object) -join ', '
+            throw "Tenant alias '$TenantAlias' not found in '$TenantMapPath'. Available aliases: $Available"
         }
-        $tenantId = if ($config -is [hashtable]) { $config.TenantId } else { [string]$config }
-        Connect-MgGraph -TenantId $tenantId -Scopes $graphScopes -NoWelcome -ErrorAction Stop
-        if ($config -is [hashtable] -and $config.AzureRoles) {
-            Connect-AzAccount -TenantId $tenantId -ErrorAction Stop | Out-Null
+        $TenantId = if ($Config -is [hashtable]) { $Config.TenantId } else { [string]$Config }
+        Connect-MgGraph -TenantId $TenantId -Scopes $GraphScopes -NoWelcome -ErrorAction Stop
+        if ($Config -is [hashtable] -and $Config.AzureRoles) {
+            Connect-AzAccount -TenantId $TenantId -ErrorAction Stop | Out-Null
         }
     } else {
-        Connect-MgGraph -Scopes $graphScopes -NoWelcome -ErrorAction Stop
+        Connect-MgGraph -Scopes $GraphScopes -NoWelcome -ErrorAction Stop
     }
 
-    $activateParams = @{ Hours = $Hours }
-    if ($Justification) { $activateParams.Justification = $Justification }
-    if ($TicketNumber)  { $activateParams.TicketNumber   = $TicketNumber }
-    if ($TicketSystem)  { $activateParams.TicketSystem   = $TicketSystem }
+    $ActivateParams = @{ Hours = $Hours }
+    if ($Justification) { $ActivateParams.Justification = $Justification }
+    if ($TicketNumber)  { $ActivateParams.TicketNumber   = $TicketNumber }
+    if ($TicketSystem)  { $ActivateParams.TicketSystem   = $TicketSystem }
 
     # ── Directory Roles ───────────────────────────────────────────────────────
-    $directoryRoles = Get-OPIMDirectoryRole
-    if ($config -is [hashtable] -and $config.DirectoryRoles) {
-        $directoryRoles = $directoryRoles | Where-Object { $_.roleDefinitionId -in $config.DirectoryRoles }
+    $DirectoryRoles = Get-OPIMDirectoryRole
+    if ($Config -is [hashtable] -and $Config.DirectoryRoles) {
+        $DirectoryRoles = $DirectoryRoles | Where-Object { $_.roleDefinitionId -in $Config.DirectoryRoles }
     }
-    if ($directoryRoles) {
-        $directoryRoles | Enable-OPIMDirectoryRole @activateParams -Wait:$Wait
+    if ($DirectoryRoles) {
+        $DirectoryRoles | Enable-OPIMDirectoryRole @ActivateParams -Wait:$Wait
     } else {
         Write-Verbose 'No eligible directory roles found (or none matched the configured set).'
     }
 
     # ── Entra ID PIM Groups ───────────────────────────────────────────────────
-    $groups = Get-OPIMEntraIDGroup
-    if ($config -is [hashtable] -and $config.EntraIDGroups) {
-        $groups = $groups | Where-Object { "$($_.groupId)_$($_.accessId)" -in $config.EntraIDGroups }
+    $Groups = Get-OPIMEntraIDGroup
+    if ($Config -is [hashtable] -and $Config.EntraIDGroups) {
+        $Groups = $Groups | Where-Object { "$($_.groupId)_$($_.accessId)" -in $Config.EntraIDGroups }
     }
-    if ($groups) {
-        $groups | Enable-OPIMEntraIDGroup @activateParams
+    if ($Groups) {
+        $Groups | Enable-OPIMEntraIDGroup @ActivateParams
     } else {
         Write-Verbose 'No eligible PIM group assignments found (or none matched the configured set).'
     }
 
     # ── Azure RBAC Roles ──────────────────────────────────────────────────────
-    if ((-not ($config -is [hashtable])) -or $config.AzureRoles) {
-        $azureRoles = Get-OPIMAzureRole
-        if ($config -is [hashtable] -and $config.AzureRoles) {
-            $azureRoles = $azureRoles | Where-Object { $_.Name -in $config.AzureRoles }
+    if ((-not ($Config -is [hashtable])) -or $Config.AzureRoles) {
+        $AzureRoles = Get-OPIMAzureRole
+        if ($Config -is [hashtable] -and $Config.AzureRoles) {
+            $AzureRoles = $AzureRoles | Where-Object { $_.Name -in $Config.AzureRoles }
         }
-        if ($azureRoles) {
-            $azureRoles | Enable-OPIMAzureRole @activateParams
+        if ($AzureRoles) {
+            $AzureRoles | Enable-OPIMAzureRole @ActivateParams
         } else {
             Write-Verbose 'No eligible Azure roles found (or none matched the configured set).'
         }
