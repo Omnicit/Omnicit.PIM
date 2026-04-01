@@ -416,4 +416,32 @@
             Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
         }
     }
+
+    Context 'When the API throws an exception that has an InnerException' {
+        BeforeAll {
+            $FakeRole = [PSCustomObject]@{
+                Name                      = 'elig-001'
+                ScopeId                   = '/subscriptions/sub-001'
+                ScopeDisplayName          = 'My Subscription'
+                PrincipalId               = 'principal-001'
+                RoleDefinitionId          = '/providers/Microsoft.Authorization/roleDefinitions/role-def-001'
+                RoleDefinitionDisplayName = 'Contributor'
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeRole }
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
+                $InnerEx = [System.Exception]::new('Inner network error')
+                throw [System.Exception]::new('Outer API error', $InnerEx)
+            }
+        }
+
+        It 'does not throw a terminating error' {
+            { Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)' -ErrorAction SilentlyContinue } | Should -Not -Throw
+        }
+
+        It 'writes a non-terminating error' {
+            $Errors = @()
+            Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)' -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
+        }
+    }
 }

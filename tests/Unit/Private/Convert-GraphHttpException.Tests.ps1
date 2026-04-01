@@ -120,4 +120,23 @@ Describe 'Convert-GraphHttpException' {
             }
         }
     }
+
+    Context 'When ReadAsStringAsync throws while reading the HTTP response body' {
+        It 'returns the original ErrorRecord unchanged' {
+            InModuleScope Omnicit.PIM {
+                $FakeContent = [PSCustomObject]@{}
+                $FakeContent | Add-Member -MemberType ScriptMethod -Name ReadAsStringAsync -Value {
+                    throw [System.IO.IOException]::new('Stream read error')
+                }
+                $FakeResponse = [PSCustomObject]@{ Content = $FakeContent }
+                $Ex = [System.Exception]::new('HTTP connection error')
+                $Ex | Add-Member -MemberType NoteProperty -Name Response -Value $FakeResponse
+                $InputRecord = [System.Management.Automation.ErrorRecord]::new($Ex, 'HttpError', [System.Management.Automation.ErrorCategory]::ConnectionError, $null)
+
+                $Result = Convert-GraphHttpException -errorRecord $InputRecord
+
+                $Result | Should -Be $InputRecord
+            }
+        }
+    }
 }

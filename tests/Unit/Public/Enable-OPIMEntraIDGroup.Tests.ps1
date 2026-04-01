@@ -435,4 +435,32 @@
             }
         }
     }
+
+    Context 'When API returns RoleAssignmentRequestPolicyValidationFailed with an unrecognized rule' {
+        BeforeAll {
+            $FakeGroup = [PSCustomObject]@{
+                id          = 'elig-001'
+                accessId    = 'member'
+                groupId     = 'group-001'
+                principalId = 'principal-001'
+                group       = [PSCustomObject]@{ displayName = 'Finance Team' }
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeGroup }
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                throw [System.Net.Http.HttpRequestException]::new(
+                    '{"error":{"code":"RoleAssignmentRequestPolicyValidationFailed","message":"Policy validation failed: UnknownRuleViolation."}}'
+                )
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'does not throw a terminating error' {
+            { Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -ErrorAction SilentlyContinue } | Should -Not -Throw
+        }
+
+        It 'writes a non-terminating error' {
+            $Errors = @()
+            Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
+        }
+    }
 }

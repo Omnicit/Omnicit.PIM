@@ -183,4 +183,38 @@
             $Errors[-1].Exception.Message | Should -Match '5 minutes'
         }
     }
+
+    Context 'When the API response does not include a group property' {
+        BeforeAll {
+            $FakeGroup = [PSCustomObject]@{
+                id          = 'instance-004'
+                accessId    = 'member'
+                groupId     = 'group-004'
+                principalId = 'principal-004'
+                group       = [PSCustomObject]@{ displayName = 'Engineering Team' }
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeGroup }
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                return @{
+                    id          = 'deact-req-004'
+                    action      = 'selfDeactivate'
+                    accessId    = 'member'
+                    groupId     = 'group-004'
+                    principalId = 'principal-004'
+                    status      = 'Provisioned'
+                    # 'group' key intentionally omitted to exercise the restore branch
+                }
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'restores the group property from the resolved schedule object' {
+            $Result = Disable-OPIMEntraIDGroup -GroupName 'Engineering Team (instance-004)'
+            $Result.group.displayName | Should -Be 'Engineering Team'
+        }
+
+        It 'returns a PSCustomObject tagged with Omnicit.PIM.GroupAssignmentScheduleRequest' {
+            $Result = Disable-OPIMEntraIDGroup -GroupName 'Engineering Team (instance-004)'
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.GroupAssignmentScheduleRequest'
+        }
+    }
 }

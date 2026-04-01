@@ -447,4 +447,33 @@
             Should -Invoke -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole -Times 0 -Scope It
         }
     }
+
+    Context 'When API returns RoleAssignmentRequestPolicyValidationFailed with an unrecognized rule' {
+        BeforeAll {
+            $FakeRole = [PSCustomObject]@{
+                id               = 'elig-001'
+                roleDefinitionId = 'role-def-001'
+                directoryScopeId = '/'
+                principalId      = 'principal-001'
+                roleDefinition   = [PSCustomObject]@{ displayName = 'Global Administrator' }
+                principal        = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeRole }
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                throw [System.Net.Http.HttpRequestException]::new(
+                    '{"error":{"code":"RoleAssignmentRequestPolicyValidationFailed","message":"Policy validation failed: UnknownRuleViolation."}}'
+                )
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'does not throw a terminating error' {
+            { Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -ErrorAction SilentlyContinue } | Should -Not -Throw
+        }
+
+        It 'writes a non-terminating error' {
+            $Errors = @()
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
+        }
+    }
 }

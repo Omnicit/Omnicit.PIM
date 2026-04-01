@@ -1,7 +1,5 @@
 ﻿---
 description: "Generate a Pester unit test file for a single Omnicit.PIM public function."
-mode: "agent"
-tools: ["read_file", "create_file", "list_dir"]
 ---
 
 You are generating a Pester unit test file for **one** function in the Omnicit.PIM PowerShell module.
