@@ -78,7 +78,23 @@ PowerShellVersion = '7.2'
 # NestedModules = @()
 
 # Functions to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no functions to export.
-FunctionsToExport = @()
+FunctionsToExport = @(
+    'Disable-OPIMAzureRole'
+    'Disable-OPIMDirectoryRole'
+    'Disable-OPIMEntraIDGroup'
+    'Enable-OPIMAzureRole'
+    'Enable-OPIMDirectoryRole'
+    'Enable-OPIMEntraIDGroup'
+    'Enable-OPIMMyRole'
+    'Get-OPIMAzureRole'
+    'Get-OPIMConfiguration'
+    'Get-OPIMDirectoryRole'
+    'Get-OPIMEntraIDGroup'
+    'Install-OPIMConfiguration'
+    'Remove-OPIMConfiguration'
+    'Set-OPIMConfiguration'
+    'Wait-OPIMDirectoryRole'
+)
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = @()

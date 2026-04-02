@@ -113,21 +113,73 @@ $PSDefaultParameterValues['Enable-OPIM*:Hours'] = 4
 
 ---
 
-## Install-OPIMConfiguration
+## Configuration CRUD
 
-Manages the `TenantMap.psd1` file used by `Enable-OPIMMyRoles` / `pim` to resolve tenant
-aliases and optionally filter which roles/groups are activated per tenant.
+The four `*-OPIMConfiguration` cmdlets manage the `TenantMap.psd1` file that `pim` uses to
+resolve tenant aliases:
+
+| Cmdlet | Alias | Purpose |
+|---|---|---|
+| `Install-OPIMConfiguration` | — | **Create** — add a new alias. Error if alias already exists. |
+| `Get-OPIMConfiguration` | `Get-PIMConfig` | **Read** — return one typed object per alias. |
+| `Set-OPIMConfiguration` | `Set-PIMConfig` | **Update** — change TenantId or replace stored role lists. |
+| `Remove-OPIMConfiguration` | `Remove-PIMConfig` | **Delete** — remove an alias, preserve the rest. |
+
+### Install-OPIMConfiguration — create a new alias
 
 ```powershell
-# Register a tenant alias (TenantAlias is the key — the GUID can be updated later with -Force)
+# Register a new tenant alias
 Install-OPIMConfiguration -TenantAlias contoso -TenantId '00000000-0000-0000-0000-000000000000'
 
-# Store specific directory roles as the default activation set for a tenant
+# Register and store specific directory roles as the default activation set
 Get-OPIMDirectoryRole | Where-Object { $_.roleDefinition.displayName -like 'Compliance*' } |
     Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>'
 
 # Preview without writing
 Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>' -WhatIf
+```
+
+> **Install is create-only.** If the alias already exists a non-terminating error is emitted.
+> Use `Set-OPIMConfiguration` to update an existing alias.
+
+### Get-OPIMConfiguration — read current configuration
+
+```powershell
+# List all tenant aliases
+Get-OPIMConfiguration
+
+# Inspect a specific alias
+Get-OPIMConfiguration -TenantAlias contoso
+
+# Use a custom file path
+Get-OPIMConfiguration -TenantMapPath 'D:\config\MyTenants.psd1'
+```
+
+### Set-OPIMConfiguration — update an existing alias
+
+```powershell
+# Update only the TenantId, preserve stored role lists
+Set-OPIMConfiguration -TenantAlias contoso -TenantId '<new-guid>'
+
+# Replace the stored DirectoryRoles list
+Get-OPIMDirectoryRole | Where-Object { $_.roleDefinition.displayName -like '*Admin*' } |
+    Set-OPIMConfiguration -TenantAlias contoso
+
+# Replace the stored EntraIDGroups list
+Get-OPIMEntraIDGroup | Set-OPIMConfiguration -TenantAlias contoso
+
+# Preview without writing
+Set-OPIMConfiguration -TenantAlias contoso -TenantId '<new-guid>' -WhatIf
+```
+
+### Remove-OPIMConfiguration — delete an alias
+
+```powershell
+# Remove the 'contoso' alias (other aliases are preserved)
+Remove-OPIMConfiguration -TenantAlias contoso
+
+# Preview without writing
+Remove-OPIMConfiguration -TenantAlias contoso -WhatIf
 ```
 
 ---
@@ -139,7 +191,7 @@ IDs. Each alias can optionally store a default set of roles and groups to activa
 activates what you actually need rather than everything eligible.
 
 > **The TenantAlias is the key.** You can change the TenantId (e.g. after a tenant migration) by
-> running `Install-OPIMConfiguration -TenantAlias <same-alias> -TenantId <new-guid> -Force`
+> running `Set-OPIMConfiguration -TenantAlias <same-alias> -TenantId <new-guid>`
 > without losing your stored role/group configuration.
 
 ### Default location
@@ -186,15 +238,20 @@ independently.
 ### Creating and managing entries
 
 ```powershell
-# Basic — add a tenant alias with no role defaults (activates all eligible at runtime)
-# -TenantMap is optional: it is implied when -TenantAlias and -TenantId are provided
+# Add a new tenant alias with no role defaults (activates all eligible at runtime)
 Install-OPIMConfiguration -TenantAlias contoso -TenantId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
 
 # Add a second tenant
 Install-OPIMConfiguration -TenantAlias fabrikam -TenantId 'yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy'
 
-# Overwrite an existing alias (update TenantId; existing role lists are preserved)
-Install-OPIMConfiguration -TenantAlias contoso -TenantId '<new-guid>' -Force
+# Update the TenantId for an existing alias (role lists are preserved)
+Set-OPIMConfiguration -TenantAlias contoso -TenantId '<new-guid>'
+
+# Read back the current configuration
+Get-OPIMConfiguration
+
+# Remove an alias (other aliases are preserved)
+Remove-OPIMConfiguration -TenantAlias fabrikam
 
 # Preview without writing
 Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>' -WhatIf
@@ -230,17 +287,18 @@ Get-OPIMAzureRole |
     Where-Object { $_.RoleDefinitionDisplayName -like 'Contributor*' } |
     Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>'
 
-# Combine directory roles AND groups in two calls with -Force to update incrementally
+# Update directory roles and groups incrementally using Set-OPIMConfiguration
 Get-OPIMDirectoryRole |
     Where-Object { $_.roleDefinition.displayName -like '*Admin*' } |
-    Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>' -Force
+    Set-OPIMConfiguration -TenantAlias contoso
 Get-OPIMEntraIDGroup |
-    Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>' -Force
+    Set-OPIMConfiguration -TenantAlias contoso
 ```
 
-> **Tip:** Running `Install-OPIMConfiguration` again with `-Force` and new piped input
-> replaces the stored role list. Omit pipe input with `-Force` to update only the `TenantId`
-> while keeping the existing role/group lists intact.
+> **Tip:** Pipe new role/group objects to `Set-OPIMConfiguration` to replace the stored list
+> for that category. Categories not supplied via pipeline retain their existing values.
+> To update only the `TenantId` without touching role lists, run `Set-OPIMConfiguration` with
+> `-TenantId` and no pipeline input.
 
 ### Using a custom path
 
@@ -249,8 +307,11 @@ Get-OPIMEntraIDGroup |
 pim -TenantAlias contoso -TenantMapPath 'D:\config\MyTenants.psd1'
 
 # Permanent: add to your profile
-$PSDefaultParameterValues['Enable-OPIMMyRoles:TenantMapPath'] = 'D:\config\MyTenants.psd1'
+$PSDefaultParameterValues['Enable-OPIMMyRoles:TenantMapPath']        = 'D:\config\MyTenants.psd1'
 $PSDefaultParameterValues['Install-OPIMConfiguration:TenantMapPath'] = 'D:\config\MyTenants.psd1'
+$PSDefaultParameterValues['Get-OPIMConfiguration:TenantMapPath']     = 'D:\config\MyTenants.psd1'
+$PSDefaultParameterValues['Set-OPIMConfiguration:TenantMapPath']     = 'D:\config\MyTenants.psd1'
+$PSDefaultParameterValues['Remove-OPIMConfiguration:TenantMapPath']  = 'D:\config\MyTenants.psd1'
 ```
 
 ### Multi-tenant workflow example
@@ -272,10 +333,10 @@ Connect-MgGraph -TenantId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Scopes `
 
 Get-OPIMDirectoryRole |
     Where-Object { $_.roleDefinition.displayName -in 'Compliance Administrator','Security Reader' } |
-    Install-OPIMConfiguration -TenantAlias corp -TenantId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Force
+    Set-OPIMConfiguration -TenantAlias corp
 
 Get-OPIMEntraIDGroup -AccessType member |
-    Install-OPIMConfiguration -TenantAlias corp -TenantId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Force
+    Set-OPIMConfiguration -TenantAlias corp
 
 # ── Daily use ─────────────────────────────────────────────────────────────────
 
