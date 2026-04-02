@@ -60,7 +60,21 @@ Build output lands in `output/module/<version>/`. Uses **Sampler** + **ModuleBui
 | Directory Role noun | `DirectoryRole` | `Enable-OPIMDirectoryRole` |
 | Azure RBAC noun | `AzureRole` | `Enable-OPIMAzureRole` |
 | PIM Groups noun | `EntraIDGroup` | `Enable-OPIMEntraIDGroup` |
+| Configuration CRUD | `*-OPIMConfiguration` | `Get/Set/Remove/Install-OPIMConfiguration` |
 | Filename | `Verb-OPIMNoun.ps1` | `Disable-OPIMDirectoryRole.ps1` |
+
+### Configuration CRUD
+
+`Install-OPIMConfiguration` is **create-only** — it emits a non-terminating error if the alias already exists and directs the user to `Set-OPIMConfiguration`. The four configuration commands follow a strict CRUD model:
+
+| Cmdlet | Operation | Notes |
+|---|---|---|
+| `Install-OPIMConfiguration` | Create | Mandatory `-TenantAlias`, `-TenantId`; accepts pipeline from `Get-OPIM*`. Error if alias exists. |
+| `Get-OPIMConfiguration` | Read | Optional `-TenantAlias` filter. Returns `Omnicit.PIM.TenantConfiguration` objects. |
+| `Set-OPIMConfiguration` | Update | Mandatory `-TenantAlias`; optional `-TenantId`; accepts pipeline from `Get-OPIM*`. Error if alias missing. |
+| `Remove-OPIMConfiguration` | Delete | Mandatory `-TenantAlias`. Error if alias or file missing. |
+
+The private helper `Export-OPIMTenantMap` (`Source/Private/`) owns PSD1 serialization and is called by `Install`, `Set`, and `Remove`. Do not duplicate the StringBuilder serialization block in any new function — call the helper instead.
 
 - **Never use `*` in `FunctionsToExport`** — always list explicitly.
 - **Aliases** must be registered in both `Omnicit.PIM.psm1` (alias map) and `AliasesToExport` in the manifest.
@@ -196,3 +210,5 @@ See [README.md](../README.md) for full usage examples, connection scopes, `Insta
 - **Local variable `$Filter` shadows the `-Filter` parameter** — in functions that have a `-Filter` parameter and also build an internal OData filter string, name the local variable `$OdataFilter` to avoid the collision.
 - **`Az.Resources` manifest version is the source of truth** — the required version is `9.0.3`, not the older `5.6.0` sometimes cited in older docs.
 - **PowerShell 7.2+ Core only** — `CompatiblePSEditions = @('Core')`. Do not suggest Windows PowerShell 5.x or Desktop-compatible code.
+- **`Install-OPIMConfiguration` is create-only** — it does NOT have a `-Force` parameter. Updating an existing alias is done via `Set-OPIMConfiguration`. Do not add `-Force` back.
+- **`Export-OPIMTenantMap` (private) owns PSD1 serialization** — always call this helper from `Install`, `Set`, and `Remove` instead of inlining the StringBuilder block.

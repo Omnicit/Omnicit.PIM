@@ -1,0 +1,32 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Configuration>
+  <ViewDefinitions>
+    <View>
+      <Name>Omnicit.PIM.TenantConfiguration</Name>
+      <ViewSelectedBy>
+        <TypeName>Omnicit.PIM.TenantConfiguration</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <AutoSize />
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>TenantAlias</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>TenantId</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>DirectoryRoleCount</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>EntraIDGroupCount</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>AzureRoleCount</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+  </ViewDefinitions>
+</Configuration>

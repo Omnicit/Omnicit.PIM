@@ -121,7 +121,7 @@ Describe 'Install-OPIMConfiguration' {
         }
     }
 
-    Context 'When the tenant alias already exists and -Force is not specified' {
+    Context 'When the tenant alias already exists' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }
             Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
@@ -131,70 +131,22 @@ Describe 'Install-OPIMConfiguration' {
             }
         }
 
-        It 'writes a warning that mentions the alias name' {
-            $warnings = @()
-            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WarningVariable warnings -WarningAction SilentlyContinue
-            $warnings | Should -Not -BeNullOrEmpty
-            $warnings[0] | Should -Match 'contoso'
+        It 'writes a non-terminating error mentioning the alias name' {
+            $Errors = @()
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
+            $Errors[0].Exception.Message | Should -Match 'contoso'
         }
 
         It 'does not call Set-Content' {
-            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WarningAction SilentlyContinue
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction SilentlyContinue
             Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
         }
-    }
 
-    Context 'When the tenant alias already exists and -Force is specified' {
-        BeforeAll {
-            Mock -ModuleName Omnicit.PIM Test-Path { return $true }
-            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
-                return @{
-                    contoso = @{ TenantId = '00000000-0000-0000-0000-000000000099' }
-                }
-            }
-            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
-        }
-        BeforeEach {
-            $script:writtenContent = $null
-        }
-
-        It 'calls Set-Content to overwrite the existing entry' {
-            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Force
-            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Scope It
-        }
-
-        It 'writes the new TenantId into the PSD1 content' {
-            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Force
-            $script:writtenContent | Should -Match '00000000-0000-0000-0000-000000000001'
-        }
-    }
-
-    Context 'When stored categories not supplied via pipeline retain their existing values' {
-        BeforeAll {
-            Mock -ModuleName Omnicit.PIM Test-Path { return $true }
-            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
-                return @{
-                    contoso = @{
-                        TenantId       = '00000000-0000-0000-0000-000000000099'
-                        DirectoryRoles = @('existing-role-def-001')
-                        EntraIDGroups  = @('group-existing_member')
-                    }
-                }
-            }
-            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
-        }
-        BeforeEach {
-            $script:writtenContent = $null
-        }
-
-        It 'retains the existing DirectoryRoles when no directory role is piped' {
-            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000099' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Force
-            $script:writtenContent | Should -Match 'existing-role-def-001'
-        }
-
-        It 'retains the existing EntraIDGroups when no group is piped' {
-            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000099' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Force
-            $script:writtenContent | Should -Match 'group-existing_member'
+        It 'suggests using Set-OPIMConfiguration in the error message' {
+            $Errors = @()
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors[0].Exception.Message | Should -Match 'Set-OPIMConfiguration'
         }
     }
 
