@@ -128,6 +128,7 @@ function Enable-OPIMAzureRole {
                     } while (-not $RoleActivation)
                 }
 
+                $Response.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleRequest')
                 $Response
             }
         }

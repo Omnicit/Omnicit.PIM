@@ -52,6 +52,11 @@
                 $LinkedRoleEligibilityScheduleId -eq 'active-001'
             }
         }
+
+        It 'tags the response with Omnicit.PIM.AzureAssignmentScheduleRequest type name' {
+            $Result = Disable-OPIMAzureRole -RoleName 'Contributor (active-001)'
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureAssignmentScheduleRequest'
+        }
     }
 
     Context 'When called with pipeline input (-Role parameter set)' {

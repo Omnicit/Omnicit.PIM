@@ -43,7 +43,9 @@ function Disable-OPIMAzureRole {
                 'Deactivate Azure Role'
             )) {
             try {
-                New-AzRoleAssignmentScheduleRequest @RoleDeactivateParams -ErrorAction Stop
+                $Response = New-AzRoleAssignmentScheduleRequest @RoleDeactivateParams -ErrorAction Stop
+                $Response.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleRequest')
+                $Response
             } catch {
                 $IsActiveToShort = ($PSItem.FullyQualifiedErrorId -like 'ActiveDurationTooShort*') -or
                                    ($PSItem.Exception.Message -match 'ActiveDurationTooShort')

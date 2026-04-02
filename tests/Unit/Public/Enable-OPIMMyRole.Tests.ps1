@@ -18,29 +18,29 @@
 
     Context 'When called without -TenantAlias (uses current MgGraph context)' {
         It 'calls Connect-MgGraph without a TenantId' {
-            Enable-OPIMMyRole
+            Enable-OPIMMyRole -AllEligible -Confirm:$false
             Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Scope It -ParameterFilter {
                 -not $TenantId
             }
         }
 
-        It 'does not call Connect-AzAccount' {
-            Enable-OPIMMyRole
-            Should -Invoke -ModuleName Omnicit.PIM Connect-AzAccount -Times 0 -Scope It
+        It 'calls Connect-AzAccount when -AllEligible is specified' {
+            Enable-OPIMMyRole -AllEligible -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Connect-AzAccount -Times 1 -Scope It
         }
 
         It 'calls Get-OPIMDirectoryRole to retrieve eligible directory roles' {
-            Enable-OPIMMyRole
+            Enable-OPIMMyRole -AllEligible -Confirm:$false
             Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Scope It
         }
 
         It 'calls Get-OPIMEntraIDGroup to retrieve eligible group assignments' {
-            Enable-OPIMMyRole
+            Enable-OPIMMyRole -AllEligible -Confirm:$false
             Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Scope It
         }
 
         It 'calls Get-OPIMAzureRole to retrieve eligible Azure RBAC roles' {
-            Enable-OPIMMyRole
+            Enable-OPIMMyRole -AllEligible -Confirm:$false
             Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Scope It
         }
     }
@@ -75,29 +75,29 @@
         }
 
         It 'calls Enable-OPIMDirectoryRole for each eligible directory role' {
-            Enable-OPIMMyRole -Hours 2
+            Enable-OPIMMyRole -AllEligible -Hours 2 -Confirm:$false
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Scope It
         }
 
         It 'calls Enable-OPIMEntraIDGroup for each eligible group assignment' {
-            Enable-OPIMMyRole -Hours 2
+            Enable-OPIMMyRole -AllEligible -Hours 2 -Confirm:$false
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 1 -Scope It
         }
 
         It 'calls Enable-OPIMAzureRole for each eligible Azure role' {
-            Enable-OPIMMyRole -Hours 2
+            Enable-OPIMMyRole -AllEligible -Hours 2 -Confirm:$false
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 1 -Scope It
         }
 
         It 'passes -Hours to Enable-OPIMDirectoryRole' {
-            Enable-OPIMMyRole -Hours 3
+            Enable-OPIMMyRole -AllEligible -Hours 3 -Confirm:$false
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Scope It -ParameterFilter {
                 $Hours -eq 3
             }
         }
 
         It 'passes -Justification when supplied' {
-            Enable-OPIMMyRole -Justification 'Incident response'
+            Enable-OPIMMyRole -AllEligible -Confirm:$false -Justification 'Incident response'
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Scope It -ParameterFilter {
                 $Justification -eq 'Incident response'
             }
@@ -160,8 +160,15 @@
             Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
         }
 
-        It 'throws when the TenantMap file is missing' {
-            { Enable-OPIMMyRole -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\missing.psd1' } | Should -Throw
+        It 'writes a non-terminating error when the TenantMap file is missing' {
+            $Errors = @()
+            Enable-OPIMMyRole -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\missing.psd1' -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
+        }
+
+        It 'does not call Connect-MgGraph when the TenantMap file is missing' {
+            Enable-OPIMMyRole -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\missing.psd1' -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
         }
     }
 
@@ -173,8 +180,10 @@
             }
         }
 
-        It 'throws when the alias is absent from the TenantMap' {
-            { Enable-OPIMMyRole -TenantAlias 'unknown' -TenantMapPath 'TestDrive:\TenantMap.psd1' } | Should -Throw
+        It 'writes a non-terminating error when the alias is absent from the TenantMap' {
+            $Errors = @()
+            Enable-OPIMMyRole -TenantAlias 'unknown' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
         }
     }
 
@@ -186,17 +195,17 @@
         }
 
         It 'does not call Enable-OPIMDirectoryRole when no directory roles are eligible' {
-            Enable-OPIMMyRole
+            Enable-OPIMMyRole -AllEligible -Confirm:$false
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 0 -Scope It
         }
 
         It 'does not call Enable-OPIMEntraIDGroup when no groups are eligible' {
-            Enable-OPIMMyRole
+            Enable-OPIMMyRole -AllEligible -Confirm:$false
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 0 -Scope It
         }
 
         It 'does not call Enable-OPIMAzureRole when no Azure roles are eligible' {
-            Enable-OPIMMyRole
+            Enable-OPIMMyRole -AllEligible -Confirm:$false
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 0 -Scope It
         }
     }
@@ -215,10 +224,160 @@
         }
 
         It 'passes -Wait to Enable-OPIMDirectoryRole' {
-            Enable-OPIMMyRole -Wait
+            Enable-OPIMMyRole -AllEligible -Wait -Confirm:$false
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Scope It -ParameterFilter {
                 $Wait -eq $true
             }
+        }
+    }
+
+    Context 'When called with no TenantAlias and no AllEligible switch' {
+        It 'writes a non-terminating error' {
+            $Errors = @()
+            Enable-OPIMMyRole -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
+        }
+
+        It 'does not call Connect-MgGraph' {
+            Enable-OPIMMyRole -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
+        }
+
+        It 'does not call any Enable-OPIM* cmdlet' {
+            Enable-OPIMMyRole -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 0 -Scope It
+        }
+    }
+
+    Context 'When -AllEligible is specified' {
+        BeforeAll {
+            $FakeDirectoryRole = [PSCustomObject]@{
+                id               = 'elig-all-001'
+                roleDefinitionId = 'role-def-001'
+                directoryScopeId = '/'
+                roleDefinition   = [PSCustomObject]@{ displayName = 'Global Administrator' }
+                principal        = [PSCustomObject]@{ displayName = 'Jane Doe' }
+            }
+            $FakeDirectoryRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
+            $FakeGroup = [PSCustomObject]@{ id = 'grp-all-001'; groupId = 'group-id-001'; accessId = 'member' }
+            $FakeGroup.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupEligibilitySchedule')
+            $FakeAzureRole = [PSCustomObject]@{ Name = 'az-all-001'; Scope = '/subscriptions/sub-001' }
+            $FakeAzureRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @($FakeDirectoryRole) }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @($FakeGroup) }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($FakeAzureRole) }
+        }
+
+        It 'activates all three categories when -Confirm:$false is specified' {
+            Enable-OPIMMyRole -AllEligible -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 1 -Scope It
+        }
+
+        It 'does not activate any category when -WhatIf is specified' {
+            Enable-OPIMMyRole -AllEligible -WhatIf
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 0 -Scope It
+        }
+
+        It 'calls Connect-AzAccount when -AllEligible is used' {
+            Enable-OPIMMyRole -AllEligible -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Connect-AzAccount -Times 1 -Scope It
+        }
+    }
+
+    Context 'When -AllEligibleDirectoryRoles is specified' {
+        BeforeAll {
+            $FakeDirectoryRole = [PSCustomObject]@{
+                id               = 'elig-dr-001'
+                roleDefinitionId = 'role-def-001'
+                directoryScopeId = '/'
+                roleDefinition   = [PSCustomObject]@{ displayName = 'Security Reader' }
+                principal        = [PSCustomObject]@{ displayName = 'Jane Doe' }
+            }
+            $FakeDirectoryRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @($FakeDirectoryRole) }
+        }
+
+        It 'activates only directory roles' {
+            Enable-OPIMMyRole -AllEligibleDirectoryRoles -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 0 -Scope It
+        }
+
+        It 'does not call Connect-AzAccount' {
+            Enable-OPIMMyRole -AllEligibleDirectoryRoles -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Connect-AzAccount -Times 0 -Scope It
+        }
+    }
+
+    Context 'When -AllEligibleEntraIDGroups is specified' {
+        BeforeAll {
+            $FakeGroup = [PSCustomObject]@{ id = 'grp-elig-002'; groupId = 'group-id-002'; accessId = 'owner' }
+            $FakeGroup.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupEligibilitySchedule')
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @($FakeGroup) }
+        }
+
+        It 'activates only Entra ID group assignments' {
+            Enable-OPIMMyRole -AllEligibleEntraIDGroups -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 0 -Scope It
+        }
+
+        It 'does not call Connect-AzAccount' {
+            Enable-OPIMMyRole -AllEligibleEntraIDGroups -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Connect-AzAccount -Times 0 -Scope It
+        }
+    }
+
+    Context 'When -AllEligibleAzureRoles is specified' {
+        BeforeAll {
+            $FakeAzureRole = [PSCustomObject]@{ Name = 'az-role-002'; Scope = '/subscriptions/sub-002' }
+            $FakeAzureRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($FakeAzureRole) }
+        }
+
+        It 'activates only Azure RBAC roles' {
+            Enable-OPIMMyRole -AllEligibleAzureRoles -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 1 -Scope It
+        }
+
+        It 'calls Connect-AzAccount when -AllEligibleAzureRoles is used' {
+            Enable-OPIMMyRole -AllEligibleAzureRoles -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Connect-AzAccount -Times 1 -Scope It
+        }
+    }
+
+    Context 'When -TenantAlias is used with a hashtable config that has no category lists' {
+        BeforeAll {
+            $FakeTenantId = '00000000-0000-0000-0000-000000000003'
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{ noconfig = @{ TenantId = $FakeTenantId } }
+            }
+        }
+
+        It 'does not call Get-OPIMDirectoryRole when no DirectoryRoles are configured' {
+            Enable-OPIMMyRole -TenantAlias 'noconfig' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WarningAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 0 -Scope It
+        }
+
+        It 'does not call Get-OPIMEntraIDGroup when no EntraIDGroups are configured' {
+            Enable-OPIMMyRole -TenantAlias 'noconfig' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WarningAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 0 -Scope It
+        }
+
+        It 'does not call Get-OPIMAzureRole when no AzureRoles are configured' {
+            Enable-OPIMMyRole -TenantAlias 'noconfig' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WarningAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 0 -Scope It
         }
     }
 }
