@@ -51,6 +51,11 @@
             $Result.RequestType | Should -Be 'SelfActivate'
         }
 
+        It 'tags the response with Omnicit.PIM.AzureAssignmentScheduleRequest type name' {
+            $Result = Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)'
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureAssignmentScheduleRequest'
+        }
+
         It 'passes a PT1H ISO 8601 duration when -Hours defaults to 1' {
             Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)'
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Scope It -ParameterFilter {
