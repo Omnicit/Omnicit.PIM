@@ -16,6 +16,33 @@ NOTE:
 TROUBLESHOOTING NOTE:
     Look out on the Github repository for issues and new releases.
 
+    RoleAssignmentRequestAcrsValidationFailed / ACRS claims challenge
+    -----------------------------------------------------------------
+    If an Enable-OPIM* command fails with the error code
+    'RoleAssignmentRequestAcrsValidationFailed', the Microsoft Graph token does
+    not satisfy the step-up authentication requirement (ACRS claim 'c1') enforced
+    by a Conditional Access policy for PIM operations.  This typically occurs
+    after a period of inactivity or when a CA policy is tightened.
+
+    The module attempts an automatic recovery: it disconnects, optionally disables
+    Windows Web Account Manager (WAM) to prevent the MSAL cache from returning the
+    same token, and then reconnects before retrying the request.  This succeeds in
+    most scenarios.
+
+    If the automatic recovery also fails (you see the error above), the MSAL
+    process-level token cache is returning the same token regardless of a
+    reconnect.  To resolve this, open a new PowerShell session and reconnect:
+
+        # In a fresh PowerShell window:
+        Connect-MgGraph -Scopes 'PrivilegedAccess.ReadWrite.AzureADGroup', ...
+        Enable-OPIMEntraIDGroup -GroupName '...'
+
+    If symptoms persist even in a new session, disable WAM before connecting:
+
+        Set-MgGraphOption -DisableLoginByWAM $true
+        Connect-MgGraph -Scopes 'PrivilegedAccess.ReadWrite.AzureADGroup', ...
+        Enable-OPIMEntraIDGroup -GroupName '...'
+
 SEE ALSO
     - {{ Please add Project URI such as github }}}
 

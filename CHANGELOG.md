@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- For any bug fix.
+- `Enable-OPIMEntraIDGroup` and `Enable-OPIMDirectoryRole` now automatically recover from `RoleAssignmentRequestAcrsValidationFailed` (CAE/ACRS claims challenge) by disconnecting, temporarily disabling Windows Web Account Manager (WAM) to prevent MSAL from reusing the cached token, reconnecting, and retrying the request transparently. If the retry also fails, a clear non-terminating error is emitted directing the user to open a new PowerShell session with `Connect-MgGraph` to obtain a truly fresh token. Previously the raw URL-encoded claims payload was surfaced verbatim.
 
 ### Security
 

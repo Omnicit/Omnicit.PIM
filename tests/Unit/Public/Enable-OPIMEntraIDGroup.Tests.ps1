@@ -463,4 +463,113 @@
             $Errors.Count | Should -BeGreaterThan 0
         }
     }
+
+    Context 'When the API returns RoleAssignmentRequestAcrsValidationFailed and auto-reconnect succeeds' {
+        BeforeAll {
+            $FakeGroup = [PSCustomObject]@{
+                id          = 'elig-001'
+                accessId    = 'member'
+                groupId     = 'group-001'
+                principalId = 'principal-001'
+                group       = [PSCustomObject]@{ displayName = 'Finance Team' }
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeGroup }
+            Mock -ModuleName Omnicit.PIM Get-MgContext {
+                [PSCustomObject]@{ Scopes = @('openid'); TenantId = 'tenant-001'; ClientId = 'cli-001' }
+            }
+            Mock -ModuleName Omnicit.PIM Disconnect-MgGraph { }
+            Mock -ModuleName Omnicit.PIM Connect-MgGraph { }
+            Mock -ModuleName Omnicit.PIM Get-MgGraphOption { [PSCustomObject]@{ DisableLoginByWAM = $false } }
+            Mock -ModuleName Omnicit.PIM Set-MgGraphOption { }
+            $script:AcrsPostCallCount = 0
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                $script:AcrsPostCallCount++
+                if ($script:AcrsPostCallCount -le 1) {
+                    throw [System.Net.Http.HttpRequestException]::new(
+                        '{"error":{"code":"RoleAssignmentRequestAcrsValidationFailed","message":"&claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%20%22value%22%3A%22c1%22%7D%7D%7D"}}'
+                    )
+                }
+                return @{
+                    id          = 'req-001'
+                    action      = 'selfActivate'
+                    accessId    = 'member'
+                    groupId     = 'group-001'
+                    principalId = 'principal-001'
+                    status      = 'Provisioned'
+                    group       = @{ displayName = 'Finance Team' }
+                }
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+        BeforeEach {
+            $script:AcrsPostCallCount = 0
+        }
+
+        It 'calls Disconnect-MgGraph once during auto-reconnect' {
+            Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)'
+            Should -Invoke -ModuleName Omnicit.PIM Disconnect-MgGraph -Times 1 -Scope It
+        }
+
+        It 'calls Connect-MgGraph once during auto-reconnect' {
+            Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)'
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Scope It
+        }
+
+        It 'calls Invoke-MgGraphRequest POST twice (initial attempt plus retry)' {
+            Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'returns a PSCustomObject tagged with Omnicit.PIM.GroupAssignmentScheduleRequest' {
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)'
+            $Result | Should -Not -BeNullOrEmpty
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.GroupAssignmentScheduleRequest'
+        }
+    }
+
+    Context 'When the API returns RoleAssignmentRequestAcrsValidationFailed and retry also fails with ACRS' {
+        BeforeAll {
+            $FakeGroup = [PSCustomObject]@{
+                id          = 'elig-001'
+                accessId    = 'member'
+                groupId     = 'group-001'
+                principalId = 'principal-001'
+                group       = [PSCustomObject]@{ displayName = 'Finance Team' }
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeGroup }
+            Mock -ModuleName Omnicit.PIM Get-MgContext {
+                [PSCustomObject]@{ Scopes = @('openid'); TenantId = 'tenant-001'; ClientId = 'cli-001' }
+            }
+            Mock -ModuleName Omnicit.PIM Disconnect-MgGraph { }
+            Mock -ModuleName Omnicit.PIM Connect-MgGraph { }
+            Mock -ModuleName Omnicit.PIM Get-MgGraphOption { [PSCustomObject]@{ DisableLoginByWAM = $false } }
+            Mock -ModuleName Omnicit.PIM Set-MgGraphOption { }
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                throw [System.Net.Http.HttpRequestException]::new(
+                    '{"error":{"code":"RoleAssignmentRequestAcrsValidationFailed","message":"&claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%20%22value%22%3A%22c1%22%7D%7D%7D"}}'
+                )
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'does not throw a terminating error' {
+            { Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -ErrorAction SilentlyContinue } | Should -Not -Throw
+        }
+
+        It 'writes a non-terminating error' {
+            $Errors = @()
+            Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
+        }
+
+        It 'sets the FullyQualifiedErrorId to RoleAssignmentRequestAcrsValidationFailed' {
+            $Errors = @()
+            Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors[-1].FullyQualifiedErrorId | Should -BeLike '*RoleAssignmentRequestAcrsValidationFailed*'
+        }
+
+        It 'includes a hint to run Connect-MgGraph in the error message' {
+            $Errors = @()
+            Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors[-1].Exception.Message | Should -BeLike '*Connect-MgGraph*'
+        }
+    }
 }
