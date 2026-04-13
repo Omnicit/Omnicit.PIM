@@ -477,7 +477,7 @@
         }
     }
 
-    Context 'When the API returns RoleAssignmentRequestAcrsValidationFailed (stale session / CAE challenge)' {
+    Context 'When the API returns RoleAssignmentRequestAcrsValidationFailed and auto-reconnect succeeds' {
         BeforeAll {
             $FakeRole = [PSCustomObject]@{
                 id               = 'elig-001'
@@ -488,6 +488,76 @@
                 principal        = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
             }
             Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeRole }
+            Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
+            Mock -ModuleName Omnicit.PIM Get-MgContext {
+                [PSCustomObject]@{ Scopes = @('openid'); TenantId = 'tenant-001'; ClientId = 'cli-001' }
+            }
+            Mock -ModuleName Omnicit.PIM Disconnect-MgGraph { }
+            Mock -ModuleName Omnicit.PIM Connect-MgGraph { }
+            Mock -ModuleName Omnicit.PIM Get-MgGraphOption { [PSCustomObject]@{ DisableLoginByWAM = $false } }
+            Mock -ModuleName Omnicit.PIM Set-MgGraphOption { }
+            $script:AcrsPostCallCount = 0
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                $script:AcrsPostCallCount++
+                if ($script:AcrsPostCallCount -le 1) {
+                    throw [System.Net.Http.HttpRequestException]::new(
+                        '{"error":{"code":"RoleAssignmentRequestAcrsValidationFailed","message":"&claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%20%22value%22%3A%22c1%22%7D%7D%7D"}}'
+                    )
+                }
+                return @{
+                    id               = 'req-001'
+                    action           = 'selfActivate'
+                    roleDefinitionId = 'role-def-001'
+                    directoryScopeId = '/'
+                    principalId      = 'principal-001'
+                    status           = 'Provisioned'
+                }
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+        BeforeEach {
+            $script:AcrsPostCallCount = 0
+        }
+
+        It 'calls Disconnect-MgGraph once during auto-reconnect' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)'
+            Should -Invoke -ModuleName Omnicit.PIM Disconnect-MgGraph -Times 1 -Scope It
+        }
+
+        It 'calls Connect-MgGraph once during auto-reconnect' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)'
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Scope It
+        }
+
+        It 'calls Invoke-MgGraphRequest POST twice (initial attempt plus retry)' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'returns a PSCustomObject tagged with Omnicit.PIM.DirectoryAssignmentScheduleRequest' {
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)'
+            $Result | Should -Not -BeNullOrEmpty
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryAssignmentScheduleRequest'
+        }
+    }
+
+    Context 'When the API returns RoleAssignmentRequestAcrsValidationFailed and retry also fails with ACRS' {
+        BeforeAll {
+            $FakeRole = [PSCustomObject]@{
+                id               = 'elig-001'
+                roleDefinitionId = 'role-def-001'
+                directoryScopeId = '/'
+                principalId      = 'principal-001'
+                roleDefinition   = [PSCustomObject]@{ displayName = 'Global Administrator' }
+                principal        = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeRole }
+            Mock -ModuleName Omnicit.PIM Get-MgContext {
+                [PSCustomObject]@{ Scopes = @('openid'); TenantId = 'tenant-001'; ClientId = 'cli-001' }
+            }
+            Mock -ModuleName Omnicit.PIM Disconnect-MgGraph { }
+            Mock -ModuleName Omnicit.PIM Connect-MgGraph { }
+            Mock -ModuleName Omnicit.PIM Get-MgGraphOption { [PSCustomObject]@{ DisableLoginByWAM = $false } }
+            Mock -ModuleName Omnicit.PIM Set-MgGraphOption { }
             Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
                 throw [System.Net.Http.HttpRequestException]::new(
                     '{"error":{"code":"RoleAssignmentRequestAcrsValidationFailed","message":"&claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%20%22value%22%3A%22c1%22%7D%7D%7D"}}'

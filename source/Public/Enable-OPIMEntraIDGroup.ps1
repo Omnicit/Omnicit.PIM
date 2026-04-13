@@ -102,35 +102,69 @@
                     $Err = Convert-GraphHttpException $PSItem
                     $AllMsgs = "$($Err.FullyQualifiedErrorId) $($Err.Exception.Message) $($PSItem.Exception.Message)"
                     if ($AllMsgs -match 'RoleAssignmentRequestAcrsValidationFailed') {
-                        $AcrsMsg = "Your session requires step-up re-authentication (ACRS). Run 'Disconnect-MgGraph' followed by 'Connect-MgGraph' to force a new token, then retry."
-                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                            [System.Exception]::new($AcrsMsg, $Err.Exception),
-                            'RoleAssignmentRequestAcrsValidationFailed',
-                            [System.Management.Automation.ErrorCategory]::AuthenticationError, $null))
-                        continue
-                    }
-                    if ($AllMsgs -notmatch 'RoleAssignmentRequestPolicyValidationFailed') {
+                        # PIM requires ACRS 'c1'; the current token no longer carries that claim.
+                        # On Windows, Web Account Manager (WAM) or the MSAL process-level cache may
+                        # reuse the same token even after Disconnect-MgGraph.  Disable WAM temporarily
+                        # so Connect-MgGraph is forced to obtain a truly fresh token.  Retry once.
+                        $MgCtx = Get-MgContext
+                        $ConnectSplat = @{ ErrorAction = 'Stop' }
+                        if ($MgCtx.Scopes)   { $ConnectSplat['Scopes']   = $MgCtx.Scopes }
+                        if ($MgCtx.TenantId) { $ConnectSplat['TenantId'] = $MgCtx.TenantId }
+                        if ($MgCtx.ClientId) { $ConnectSplat['ClientId'] = $MgCtx.ClientId }
+                        $WamWasEnabled = $false
+                        if ($IsWindows) {
+                            try {
+                                if (-not (Get-MgGraphOption -ErrorAction Stop).DisableLoginByWAM) {
+                                    Set-MgGraphOption -DisableLoginByWAM $true -ErrorAction Stop
+                                    $WamWasEnabled = $true
+                                }
+                            } catch { }
+                        }
+                        try {
+                            $null = Disconnect-MgGraph -ErrorAction Stop
+                            $null = Connect-MgGraph @ConnectSplat
+                            Invoke-MgGraphRequest -Method POST -Uri 'v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests' -Body $Request -Verbose:$false -ErrorAction Stop
+                        } catch {
+                            $RetryErr  = Convert-GraphHttpException $PSItem
+                            $RetryMsgs = "$($RetryErr.FullyQualifiedErrorId) $($RetryErr.Exception.Message) $($PSItem.Exception.Message)"
+                            if ($RetryMsgs -match 'RoleAssignmentRequestAcrsValidationFailed') {
+                                $AcrsMsg = "Your session requires step-up re-authentication (ACRS) and automatic re-authentication failed. " +
+                                    "Open a new PowerShell session and run 'Connect-MgGraph' to obtain a fresh token, then retry. " +
+                                    "On Windows, if the issue persists after reconnecting, try: Set-MgGraphOption -DisableLoginByWAM `$true"
+                                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                                    [System.Exception]::new($AcrsMsg, $RetryErr.Exception),
+                                    'RoleAssignmentRequestAcrsValidationFailed',
+                                    [System.Management.Automation.ErrorCategory]::AuthenticationError, $null))
+                            } else {
+                                $PSCmdlet.WriteError($RetryErr)
+                            }
+                            continue
+                        } finally {
+                            if ($WamWasEnabled) {
+                                try { Set-MgGraphOption -DisableLoginByWAM $false -ErrorAction SilentlyContinue } catch { }
+                            }
+                        }
+                    } elseif ($AllMsgs -notmatch 'RoleAssignmentRequestPolicyValidationFailed') {
                         $PSCmdlet.WriteError($Err)
                         continue
-                    }
-                    if ($AllMsgs -match 'JustificationRule') {
+                    } elseif ($AllMsgs -match 'JustificationRule') {
                         $JustMsg = 'Your PIM policy requires a justification for this group. Use the -Justification parameter.'
                         $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                             [System.Exception]::new($JustMsg, $Err.Exception),
                             'RoleAssignmentRequestPolicyValidationFailed',
                             [System.Management.Automation.ErrorCategory]::OperationStopped, $null))
                         continue
-                    }
-                    if ($AllMsgs -match 'ExpirationRule') {
+                    } elseif ($AllMsgs -match 'ExpirationRule') {
                         $ExpMsg = 'Your PIM policy requires a shorter expiration. Use -NotAfter to specify an earlier time.'
                         $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                             [System.Exception]::new($ExpMsg, $Err.Exception),
                             'RoleAssignmentRequestPolicyValidationFailed',
                             [System.Management.Automation.ErrorCategory]::OperationStopped, $null))
                         continue
+                    } else {
+                        $PSCmdlet.WriteError($Err)
+                        continue
                     }
-                    $PSCmdlet.WriteError($Err)
-                    continue
                 }
 
                 # Rehydrate group info from the eligibility schedule
