@@ -118,7 +118,9 @@
                                     Set-MgGraphOption -DisableLoginByWAM $true -ErrorAction Stop
                                     $WamWasEnabled = $true
                                 }
-                            } catch { }
+                            } catch {
+                                Write-Debug "WAM state could not be determined or changed; skipping WAM disable. $_"
+                            }
                         }
                         try {
                             $null = Disconnect-MgGraph -ErrorAction Stop
@@ -141,7 +143,9 @@
                             continue
                         } finally {
                             if ($WamWasEnabled) {
-                                try { Set-MgGraphOption -DisableLoginByWAM $false -ErrorAction SilentlyContinue } catch { }
+                                try { Set-MgGraphOption -DisableLoginByWAM $false -ErrorAction SilentlyContinue } catch {
+                                    Write-Debug "WAM state could not be restored. $_"
+                                }
                             }
                         }
                     } elseif ($AllMsgs -notmatch 'RoleAssignmentRequestPolicyValidationFailed') {
