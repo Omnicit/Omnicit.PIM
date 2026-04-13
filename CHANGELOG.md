@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- For any bug fix.
+- `Enable-OPIMEntraIDGroup` and `Enable-OPIMDirectoryRole` now emit an actionable non-terminating error when the Graph API returns `RoleAssignmentRequestAcrsValidationFailed`. This error indicates a Continuous Access Evaluation (CAE) claims challenge — the session token no longer satisfies the step-up authentication requirement (ACRS `c1`) enforced by Conditional Access. The error message now instructs the user to run `Connect-MgGraph` to refresh the session before retrying. Previously the raw URL-encoded claims payload was surfaced verbatim.
 
 ### Security
 

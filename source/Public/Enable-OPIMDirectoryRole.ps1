@@ -113,6 +113,14 @@
                 } catch {
                     $Err = Convert-GraphHttpException $PSItem
                     $AllMsgs = "$($Err.FullyQualifiedErrorId) $($Err.Exception.Message) $($PSItem.Exception.Message)"
+                    if ($AllMsgs -match 'RoleAssignmentRequestAcrsValidationFailed') {
+                        $AcrsMsg = "Your session requires step-up re-authentication (ACRS). Run 'Disconnect-MgGraph' followed by 'Connect-MgGraph' to force a new token, then retry."
+                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new($AcrsMsg, $Err.Exception),
+                            'RoleAssignmentRequestAcrsValidationFailed',
+                            [System.Management.Automation.ErrorCategory]::AuthenticationError, $null))
+                        continue
+                    }
                     if ($AllMsgs -notmatch 'RoleAssignmentRequestPolicyValidationFailed') {
                         $PSCmdlet.WriteError($Err)
                         continue
