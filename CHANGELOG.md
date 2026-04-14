@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Invoke-GraphWithAcrsRetry` (private) — wraps `Invoke-MgGraphRequest` for PIM activation POST requests with automatic ACRS claims-challenge retry via MSAL interactive authentication. Used by `Enable-OPIMDirectoryRole` and `Enable-OPIMEntraIDGroup`.
 - `Enable-OPIMMyRole` gains four new switch parameters: `-AllEligible`, `-AllEligibleDirectoryRoles`, `-AllEligibleEntraIDGroups`, `-AllEligibleAzureRoles`. These bypass the TenantMap filter and activate all eligible roles in the selected categories, each requiring interactive ShouldProcess confirmation (supports `-WhatIf`/`-Confirm`).
 - `Omnicit.PIM.AzureAssignmentScheduleRequest` type with matching `Format.ps1xml` and `Types.ps1xml` — enables consistent table output for `Enable-OPIMAzureRole` and `Disable-OPIMAzureRole` results.
 - `Get-OPIMConfiguration` — reads the TenantMap.psd1 file and returns typed `Omnicit.PIM.TenantConfiguration` objects (one per alias). Supports `-TenantAlias` filter and `-TenantMapPath` override. Alias: `Get-PIMConfig`.
@@ -33,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Security**: All Graph API `catch` blocks now call `$null = $Error.Remove($PSItem)` as the first statement, removing the raw `HttpRequestMessage` (which contains the `Authorization: Bearer <token>`) from `$Error` before any further processing. Previously the bearer token could be inspected via `$Error` after a failed Graph call.
 - `Enable-OPIMEntraIDGroup` and `Enable-OPIMDirectoryRole` now surface `RoleAssignmentRequestAcrsValidationFailed` (CAE/ACRS claims challenge) as a direct, non-terminating `AuthenticationError` with an actionable message directing the user to run `Connect-MgGraph` in a new PowerShell session. The previous WAM-disable/disconnect/retry logic has been removed because `Set-MgGraphOption -DisableLoginByWAM $true` is silently ignored when using the default Graph ClientId, making the retry ineffective and causing unnecessary session disconnection.
+- All `IArgumentCompleter` class methods now invoke `Get-OPIM*` functions via `[scriptblock]::Create()` to ensure Pester mocks can intercept calls from .NET class method bodies.
 
 ### Security
 

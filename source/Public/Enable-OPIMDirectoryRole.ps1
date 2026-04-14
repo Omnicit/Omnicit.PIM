@@ -108,32 +108,23 @@
                     $UserPrincipalName,
                     "Activate $($Role.roleDefinition.displayName) for scope $($Role.directoryScopeId) from $NotBefore to $RoleExpireTime"
                 )) {
-                $Response = try {
-                    Invoke-MgGraphRequest -Method POST -Uri 'v1.0/roleManagement/directory/roleAssignmentScheduleRequests' -Body $Request -Verbose:$false -ErrorAction Stop
-                } catch {
-                    # Remove the raw error record immediately; its TargetObject (HttpRequestMessage)
-                    # contains the Authorization header with the bearer token in plain text.
-                    $null = $Error.Remove($PSItem)
-                    $Err = Convert-GraphHttpException $PSItem
-                    $AllMsgs = "$($Err.FullyQualifiedErrorId) $($Err.Exception.Message) $($PSItem.Exception.Message)"
-                    if ($AllMsgs -match 'RoleAssignmentRequestAcrsValidationFailed') {
-                        # The Graph API returned a Conditional Access claims challenge requiring
-                        # authentication context 'c1'.  A silent WAM reconnect cannot satisfy this
-                        # because the default ClientId always re-uses WAM on Windows regardless of
-                        # Set-MgGraphOption -DisableLoginByWAM.  Surface the error directly so the
-                        # user can take action without their session being silently disconnected.
-                        $AcrsMsg = "PIM requires re-authentication with Conditional Access authentication " +
-                            "context 'c1'. Your current session token does not satisfy this claim requirement. " +
-                            "Run Disconnect-MgGraph, then Connect-MgGraph in a new PowerShell session to " +
-                            "obtain a fresh token and retry. If the issue persists, the tenant may require " +
-                            "a dedicated app registration to satisfy the authentication context policy."
+                $GraphUri = 'v1.0/roleManagement/directory/roleAssignmentScheduleRequests'
+                $Result = Invoke-GraphWithAcrsRetry -Uri $GraphUri -Body $Request
+
+                # Invoke-GraphWithAcrsRetry returns a hashtable with _AcrsError key when the call failed.
+                # Success returns a plain response hashtable without this key.
+                if ($Result -is [hashtable] -and $Result.ContainsKey('_AcrsError')) {
+                    $Err     = $Result._ErrorRecord
+                    $AllMsgs = $Result._AllMsgs
+                    if ($Result._AcrsError -and ($Result._NoClaimsExtracted -or $Result._NoMsal -or $Result._MsalBuildFailed -or $Result._NoWithClaims -or $Result._TokenFailed -or $Result._RetryFailed)) {
+                        $AcrsMsg = 'PIM requires Conditional Access authentication context that your current ' +
+                            'session token does not satisfy. The automatic claims-challenge retry failed. ' +
+                            'Run Disconnect-MgGraph, then Connect-MgGraph in a new PowerShell session. ' +
+                            'If the issue persists, the tenant may require a custom app registration.'
                         $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                             [System.Exception]::new($AcrsMsg, $Err.Exception),
                             'RoleAssignmentRequestAcrsValidationFailed',
                             [System.Management.Automation.ErrorCategory]::AuthenticationError, $null))
-                        continue
-                    } elseif ($AllMsgs -notmatch 'RoleAssignmentRequestPolicyValidationFailed') {
-                        $PSCmdlet.WriteError($Err)
                         continue
                     } elseif ($AllMsgs -match 'JustificationRule') {
                         $JustMsg = 'Your PIM policy requires a justification for this role. Use the -Justification parameter.'
@@ -154,6 +145,8 @@
                         continue
                     }
                 }
+
+                $Response = $Result
 
                 # Rehydrate expanded navigation properties from the eligibility schedule
                 'roleDefinition', 'principal', 'directoryScope' | Restore-GraphProperty $Request $Response $Role

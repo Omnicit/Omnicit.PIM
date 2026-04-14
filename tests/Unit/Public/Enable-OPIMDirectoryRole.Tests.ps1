@@ -488,11 +488,19 @@
                 principal        = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
             }
             Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeRole }
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
-                throw [System.Net.Http.HttpRequestException]::new(
-                    '{"error":{"code":"RoleAssignmentRequestAcrsValidationFailed","message":"&claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%20%22value%22%3A%22c1%22%7D%7D%7D"}}'
-                )
-            } -ParameterFilter { $Method -eq 'POST' }
+            Mock -ModuleName Omnicit.PIM Invoke-GraphWithAcrsRetry {
+                return @{
+                    _AcrsError   = $true
+                    _ErrorRecord = [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('RoleAssignmentRequestAcrsValidationFailed: ACRS validation failed'),
+                        'RoleAssignmentRequestAcrsValidationFailed',
+                        [System.Management.Automation.ErrorCategory]::OperationStopped,
+                        $null
+                    )
+                    _AllMsgs     = 'RoleAssignmentRequestAcrsValidationFailed ACRS validation failed'
+                    _NoMsal      = $true
+                }
+            }
         }
 
         It 'does not throw a terminating error' {
@@ -517,9 +525,9 @@
             $Errors[-1].Exception.Message | Should -BeLike '*Connect-MgGraph*'
         }
 
-        It 'calls Invoke-MgGraphRequest POST once only (no retry)' {
+        It 'calls Invoke-GraphWithAcrsRetry once only (no double retry)' {
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -ErrorAction SilentlyContinue
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter { $Method -eq 'POST' }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-GraphWithAcrsRetry -Times 1 -Scope It
         }
 
         It 'does not call Disconnect-MgGraph' {

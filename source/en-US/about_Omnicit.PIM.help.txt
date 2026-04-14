@@ -2,16 +2,101 @@ TOPIC
     about_Omnicit.PIM
 
 SHORT DESCRIPTION
-    Entra ID Privileged Identity Management (PIM) Self Activation Commands for Directory Roles, Azure Resources, and Entra ID Groups
+    Entra ID Privileged Identity Management (PIM) Self Activation Commands for
+    Directory Roles, Azure Resources, and Entra ID Groups.
 
 LONG DESCRIPTION
-    Entra ID Privileged Identity Management (PIM) Self Activation Commands for Directory Roles, Azure Resources, and Entra ID Groups
+    Omnicit.PIM is a PowerShell 7.2+ (Core-only) module for self-service
+    activation and deactivation of PIM roles and group memberships across three
+    surfaces:
+
+    Surface              Noun             Example cmdlet
+    -------              ----             --------------
+    Directory Roles      DirectoryRole    Enable-OPIMDirectoryRole
+    Azure RBAC Roles     AzureRole        Enable-OPIMAzureRole
+    Entra ID Groups      EntraIDGroup     Enable-OPIMEntraIDGroup
+
+    All cmdlets use the canonical prefix OPIM and short PIM aliases are
+    available for convenience (e.g. Enable-PIMRole, pim).
+
+    DEPENDENCIES
+
+    The module requires:
+      - Microsoft.Graph.Authentication (>= 2.36.0) for all Graph API calls
+      - Az.Resources (>= 9.0.3) for Azure RBAC PIM operations
+
+    No other Microsoft.Graph.* SDK modules are needed; all Graph calls use
+    Invoke-MgGraphRequest directly.
+
+    CONNECTION SCOPES
+
+    Directory roles and Entra ID groups require Microsoft Graph scopes:
+      Connect-MgGraph -Scopes 'RoleEligibilitySchedule.ReadWrite.Directory',
+                               'RoleAssignmentSchedule.ReadWrite.Directory',
+                               'PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup',
+                               'PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup',
+                               'AdministrativeUnit.Read.All'
+
+    Azure RBAC roles require:
+      Connect-AzAccount
+
+    CONFIGURATION (TENANTMAP)
+
+    The *-OPIMConfiguration cmdlets manage a TenantMap.psd1 file that maps
+    short tenant aliases to Azure Tenant IDs and optional default role lists.
+
+      Install-OPIMConfiguration  Create a new alias
+      Get-OPIMConfiguration      Read current configuration
+      Set-OPIMConfiguration      Update an existing alias
+      Remove-OPIMConfiguration   Delete an alias
+
+    The TenantMap is stored at:
+      $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1
+
+    ENABLE-OPIMMYROLE (alias: pim)
+
+    The all-in-one activation command. Connects to Microsoft Graph (and Azure
+    if configured) and activates eligible roles for a named tenant alias:
+
+      pim -TenantAlias contoso -Hours 4 -Justification 'Incident response'
+
+    Use -AllEligible, -AllEligibleDirectoryRoles, -AllEligibleEntraIDGroups,
+    or -AllEligibleAzureRoles to bypass the TenantMap filter and activate
+    all eligible roles in the selected categories.
+
+    DEFAULT ACTIVATION DURATION
+
+    The default activation period is 1 hour. Override with -Hours or -Until,
+    or set persistently via:
+      $PSDefaultParameterValues['Enable-OPIM*:Hours'] = 4
+
+    WHATIF / CONFIRM SUPPORT
+
+    All Enable-* and Disable-* commands support -WhatIf and -Confirm:
+      Get-OPIMDirectoryRole | Enable-OPIMDirectoryRole -WhatIf
 
 EXAMPLES
-    PS C:\> {{ add examples here }}
+    PS C:\> Get-OPIMDirectoryRole
+    Lists all eligible directory roles for the current user.
+
+    PS C:\> Get-OPIMDirectoryRole | Enable-OPIMDirectoryRole -Hours 4 -Justification 'Incident response'
+    Activates all eligible directory roles for 4 hours.
+
+    PS C:\> Enable-OPIMDirectoryRole -RoleName 'Global Administrator' -Wait
+    Activates the specified role and waits until it is fully provisioned.
+
+    PS C:\> Get-OPIMAzureRole -Activated | Disable-OPIMAzureRole
+    Deactivates all active Azure RBAC roles.
+
+    PS C:\> pim -TenantAlias contoso -Hours 8 -Justification 'Daily operations'
+    Activates all stored roles for the 'contoso' tenant alias.
 
 NOTE:
-    Thank you to all those who contributed to this module, by writing code, sharing opinions, and provided feedback.
+    Thank you to all those who contributed to this module, by writing code,
+    sharing opinions, and providing feedback.
+
+    Originally created by Justin Grote (@justinwgrote). Overhauled and
+    maintained by Omnicit.
 
 TROUBLESHOOTING NOTE:
     Look out on the Github repository for issues and new releases.
@@ -21,31 +106,32 @@ TROUBLESHOOTING NOTE:
     If an Enable-OPIM* command fails with the error code
     'RoleAssignmentRequestAcrsValidationFailed', the Microsoft Graph token does
     not satisfy the step-up authentication requirement (ACRS claim 'c1') enforced
-    by a Conditional Access policy for PIM operations.  This typically occurs
-    after a period of inactivity or when a CA policy is tightened.
+    by a Conditional Access policy for PIM operations.
 
-    The module attempts an automatic recovery: it disconnects, optionally disables
-    Windows Web Account Manager (WAM) to prevent the MSAL cache from returning the
-    same token, and then reconnects before retrying the request.  This succeeds in
-    most scenarios.
+    The module automatically attempts to acquire a new token with the required
+    claims via MSAL interactive authentication (opens a browser window). If
+    this succeeds the request is retried transparently.
 
-    If the automatic recovery also fails (you see the error above), the MSAL
-    process-level token cache is returning the same token regardless of a
-    reconnect.  To resolve this, open a new PowerShell session and reconnect:
+    If the automatic recovery fails, the error message directs you to open a
+    new PowerShell session and reconnect:
 
         # In a fresh PowerShell window:
-        Connect-MgGraph -Scopes 'PrivilegedAccess.ReadWrite.AzureADGroup', ...
-        Enable-OPIMEntraIDGroup -GroupName '...'
+        Connect-MgGraph -Scopes 'RoleEligibilitySchedule.ReadWrite.Directory', ...
+        Enable-OPIMDirectoryRole -RoleName '...'
 
-    If symptoms persist even in a new session, disable WAM before connecting:
+    If the issue persists, the tenant may require a custom app registration
+    for claims-challenge support.
 
-        Set-MgGraphOption -DisableLoginByWAM $true
-        Connect-MgGraph -Scopes 'PrivilegedAccess.ReadWrite.AzureADGroup', ...
-        Enable-OPIMEntraIDGroup -GroupName '...'
+    Bearer token security
+    ---------------------
+    All Graph API error handling removes the raw HttpRequestMessage from the
+    $Error collection immediately after catching, preventing the bearer token
+    (in the Authorization header) from being exposed through $Error inspection.
 
 SEE ALSO
-    - {{ Please add Project URI such as github }}}
+    - https://github.com/Omnicit/Omnicit.PIM
 
 KEYWORDS
-    {{ Add comma separated keywords here }}
+    PIM, Privileged Identity Management, Entra ID, Azure AD, RBAC, Graph,
+    Directory Roles, Azure Roles, PIM Groups, Self-Activation
 
