@@ -111,55 +111,27 @@
                 $Response = try {
                     Invoke-MgGraphRequest -Method POST -Uri 'v1.0/roleManagement/directory/roleAssignmentScheduleRequests' -Body $Request -Verbose:$false -ErrorAction Stop
                 } catch {
+                    # Remove the raw error record immediately; its TargetObject (HttpRequestMessage)
+                    # contains the Authorization header with the bearer token in plain text.
+                    $null = $Error.Remove($PSItem)
                     $Err = Convert-GraphHttpException $PSItem
                     $AllMsgs = "$($Err.FullyQualifiedErrorId) $($Err.Exception.Message) $($PSItem.Exception.Message)"
                     if ($AllMsgs -match 'RoleAssignmentRequestAcrsValidationFailed') {
-                        # PIM requires ACRS 'c1'; the current token no longer carries that claim.
-                        # On Windows, Web Account Manager (WAM) or the MSAL process-level cache may
-                        # reuse the same token even after Disconnect-MgGraph.  Disable WAM temporarily
-                        # so Connect-MgGraph is forced to obtain a truly fresh token.  Retry once.
-                        $MgCtx = Get-MgContext
-                        $ConnectSplat = @{ ErrorAction = 'Stop' }
-                        if ($MgCtx.Scopes)   { $ConnectSplat['Scopes']   = $MgCtx.Scopes }
-                        if ($MgCtx.TenantId) { $ConnectSplat['TenantId'] = $MgCtx.TenantId }
-                        if ($MgCtx.ClientId) { $ConnectSplat['ClientId'] = $MgCtx.ClientId }
-                        $WamWasEnabled = $false
-                        if ($IsWindows) {
-                            try {
-                                if (-not (Get-MgGraphOption -ErrorAction Stop).DisableLoginByWAM) {
-                                    Set-MgGraphOption -DisableLoginByWAM $true -ErrorAction Stop
-                                    $WamWasEnabled = $true
-                                }
-                            } catch {
-                                Write-Debug "WAM state could not be determined or changed; skipping WAM disable. $_"
-                            }
-                        }
-                        try {
-                            $null = Disconnect-MgGraph -ErrorAction Stop
-                            $null = Connect-MgGraph @ConnectSplat
-                            Invoke-MgGraphRequest -Method POST -Uri 'v1.0/roleManagement/directory/roleAssignmentScheduleRequests' -Body $Request -Verbose:$false -ErrorAction Stop
-                        } catch {
-                            $RetryErr  = Convert-GraphHttpException $PSItem
-                            $RetryMsgs = "$($RetryErr.FullyQualifiedErrorId) $($RetryErr.Exception.Message) $($PSItem.Exception.Message)"
-                            if ($RetryMsgs -match 'RoleAssignmentRequestAcrsValidationFailed') {
-                                $AcrsMsg = "Your session requires step-up re-authentication (ACRS) and automatic re-authentication failed. " +
-                                    "Open a new PowerShell session and run 'Connect-MgGraph' to obtain a fresh token, then retry. " +
-                                    "On Windows, if the issue persists after reconnecting, try: Set-MgGraphOption -DisableLoginByWAM `$true"
-                                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                                    [System.Exception]::new($AcrsMsg, $RetryErr.Exception),
-                                    'RoleAssignmentRequestAcrsValidationFailed',
-                                    [System.Management.Automation.ErrorCategory]::AuthenticationError, $null))
-                            } else {
-                                $PSCmdlet.WriteError($RetryErr)
-                            }
-                            continue
-                        } finally {
-                            if ($WamWasEnabled) {
-                                try { Set-MgGraphOption -DisableLoginByWAM $false -ErrorAction SilentlyContinue } catch {
-                                    Write-Debug "WAM state could not be restored. $_"
-                                }
-                            }
-                        }
+                        # The Graph API returned a Conditional Access claims challenge requiring
+                        # authentication context 'c1'.  A silent WAM reconnect cannot satisfy this
+                        # because the default ClientId always re-uses WAM on Windows regardless of
+                        # Set-MgGraphOption -DisableLoginByWAM.  Surface the error directly so the
+                        # user can take action without their session being silently disconnected.
+                        $AcrsMsg = "PIM requires re-authentication with Conditional Access authentication " +
+                            "context 'c1'. Your current session token does not satisfy this claim requirement. " +
+                            "Run Disconnect-MgGraph, then Connect-MgGraph in a new PowerShell session to " +
+                            "obtain a fresh token and retry. If the issue persists, the tenant may require " +
+                            "a dedicated app registration to satisfy the authentication context policy."
+                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new($AcrsMsg, $Err.Exception),
+                            'RoleAssignmentRequestAcrsValidationFailed',
+                            [System.Management.Automation.ErrorCategory]::AuthenticationError, $null))
+                        continue
                     } elseif ($AllMsgs -notmatch 'RoleAssignmentRequestPolicyValidationFailed') {
                         $PSCmdlet.WriteError($Err)
                         continue

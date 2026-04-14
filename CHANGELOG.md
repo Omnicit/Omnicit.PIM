@@ -31,7 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `Enable-OPIMEntraIDGroup` and `Enable-OPIMDirectoryRole` now automatically recover from `RoleAssignmentRequestAcrsValidationFailed` (CAE/ACRS claims challenge) by disconnecting, temporarily disabling Windows Web Account Manager (WAM) to prevent MSAL from reusing the cached token, reconnecting, and retrying the request transparently. If the retry also fails, a clear non-terminating error is emitted directing the user to open a new PowerShell session with `Connect-MgGraph` to obtain a truly fresh token. Previously the raw URL-encoded claims payload was surfaced verbatim.
+- **Security**: All Graph API `catch` blocks now call `$null = $Error.Remove($PSItem)` as the first statement, removing the raw `HttpRequestMessage` (which contains the `Authorization: Bearer <token>`) from `$Error` before any further processing. Previously the bearer token could be inspected via `$Error` after a failed Graph call.
+- `Enable-OPIMEntraIDGroup` and `Enable-OPIMDirectoryRole` now surface `RoleAssignmentRequestAcrsValidationFailed` (CAE/ACRS claims challenge) as a direct, non-terminating `AuthenticationError` with an actionable message directing the user to run `Connect-MgGraph` in a new PowerShell session. The previous WAM-disable/disconnect/retry logic has been removed because `Set-MgGraphOption -DisableLoginByWAM $true` is silently ignored when using the default Graph ClientId, making the retry ineffective and causing unnecessary session disconnection.
 
 ### Security
 

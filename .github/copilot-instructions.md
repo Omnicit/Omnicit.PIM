@@ -1,5 +1,28 @@
 ﻿# Omnicit.PIM Copilot Instructions
 
+## Branch Policy — ALWAYS CHECK FIRST
+
+**Before making any code change, Copilot must:**
+
+1. Determine the current branch (`git branch --show-current`).
+2. If the current branch is `main` (or any other protected/shared branch), **stop and ask the user** whether to:
+   - Create a new branch — propose a name based on the change (e.g. `fix/acrs-bearer-token-leak`, `feat/add-azure-role-filter`, `chore/update-tests`).
+   - Continue on the current branch (explicit user consent required).
+3. Only proceed after the user has confirmed the target branch.
+4. If a new branch is requested, create it with `git checkout -b <branch-name>` before touching any files.
+
+**Branch naming convention:**
+
+| Change type | Prefix | Example |
+|---|---|---|
+| Bug fix | `fix/` | `fix/acrs-bearer-token-leak` |
+| New feature | `feat/` | `feat/enable-myroleset-parallel` |
+| Tests / QA | `test/` | `test/fix-completer-mocks` |
+| Docs / chore | `chore/` | `chore/update-readme` |
+| Refactor | `refactor/` | `refactor/simplify-error-handling` |
+
+---
+
 ## Project Overview
 
 **Omnicit.PIM** is a PowerShell 7.2+ (Core-only) module for Azure Privileged Identity Management (PIM) self-activation across three pillars:
@@ -212,3 +235,14 @@ See [README.md](../README.md) for full usage examples, connection scopes, `Insta
 - **PowerShell 7.2+ Core only** — `CompatiblePSEditions = @('Core')`. Do not suggest Windows PowerShell 5.x or Desktop-compatible code.
 - **`Install-OPIMConfiguration` is create-only** — it does NOT have a `-Force` parameter. Updating an existing alias is done via `Set-OPIMConfiguration`. Do not add `-Force` back.
 - **`Export-OPIMTenantMap` (private) owns PSD1 serialization** — always call this helper from `Install`, `Set`, and `Remove` instead of inlining the StringBuilder block.
+- **Mocking functions called from `.NET` classes (`IArgumentCompleter`)** — Pester's `InModuleScope { Mock ... }` does NOT intercept calls made from class methods because .NET class method bodies are bound to the module's runspace at class-load time, not the Pester mock scope. Always use `Mock -ModuleName Omnicit.PIM FunctionName { ... }` at the outer `It` / `Context` level when testing completer classes. Class types defined in a module are NOT accessible in the outer test scope (calling `[ClassName]::new()` outside `InModuleScope` raises "Unable to find type"). Use `InModuleScope` for class instantiation, method calls, and assertions — use `Mock -ModuleName` (outside `InModuleScope`) for mocking. Correct pattern:
+  ```powershell
+  It 'test' {
+      Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return $fakeData }
+      InModuleScope Omnicit.PIM {
+          $Completer = [DirectoryEligibleRoleCompleter]::new()
+          $Result = $Completer.CompleteArgument('Enable-OPIMDirectoryRole', 'RoleName', '', $null, @{})
+          $Result | Should -Not -BeNullOrEmpty
+      }
+  }
+  ```
