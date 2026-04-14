@@ -49,6 +49,9 @@
             $Response = try {
                 Invoke-MgGraphRequest -Method POST -Uri 'v1.0/roleManagement/directory/roleAssignmentScheduleRequests' -Body $Request -Verbose:$false -ErrorAction Stop
             } catch {
+                # Remove the raw error record immediately; its TargetObject (HttpRequestMessage)
+                # contains the Authorization header with the bearer token in plain text.
+                $null = $Error.Remove($PSItem)
                 $Err = Convert-GraphHttpException $PSItem
                 $IsActiveToShort = ($Err.FullyQualifiedErrorId -like 'ActiveDurationTooShort*') -or
                                    ($PSItem.Exception.Message -match 'ActiveDurationTooShort')
