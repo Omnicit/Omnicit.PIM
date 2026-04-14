@@ -53,7 +53,7 @@ Source/
 # Build the module (Clean → Build → Changelog)
 ./build.ps1
 
-# Run Pester tests + PSScriptAnalyzer (70% coverage threshold)
+# Run Pester tests + PSScriptAnalyzer (80% coverage threshold)
 ./build.ps1 -AutoRestore -Tasks test
 
 # Build + package as NuGet
@@ -153,6 +153,7 @@ For `SelfDeactivate` supply the `roleAssignmentScheduleInstance` ID, **not** the
 ## Error Handling
 
 - All Graph API errors go through `Convert-GraphHttpException` in `Private/` — converts raw HTTP exceptions to typed PowerShell `ErrorRecord` objects with parsed `error.code` and `error.message`.
+- **Security: `$Error.Remove()` is mandatory in every Graph `catch` block** — call `$null = $Error.Remove($PSItem)` as the **first** statement in every `catch` that handles a Graph API exception. The raw `HttpRequestMessage` in `$Error` contains the `Authorization: Bearer <token>` header in plain text. Failing to remove it leaks the bearer token to anyone inspecting `$Error`.
 - **All functions emit non-terminating errors** via `$PSCmdlet.WriteError()`. Never use bare `throw` in public functions — it terminates the pipeline and prevents `-ErrorAction SilentlyContinue` from working. After `WriteError`, exit with `return` (in `process`) or `continue` (inside a `foreach` loop over multiple roles).
 - Use `Write-CmdletError` (private) to emit non-terminating errors consistently from private helpers.
 - Special error codes to handle: `InsufficientPermissions` (suggest `-All` is required), `ActiveDurationTooShort` (5-min cooldown between activate/deactivate).
@@ -182,6 +183,7 @@ For `SelfDeactivate` supply the `roleAssignmentScheduleInstance` ID, **not** the
 
 - **Duration formatting** — Use `[System.Xml.XmlConvert]::ToString([timespan]...)` for ISO 8601 durations required by PIM APIs, e.g. `PT1H`.
 - **Current user ID** — Use `Get-MyId` (private) which caches the result in `$SCRIPT:_MyIDCache`.
+- **ACRS claims-challenge retry** — `Invoke-GraphWithAcrsRetry` (private) wraps `Invoke-MgGraphRequest` POST calls for PIM activation. When the Graph API returns `RoleAssignmentRequestAcrsValidationFailed`, it extracts the claims JSON, acquires a new token via MSAL `AcquireTokenInteractive` with `WithClaims` (using reflection — MSAL types live in a separate Assembly Load Context), and retries with `Invoke-RestMethod`. On success it returns the response hashtable; on failure it returns a hashtable with `_AcrsError = $true` and diagnostic keys (`_ErrorRecord`, `_AllMsgs`, `_NoClaimsExtracted`, `_NoMsal`, etc.) for the caller to inspect. Callers (`Enable-OPIMDirectoryRole`, `Enable-OPIMEntraIDGroup`) check `$Result.ContainsKey('_AcrsError')` to distinguish success from error. **Do not mock `Invoke-MgGraphRequest` when testing ACRS error paths** — mock `Invoke-GraphWithAcrsRetry` directly to avoid triggering the real MSAL reflection code.
 - **Tab completers** — Return strings in a format that includes the schedule ID in trailing parentheses. Format differs by pillar:
   - Directory roles: `'DisplayName -> ScopeName (id)'` (scope omitted for root `/`)
   - Azure RBAC roles: `'RoleName -> ScopeDisplayName (Name)'` (ID is `.Name`, not `.id`)
@@ -235,7 +237,7 @@ See [README.md](../README.md) for full usage examples, connection scopes, `Insta
 - **PowerShell 7.2+ Core only** — `CompatiblePSEditions = @('Core')`. Do not suggest Windows PowerShell 5.x or Desktop-compatible code.
 - **`Install-OPIMConfiguration` is create-only** — it does NOT have a `-Force` parameter. Updating an existing alias is done via `Set-OPIMConfiguration`. Do not add `-Force` back.
 - **`Export-OPIMTenantMap` (private) owns PSD1 serialization** — always call this helper from `Install`, `Set`, and `Remove` instead of inlining the StringBuilder block.
-- **Mocking functions called from `.NET` classes (`IArgumentCompleter`)** — Pester's `InModuleScope { Mock ... }` does NOT intercept calls made from class methods because .NET class method bodies are bound to the module's runspace at class-load time, not the Pester mock scope. Always use `Mock -ModuleName Omnicit.PIM FunctionName { ... }` at the outer `It` / `Context` level when testing completer classes. Class types defined in a module are NOT accessible in the outer test scope (calling `[ClassName]::new()` outside `InModuleScope` raises "Unable to find type"). Use `InModuleScope` for class instantiation, method calls, and assertions — use `Mock -ModuleName` (outside `InModuleScope`) for mocking. Correct pattern:
+- **Mocking functions called from `.NET` classes (`IArgumentCompleter`)** — Pester's `InModuleScope { Mock ... }` does NOT intercept calls made from class methods because .NET class method bodies are bound to the module's runspace at class-load time, not the Pester mock scope. The completer classes work around this by calling `Get-OPIM*` via `& ([scriptblock]::Create('Get-OPIMDirectoryRole'))` instead of a direct function call — `[scriptblock]::Create()` forces command resolution through the normal pipeline where Pester can intercept. **Do not revert this to a direct call** or mocks will break. Always use `Mock -ModuleName Omnicit.PIM FunctionName { ... }` at the outer `It` / `Context` level when testing completer classes. Class types defined in a module are NOT accessible in the outer test scope (calling `[ClassName]::new()` outside `InModuleScope` raises "Unable to find type"). Use `InModuleScope` for class instantiation, method calls, and assertions — use `Mock -ModuleName` (outside `InModuleScope`) for mocking. Correct pattern:
   ```powershell
   It 'test' {
       Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return $fakeData }

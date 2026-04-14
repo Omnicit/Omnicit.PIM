@@ -14,7 +14,7 @@ class AzureEligibleRoleCompleter : IArgumentCompleter {
         $ErrorActionPreference = 'Stop'
         try {
             Write-Progress -Id 51806 -Activity 'Get Eligible Azure Roles' -Status 'Fetching from Azure' -PercentComplete 1
-            [List[CompletionResult]]$Result = Get-OPIMAzureRole | ForEach-Object {
+            [List[CompletionResult]]$Result = & ([scriptblock]::Create('Get-OPIMAzureRole')) | ForEach-Object {
                 "'{0} -> {1} ({2})'" -f $PSItem.RoleDefinitionDisplayName, $PSItem.ScopeDisplayName, $PSItem.Name
             } | Where-Object {
                 if (-not $wordToComplete) { return $true }
