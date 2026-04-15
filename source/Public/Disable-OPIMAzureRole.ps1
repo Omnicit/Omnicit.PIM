@@ -16,6 +16,9 @@ function Disable-OPIMAzureRole {
     Active Azure RBAC role assignment schedule instance object piped from Get-OPIMAzureRole -Activated.
     .PARAMETER RoleName
     Name of the active Azure role to deactivate. Supports tab completion to currently active roles.
+    .PARAMETER Identity
+    The schedule instance Name from Get-OPIMAzureRole -Activated (the Name property) to deactivate
+    directly without tab completion. Mutually exclusive with -Role and -RoleName.
     #>
     [Alias('Disable-PIMResourceRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
@@ -24,9 +27,21 @@ function Disable-OPIMAzureRole {
         $Role,
         [ArgumentCompleter([AzureActivatedRoleCompleter])]
         [Parameter(ParameterSetName = 'RoleName', Mandatory, Position = 0)]
-        [String]$RoleName
+        [String]$RoleName,
+        [Parameter(ParameterSetName = 'ByIdentity', Mandatory)]
+        [String]$Identity
     )
     process {
+        if ($Identity) {
+            $Role = Get-OPIMAzureRole -Activated | Where-Object Name -EQ $Identity | Select-Object -First 1
+            if (-not $Role) {
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("No active Azure role found with identity '$Identity'."),
+                    'IdentityNotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Identity))
+                return
+            }
+        }
         if ($RoleName) { $Role = Resolve-RoleByName -Activated $RoleName }
 
         $RoleDeactivateParams = @{

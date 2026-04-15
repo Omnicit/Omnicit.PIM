@@ -34,13 +34,28 @@ Connect-MgGraph -Scopes 'RoleEligibilitySchedule.ReadWrite.Directory',
 # List eligible roles
 Get-OPIMDirectoryRole
 
+# List active role assignments
+Get-OPIMDirectoryRole -Activated
+
+# List BOTH eligible and active in one call
+Get-OPIMDirectoryRole -All
+
 # Activate — tab-complete the role name
 Enable-OPIMDirectoryRole <tab>
+
+# Activate using positional params: Role (pos 0), Justification (pos 1), Hours (pos 2)
+Enable-OPIMDirectoryRole 'Global Administrator (elig-id)' 'Incident response' 4
+
+# Activate by schedule ID (from Get-OPIMDirectoryRole id property)
+Enable-OPIMDirectoryRole -Identity 'elig-001'
 
 # Activate all eligible roles for 4 hours with a justification
 Get-OPIMDirectoryRole | Enable-OPIMDirectoryRole -Hours 4 -Justification 'Incident response'
 
-# Deactivate
+# Deactivate by schedule instance ID (from Get-OPIMDirectoryRole -Activated id property)
+Disable-OPIMDirectoryRole -Identity 'active-instance-001'
+
+# Deactivate all active roles
 Get-OPIMDirectoryRole -Activated | Disable-OPIMDirectoryRole
 
 # Activate and wait for provisioning before continuing
@@ -53,11 +68,32 @@ Get-OPIMDirectoryRole | Enable-OPIMDirectoryRole -Wait
 # Connect
 Connect-AzAccount
 
-# List eligible roles
+# List eligible roles (current user, all scopes)
 Get-OPIMAzureRole
+
+# List active role assignments
+Get-OPIMAzureRole -Activated
+
+# List BOTH eligible and active in one call
+Get-OPIMAzureRole -All
+
+# List eligible roles at a specific subscription scope
+Get-OPIMAzureRole -Scope '/subscriptions/00000000-...'
+
+# List active roles at a specific scope (exact scope match only)
+Get-OPIMAzureRole -Activated -Scope '/subscriptions/00000000-...'
 
 # Activate — tab-complete the role name
 Enable-OPIMAzureRole <tab>
+
+# Activate using positional params: Role (pos 0), Justification (pos 1), Hours (pos 2)
+Enable-OPIMAzureRole 'Contributor -> My Subscription (elig-name)' 'Incident response' 4
+
+# Activate by schedule Name (the Name property from Get-OPIMAzureRole)
+Enable-OPIMAzureRole -Identity 'elig-schedule-name'
+
+# Deactivate by schedule instance Name (from Get-OPIMAzureRole -Activated)
+Disable-OPIMAzureRole -Identity 'active-schedule-name'
 
 # Deactivate all active roles
 Get-OPIMAzureRole -Activated | Disable-OPIMAzureRole
@@ -73,16 +109,31 @@ Connect-MgGraph -Scopes 'RoleEligibilitySchedule.ReadWrite.Directory',
 # List eligible group memberships/ownerships
 Get-OPIMEntraIDGroup
 
+# List active group assignments
+Get-OPIMEntraIDGroup -Activated
+
+# List BOTH eligible and active in one call
+Get-OPIMEntraIDGroup -All
+
 # Filter by access type
 Get-OPIMEntraIDGroup -AccessType member
 
 # Activate — tab-complete the group name
 Enable-OPIMEntraIDGroup <tab>
 
+# Activate using positional params: Group (pos 0), Justification (pos 1), Hours (pos 2)
+Enable-OPIMEntraIDGroup 'Finance Team - member (elig-id)' 'Project work' 2
+
+# Activate by schedule ID (from Get-OPIMEntraIDGroup id property)
+Enable-OPIMEntraIDGroup -Identity 'elig-001'
+
 # Activate all eligible group assignments
 Get-OPIMEntraIDGroup | Enable-OPIMEntraIDGroup -Hours 2 -Justification 'Project work'
 
-# Deactivate
+# Deactivate by schedule instance ID (from Get-OPIMEntraIDGroup -Activated id property)
+Disable-OPIMEntraIDGroup -Identity 'active-instance-001'
+
+# Deactivate all active group assignments
 Get-OPIMEntraIDGroup -Activated | Disable-OPIMEntraIDGroup
 ```
 
@@ -381,6 +432,95 @@ Or add to your profile:  `$PSDefaultParameterValues['Enable-OPIM*:Hours'] = 4`
 
 ---
 
+## Positional Parameters for Enable-*
+
+All three `Enable-OPIM*` cmdlets accept positional arguments in this order:
+
+| Position | Parameter | Example |
+|---|---|---|
+| 0 | `-RoleName` / `-GroupName` | `'Global Administrator (elig-id)'` |
+| 1 | `-Justification` | `'Incident response'` |
+| 2 | `-Hours` | `4` |
+
+```powershell
+# Explicit
+Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-id)' -Justification 'Incident' -Hours 4
+
+# Positional (identical result)
+Enable-OPIMDirectoryRole 'Global Administrator (elig-id)' 'Incident' 4
+```
+
+---
+
+## Using -All, -Activated, and default (eligible only)
+
+All `Get-OPIM*` cmdlets support three modes. `-All` and `-Activated` are mutually exclusive:
+
+| Command | Returns |
+|---|---|
+| `Get-OPIMDirectoryRole` | Eligible (inactive) roles only |
+| `Get-OPIMDirectoryRole -Activated` | Currently active role assignments |
+| `Get-OPIMDirectoryRole -All` | Both eligible **and** active for the current user |
+
+The same applies to `Get-OPIMEntraIDGroup` and `Get-OPIMAzureRole`.
+
+> **Note:** `-All` returns both schedule types **for the current user**. It does not list other
+> users' roles. Both result types are returned with their correct TypeNames so Format views apply.
+
+---
+
+## Using -Identity for direct activation/deactivation
+
+Every `Enable-OPIM*` and `Disable-OPIM*` cmdlet accepts `-Identity` to target a specific schedule
+by ID without needing tab completion:
+
+```powershell
+# Get the ID of an eligible role
+Get-OPIMDirectoryRole | Select-Object id, @{n='Role';e={$_.roleDefinition.displayName}}
+
+# Activate by ID
+Enable-OPIMDirectoryRole -Identity 'elig-001'
+
+# Deactivate by ID (use the id from -Activated output)
+Get-OPIMDirectoryRole -Activated | Select-Object id, @{n='Role';e={$_.roleDefinition.displayName}}
+Disable-OPIMDirectoryRole -Identity 'active-instance-001'
+```
+
+For Azure RBAC roles the identity is the **Name** property (not `id`):
+
+```powershell
+Get-OPIMAzureRole | Select-Object Name, RoleDefinitionDisplayName, ScopeId
+Enable-OPIMAzureRole -Identity 'eligible-schedule-name'
+
+Get-OPIMAzureRole -Activated | Select-Object Name, RoleDefinitionDisplayName
+Disable-OPIMAzureRole -Identity 'active-schedule-name'
+```
+
+---
+
+## Using -Filter for OData queries
+
+`Get-OPIMDirectoryRole` and `Get-OPIMEntraIDGroup` accept an OData `-Filter` string for
+server-side filtering. Common examples:
+
+```powershell
+# Filter by role definition (Directory roles)
+Get-OPIMDirectoryRole -Filter "roleDefinitionId eq '62e90394-69f5-4237-9190-012177145e10'"
+
+# Filter by group ID (Entra ID Groups)
+Get-OPIMEntraIDGroup -Filter "groupId eq '00000000-0000-0000-0000-000000000000'"
+
+# Filter by principal (requires elevated permissions)
+Get-OPIMDirectoryRole -Filter "principalId eq '00000000-0000-0000-0000-000000000000'"
+
+# -Identity is shorthand for id eq '<value>' filter
+Get-OPIMDirectoryRole -Identity 'elig-001'
+# equivalent to:
+Get-OPIMDirectoryRole -Filter "id eq 'elig-001'"
+```
+
+---
+
 ## WhatIf / Confirm Support
 
 All activation and deactivation commands support `-WhatIf` and `-Confirm`:
@@ -407,8 +547,8 @@ Use `-Activated` on the `Get-OPIM*` cmdlets to see currently active assignments.
 
 | Dependency | Purpose |
 |---|---|
-| `Microsoft.Graph.Authentication` 2.0+ | Directory roles and Entra ID group PIM (raw `Invoke-MgGraphRequest`) |
-| `Az.Resources` 5.6+ | Azure resource (RBAC) roles |
+| `Microsoft.Graph.Authentication` 2.36+ | Directory roles and Entra ID group PIM (raw `Invoke-MgGraphRequest`) |
+| `Az.Resources` 9.0.3+ | Azure resource (RBAC) roles |
 
 ---
 

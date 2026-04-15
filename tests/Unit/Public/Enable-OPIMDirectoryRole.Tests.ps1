@@ -536,4 +536,89 @@
             Should -Invoke -ModuleName Omnicit.PIM Disconnect-MgGraph -Times 0 -Scope It
         }
     }
+
+    Context 'When -Identity is specified and the role is found' {
+        BeforeAll {
+            $FakeElig = [PSCustomObject]@{
+                id               = 'elig-010'
+                roleDefinitionId = 'role-def-001'
+                directoryScopeId = '/'
+                principalId      = 'principal-001'
+                roleDefinition   = [PSCustomObject]@{ displayName = 'Reports Reader' }
+                principal        = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
+            }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return $FakeElig }
+            Mock -ModuleName Omnicit.PIM Invoke-GraphWithAcrsRetry {
+                return @{
+                    id               = 'req-010'
+                    action           = 'SelfActivate'
+                    roleDefinitionId = 'role-def-001'
+                    directoryScopeId = '/'
+                    principalId      = 'principal-001'
+                    status           = 'Provisioned'
+                }
+            }
+            Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
+        }
+
+        It 'looks up the role via Get-OPIMDirectoryRole -Identity' {
+            Enable-OPIMDirectoryRole -Identity 'elig-010'
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Scope It
+        }
+
+        It 'submits the SelfActivate request' {
+            Enable-OPIMDirectoryRole -Identity 'elig-010'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-GraphWithAcrsRetry -Times 1 -Scope It
+        }
+
+        It 'returns a PSCustomObject tagged with Omnicit.PIM.DirectoryAssignmentScheduleRequest' {
+            $Result = Enable-OPIMDirectoryRole -Identity 'elig-010'
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryAssignmentScheduleRequest'
+        }
+    }
+
+    Context 'When -Identity is specified but no eligible role is found' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return $null }
+        }
+
+        It 'writes a non-terminating error' {
+            $Errors = @()
+            Enable-OPIMDirectoryRole -Identity 'nonexistent-999' -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
+        }
+    }
+
+    Context 'When positional parameters are used' {
+        BeforeAll {
+            $FakeElig = [PSCustomObject]@{
+                id               = 'elig-pos-001'
+                roleDefinitionId = 'role-def-001'
+                directoryScopeId = '/'
+                principalId      = 'principal-001'
+                roleDefinition   = [PSCustomObject]@{ displayName = 'Reports Reader' }
+                principal        = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeElig }
+            Mock -ModuleName Omnicit.PIM Invoke-GraphWithAcrsRetry {
+                return @{
+                    id               = 'req-pos-001'
+                    action           = 'SelfActivate'
+                    roleDefinitionId = 'role-def-001'
+                    directoryScopeId = '/'
+                    principalId      = 'principal-001'
+                    status           = 'Provisioned'
+                }
+            }
+            Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
+        }
+
+        It 'accepts RoleName as position 0, Justification as position 1, Hours as position 2' {
+            Enable-OPIMDirectoryRole 'Reports Reader (elig-pos-001)' 'Incident response' 4
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-GraphWithAcrsRetry -Times 1 -Scope It -ParameterFilter {
+                $Body.justification -eq 'Incident response' -and
+                $Body.scheduleInfo.expiration.duration -eq 'PT4H'
+            }
+        }
+    }
 }

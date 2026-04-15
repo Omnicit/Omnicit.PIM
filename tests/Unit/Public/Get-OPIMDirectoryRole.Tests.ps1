@@ -144,10 +144,9 @@ Describe 'Get-OPIMDirectoryRole' {
             } -ParameterFilter { $Uri -like '*roleAssignmentScheduleInstances*' }
         }
 
-        It 'filters out non-Activated items and returns only the Activated entry' {
+        It 'returns all items from roleAssignmentScheduleInstances without post-filtering by assignmentType' {
             $Result = Get-OPIMDirectoryRole -Activated
-            $Result | Should -HaveCount 1
-            $Result[0].assignmentType | Should -Be 'Activated'
+            $Result | Should -HaveCount 2
         }
     }
 
@@ -155,14 +154,31 @@ Describe 'Get-OPIMDirectoryRole' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
                 return @{ value = @() }
-            } -ParameterFilter { $Uri -like '*roleEligibilitySchedules*' -and $Uri -notlike '*filterByCurrentUser*' }
+            } -ParameterFilter { $Uri -like '*roleEligibilitySchedules*' }
+
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                return @{ value = @() }
+            } -ParameterFilter { $Uri -like '*roleAssignmentScheduleInstances*' }
         }
 
-        It 'calls Invoke-MgGraphRequest without filterByCurrentUser' {
+        It 'calls Invoke-MgGraphRequest for roleEligibilitySchedules with filterByCurrentUser' {
             Get-OPIMDirectoryRole -All
             Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
-                $Uri -like '*roleEligibilitySchedules*' -and $Uri -notlike '*filterByCurrentUser*'
+                $Uri -like '*roleEligibilitySchedules*' -and $Uri -like '*filterByCurrentUser*'
             }
+        }
+
+        It 'calls Invoke-MgGraphRequest for roleAssignmentScheduleInstances with filterByCurrentUser' {
+            Get-OPIMDirectoryRole -All
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+                $Uri -like '*roleAssignmentScheduleInstances*' -and $Uri -like '*filterByCurrentUser*'
+            }
+        }
+    }
+
+    Context 'When -All and -Activated are both specified' {
+        It 'throws a parameter binding error because they are mutually exclusive' {
+            { Get-OPIMDirectoryRole -All -Activated } | Should -Throw
         }
     }
 

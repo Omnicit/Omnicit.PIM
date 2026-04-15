@@ -92,14 +92,31 @@ Describe 'Get-OPIMEntraIDGroup' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
                 return @{ value = @() }
-            } -ParameterFilter { $Uri -like '*eligibilitySchedules*' -and $Uri -notlike '*filterByCurrentUser*' }
+            } -ParameterFilter { $Uri -like '*eligibilitySchedules*' }
+
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                return @{ value = @() }
+            } -ParameterFilter { $Uri -like '*assignmentScheduleInstances*' }
         }
 
-        It 'calls Invoke-MgGraphRequest without filterByCurrentUser' {
+        It 'calls Invoke-MgGraphRequest for eligibilitySchedules with filterByCurrentUser' {
             Get-OPIMEntraIDGroup -All
             Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
-                $Uri -like '*eligibilitySchedules*' -and $Uri -notlike '*filterByCurrentUser*'
+                $Uri -like '*eligibilitySchedules*' -and $Uri -like '*filterByCurrentUser*'
             }
+        }
+
+        It 'calls Invoke-MgGraphRequest for assignmentScheduleInstances with filterByCurrentUser' {
+            Get-OPIMEntraIDGroup -All
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+                $Uri -like '*assignmentScheduleInstances*' -and $Uri -like '*filterByCurrentUser*'
+            }
+        }
+    }
+
+    Context 'When -All and -Activated are both specified' {
+        It 'throws a parameter binding error because they are mutually exclusive' {
+            { Get-OPIMEntraIDGroup -All -Activated } | Should -Throw
         }
     }
 

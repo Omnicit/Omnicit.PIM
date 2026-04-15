@@ -189,4 +189,58 @@
             $Errors[-1].Exception.Message | Should -Match '5 minutes'
         }
     }
+
+    Context 'When -Identity is specified and the role is found' {
+        BeforeAll {
+            $FakeActive = [PSCustomObject]@{
+                id                       = 'instance-002'
+                roleDefinitionId         = 'role-def-001'
+                directoryScopeId         = '/'
+                principalId              = 'principal-001'
+                roleAssignmentScheduleId = 'schedule-002'
+                roleDefinition           = [PSCustomObject]@{ displayName = 'Reports Reader' }
+                principal                = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
+            }
+            $FakeActive.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleInstance')
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return $FakeActive }
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                return @{
+                    id              = 'deact-req-002'
+                    action          = 'SelfDeactivate'
+                    status          = 'Provisioned'
+                    createdDateTime = '2024-01-01T12:00:00Z'
+                }
+            } -ParameterFilter { $Method -eq 'POST' }
+            Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
+        }
+
+        It 'looks up the role via Get-OPIMDirectoryRole -Activated -Identity' {
+            Disable-OPIMDirectoryRole -Identity 'instance-002'
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Scope It
+        }
+
+        It 'submits the SelfDeactivate request' {
+            Disable-OPIMDirectoryRole -Identity 'instance-002'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+                $Method -eq 'POST'
+            }
+        }
+
+        It 'returns a PSCustomObject tagged with Omnicit.PIM.DirectoryAssignmentScheduleRequest' {
+            $Result = Disable-OPIMDirectoryRole -Identity 'instance-002'
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryAssignmentScheduleRequest'
+        }
+    }
+
+    Context 'When -Identity is specified but no active role is found' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return $null }
+        }
+
+        It 'writes a non-terminating error' {
+            $Errors = @()
+            Disable-OPIMDirectoryRole -Identity 'nonexistent-999' -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
+        }
+    }
 }

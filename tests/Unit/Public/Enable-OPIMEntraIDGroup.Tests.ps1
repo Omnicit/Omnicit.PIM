@@ -522,4 +522,87 @@
             Should -Invoke -ModuleName Omnicit.PIM Disconnect-MgGraph -Times 0 -Scope It
         }
     }
+
+    Context 'When -Identity is specified and the group is found' {
+        BeforeAll {
+            $FakeElig = [PSCustomObject]@{
+                id          = 'elig-010'
+                accessId    = 'member'
+                groupId     = 'group-001'
+                principalId = 'principal-001'
+                group       = [PSCustomObject]@{ displayName = 'Finance Team' }
+                principal   = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
+            }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return $FakeElig }
+            Mock -ModuleName Omnicit.PIM Invoke-GraphWithAcrsRetry {
+                return @{
+                    id          = 'req-010'
+                    action      = 'selfActivate'
+                    accessId    = 'member'
+                    groupId     = 'group-001'
+                    principalId = 'principal-001'
+                    status      = 'Provisioned'
+                }
+            }
+        }
+
+        It 'looks up the group via Get-OPIMEntraIDGroup -Identity' {
+            Enable-OPIMEntraIDGroup -Identity 'elig-010'
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Scope It
+        }
+
+        It 'submits the selfActivate request' {
+            Enable-OPIMEntraIDGroup -Identity 'elig-010'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-GraphWithAcrsRetry -Times 1 -Scope It
+        }
+
+        It 'returns a PSCustomObject tagged with Omnicit.PIM.GroupAssignmentScheduleRequest' {
+            $Result = Enable-OPIMEntraIDGroup -Identity 'elig-010'
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.GroupAssignmentScheduleRequest'
+        }
+    }
+
+    Context 'When -Identity is specified but no eligible group is found' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return $null }
+        }
+
+        It 'writes a non-terminating error' {
+            $Errors = @()
+            Enable-OPIMEntraIDGroup -Identity 'nonexistent-999' -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
+        }
+    }
+
+    Context 'When positional parameters are used' {
+        BeforeAll {
+            $FakeElig = [PSCustomObject]@{
+                id          = 'elig-pos-001'
+                accessId    = 'member'
+                groupId     = 'group-001'
+                principalId = 'principal-001'
+                group       = [PSCustomObject]@{ displayName = 'Finance Team' }
+                principal   = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeElig }
+            Mock -ModuleName Omnicit.PIM Invoke-GraphWithAcrsRetry {
+                return @{
+                    id          = 'req-pos-001'
+                    action      = 'selfActivate'
+                    accessId    = 'member'
+                    groupId     = 'group-001'
+                    principalId = 'principal-001'
+                    status      = 'Provisioned'
+                }
+            }
+        }
+
+        It 'accepts GroupName as position 0, Justification as position 1, Hours as position 2' {
+            Enable-OPIMEntraIDGroup 'Finance Team (elig-pos-001)' 'Project work' 2
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-GraphWithAcrsRetry -Times 1 -Scope It -ParameterFilter {
+                $Body.justification -eq 'Project work' -and
+                $Body.scheduleInfo.expiration.duration -eq 'PT2H'
+            }
+        }
+    }
 }

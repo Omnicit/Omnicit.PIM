@@ -30,6 +30,9 @@
     .PARAMETER RoleName
     Tab-completable name of the eligible directory role in the format produced by the argument completer.
     Accepts multiple values. Mutually exclusive with -Role.
+    .PARAMETER Identity
+    The schedule item ID from Get-OPIMDirectoryRole (the id property) to activate directly without
+    tab completion. Mutually exclusive with -Role and -RoleName.
     .PARAMETER Justification
     Free-text justification for the activation request. May be required by your PIM policy.
     .PARAMETER TicketNumber
@@ -55,10 +58,12 @@
         [Parameter(Position = 0, ParameterSetName = 'RoleName', Mandatory)]
         [ArgumentCompleter([DirectoryEligibleRoleCompleter])]
         [string[]]$RoleName,
-        [string]$Justification,
+        [Parameter(ParameterSetName = 'ByIdentity', Mandatory)]
+        [string]$Identity,
+        [Parameter(Position = 1)][string]$Justification,
         [string]$TicketNumber,
         [string]$TicketSystem,
-        [ValidateNotNullOrEmpty()][int]$Hours = 1,
+        [Parameter(Position = 2)][ValidateNotNullOrEmpty()][int]$Hours = 1,
         [ValidateNotNullOrEmpty()][DateTime]$NotBefore = [DateTime]::Now,
         [DateTime][Alias('NotAfter')]$Until,
         [Switch]$Wait
@@ -67,6 +72,16 @@
         [System.Collections.Generic.List[PSObject]]$_pendingWait = [System.Collections.Generic.List[PSObject]]::new()
     }
     process {
+        if ($Identity) {
+            $Role = Get-OPIMDirectoryRole -Identity $Identity | Select-Object -First 1
+            if (-not $Role) {
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("No eligible directory role found with identity '$Identity'."),
+                    'IdentityNotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Identity))
+                return
+            }
+        }
         $ResolvedRoles = if ($RoleName) {
             $RoleName | ForEach-Object { Resolve-RoleByName -AD $_ }
         } else {

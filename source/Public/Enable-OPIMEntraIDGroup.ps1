@@ -22,6 +22,9 @@
     .PARAMETER GroupName
     Tab-completable name of the eligible group assignment in the format produced by the argument completer.
     Accepts multiple values. Mutually exclusive with -Group.
+    .PARAMETER Identity
+    The schedule item ID from Get-OPIMEntraIDGroup (the id property) to activate directly without
+    tab completion. Mutually exclusive with -Group and -GroupName.
     .PARAMETER Justification
     Free-text justification for the activation request. May be required by your PIM policy.
     .PARAMETER TicketNumber
@@ -47,15 +50,27 @@
         [Parameter(Position = 0, ParameterSetName = 'GroupName', Mandatory)]
         [ArgumentCompleter([GroupEligibleCompleter])]
         [string[]]$GroupName,
-        [string]$Justification,
+        [Parameter(ParameterSetName = 'ByIdentity', Mandatory)]
+        [string]$Identity,
+        [Parameter(Position = 1)][string]$Justification,
         [string]$TicketNumber,
         [string]$TicketSystem,
-        [ValidateNotNullOrEmpty()][int]$Hours = 1,
+        [Parameter(Position = 2)][ValidateNotNullOrEmpty()][int]$Hours = 1,
         [ValidateNotNullOrEmpty()][DateTime]$NotBefore = [DateTime]::Now,
         [DateTime][Alias('NotAfter')]$Until,
         [Switch]$Wait
     )
     process {
+        if ($Identity) {
+            $Group = Get-OPIMEntraIDGroup -Identity $Identity | Select-Object -First 1
+            if (-not $Group) {
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("No eligible PIM group assignment found with identity '$Identity'."),
+                    'IdentityNotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Identity))
+                return
+            }
+        }
         $ResolvedGroups = if ($GroupName) {
             $GroupName | ForEach-Object { Resolve-RoleByName -Group $_ }
         } else {

@@ -20,6 +20,9 @@
     Active directory role assignment schedule instance object piped from Get-OPIMDirectoryRole -Activated.
     .PARAMETER RoleName
     Name of the active directory role to deactivate. Supports tab completion to currently active roles.
+    .PARAMETER Identity
+    The schedule instance ID from Get-OPIMDirectoryRole -Activated (the id property) to deactivate
+    directly without tab completion. Mutually exclusive with -Role and -RoleName.
     #>
     [Alias('Disable-PIMADRole', 'Disable-PIMRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
@@ -29,9 +32,21 @@
         $Role,
         [ArgumentCompleter([DirectoryActivatedRoleCompleter])]
         [Parameter(ParameterSetName = 'RoleName', Mandatory, Position = 0)]
-        [String]$RoleName
+        [String]$RoleName,
+        [Parameter(ParameterSetName = 'ByIdentity', Mandatory)]
+        [String]$Identity
     )
     process {
+        if ($Identity) {
+            $Role = Get-OPIMDirectoryRole -Activated -Identity $Identity | Select-Object -First 1
+            if (-not $Role) {
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("No active directory role found with identity '$Identity'."),
+                    'IdentityNotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Identity))
+                return
+            }
+        }
         if ($RoleName) { $Role = Resolve-RoleByName -AD -Activated $RoleName }
 
         $Request = @{
