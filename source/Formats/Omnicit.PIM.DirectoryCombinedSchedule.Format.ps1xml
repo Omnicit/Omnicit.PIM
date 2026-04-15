@@ -2,13 +2,14 @@
 <Configuration>
   <ViewDefinitions>
     <View>
-      <Name>Omnicit.PIM.GroupAssignmentScheduleInstance</Name>
+      <Name>Omnicit.PIM.DirectoryCombinedSchedule</Name>
       <ViewSelectedBy>
-        <TypeName>Omnicit.PIM.GroupAssignmentScheduleInstance</TypeName>
+        <TypeName>Omnicit.PIM.DirectoryCombinedSchedule</TypeName>
       </ViewSelectedBy>
       <TableControl>
         <AutoSize />
         <TableHeaders>
+          <TableColumnHeader />
           <TableColumnHeader />
           <TableColumnHeader />
           <TableColumnHeader />
@@ -20,10 +21,11 @@
         <TableRowEntries>
           <TableRowEntry>
             <TableColumnItems>
+              <TableColumnItem><PropertyName>Status</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>PrincipalDisplayName</PropertyName></TableColumnItem>
-              <TableColumnItem><PropertyName>GroupDisplayName</PropertyName></TableColumnItem>
-              <TableColumnItem><PropertyName>AccessId</PropertyName></TableColumnItem>
-              <TableColumnItem><PropertyName>AssignmentType</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>RoleName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Scope</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>MemberType</PropertyName></TableColumnItem>
               <TableColumnItem><ScriptBlock>if ($_.EndDateTime) { $_.EndDateTime } else { 'Never' }</ScriptBlock></TableColumnItem>
             </TableColumnItems>
           </TableRowEntry>

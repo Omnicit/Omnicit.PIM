@@ -28,7 +28,7 @@
       <ScriptProperty>
         <Name>EndDateTime</Name>
         <GetScriptBlock>
-          if ($this.scheduleInfo.expiration.type -eq 'noExpiration') {
+          if ($this.scheduleInfo.expiration.type -eq 'noExpiration' -or -not $this.scheduleInfo.expiration.endDateTime) {
             'Never'
           } else {
             $this.scheduleInfo.expiration.endDateTime

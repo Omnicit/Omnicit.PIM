@@ -17,6 +17,9 @@
     Active PIM group assignment schedule instance object piped from Get-OPIMEntraIDGroup -Activated.
     .PARAMETER GroupName
     Name of the active PIM group assignment to deactivate. Supports tab completion to currently active group assignments.
+    .PARAMETER Identity
+    The schedule instance ID from Get-OPIMEntraIDGroup -Activated (the id property) to deactivate
+    directly without tab completion. Mutually exclusive with -Group and -GroupName.
     #>
     [Alias('Disable-PIMGroup')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'GroupName')]
@@ -26,10 +29,28 @@
         $Group,
         [ArgumentCompleter([GroupActivatedCompleter])]
         [Parameter(ParameterSetName = 'GroupName', Mandatory, Position = 0)]
-        [String]$GroupName
+        [String]$GroupName,
+        [Parameter(ParameterSetName = 'ByIdentity', Mandatory)]
+        [String]$Identity
     )
     process {
+        if ($Identity) {
+            $Group = Get-OPIMEntraIDGroup -Activated -Identity $Identity | Select-Object -First 1
+            if (-not $Group) {
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("No active PIM group assignment found with identity '$Identity'."),
+                    'IdentityNotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Identity))
+                return
+            }
+        }
         if ($GroupName) { $Group = Resolve-RoleByName -Group -Activated $GroupName }
+
+        # Skip eligible-only schedules piped from Get-OPIMEntraIDGroup -All
+        if ($Group.PSObject.TypeNames -contains 'Omnicit.PIM.GroupEligibilitySchedule') {
+            Write-Verbose "Skipping eligible-only group assignment: $($Group.group.displayName) ($($Group.accessId))"
+            return
+        }
 
         $Request = @{
             action      = 'selfDeactivate'

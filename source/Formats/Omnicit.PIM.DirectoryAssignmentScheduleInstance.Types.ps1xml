@@ -25,6 +25,22 @@
           }
         </GetScriptBlock>
       </ScriptProperty>
+      <ScriptProperty>
+        <Name>MemberType</Name>
+        <GetScriptBlock>
+          $this.memberType
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>EndDateTime</Name>
+        <GetScriptBlock>
+          if ($this.endDateTime) {
+            $this.endDateTime
+          } else {
+            'Never'
+          }
+        </GetScriptBlock>
+      </ScriptProperty>
     </Members>
   </Type>
 </Types>

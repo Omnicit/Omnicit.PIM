@@ -28,6 +28,9 @@ function Enable-OPIMAzureRole {
     .PARAMETER RoleName
     Tab-completable name of the eligible Azure role in the format produced by the argument completer.
     Accepts multiple values. Mutually exclusive with -Role.
+    .PARAMETER Identity
+    The schedule name from Get-OPIMAzureRole (the Name property) to activate directly without
+    tab completion. Mutually exclusive with -Role and -RoleName.
     .PARAMETER Justification
     Free-text justification for the activation request. May be required by your PIM policy.
     .PARAMETER TicketNumber
@@ -52,15 +55,27 @@ function Enable-OPIMAzureRole {
         [Parameter(Position = 0, ParameterSetName = 'RoleName', Mandatory)]
         [ArgumentCompleter([AzureEligibleRoleCompleter])]
         [string[]]$RoleName,
-        [string]$Justification,
+        [Parameter(ParameterSetName = 'ByIdentity', Mandatory)]
+        [string]$Identity,
+        [Parameter(Position = 1)][string]$Justification,
         [string]$TicketNumber,
         [string]$TicketSystem,
-        [ValidateNotNullOrEmpty()][int]$Hours = 1,
+        [Parameter(Position = 2)][ValidateNotNullOrEmpty()][int]$Hours = 1,
         [ValidateNotNullOrEmpty()][DateTime]$NotBefore = [DateTime]::Now,
         [DateTime][Alias('NotAfter')]$Until,
         [Switch]$Wait
     )
     process {
+        if ($Identity) {
+            $Role = Get-OPIMAzureRole | Where-Object Name -EQ $Identity | Select-Object -First 1
+            if (-not $Role) {
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("No eligible Azure role found with identity '$Identity'."),
+                    'IdentityNotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Identity))
+                return
+            }
+        }
         $ResolvedRoles = if ($RoleName) {
             $RoleName | ForEach-Object { Resolve-RoleByName $_ }
         } else {
@@ -68,6 +83,11 @@ function Enable-OPIMAzureRole {
         }
 
         foreach ($Role in $ResolvedRoles) {
+            # Skip already-active instances piped from Get-OPIMAzureRole -All
+            if ($Role.PSObject.TypeNames -contains 'Omnicit.PIM.AzureAssignmentScheduleInstance') {
+                Write-Verbose "Skipping already-active Azure role: $($Role.RoleDefinitionDisplayName) on $($Role.ScopeDisplayName)"
+                continue
+            }
             $RoleActivateParams = @{
                 Name                            = New-Guid
                 Scope                           = $Role.ScopeId

@@ -217,4 +217,77 @@
             $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.GroupAssignmentScheduleRequest'
         }
     }
+
+    Context 'When -Identity is specified and the group is found' {
+        BeforeAll {
+            $FakeActive = [PSCustomObject]@{
+                id          = 'instance-005'
+                accessId    = 'member'
+                groupId     = 'group-002'
+                principalId = 'principal-001'
+                group       = [PSCustomObject]@{ displayName = 'Security Team' }
+            }
+            $FakeActive.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleInstance')
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return $FakeActive }
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                return @{
+                    id          = 'deact-req-005'
+                    action      = 'selfDeactivate'
+                    accessId    = 'member'
+                    groupId     = 'group-002'
+                    principalId = 'principal-001'
+                    status      = 'Provisioned'
+                    group       = @{ displayName = 'Security Team' }
+                }
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'looks up the group via Get-OPIMEntraIDGroup -Activated -Identity' {
+            Disable-OPIMEntraIDGroup -Identity 'instance-005'
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Scope It
+        }
+
+        It 'submits the selfDeactivate request' {
+            Disable-OPIMEntraIDGroup -Identity 'instance-005'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+                $Method -eq 'POST'
+            }
+        }
+
+        It 'returns a PSCustomObject tagged with Omnicit.PIM.GroupAssignmentScheduleRequest' {
+            $Result = Disable-OPIMEntraIDGroup -Identity 'instance-005'
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.GroupAssignmentScheduleRequest'
+        }
+    }
+
+    Context 'When -Identity is specified but no active group is found' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return $null }
+        }
+
+        It 'writes a non-terminating error' {
+            $Errors = @()
+            Disable-OPIMEntraIDGroup -Identity 'nonexistent-999' -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
+        }
+    }
+
+    Context 'When a GroupEligibilitySchedule is piped from Get-OPIMEntraIDGroup -All' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest { } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'skips the eligible-only schedule and does not POST to the Graph API' {
+            $EligibleOnly = [PSCustomObject]@{
+                id          = 'elig-001'
+                accessId    = 'member'
+                groupId     = 'group-001'
+                principalId = 'principal-001'
+                group       = @{ displayName = 'PIM Admins' }
+            }
+            $EligibleOnly.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupEligibilitySchedule')
+            $EligibleOnly | Disable-OPIMEntraIDGroup
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+    }
 }

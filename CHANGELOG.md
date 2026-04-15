@@ -7,7 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `Invoke-GraphWithAcrsRetry` (private) — wraps `Invoke-MgGraphRequest` for PIM activation POST requests with automatic ACRS claims-challenge retry via MSAL interactive authentication. Used by `Enable-OPIMDirectoryRole` and `Enable-OPIMEntraIDGroup`.
+- `-Identity` parameter (ParameterSetName `ByIdentity`) added to all six `Enable-OPIM*` and `Disable-OPIM*` cmdlets. Activates or deactivates a role/group by schedule ID (or schedule `Name` for Azure) without tab completion. For `Disable-*` cmdlets, the ID must correspond to an active schedule instance (from `Get-OPIM* -Activated`). For Azure RBAC the identity is the `Name` property.
+- `Get-OPIMDirectoryRole`, `Get-OPIMEntraIDGroup`, and `Get-OPIMAzureRole` gain a new `-All` ParameterSet that returns **both** eligible and active schedules for the current user in a single call. `-All` and `-Activated` are mutually exclusive.
+- `Get-OPIMDirectoryRole` — new `-RoleName` positional parameter (`[Position = 0]`) with tab completion via `DirectoryEligibleRoleCompleter`. Extracts the schedule ID from the trailing `(id)` and performs a dual-search across eligible and active endpoints.
+- `Get-OPIMEntraIDGroup` — new `-GroupName` positional parameter (`[Position = 0]`) with tab completion via `GroupEligibleCompleter`. Extracts the schedule ID from the trailing `(id)` and performs a dual-search across eligible and active endpoints.
+- `Get-OPIMAzureRole` — new `-RoleName` positional parameter (`[Position = 0]`) with tab completion via `AzureEligibleRoleCompleter`, and new `-Identity` parameter for direct look-up by schedule `Name`. Both perform dual-search across eligible and active endpoints.
+- Combined schedule view: When `-All`, `-RoleName`/`-GroupName`/`-Identity` trigger dual-search, all three `Get-OPIM*` cmdlets now return `Omnicit.PIM.*CombinedSchedule` typed objects with a `Status` column (`Eligible` or `Active`) for consistent table output across both result types.
+- New format/type files for combined schedule views: `Omnicit.PIM.DirectoryCombinedSchedule`, `Omnicit.PIM.GroupCombinedSchedule`, `Omnicit.PIM.AzureCombinedSchedule` — each with a `Status` column in the default table view.
+- Pipeline safety guards: `Enable-OPIMDirectoryRole`, `Enable-OPIMEntraIDGroup`, `Enable-OPIMAzureRole` now skip pipeline objects already tagged as active assignment instances (e.g. objects piped from `Get-OPIM* -All` that have `Status = Active`), emitting a `Write-Verbose` message instead of attempting an activation that would fail.
+- Pipeline safety guards: `Disable-OPIMDirectoryRole`, `Disable-OPIMEntraIDGroup`, `Disable-OPIMAzureRole` now skip pipeline objects tagged as eligible-only schedules (e.g. objects piped from `Get-OPIM* -All` that have `Status = Eligible`), emitting a non-terminating error instead of attempting a deactivation that would fail.
+
+### Changed
+
+- **BREAKING** — `Get-OPIMDirectoryRole -All`, `Get-OPIMEntraIDGroup -All`, and `Get-OPIMAzureRole -All` no longer remove `filterByCurrentUser` / `asTarget()` to list all principals. They now return **both** eligible and active schedules for the **current user**. Admins seeking all-principals data should query the Graph API directly with elevated permissions.
+- **BREAKING** — `-All` and `-Activated` are now mutually exclusive on all three `Get-OPIM*` cmdlets. Combining them raises a parameter binding error.
+- `Enable-OPIMDirectoryRole`, `Enable-OPIMEntraIDGroup`, `Enable-OPIMAzureRole` — `-Justification` is now positional `[Position = 1]` and `-Hours` is positional `[Position = 2]`, enabling: `Enable-OPIMDirectoryRole 'Role (id)' 'Justification' 4`.
+
+### Fixed
+
+- `Get-OPIMDirectoryRole -Activated` no longer applies a post-filter of `assignmentType -eq 'Activated'`. All items returned by `roleAssignmentScheduleInstances` are inherently active assignments; the filter suppressed results when the real Graph API response omitted or differed in that field.
+- `Get-OPIMEntraIDGroup -All` no longer throws `MissingParameters: The required parameters GroupId or PrincipalId is missing`. The PIM Groups API requires `filterByCurrentUser(on='principal')` even when listing all types; this is now preserved.
+- `Get-OPIMAzureRole -All` no longer throws `InsufficientPermissions`. The `asTarget()` filter is now preserved with `-All`, restricting results to the current user at scope `/`.
+- `Get-OPIMAzureRole -Activated -Scope '<specific-scope>'` now returns only instances at that exact scope. Previously, `Get-AzRoleAssignmentScheduleInstance` returned inherited parent-scope instances; these are now filtered out client-side when scope is not `/`.
+- `Get-OPIMDirectoryRole`, `Get-OPIMEntraIDGroup` — improved `.PARAMETER Filter` documentation with OData examples. Added `.EXAMPLE` blocks for `-Filter` and `-Identity` usage.
+- `Get-OPIMEntraIDGroup` — `-AccessType` filter now applies correctly when `-All` is combined with `-AccessType member` or `-AccessType owner`. Previously the filter was silently ignored in `-All` mode.
+- `Get-OPIMAzureRole` — removed `[Alias('Id')]` from the `-Scope` parameter. PowerShell's prefix-matching treated `Id` as an abbreviation of `-Identity`, causing "Parameter set cannot be resolved" errors when `-Identity` was specified alongside the default `$Scope = '/'` binding.
+- `Get-OPIMAzureRole` — `Add-Member -NotePropertyName Status` now uses `-Force` to prevent "Cannot add a member with the name 'Status' because a member already exists" errors when the same object is processed more than once (e.g. across multiple pipeline invocations).
+- `Get-OPIMAzureRole` dual-search now correctly separates the `-Name` (Get parameter set) and `-Filter` (List parameter set) calls to `Get-AzRoleEligibilitySchedule` and `Get-AzRoleAssignmentScheduleInstance`. These are mutually exclusive parameter sets in Az.Resources; previously passing both parameters caused a parameter binding error.
+
+ — wraps `Invoke-MgGraphRequest` for PIM activation POST requests with automatic ACRS claims-challenge retry via MSAL interactive authentication. Used by `Enable-OPIMDirectoryRole` and `Enable-OPIMEntraIDGroup`.
 - `Enable-OPIMMyRole` gains four new switch parameters: `-AllEligible`, `-AllEligibleDirectoryRoles`, `-AllEligibleEntraIDGroups`, `-AllEligibleAzureRoles`. These bypass the TenantMap filter and activate all eligible roles in the selected categories, each requiring interactive ShouldProcess confirmation (supports `-WhatIf`/`-Confirm`).
 - `Omnicit.PIM.AzureAssignmentScheduleRequest` type with matching `Format.ps1xml` and `Types.ps1xml` — enables consistent table output for `Enable-OPIMAzureRole` and `Disable-OPIMAzureRole` results.
 - `Get-OPIMConfiguration` — reads the TenantMap.psd1 file and returns typed `Omnicit.PIM.TenantConfiguration` objects (one per alias). Supports `-TenantAlias` filter and `-TenantMapPath` override. Alias: `Get-PIMConfig`.

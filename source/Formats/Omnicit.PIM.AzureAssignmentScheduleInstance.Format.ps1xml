@@ -13,16 +13,28 @@
           <TableColumnHeader />
           <TableColumnHeader />
           <TableColumnHeader />
-          <TableColumnHeader />
+          <TableColumnHeader>
+            <Label>EndDateTime</Label>
+          </TableColumnHeader>
         </TableHeaders>
         <TableRowEntries>
           <TableRowEntry>
             <TableColumnItems>
-              <TableColumnItem><PropertyName>PrincipalDisplayName</PropertyName></TableColumnItem>
-              <TableColumnItem><PropertyName>RoleDefinitionDisplayName</PropertyName></TableColumnItem>
-              <TableColumnItem><PropertyName>ScopeDisplayName</PropertyName></TableColumnItem>
-              <TableColumnItem><PropertyName>AssignmentType</PropertyName></TableColumnItem>
-              <TableColumnItem><PropertyName>EndDateTime</PropertyName></TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>PrincipalDisplayName</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>RoleDefinitionDisplayName</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>ScopeDisplayName</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>AssignmentType</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($_.EndDateTime) { $_.EndDateTime } else { 'Never' }</ScriptBlock>
+              </TableColumnItem>
             </TableColumnItems>
           </TableRowEntry>
         </TableRowEntries>

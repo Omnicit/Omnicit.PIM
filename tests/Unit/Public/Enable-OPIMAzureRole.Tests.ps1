@@ -449,4 +449,97 @@
             $Errors.Count | Should -BeGreaterThan 0
         }
     }
+
+    Context 'When -Identity is specified and the role is found' {
+        BeforeAll {
+            $FakeElig = [PSCustomObject]@{
+                Name                            = 'elig-010'
+                RoleDefinitionId                = '/providers/Microsoft.Authorization/roleDefinitions/role-def-001'
+                RoleDefinitionDisplayName       = 'Storage Blob Reader'
+                ScopeId                         = '/subscriptions/sub-001'
+                ScopeDisplayName                = 'My Subscription'
+                PrincipalId                     = 'principal-001'
+                LinkedRoleEligibilityScheduleId = 'schedule-010'
+            }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return $FakeElig }
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
+                return [PSCustomObject]@{
+                    Name        = [System.Guid]::NewGuid().ToString()
+                    Scope       = '/subscriptions/sub-001'
+                    RequestType = 'SelfActivate'
+                }
+            }
+        }
+
+        It 'looks up the role via Get-OPIMAzureRole filtered by Name' {
+            Enable-OPIMAzureRole -Identity 'elig-010'
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Scope It
+        }
+
+        It 'submits the SelfActivate request via New-AzRoleAssignmentScheduleRequest' {
+            Enable-OPIMAzureRole -Identity 'elig-010'
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Scope It
+        }
+    }
+
+    Context 'When -Identity is specified but no eligible role is found' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return $null }
+        }
+
+        It 'writes a non-terminating error' {
+            $Errors = @()
+            Enable-OPIMAzureRole -Identity 'nonexistent-999' -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
+        }
+    }
+
+    Context 'When positional parameters are used' {
+        BeforeAll {
+            $FakeElig = [PSCustomObject]@{
+                Name                            = 'elig-pos-001'
+                RoleDefinitionId                = '/providers/Microsoft.Authorization/roleDefinitions/role-def-001'
+                RoleDefinitionDisplayName       = 'Contributor'
+                ScopeId                         = '/subscriptions/sub-001'
+                ScopeDisplayName                = 'My Subscription'
+                PrincipalId                     = 'principal-001'
+                LinkedRoleEligibilityScheduleId = 'elig-pos-001'
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeElig }
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
+                return [PSCustomObject]@{
+                    Name        = [System.Guid]::NewGuid().ToString()
+                    Scope       = '/subscriptions/sub-001'
+                    RequestType = 'SelfActivate'
+                }
+            }
+        }
+
+        It 'accepts RoleName as position 0, Justification as position 1, Hours as position 2' {
+            Enable-OPIMAzureRole 'Contributor (elig-pos-001)' 'Incident response' 4
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Scope It -ParameterFilter {
+                $Justification -eq 'Incident response' -and
+                $ExpirationDuration -eq 'PT4H'
+            }
+        }
+    }
+
+    Context 'When an AzureAssignmentScheduleInstance is piped from Get-OPIMAzureRole -All' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest { }
+        }
+
+        It 'skips the already-active instance and does not call New-AzRoleAssignmentScheduleRequest' {
+            $AlreadyActive = [PSCustomObject]@{
+                Name                      = 'active-001'
+                AssignmentType            = 'Activated'
+                RoleDefinitionDisplayName = 'Contributor'
+                ScopeId                   = '/subscriptions/sub-001'
+                ScopeDisplayName          = 'My Subscription'
+            }
+            $AlreadyActive.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+            $AlreadyActive | Enable-OPIMAzureRole
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
+        }
+    }
 }

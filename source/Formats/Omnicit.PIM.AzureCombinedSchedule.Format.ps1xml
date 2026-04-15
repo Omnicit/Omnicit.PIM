@@ -2,9 +2,9 @@
 <Configuration>
   <ViewDefinitions>
     <View>
-      <Name>Omnicit.PIM.GroupAssignmentScheduleInstance</Name>
+      <Name>Omnicit.PIM.AzureCombinedSchedule</Name>
       <ViewSelectedBy>
-        <TypeName>Omnicit.PIM.GroupAssignmentScheduleInstance</TypeName>
+        <TypeName>Omnicit.PIM.AzureCombinedSchedule</TypeName>
       </ViewSelectedBy>
       <TableControl>
         <AutoSize />
@@ -20,10 +20,10 @@
         <TableRowEntries>
           <TableRowEntry>
             <TableColumnItems>
+              <TableColumnItem><PropertyName>Status</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>PrincipalDisplayName</PropertyName></TableColumnItem>
-              <TableColumnItem><PropertyName>GroupDisplayName</PropertyName></TableColumnItem>
-              <TableColumnItem><PropertyName>AccessId</PropertyName></TableColumnItem>
-              <TableColumnItem><PropertyName>AssignmentType</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>RoleDefinitionDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>ScopeDisplayName</PropertyName></TableColumnItem>
               <TableColumnItem><ScriptBlock>if ($_.EndDateTime) { $_.EndDateTime } else { 'Never' }</ScriptBlock></TableColumnItem>
             </TableColumnItems>
           </TableRowEntry>

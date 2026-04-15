@@ -144,10 +144,9 @@ Describe 'Get-OPIMDirectoryRole' {
             } -ParameterFilter { $Uri -like '*roleAssignmentScheduleInstances*' }
         }
 
-        It 'filters out non-Activated items and returns only the Activated entry' {
+        It 'returns all items from roleAssignmentScheduleInstances without post-filtering by assignmentType' {
             $Result = Get-OPIMDirectoryRole -Activated
-            $Result | Should -HaveCount 1
-            $Result[0].assignmentType | Should -Be 'Activated'
+            $Result | Should -HaveCount 2
         }
     }
 
@@ -155,14 +154,31 @@ Describe 'Get-OPIMDirectoryRole' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
                 return @{ value = @() }
-            } -ParameterFilter { $Uri -like '*roleEligibilitySchedules*' -and $Uri -notlike '*filterByCurrentUser*' }
+            } -ParameterFilter { $Uri -like '*roleEligibilitySchedules*' }
+
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                return @{ value = @() }
+            } -ParameterFilter { $Uri -like '*roleAssignmentScheduleInstances*' }
         }
 
-        It 'calls Invoke-MgGraphRequest without filterByCurrentUser' {
+        It 'calls Invoke-MgGraphRequest for roleEligibilitySchedules with filterByCurrentUser' {
             Get-OPIMDirectoryRole -All
             Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
-                $Uri -like '*roleEligibilitySchedules*' -and $Uri -notlike '*filterByCurrentUser*'
+                $Uri -like '*roleEligibilitySchedules*' -and $Uri -like '*filterByCurrentUser*'
             }
+        }
+
+        It 'calls Invoke-MgGraphRequest for roleAssignmentScheduleInstances with filterByCurrentUser' {
+            Get-OPIMDirectoryRole -All
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+                $Uri -like '*roleAssignmentScheduleInstances*' -and $Uri -like '*filterByCurrentUser*'
+            }
+        }
+    }
+
+    Context 'When -All and -Activated are both specified' {
+        It 'throws a parameter binding error because they are mutually exclusive' {
+            { Get-OPIMDirectoryRole -All -Activated } | Should -Throw
         }
     }
 
@@ -181,13 +197,27 @@ Describe 'Get-OPIMDirectoryRole' {
                     )
                 }
             } -ParameterFilter { $Uri -like '*roleEligibilitySchedules*' }
+
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                return @{ value = @() }
+            } -ParameterFilter { $Uri -like '*roleAssignmentScheduleInstances*' }
         }
 
-        It 'appends an id eq filter to the request URI' {
+        It 'queries both eligible and active endpoints with the id filter (dual-search)' {
             Get-OPIMDirectoryRole -Identity 'elig-001'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Scope It -ParameterFilter {
                 $Uri -like "*id eq 'elig-001'*"
             }
+        }
+
+        It 'returns an object tagged with Omnicit.PIM.DirectoryCombinedSchedule' {
+            $Result = Get-OPIMDirectoryRole -Identity 'elig-001'
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryCombinedSchedule'
+        }
+
+        It 'returns an object with Status set to Eligible for eligible items' {
+            $Result = Get-OPIMDirectoryRole -Identity 'elig-001'
+            $Result.Status | Should -Be 'Eligible'
         }
     }
 
@@ -196,11 +226,15 @@ Describe 'Get-OPIMDirectoryRole' {
             Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
                 return @{ value = @() }
             } -ParameterFilter { $Uri -like '*roleEligibilitySchedules*' }
+
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                return @{ value = @() }
+            } -ParameterFilter { $Uri -like '*roleAssignmentScheduleInstances*' }
         }
 
-        It 'appends the OData filter string to the request URI' {
+        It 'queries both eligible and active endpoints with the OData filter (dual-search)' {
             Get-OPIMDirectoryRole -Filter "roleDefinitionId eq 'role-def-001'"
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Scope It -ParameterFilter {
                 $Uri -like "*roleDefinitionId eq 'role-def-001'*"
             }
         }
@@ -249,6 +283,97 @@ Describe 'Get-OPIMDirectoryRole' {
             $Errors = @()
             Get-OPIMDirectoryRole -ErrorVariable Errors -ErrorAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.PIM Convert-GraphHttpException -Times 1 -Scope It
+        }
+    }
+
+    Context 'When -All returns both eligible and active results' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                return @{
+                    value = @(
+                        @{
+                            id               = 'elig-001'
+                            roleDefinitionId = 'role-def-001'
+                            directoryScopeId = '/'
+                            roleDefinition   = @{ displayName = 'Global Administrator' }
+                            principal        = @{ displayName = 'Jane Doe' }
+                        }
+                    )
+                }
+            } -ParameterFilter { $Uri -like '*roleEligibilitySchedules*' }
+
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                return @{
+                    value = @(
+                        @{
+                            id               = 'active-001'
+                            roleDefinitionId = 'role-def-001'
+                            directoryScopeId = '/'
+                            roleDefinition   = @{ displayName = 'Global Administrator' }
+                            principal        = @{ displayName = 'Jane Doe' }
+                        }
+                    )
+                }
+            } -ParameterFilter { $Uri -like '*roleAssignmentScheduleInstances*' }
+        }
+
+        It 'tags all results with Omnicit.PIM.DirectoryCombinedSchedule' {
+            $Result = Get-OPIMDirectoryRole -All
+            $Result | ForEach-Object {
+                $_.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryCombinedSchedule'
+            }
+        }
+
+        It 'sets Status to Eligible on eligible items and Active on active items' {
+            $Result = Get-OPIMDirectoryRole -All
+            ($Result | Where-Object Status -EQ 'Eligible').Count | Should -Be 1
+            ($Result | Where-Object Status -EQ 'Active').Count | Should -Be 1
+        }
+
+        It 'retains the original TypeName for pipeline binding on eligible items' {
+            $Result = Get-OPIMDirectoryRole -All
+            ($Result | Where-Object Status -EQ 'Eligible').PSObject.TypeNames |
+                Should -Contain 'Omnicit.PIM.DirectoryEligibilitySchedule'
+        }
+
+        It 'retains the original TypeName for pipeline binding on active items' {
+            $Result = Get-OPIMDirectoryRole -All
+            ($Result | Where-Object Status -EQ 'Active').PSObject.TypeNames |
+                Should -Contain 'Omnicit.PIM.DirectoryAssignmentScheduleInstance'
+        }
+    }
+
+    Context 'When -RoleName is specified' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                return @{
+                    value = @(
+                        @{
+                            id               = 'elig-001'
+                            roleDefinitionId = 'role-def-001'
+                            directoryScopeId = '/'
+                            roleDefinition   = @{ displayName = 'Global Administrator' }
+                            principal        = @{ displayName = 'Jane Doe' }
+                        }
+                    )
+                }
+            } -ParameterFilter { $Uri -like '*roleEligibilitySchedules*' }
+
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                return @{ value = @() }
+            } -ParameterFilter { $Uri -like '*roleAssignmentScheduleInstances*' }
+        }
+
+        It 'extracts the schedule ID from trailing parentheses and performs dual-search' {
+            Get-OPIMDirectoryRole -RoleName 'Global Administrator -> Directory (elig-001)'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Scope It -ParameterFilter {
+                $Uri -like "*id eq 'elig-001'*"
+            }
+        }
+
+        It 'returns an object tagged with Omnicit.PIM.DirectoryCombinedSchedule' {
+            $Result = Get-OPIMDirectoryRole -RoleName 'Global Administrator -> Directory (elig-001)'
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryCombinedSchedule'
         }
     }
 }
