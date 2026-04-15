@@ -83,6 +83,11 @@ function Enable-OPIMAzureRole {
         }
 
         foreach ($Role in $ResolvedRoles) {
+            # Skip already-active instances piped from Get-OPIMAzureRole -All
+            if ($Role.PSObject.TypeNames -contains 'Omnicit.PIM.AzureAssignmentScheduleInstance') {
+                Write-Verbose "Skipping already-active Azure role: $($Role.RoleDefinitionDisplayName) on $($Role.ScopeDisplayName)"
+                continue
+            }
             $RoleActivateParams = @{
                 Name                            = New-Guid
                 Scope                           = $Role.ScopeId

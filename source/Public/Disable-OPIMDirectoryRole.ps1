@@ -49,6 +49,12 @@
         }
         if ($RoleName) { $Role = Resolve-RoleByName -AD -Activated $RoleName }
 
+        # Skip eligible-only schedules piped from Get-OPIMDirectoryRole -All
+        if ($Role.PSObject.TypeNames -contains 'Omnicit.PIM.DirectoryEligibilitySchedule') {
+            Write-Verbose "Skipping eligible-only directory role: $($Role.roleDefinition.displayName)"
+            return
+        }
+
         $Request = @{
             action           = 'SelfDeactivate'
             roleDefinitionId = $Role.roleDefinitionId

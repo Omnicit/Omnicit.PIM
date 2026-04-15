@@ -101,6 +101,106 @@ Describe 'Get-OPIMAzureRole' {
         }
     }
 
+    Context 'When -All returns both eligible and active results' {
+        BeforeAll {
+            $FakeEligible = [PSCustomObject]@{
+                Name                      = 'elig-001'
+                RoleDefinitionDisplayName = 'Contributor'
+                ScopeDisplayName          = 'My Subscription'
+                ScopeId                   = '/subscriptions/sub-001'
+                PrincipalId               = 'principal-001'
+            }
+            $FakeActive = [PSCustomObject]@{
+                Name                      = 'active-001'
+                AssignmentType            = 'Activated'
+                RoleDefinitionDisplayName = 'Contributor'
+                ScopeDisplayName          = 'My Subscription'
+                ScopeId                   = '/subscriptions/sub-001'
+                PrincipalId               = 'principal-001'
+            }
+            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule { return $FakeEligible } -ParameterFilter { $Filter -eq 'asTarget()' }
+            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance { return $FakeActive } -ParameterFilter { $Filter -eq 'asTarget()' }
+        }
+
+        It 'tags all results with Omnicit.PIM.AzureCombinedSchedule' {
+            $Result = Get-OPIMAzureRole -All
+            $Result | ForEach-Object {
+                $_.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureCombinedSchedule'
+            }
+        }
+
+        It 'sets Status to Eligible on eligible items and Active on active items' {
+            $Result = Get-OPIMAzureRole -All
+            ($Result | Where-Object Status -EQ 'Eligible').Count | Should -Be 1
+            ($Result | Where-Object Status -EQ 'Active').Count | Should -Be 1
+        }
+    }
+
+    Context 'When -Identity is specified' {
+        BeforeAll {
+            $FakeEligible = [PSCustomObject]@{
+                Name                      = 'elig-001'
+                RoleDefinitionDisplayName = 'Contributor'
+                ScopeId                   = '/subscriptions/sub-001'
+                PrincipalId               = 'principal-001'
+            }
+            # Name and Filter are mutually exclusive parameter sets in Az.Resources cmdlets.
+            # When -Name is specified, -Filter is NOT passed.
+            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
+                return $FakeEligible
+            } -ParameterFilter { $Name -eq 'elig-001' }
+            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance {
+                return @()
+            } -ParameterFilter { $Name -eq 'elig-001' }
+        }
+
+        It 'passes the Name to both eligible and active cmdlets (dual-search)' {
+            Get-OPIMAzureRole -Identity 'elig-001'
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Scope It -ParameterFilter { $Name -eq 'elig-001' }
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 1 -Scope It -ParameterFilter { $Name -eq 'elig-001' }
+        }
+
+        It 'returns an object tagged with Omnicit.PIM.AzureCombinedSchedule' {
+            $Result = Get-OPIMAzureRole -Identity 'elig-001'
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureCombinedSchedule'
+        }
+
+        It 'returns an object with Status set to Eligible' {
+            $Result = Get-OPIMAzureRole -Identity 'elig-001'
+            $Result.Status | Should -Be 'Eligible'
+        }
+    }
+
+    Context 'When -RoleName is specified' {
+        BeforeAll {
+            $FakeEligible = [PSCustomObject]@{
+                Name                      = 'elig-001'
+                RoleDefinitionDisplayName = 'Contributor'
+                ScopeId                   = '/subscriptions/sub-001'
+                PrincipalId               = 'principal-001'
+            }
+            # Name and Filter are mutually exclusive parameter sets in Az.Resources cmdlets.
+            # When -Name is specified, -Filter is NOT passed.
+            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
+                return $FakeEligible
+            } -ParameterFilter { $Name -eq 'elig-001' }
+            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance {
+                return @()
+            } -ParameterFilter { $Name -eq 'elig-001' }
+        }
+
+        It 'extracts the schedule Name from trailing parentheses and performs dual-search' {
+            Get-OPIMAzureRole -RoleName 'Contributor -> My Subscription (elig-001)'
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Scope It -ParameterFilter { $Name -eq 'elig-001' }
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 1 -Scope It -ParameterFilter { $Name -eq 'elig-001' }
+        }
+
+        It 'returns an object tagged with Omnicit.PIM.AzureCombinedSchedule' {
+            $Result = Get-OPIMAzureRole -RoleName 'Contributor -> My Subscription (elig-001)'
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureCombinedSchedule'
+        }
+    }
+
     Context 'When -All and -Activated are both specified' {
         It 'throws a parameter binding error because they are mutually exclusive' {
             { Get-OPIMAzureRole -All -Activated } | Should -Throw

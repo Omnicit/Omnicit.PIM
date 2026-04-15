@@ -44,6 +44,12 @@ function Disable-OPIMAzureRole {
         }
         if ($RoleName) { $Role = Resolve-RoleByName -Activated $RoleName }
 
+        # Skip eligible-only schedules piped from Get-OPIMAzureRole -All
+        if ($Role.PSObject.TypeNames -contains 'Omnicit.PIM.AzureEligibilitySchedule') {
+            Write-Verbose "Skipping eligible-only Azure role: $($Role.RoleDefinitionDisplayName)"
+            return
+        }
+
         $RoleDeactivateParams = @{
             Name                            = New-Guid
             Scope                           = $Role.ScopeId

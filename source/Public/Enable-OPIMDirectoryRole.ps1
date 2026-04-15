@@ -89,6 +89,11 @@
         }
 
         foreach ($Role in $ResolvedRoles) {
+            # Skip already-active instances piped from Get-OPIMDirectoryRole -All
+            if ($Role.PSObject.TypeNames -contains 'Omnicit.PIM.DirectoryAssignmentScheduleInstance') {
+                Write-Verbose "Skipping already-active directory role: $($Role.roleDefinition.displayName)"
+                continue
+            }
             $ScheduleInfo = @{
                 startDateTime = $NotBefore.ToString('o')
                 expiration    = @{}

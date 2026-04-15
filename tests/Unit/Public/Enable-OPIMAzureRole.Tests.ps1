@@ -523,4 +523,23 @@
             }
         }
     }
+
+    Context 'When an AzureAssignmentScheduleInstance is piped from Get-OPIMAzureRole -All' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest { }
+        }
+
+        It 'skips the already-active instance and does not call New-AzRoleAssignmentScheduleRequest' {
+            $AlreadyActive = [PSCustomObject]@{
+                Name                      = 'active-001'
+                AssignmentType            = 'Activated'
+                RoleDefinitionDisplayName = 'Contributor'
+                ScopeId                   = '/subscriptions/sub-001'
+                ScopeDisplayName          = 'My Subscription'
+            }
+            $AlreadyActive.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+            $AlreadyActive | Enable-OPIMAzureRole
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
+        }
+    }
 }

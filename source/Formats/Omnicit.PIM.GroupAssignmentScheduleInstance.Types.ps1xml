@@ -15,6 +15,28 @@
           $this.principal.displayName
         </GetScriptBlock>
       </ScriptProperty>
+      <ScriptProperty>
+        <Name>AccessId</Name>
+        <GetScriptBlock>
+          $this.accessId
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>AssignmentType</Name>
+        <GetScriptBlock>
+          $this.assignmentType
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>EndDateTime</Name>
+        <GetScriptBlock>
+          if ($this.endDateTime) {
+            $this.endDateTime
+          } else {
+            'Never'
+          }
+        </GetScriptBlock>
+      </ScriptProperty>
     </Members>
   </Type>
 </Types>

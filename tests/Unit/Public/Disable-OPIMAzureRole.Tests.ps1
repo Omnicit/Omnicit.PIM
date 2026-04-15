@@ -220,4 +220,22 @@
             $Errors.Count | Should -BeGreaterThan 0
         }
     }
+
+    Context 'When an AzureEligibilitySchedule is piped from Get-OPIMAzureRole -All' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest { }
+        }
+
+        It 'skips the eligible-only schedule and does not call New-AzRoleAssignmentScheduleRequest' {
+            $EligibleOnly = [PSCustomObject]@{
+                Name                      = 'elig-001'
+                RoleDefinitionDisplayName = 'Contributor'
+                ScopeId                   = '/subscriptions/sub-001'
+                ScopeDisplayName          = 'My Subscription'
+            }
+            $EligibleOnly.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
+            $EligibleOnly | Disable-OPIMAzureRole
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
+        }
+    }
 }

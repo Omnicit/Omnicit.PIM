@@ -46,6 +46,12 @@
         }
         if ($GroupName) { $Group = Resolve-RoleByName -Group -Activated $GroupName }
 
+        # Skip eligible-only schedules piped from Get-OPIMEntraIDGroup -All
+        if ($Group.PSObject.TypeNames -contains 'Omnicit.PIM.GroupEligibilitySchedule') {
+            Write-Verbose "Skipping eligible-only group assignment: $($Group.group.displayName) ($($Group.accessId))"
+            return
+        }
+
         $Request = @{
             action      = 'selfDeactivate'
             accessId    = $Group.accessId

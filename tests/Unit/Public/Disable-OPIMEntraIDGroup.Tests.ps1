@@ -271,4 +271,23 @@
             $Errors.Count | Should -BeGreaterThan 0
         }
     }
+
+    Context 'When a GroupEligibilitySchedule is piped from Get-OPIMEntraIDGroup -All' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest { } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'skips the eligible-only schedule and does not POST to the Graph API' {
+            $EligibleOnly = [PSCustomObject]@{
+                id          = 'elig-001'
+                accessId    = 'member'
+                groupId     = 'group-001'
+                principalId = 'principal-001'
+                group       = @{ displayName = 'PIM Admins' }
+            }
+            $EligibleOnly.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupEligibilitySchedule')
+            $EligibleOnly | Disable-OPIMEntraIDGroup
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+    }
 }

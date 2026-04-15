@@ -25,35 +25,46 @@
     List only eligible PIM group memberships (not ownerships).
     .EXAMPLE
     Get-OPIMEntraIDGroup -Identity 'elig-001'
-    Retrieve a single group schedule by its schedule ID (the id property from output).
+    Retrieve both eligible and active records with that schedule ID (dual-search).
     .EXAMPLE
     Get-OPIMEntraIDGroup -Filter "groupId eq '00000000-0000-0000-0000-000000000000'"
-    Return only group assignments matching an OData filter. Common filter properties:
+    Return both eligible and active group assignments matching an OData filter (dual-search).
+    Common filter properties:
       groupId eq '<guid>'       — filter by a specific group
       principalId eq '<guid>'   — filter by a specific principal
+    .EXAMPLE
+    Get-OPIMEntraIDGroup 'Finance Team - member (elig-001)'
+    Tab-complete and retrieve details for a group assignment by name (dual-search).
     .OUTPUTS
-    System.Collections.Hashtable (tagged as Omnicit.PIM.GroupEligibilitySchedule or Omnicit.PIM.GroupAssignmentScheduleInstance)
+    PSCustomObject tagged as Omnicit.PIM.GroupEligibilitySchedule,
+    Omnicit.PIM.GroupAssignmentScheduleInstance, or Omnicit.PIM.GroupCombinedSchedule
+    (when -All, -Identity or -Filter is used without -Activated).
     .PARAMETER All
     Return BOTH eligible and active group assignment schedules for the current user in a single call.
-    Mutually exclusive with -Activated.
+    Objects are emitted with the Omnicit.PIM.GroupCombinedSchedule type for consistent table
+    formatting with a Status column. Mutually exclusive with -Activated.
     .PARAMETER Activated
     Only return currently activated group assignment schedule instances instead of eligible
     (inactive) group eligibility schedules.
     Mutually exclusive with -All.
+    .PARAMETER GroupName
+    Tab-completable name of the PIM group assignment in the format produced by the argument completer.
+    Extracts the schedule ID from the trailing (id) and performs a dual-search across eligible
+    and active schedules. Mutually exclusive intent with -Identity (both set the same filter).
     .PARAMETER Identity
     The schedule item ID used to retrieve a single specific group assignment record by its unique identifier.
     The ID corresponds to the id property on objects returned by this cmdlet.
-    When supplied, an OData filter of id eq '<Identity>' is applied automatically.
+    When supplied, both eligible and active schedules are searched (dual-search) unless -Activated
+    is also specified.
     .PARAMETER Filter
     An OData filter string appended to the Graph API request to narrow the result set.
-    Ignored when -Identity is specified.
+    When specified without -Activated, both eligible and active are searched (dual-search).
     Common examples:
       -Filter "groupId eq '<guid>'"
       -Filter "principalId eq '<guid>'"
     .PARAMETER AccessType
     Limits results to a specific access type. Accepts member or owner. When omitted both
-    membership and ownership eligibility schedules are returned.
-    Ignored when -All is specified.
+    membership and ownership schedules are returned. Applies to all modes including -All.
     #>
     [Alias('Get-PIMGroup')]
     [CmdletBinding(DefaultParameterSetName = 'Default')]
@@ -61,31 +72,50 @@
     param(
         [Parameter(ParameterSetName = 'All')][Switch]$All,
         [Parameter(ParameterSetName = 'Activated')][Switch]$Activated,
+        [Parameter(Position = 0)]
+        [ArgumentCompleter([GroupEligibleCompleter])]
+        [String]$GroupName,
         [String]$Identity,
         [String]$Filter,
         [ValidateSet('member', 'owner')]
         [String]$AccessType
     )
     process {
+        # Resolve GroupName to a schedule Identity if provided (extract ID from trailing '(id)' suffix)
+        [string]$ResolvedId = $Identity
+        if ($GroupName) {
+            if ($GroupName -match '\(([^)]+)\)$') {
+                $ResolvedId = $Matches[1]
+            } else {
+                $ResolvedId = $GroupName
+            }
+        }
+
         $Base = 'v1.0/identityGovernance/privilegedAccess/group'
         [string]$UserFilter = "/filterByCurrentUser(on='principal')"
         $Expand = '?$expand=group,principal'
 
-        $FilterParts = [System.Collections.Generic.List[string]]::new()
-        if ($Identity) { $FilterParts.Add("id eq '$Identity'") }
-        if ($Filter)   { $FilterParts.Add($Filter) }
+        # Build unified OData filter (applies to both eligible and active endpoints in dual mode)
+        $AllFilterParts = [System.Collections.Generic.List[string]]::new()
+        if ($ResolvedId) { $AllFilterParts.Add("id eq '$ResolvedId'") }
+        if ($AccessType) { $AllFilterParts.Add("accessId eq '$AccessType'") }
+        if ($Filter)     { $AllFilterParts.Add($Filter) }
 
-        [string]$OdataFilter = if ($FilterParts.Count -gt 0) {
-            '&$filter=' + ($FilterParts -join ' and ')
+        [string]$OdataFilter = if ($AllFilterParts.Count -gt 0) {
+            '&$filter=' + ($AllFilterParts -join ' and ')
         } else {
             [String]::Empty
         }
 
-        if ($All) {
-            # Return both eligible and active for the current user
+        # Dual mode: -All, or a specific id/filter given and -Activated not explicitly requested
+        [bool]$HasSearchCriteria = $ResolvedId -or $Filter
+        [bool]$IsDual = $All -or (-not $Activated -and $HasSearchCriteria)
+
+        if ($IsDual) {
+            # Return both eligible and active with GroupCombinedSchedule type for consistent formatting
             foreach ($TypeConfig in @(
-                @{ Type = 'eligibilitySchedules';      TypeName = 'Omnicit.PIM.GroupEligibilitySchedule'        }
-                @{ Type = 'assignmentScheduleInstances'; TypeName = 'Omnicit.PIM.GroupAssignmentScheduleInstance' }
+                @{ Type = 'eligibilitySchedules';        TypeName = 'Omnicit.PIM.GroupEligibilitySchedule';        Status = 'Eligible' }
+                @{ Type = 'assignmentScheduleInstances'; TypeName = 'Omnicit.PIM.GroupAssignmentScheduleInstance'; Status = 'Active'   }
             )) {
                 $RequestUri = "${Base}/$($TypeConfig.Type)${UserFilter}${Expand}${OdataFilter}"
                 try {
@@ -97,7 +127,9 @@
                 }
                 foreach ($Item in $Items) {
                     $Obj = [PSCustomObject]$Item
+                    $Obj | Add-Member -NotePropertyName Status -NotePropertyValue $TypeConfig.Status -Force
                     $Obj.PSObject.TypeNames.Insert(0, $TypeConfig.TypeName)
+                    $Obj.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupCombinedSchedule')
                     $Obj
                 }
             }
@@ -110,19 +142,7 @@
             'eligibilitySchedules'
         }
 
-        # AccessType filter only applies to single-type calls (not -All)
-        $SingleCallParts = [System.Collections.Generic.List[string]]::new()
-        if ($Identity)   { $SingleCallParts.Add("id eq '$Identity'") }
-        if ($AccessType) { $SingleCallParts.Add("accessId eq '$AccessType'") }
-        if ($Filter)     { $SingleCallParts.Add($Filter) }
-
-        [string]$SingleOdataFilter = if ($SingleCallParts.Count -gt 0) {
-            '&$filter=' + ($SingleCallParts -join ' and ')
-        } else {
-            [String]::Empty
-        }
-
-        $RequestUri = "${Base}/${Type}${UserFilter}${Expand}${SingleOdataFilter}"
+        $RequestUri = "${Base}/${Type}${UserFilter}${Expand}${OdataFilter}"
 
         try {
             $Items = Invoke-MgGraphRequest -Uri $RequestUri -ErrorAction Stop -Verbose:$false |

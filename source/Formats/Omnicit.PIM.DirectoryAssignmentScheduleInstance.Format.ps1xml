@@ -13,7 +13,9 @@
           <TableColumnHeader />
           <TableColumnHeader />
           <TableColumnHeader />
-          <TableColumnHeader />
+          <TableColumnHeader>
+            <Label>EndDateTime</Label>
+          </TableColumnHeader>
         </TableHeaders>
         <TableRowEntries>
           <TableRowEntry>
@@ -22,7 +24,7 @@
               <TableColumnItem><PropertyName>RoleName</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>Scope</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>MemberType</PropertyName></TableColumnItem>
-              <TableColumnItem><PropertyName>EndDateTime</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>if ($_.EndDateTime) { $_.EndDateTime } else { 'Never' }</ScriptBlock></TableColumnItem>
             </TableColumnItems>
           </TableRowEntry>
         </TableRowEntries>

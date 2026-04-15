@@ -243,4 +243,22 @@
             $Errors.Count | Should -BeGreaterThan 0
         }
     }
+
+    Context 'When a DirectoryEligibilitySchedule is piped from Get-OPIMDirectoryRole -All' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest { } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'skips the eligible-only schedule and does not POST to the Graph API' {
+            $EligibleOnly = [PSCustomObject]@{
+                id               = 'elig-001'
+                roleDefinitionId = 'role-def-001'
+                directoryScopeId = '/'
+                roleDefinition   = [PSCustomObject]@{ displayName = 'Global Administrator' }
+            }
+            $EligibleOnly.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
+            $EligibleOnly | Disable-OPIMDirectoryRole
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+    }
 }

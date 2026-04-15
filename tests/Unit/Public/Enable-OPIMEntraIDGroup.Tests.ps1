@@ -605,4 +605,23 @@
             }
         }
     }
+
+    Context 'When a GroupAssignmentScheduleInstance is piped from Get-OPIMEntraIDGroup -All' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Invoke-GraphWithAcrsRetry { }
+        }
+
+        It 'skips the already-active instance and does not POST to the Graph API' {
+            $AlreadyActive = [PSCustomObject]@{
+                id          = 'active-001'
+                accessId    = 'member'
+                groupId     = 'group-001'
+                principalId = 'principal-001'
+                group       = @{ displayName = 'PIM Admins' }
+            }
+            $AlreadyActive.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleInstance')
+            $AlreadyActive | Enable-OPIMEntraIDGroup
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-GraphWithAcrsRetry -Times 0 -Scope It
+        }
+    }
 }

@@ -78,6 +78,11 @@
         }
 
         foreach ($Group in $ResolvedGroups) {
+            # Skip already-active instances piped from Get-OPIMEntraIDGroup -All
+            if ($Group.PSObject.TypeNames -contains 'Omnicit.PIM.GroupAssignmentScheduleInstance') {
+                Write-Verbose "Skipping already-active group assignment: $($Group.group.displayName) ($($Group.accessId))"
+                continue
+            }
             $ScheduleInfo = @{
                 startDateTime = $NotBefore.ToString('o')
                 expiration    = @{}
