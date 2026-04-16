@@ -48,6 +48,7 @@ stages:
 
           - task: PublishPipelineArtifact@1
             displayName: 'Publish Build Artifact'
+            condition: succeededOrFailed()
             inputs:
               targetPath: '$(buildFolderName)/'
               artifact: $(buildArtifactName)
@@ -87,6 +88,7 @@ stages:
 
           - task: PublishPipelineArtifact@1
             displayName: 'Publish Test Artifact'
+            condition: succeededOrFailed()
             inputs:
               targetPath: '$(buildFolderName)/$(testResultFolderName)/'
               artifactName: 'CodeCoverageLinux'
@@ -123,6 +125,7 @@ stages:
 
           - task: PublishPipelineArtifact@1
             displayName: 'Publish Test Artifact'
+            condition: succeededOrFailed()
             inputs:
               targetPath: '$(buildFolderName)/$(testResultFolderName)/'
               artifactName: 'CodeCoverageWinPS7'
@@ -159,6 +162,7 @@ stages:
 
           - task: PublishPipelineArtifact@1
             displayName: 'Publish Test Artifact'
+            condition: succeededOrFailed()
             inputs:
               targetPath: '$(buildFolderName)/$(testResultFolderName)/'
               artifactName: 'CodeCoverageMacOS'
@@ -194,21 +198,21 @@ stages:
             inputs:
               buildType: 'current'
               artifactName: 'CodeCoverageMacOS'
-              targetPath: '$(Build.SourcesDirectory)/$(buildFolderName)/$(testResultFolderName)'
-
+              targetPath: '$(Build.SourcesDirectory)/$(buildFolderName)/$(testResultFolderName)/CodeCoverageMacOS'
+          
           - task: DownloadPipelineArtifact@2
             displayName: 'Download Test Artifact Linux'
             inputs:
               buildType: 'current'
               artifactName: 'CodeCoverageLinux'
-              targetPath: '$(Build.SourcesDirectory)/$(buildFolderName)/$(testResultFolderName)'
-
+              targetPath: '$(Build.SourcesDirectory)/$(buildFolderName)/$(testResultFolderName)/CodeCoverageLinux'
+          
           - task: DownloadPipelineArtifact@2
             displayName: 'Download Test Artifact Windows (PS7)'
             inputs:
               buildType: 'current'
               artifactName: 'CodeCoverageWinPS7'
-              targetPath: '$(Build.SourcesDirectory)/$(buildFolderName)/$(testResultFolderName)'
+              targetPath: '$(Build.SourcesDirectory)/$(buildFolderName)/$(testResultFolderName)/CodeCoverageWinPS7'
 
           # Make sure to update build.yaml to support these tasks, then uncomment these tasks:
           - task: PowerShell@2
@@ -218,10 +222,9 @@ stages:
               filePath: './build.ps1'
               arguments: '-tasks merge'
               pwsh: true
-          - task: PublishCodeCoverageResults@1
+          - task: PublishCodeCoverageResults@2
             displayName: 'Publish Azure Code Coverage'
             inputs:
-              codeCoverageTool: 'JaCoCo'
               summaryFileLocation: '$(buildFolderName)/$(testResultFolderName)/JaCoCo_coverage.xml'
               pathToSources: '$(Build.SourcesDirectory)/$(dscBuildVariable.RepositoryName)/'
 
