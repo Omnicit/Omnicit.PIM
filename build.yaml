@@ -71,8 +71,8 @@ BuildWorkflow:
 
   # Use this task when you have multiple parallel tests, which produce multiple
   # code coverage files and needs to get merged into one file.
-  #merge:
-    #- Merge_CodeCoverage_Files
+  merge:
+    - Merge_CodeCoverage_Files
 
   publish:
 
@@ -106,8 +106,8 @@ Pester:
   # MSAL reflection code (assembly lookup, token builder, interactive auth)
   # that cannot be exercised without a live MSAL runtime in the test process.
   CodeCoverageThreshold: 80 # Set to 0 to bypass
-  #CodeCoverageOutputFile: JaCoCo_$OsShortName.xml
-  #CodeCoverageOutputFileEncoding: ascii
+  CodeCoverageOutputFile: JaCoCo_$OsShortName.xml
+  CodeCoverageOutputFileEncoding: ascii
   # Use this if code coverage should be merged from several pipeline test jobs.
   # Any existing keys above should be replaced. See also CodeCoverage below.
   # CodeCoverageOutputFile is the file that is created for each pipeline test job.
@@ -118,9 +118,9 @@ Pester:
 #                                after the file specified in CodeCoverageOutputFile.
 # CodeCoverageMergedOutputFile - the file that is created by the merge build task and
 #                                is the file that should be uploaded to code coverage services.
-#CodeCoverage:
-  #CodeCoverageFilePattern: JaCoCo_Merge.xml # the pattern used to search all pipeline test job artifacts
-  #CodeCoverageMergedOutputFile: JaCoCo_coverage.xml # the file that is created for the merged code coverage
+CodeCoverage:
+  CodeCoverageFilePattern: JaCoCo_Merge.xml # the pattern used to search all pipeline test job artifacts
+  CodeCoverageMergedOutputFile: JaCoCo_coverage.xml # the file that is created for the merged code coverage
 
 
 # Import ModuleBuilder tasks from a specific PowerShell module using the build

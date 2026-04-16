@@ -1,5 +1,10 @@
-# Omnicit.PIM — Privileged Identity Management Module
-
+# Omnicit.PIM [![Azure DevOps builds](https://img.shields.io/azure-devops/build/omnicit/04de5b37-b0aa-4178-8500-8ee073e3b2a4/6)](https://dev.azure.com/omnicit/Omnicit.PIM/_build?definitionId=6&_a=summary) <img align="right" width="110" height="110" src="assets/icon.png">
+ 
+[![PowerShell Gallery (with prereleases)](https://img.shields.io/powershellgallery/v/Omnicit.PIM?label=Omnicit.PIM%20Preview&include_prereleases)](https://www.powershellgallery.com/packages/Omnicit.PIM/)
+[![PowerShell Gallery](https://img.shields.io/powershellgallery/v/Omnicit.PIM?label=Omnicit.PIM)](https://www.powershellgallery.com/packages/Omnicit.PIM/)
+[![Azure DevOps tests](https://img.shields.io/azure-devops/tests/omnicit/04de5b37-b0aa-4178-8500-8ee073e3b2a4/6)](https://dev.azure.com/omnicit/Omnicit.PIM/_test/analytics?definitionId=6&contextType=build)
+![Azure DevOps coverage](https://img.shields.io/azure-devops/coverage/omnicit/04de5b37-b0aa-4178-8500-8ee073e3b2a4/6)
+![PowerShell Gallery](https://img.shields.io/powershellgallery/p/Omnicit.PIM)
 A PowerShell module for self-service activation and deactivation of PIM roles and group memberships across three surfaces:
 
 | Surface | Noun | Cmdlet prefix |

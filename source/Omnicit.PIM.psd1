@@ -120,7 +120,7 @@ PrivateData = @{
     PSData = @{
 
         # Tags applied to this module. These help with module discovery in online galleries.
-            Tags = @('PIM', 'Azure', 'EntraID', 'ActiveDirectory', 'Identity', 'Privileged')
+            Tags       = @('Windows', 'Linux', 'MacOS', 'PSEdition_Core''PIM', 'Azure', 'EntraID', 'Identity', 'Privileged')
 
         # A URL to the license for this module.
             LicenseUri = 'https://github.com/Omnicit/Omnicit.PIM/LICENSE'
@@ -129,7 +129,7 @@ PrivateData = @{
             ProjectUri = 'https://github.com/Omnicit/Omnicit.PIM'
 
         # A URL to an icon representing this module.
-         IconUri = 'https://raw.githubusercontent.com/Omnicit/Omnicit.PIM/main/assets/icon.png'
+            IconUri = 'https://raw.githubusercontent.com/Omnicit/Omnicit.PIM/main/assets/icon.png'
 
         # ReleaseNotes of this module
         ReleaseNotes = ''
