@@ -129,7 +129,7 @@ PrivateData = @{
             ProjectUri = 'https://github.com/Omnicit/Omnicit.PIM'
 
         # A URL to an icon representing this module.
-        # IconUri = ''
+         IconUri = 'https://raw.githubusercontent.com/Omnicit/Omnicit.PIM/main/assets/icon.png'
 
         # ReleaseNotes of this module
         ReleaseNotes = ''
