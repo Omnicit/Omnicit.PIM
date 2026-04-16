@@ -106,12 +106,12 @@ Pester:
   # MSAL reflection code (assembly lookup, token builder, interactive auth)
   # that cannot be exercised without a live MSAL runtime in the test process.
   CodeCoverageThreshold: 80 # Set to 0 to bypass
-  CodeCoverageOutputFile: JaCoCo_$OsShortName.xml
-  CodeCoverageOutputFileEncoding: ascii
+  #CodeCoverageOutputFile: JaCoCo_$OsShortName.xml
+  #CodeCoverageOutputFileEncoding: ascii
   # Use this if code coverage should be merged from several pipeline test jobs.
   # Any existing keys above should be replaced. See also CodeCoverage below.
   # CodeCoverageOutputFile is the file that is created for each pipeline test job.
-  #CodeCoverageOutputFile: JaCoCo_Merge.xml
+  CodeCoverageOutputFile: JaCoCo_Merge.xml
 
 # Use this to merged code coverage from several pipeline test jobs.
 # CodeCoverageFilePattern      - the pattern used to search all pipeline test job artifacts
