@@ -1,4 +1,4 @@
-﻿Describe 'Set-OPIMConfiguration' {
+Describe 'Set-OPIMConfiguration' {
     BeforeAll {
         Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
         Import-Module Omnicit.PIM -Force
@@ -10,6 +10,7 @@
 
     Context 'When the TenantMap file does not exist' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $false }
         }
 
@@ -27,6 +28,7 @@
 
     Context 'When the alias does not exist in the file' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }
             Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
                 return @{
@@ -50,6 +52,7 @@
 
     Context 'When updating the TenantId for an existing alias' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }
             Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
                 return @{
@@ -75,6 +78,7 @@
 
     Context 'When a directory role object is piped' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }
             Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
                 return @{
@@ -110,6 +114,7 @@
 
     Context 'When a group object is piped' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }
             Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
                 return @{
@@ -140,6 +145,7 @@
 
     Context 'When an Azure role object is piped' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }
             Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
                 return @{
@@ -169,6 +175,7 @@
 
     Context 'When no pipeline input is provided and only TenantId is changed' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }
             Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
                 return @{
@@ -204,6 +211,7 @@
 
     Context 'When -WhatIf is specified' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }
             Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
                 return @{

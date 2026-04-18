@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `-Identity` parameter (ParameterSetName `ByIdentity`) added to all six `Enable-OPIM*` and `Disable-OPIM*` cmdlets. Activates or deactivates a role/group by schedule ID (or schedule `Name` for Azure) without tab completion. For `Disable-*` cmdlets, the ID must correspond to an active schedule instance (from `Get-OPIM* -Activated`). For Azure RBAC the identity is the `Name` property.
+- `Connect-OPIM` (alias `Connect-PIM`) — new public cmdlet to pre-authenticate against Microsoft Graph and optionally Azure. A single browser prompt covers all PIM surfaces (directory roles, Entra ID groups, Azure RBAC). All `Get-/Enable-/Disable-OPIM*` cmdlets call this automatically on first use.
+- `Disconnect-OPIM` (alias `Disconnect-PIM`) — new public cmdlet to clear all cached session tokens and disconnect from Graph and Azure.
+- Centralized MSAL-based authentication layer (`Initialize-OPIMAuth`, `Get-OPIMMsalApplication` private helpers). All PIM cmdlets now share a single token-acquisition flow that caches the result and is idempotent when called multiple times in the same session.
+- ACRS Conditional Access claims-challenge handling moved into `Invoke-OPIMGraphRequest`. A single reactive browser re-prompt is issued when Graph returns a step-up challenge, eliminating repeated browser windows when activating multiple roles in one `Enable-OPIMMyRole` call.
+- `Invoke-OPIMGraphRequest` private wrapper replaces direct `Invoke-MgGraphRequest` calls throughout the module. Provides bearer-token security (removes raw error records before any processing), ACRS retry, and consistent `Convert-GraphHttpException` error conversion.
+
+ (ParameterSetName `ByIdentity`) added to all six `Enable-OPIM*` and `Disable-OPIM*` cmdlets. Activates or deactivates a role/group by schedule ID (or schedule `Name` for Azure) without tab completion. For `Disable-*` cmdlets, the ID must correspond to an active schedule instance (from `Get-OPIM* -Activated`). For Azure RBAC the identity is the `Name` property.
 - `Get-OPIMDirectoryRole`, `Get-OPIMEntraIDGroup`, and `Get-OPIMAzureRole` gain a new `-All` ParameterSet that returns **both** eligible and active schedules for the current user in a single call. `-All` and `-Activated` are mutually exclusive.
 - `Get-OPIMDirectoryRole` — new `-RoleName` positional parameter (`[Position = 0]`) with tab completion via `DirectoryEligibleRoleCompleter`. Extracts the schedule ID from the trailing `(id)` and performs a dual-search across eligible and active endpoints.
 - `Get-OPIMEntraIDGroup` — new `-GroupName` positional parameter (`[Position = 0]`) with tab completion via `GroupEligibleCompleter`. Extracts the schedule ID from the trailing `(id)` and performs a dual-search across eligible and active endpoints.

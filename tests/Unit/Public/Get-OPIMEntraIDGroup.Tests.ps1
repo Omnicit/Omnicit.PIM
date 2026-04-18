@@ -9,7 +9,8 @@ Describe 'Get-OPIMEntraIDGroup' {
 
     Context 'When called with default parameters (eligible schedules)' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     value = @(
                         @{
@@ -25,16 +26,16 @@ Describe 'Get-OPIMEntraIDGroup' {
             } -ParameterFilter { $Uri -like '*eligibilitySchedules*' }
         }
 
-        It 'calls Invoke-MgGraphRequest targeting eligibilitySchedules' {
+        It 'calls Invoke-OPIMGraphRequest targeting eligibilitySchedules' {
             Get-OPIMEntraIDGroup
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
                 $Uri -like '*eligibilitySchedules*'
             }
         }
 
-        It 'calls Invoke-MgGraphRequest with filterByCurrentUser' {
+        It 'calls Invoke-OPIMGraphRequest with filterByCurrentUser' {
             Get-OPIMEntraIDGroup
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
                 $Uri -like "*filterByCurrentUser*"
             }
         }
@@ -52,7 +53,8 @@ Describe 'Get-OPIMEntraIDGroup' {
 
     Context 'When -Activated is specified' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     value = @(
                         @{
@@ -68,9 +70,9 @@ Describe 'Get-OPIMEntraIDGroup' {
             } -ParameterFilter { $Uri -like '*assignmentScheduleInstances*' }
         }
 
-        It 'calls Invoke-MgGraphRequest targeting assignmentScheduleInstances' {
+        It 'calls Invoke-OPIMGraphRequest targeting assignmentScheduleInstances' {
             Get-OPIMEntraIDGroup -Activated
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
                 $Uri -like '*assignmentScheduleInstances*'
             }
         }
@@ -82,7 +84,7 @@ Describe 'Get-OPIMEntraIDGroup' {
 
         It 'does not call eligibilitySchedules' {
             Get-OPIMEntraIDGroup -Activated
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 0 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter {
                 $Uri -like '*eligibilitySchedules*'
             }
         }
@@ -90,25 +92,26 @@ Describe 'Get-OPIMEntraIDGroup' {
 
     Context 'When -All is specified' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{ value = @() }
             } -ParameterFilter { $Uri -like '*eligibilitySchedules*' }
 
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{ value = @() }
             } -ParameterFilter { $Uri -like '*assignmentScheduleInstances*' }
         }
 
-        It 'calls Invoke-MgGraphRequest for eligibilitySchedules with filterByCurrentUser' {
+        It 'calls Invoke-OPIMGraphRequest for eligibilitySchedules with filterByCurrentUser' {
             Get-OPIMEntraIDGroup -All
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
                 $Uri -like '*eligibilitySchedules*' -and $Uri -like '*filterByCurrentUser*'
             }
         }
 
-        It 'calls Invoke-MgGraphRequest for assignmentScheduleInstances with filterByCurrentUser' {
+        It 'calls Invoke-OPIMGraphRequest for assignmentScheduleInstances with filterByCurrentUser' {
             Get-OPIMEntraIDGroup -All
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
                 $Uri -like '*assignmentScheduleInstances*' -and $Uri -like '*filterByCurrentUser*'
             }
         }
@@ -122,18 +125,19 @@ Describe 'Get-OPIMEntraIDGroup' {
 
     Context 'When -Identity is specified' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{ value = @() }
             } -ParameterFilter { $Uri -like '*eligibilitySchedules*' }
 
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{ value = @() }
             } -ParameterFilter { $Uri -like '*assignmentScheduleInstances*' }
         }
 
         It 'queries both eligible and active endpoints with the id filter (dual-search)' {
             Get-OPIMEntraIDGroup -Identity 'elig-001'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Scope It -ParameterFilter {
                 $Uri -like "*id eq 'elig-001'*"
             }
         }
@@ -141,18 +145,19 @@ Describe 'Get-OPIMEntraIDGroup' {
 
     Context 'When -Filter is specified' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{ value = @() }
             } -ParameterFilter { $Uri -like '*eligibilitySchedules*' }
 
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{ value = @() }
             } -ParameterFilter { $Uri -like '*assignmentScheduleInstances*' }
         }
 
         It 'queries both eligible and active endpoints with the OData filter (dual-search)' {
             Get-OPIMEntraIDGroup -Filter "groupId eq 'group-001'"
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Scope It -ParameterFilter {
                 $Uri -like "*groupId eq 'group-001'*"
             }
         }
@@ -160,21 +165,22 @@ Describe 'Get-OPIMEntraIDGroup' {
 
     Context 'When -AccessType is specified' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{ value = @() }
             } -ParameterFilter { $Uri -like '*eligibilitySchedules*' }
         }
 
         It 'appends an accessId eq filter for member' {
             Get-OPIMEntraIDGroup -AccessType member
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
                 $Uri -like "*accessId eq 'member'*"
             }
         }
 
         It 'appends an accessId eq filter for owner' {
             Get-OPIMEntraIDGroup -AccessType owner
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
                 $Uri -like "*accessId eq 'owner'*"
             }
         }
@@ -182,18 +188,19 @@ Describe 'Get-OPIMEntraIDGroup' {
 
     Context 'When -Identity, -AccessType, and -Filter are all specified' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{ value = @() }
             } -ParameterFilter { $Uri -like '*eligibilitySchedules*' }
 
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{ value = @() }
             } -ParameterFilter { $Uri -like '*assignmentScheduleInstances*' }
         }
 
         It 'combines all filter parts and queries both endpoints (dual-search)' {
             Get-OPIMEntraIDGroup -Identity 'elig-001' -AccessType member -Filter "principalId eq 'principal-001'"
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Scope It -ParameterFilter {
                 $Uri -like "*id eq 'elig-001'*" -and
                 $Uri -like "*accessId eq 'member'*" -and
                 $Uri -like "*principalId eq 'principal-001'*"
@@ -203,7 +210,8 @@ Describe 'Get-OPIMEntraIDGroup' {
 
     Context 'When the result set is empty' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{ value = @() }
             } -ParameterFilter { $Uri -like '*eligibilitySchedules*' }
         }
@@ -220,7 +228,8 @@ Describe 'Get-OPIMEntraIDGroup' {
 
     Context 'When the Graph API returns an error' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 throw [System.Net.Http.HttpRequestException]::new(
                     '{"error":{"code":"InsufficientPermissions","message":"Access denied"}}'
                 )
@@ -239,17 +248,12 @@ Describe 'Get-OPIMEntraIDGroup' {
             Get-OPIMEntraIDGroup -ErrorVariable Errors -ErrorAction SilentlyContinue
             $Errors.Count | Should -BeGreaterThan 0
         }
-
-        It 'passes the raw exception to Convert-GraphHttpException' {
-            $Errors = @()
-            Get-OPIMEntraIDGroup -ErrorVariable Errors -ErrorAction SilentlyContinue
-            Should -Invoke -ModuleName Omnicit.PIM Convert-GraphHttpException -Times 1 -Scope It
-        }
     }
 
     Context 'When -All returns both eligible and active results' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     value = @(
                         @{
@@ -264,7 +268,7 @@ Describe 'Get-OPIMEntraIDGroup' {
                 }
             } -ParameterFilter { $Uri -like '*eligibilitySchedules*' }
 
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     value = @(
                         @{
@@ -296,18 +300,19 @@ Describe 'Get-OPIMEntraIDGroup' {
 
     Context 'When -All -AccessType owner is specified' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{ value = @() }
             } -ParameterFilter { $Uri -like '*eligibilitySchedules*' }
 
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{ value = @() }
             } -ParameterFilter { $Uri -like '*assignmentScheduleInstances*' }
         }
 
         It 'includes accessId eq owner filter in both endpoint calls' {
             Get-OPIMEntraIDGroup -All -AccessType owner
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Scope It -ParameterFilter {
                 $Uri -like "*accessId eq 'owner'*"
             }
         }
@@ -315,7 +320,8 @@ Describe 'Get-OPIMEntraIDGroup' {
 
     Context 'When -GroupName is specified' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     value = @(
                         @{
@@ -330,14 +336,14 @@ Describe 'Get-OPIMEntraIDGroup' {
                 }
             } -ParameterFilter { $Uri -like '*eligibilitySchedules*' }
 
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{ value = @() }
             } -ParameterFilter { $Uri -like '*assignmentScheduleInstances*' }
         }
 
         It 'extracts the schedule ID from trailing parentheses and performs dual-search' {
             Get-OPIMEntraIDGroup -GroupName 'PIM Admins - member (elig-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Scope It -ParameterFilter {
                 $Uri -like "*id eq 'elig-001'*"
             }
         }

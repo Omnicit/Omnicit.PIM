@@ -1,4 +1,4 @@
-﻿Describe 'Disable-OPIMEntraIDGroup' {
+Describe 'Disable-OPIMEntraIDGroup' {
     BeforeAll {
         Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
         Import-Module Omnicit.PIM -Force
@@ -9,6 +9,7 @@
 
     Context 'When called with -GroupName (happy path)' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeGroup = [PSCustomObject]@{
                 id          = 'instance-001'
                 accessId    = 'member'
@@ -17,7 +18,7 @@
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
             }
             Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeGroup }
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     id          = 'deact-req-001'
                     action      = 'selfDeactivate'
@@ -35,23 +36,23 @@
             Should -Invoke -ModuleName Omnicit.PIM Resolve-RoleByName -Times 1 -Scope It
         }
 
-        It 'calls Invoke-MgGraphRequest with POST to the group assignmentScheduleRequests endpoint' {
+        It 'calls Invoke-OPIMGraphRequest with POST to the group assignmentScheduleRequests endpoint' {
             Disable-OPIMEntraIDGroup -GroupName 'Finance Team (instance-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Uri -like '*privilegedAccess/group/assignmentScheduleRequests*'
             }
         }
 
         It 'sends selfDeactivate as the action in the request body' {
             Disable-OPIMEntraIDGroup -GroupName 'Finance Team (instance-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.action -eq 'selfDeactivate'
             }
         }
 
         It 'sends the accessId from the resolved group in the request body' {
             Disable-OPIMEntraIDGroup -GroupName 'Finance Team (instance-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.accessId -eq 'member'
             }
         }
@@ -64,6 +65,7 @@
 
     Context 'When called with pipeline input (-Group parameter set)' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeGroup = [PSCustomObject]@{
                 id          = 'instance-002'
                 accessId    = 'owner'
@@ -72,7 +74,7 @@
                 group       = [PSCustomObject]@{ displayName = 'DevOps Team' }
             }
             $FakeGroup.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleInstance')
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     id          = 'deact-req-002'
                     action      = 'selfDeactivate'
@@ -85,18 +87,18 @@
             } -ParameterFilter { $Method -eq 'POST' }
         }
 
-        It 'calls Invoke-MgGraphRequest with the groupId and principalId from the piped group' {
+        It 'calls Invoke-OPIMGraphRequest with the groupId and principalId from the piped group' {
             $FakeGroup | Disable-OPIMEntraIDGroup
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and
                 $Body.groupId -eq 'group-002' -and
                 $Body.principalId -eq 'principal-002'
             }
         }
 
-        It 'calls Invoke-MgGraphRequest with the accessId from the piped group' {
+        It 'calls Invoke-OPIMGraphRequest with the accessId from the piped group' {
             $FakeGroup | Disable-OPIMEntraIDGroup
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.accessId -eq 'owner'
             }
         }
@@ -109,6 +111,7 @@
 
     Context 'When -WhatIf is specified' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeGroup = [PSCustomObject]@{
                 id          = 'instance-001'
                 accessId    = 'member'
@@ -117,17 +120,18 @@
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
             }
             Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeGroup }
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest { } -ParameterFilter { $Method -eq 'POST' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest { } -ParameterFilter { $Method -eq 'POST' }
         }
 
-        It 'does not call Invoke-MgGraphRequest when -WhatIf is specified' {
+        It 'does not call Invoke-OPIMGraphRequest when -WhatIf is specified' {
             Disable-OPIMEntraIDGroup -GroupName 'Finance Team (instance-001)' -WhatIf
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It
         }
     }
 
     Context 'When the Graph API returns a general error' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeGroup = [PSCustomObject]@{
                 id          = 'instance-001'
                 accessId    = 'member'
@@ -136,7 +140,7 @@
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
             }
             Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeGroup }
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 throw [System.Net.Http.HttpRequestException]::new(
                     '{"error":{"code":"GeneralError","message":"An unexpected error occurred."}}'
                 )
@@ -156,6 +160,7 @@
 
     Context 'When the API returns an ActiveDurationTooShort error' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeGroup = [PSCustomObject]@{
                 id          = 'instance-001'
                 accessId    = 'member'
@@ -164,7 +169,7 @@
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
             }
             Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeGroup }
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 throw [System.Net.Http.HttpRequestException]::new(
                     '{"error":{"code":"ActiveDurationTooShort","message":"Group was not activated long enough to meet the minimum wait period."}}'
                 )
@@ -186,6 +191,7 @@
 
     Context 'When the API response does not include a group property' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeGroup = [PSCustomObject]@{
                 id          = 'instance-004'
                 accessId    = 'member'
@@ -194,7 +200,7 @@
                 group       = [PSCustomObject]@{ displayName = 'Engineering Team' }
             }
             Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeGroup }
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     id          = 'deact-req-004'
                     action      = 'selfDeactivate'
@@ -220,6 +226,7 @@
 
     Context 'When -Identity is specified and the group is found' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeActive = [PSCustomObject]@{
                 id          = 'instance-005'
                 accessId    = 'member'
@@ -229,7 +236,7 @@
             }
             $FakeActive.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleInstance')
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return $FakeActive }
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     id          = 'deact-req-005'
                     action      = 'selfDeactivate'
@@ -249,7 +256,7 @@
 
         It 'submits the selfDeactivate request' {
             Disable-OPIMEntraIDGroup -Identity 'instance-005'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
                 $Method -eq 'POST'
             }
         }
@@ -262,6 +269,7 @@
 
     Context 'When -Identity is specified but no active group is found' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return $null }
         }
 
@@ -274,7 +282,8 @@
 
     Context 'When a GroupEligibilitySchedule is piped from Get-OPIMEntraIDGroup -All' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest { } -ParameterFilter { $Method -eq 'POST' }
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest { } -ParameterFilter { $Method -eq 'POST' }
         }
 
         It 'skips the eligible-only schedule and does not POST to the Graph API' {
@@ -287,7 +296,7 @@
             }
             $EligibleOnly.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupEligibilitySchedule')
             $EligibleOnly | Disable-OPIMEntraIDGroup
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
         }
     }
 }

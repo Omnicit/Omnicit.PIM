@@ -12,6 +12,7 @@ Describe 'Wait-OPIMDirectoryRole' {
 
     Context 'When the role request end date has already expired' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $expiredRole = [PSCustomObject]@{
                 id               = 'req-expired'
                 roleDefinition   = [PSCustomObject]@{ displayName = 'Global Administrator' }
@@ -37,6 +38,7 @@ Describe 'Wait-OPIMDirectoryRole' {
 
     Context 'When the role request has no expiration date set' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $noExpiryRole = [PSCustomObject]@{
                 id               = 'req-001'
                 roleDefinition   = [PSCustomObject]@{ displayName = 'Global Administrator' }
@@ -55,6 +57,7 @@ Describe 'Wait-OPIMDirectoryRole' {
 
     Context 'When the role request has a future end date' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $futureRole = [PSCustomObject]@{
                 id               = 'req-future'
                 roleDefinition   = [PSCustomObject]@{ displayName = 'Global Administrator' }
@@ -77,6 +80,7 @@ Describe 'Wait-OPIMDirectoryRole' {
 
     Context 'When multiple role requests are piped and one is expired' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $expiredRole = [PSCustomObject]@{
                 id               = 'req-expired'
                 roleDefinition   = [PSCustomObject]@{ displayName = 'Global Administrator' }
@@ -117,7 +121,7 @@ Describe 'Wait-OPIMDirectoryRole' {
 
     Context 'When -PassThru is specified' {
         It 'calls Get-OPIMDirectoryRole -Activated to return activated role instances' -Skip {
-            # Invoke-MgGraphRequest mocks do not cross ForEach-Object -Parallel runspace boundaries.
+            # Invoke-OPIMGraphRequest mocks do not cross ForEach-Object -Parallel runspace boundaries.
             # Wait-OPIMDirectoryRole must poll Graph until the role reaches Provisioned status before
             # the -PassThru code path is reachable. This scenario is covered by integration tests.
         }

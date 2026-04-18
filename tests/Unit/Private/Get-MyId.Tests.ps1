@@ -11,22 +11,22 @@ Describe 'Get-MyId' {
             InModuleScope Omnicit.PIM {
                 $script:_MyIDCache = $null
                 Mock Get-MgContext { return $null }
-                { Get-MyId } | Should -Throw '*not connected to Microsoft Graph*'
+                { Get-MyId } | Should -Throw '*Not connected*'
             }
         }
     }
 
     Context 'When connected and the user id is not yet cached (cache miss)' {
-        It 'calls Invoke-MgGraphRequest against v1.0/me' {
+        It 'calls Invoke-OPIMGraphRequest against v1.0/me' {
             InModuleScope Omnicit.PIM {
                 $script:_MyIDCache = $null
                 Mock Get-MgContext { [PSCustomObject]@{ Account = 'jane@contoso.com' } }
-                Mock Invoke-MgGraphRequest {
+                Mock Invoke-OPIMGraphRequest {
                     @{ userPrincipalName = 'jane@contoso.com'; id = '00000000-0000-0000-0000-000000000001' }
                 } -ParameterFilter { $Uri -eq 'v1.0/me' }
 
                 Get-MyId
-                Should -Invoke Invoke-MgGraphRequest -Times 1 -Scope It
+                Should -Invoke Invoke-OPIMGraphRequest -Times 1 -Scope It
             }
         }
 
@@ -34,7 +34,7 @@ Describe 'Get-MyId' {
             InModuleScope Omnicit.PIM {
                 $script:_MyIDCache = $null
                 Mock Get-MgContext { [PSCustomObject]@{ Account = 'jane@contoso.com' } }
-                Mock Invoke-MgGraphRequest {
+                Mock Invoke-OPIMGraphRequest {
                     @{ userPrincipalName = 'jane@contoso.com'; id = '00000000-0000-0000-0000-000000000001' }
                 } -ParameterFilter { $Uri -eq 'v1.0/me' }
 
@@ -46,16 +46,16 @@ Describe 'Get-MyId' {
     }
 
     Context 'When the user id is already in the cache (cache hit)' {
-        It 'returns the cached Guid without calling Invoke-MgGraphRequest' {
+        It 'returns the cached Guid without calling Invoke-OPIMGraphRequest' {
             InModuleScope Omnicit.PIM {
                 $script:_MyIDCache = [System.Collections.Generic.Dictionary[String, Guid]]::new()
                 $script:_MyIDCache.Add('jane@contoso.com', [Guid]'00000000-0000-0000-0000-000000000002')
                 Mock Get-MgContext { [PSCustomObject]@{ Account = 'jane@contoso.com' } }
-                Mock Invoke-MgGraphRequest { }
+                Mock Invoke-OPIMGraphRequest { }
 
                 $Result = Get-MyId
                 $Result.ToString() | Should -Be '00000000-0000-0000-0000-000000000002'
-                Should -Invoke Invoke-MgGraphRequest -Times 0 -Scope It
+                Should -Invoke Invoke-OPIMGraphRequest -Times 0 -Scope It
             }
         }
     }
@@ -66,12 +66,12 @@ Describe 'Get-MyId' {
                 $SCRIPT:_MyIDCache = [System.Collections.Generic.Dictionary[String, Guid]]::new()
                 $SCRIPT:_MyIDCache.Add('explicit@contoso.com', [Guid]'00000000-0000-0000-0000-000000000003')
                 Mock Get-MgContext { }
-                Mock Invoke-MgGraphRequest { }
+                Mock Invoke-OPIMGraphRequest { }
 
                 $result = Get-MyId -user 'explicit@contoso.com'
                 $result.ToString() | Should -Be '00000000-0000-0000-0000-000000000003'
                 Should -Invoke Get-MgContext -Times 0 -Scope It
-                Should -Invoke Invoke-MgGraphRequest -Times 0 -Scope It
+                Should -Invoke Invoke-OPIMGraphRequest -Times 0 -Scope It
             }
         }
     }
@@ -81,7 +81,7 @@ Describe 'Get-MyId' {
             InModuleScope Omnicit.PIM {
                 $SCRIPT:_MyIDCache = $null
                 Mock Get-MgContext { [PSCustomObject]@{ Account = 'jane@contoso.com' } }
-                Mock Invoke-MgGraphRequest {
+                Mock Invoke-OPIMGraphRequest {
                     @{ userPrincipalName = 'imposter@contoso.com'; id = '00000000-0000-0000-0000-000000000004' }
                 } -ParameterFilter { $Uri -eq 'v1.0/me' }
 

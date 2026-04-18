@@ -69,6 +69,7 @@
         [Switch]$Wait
     )
     begin {
+        Initialize-OPIMAuth
         [System.Collections.Generic.List[PSObject]]$_pendingWait = [System.Collections.Generic.List[PSObject]]::new()
     }
     process {
@@ -129,24 +130,12 @@
                     "Activate $($Role.roleDefinition.displayName) for scope $($Role.directoryScopeId) from $NotBefore to $RoleExpireTime"
                 )) {
                 $GraphUri = 'v1.0/roleManagement/directory/roleAssignmentScheduleRequests'
-                $Result = Invoke-GraphWithAcrsRetry -Uri $GraphUri -Body $Request
-
-                # Invoke-GraphWithAcrsRetry returns a hashtable with _AcrsError key when the call failed.
-                # Success returns a plain response hashtable without this key.
-                if ($Result -is [hashtable] -and $Result.ContainsKey('_AcrsError')) {
-                    $Err     = $Result._ErrorRecord
-                    $AllMsgs = $Result._AllMsgs
-                    if ($Result._AcrsError -and ($Result._NoClaimsExtracted -or $Result._NoMsal -or $Result._MsalBuildFailed -or $Result._NoWithClaims -or $Result._TokenFailed -or $Result._RetryFailed)) {
-                        $AcrsMsg = 'PIM requires Conditional Access authentication context that your current ' +
-                            'session token does not satisfy. The automatic claims-challenge retry failed. ' +
-                            'Run Disconnect-MgGraph, then Connect-MgGraph in a new PowerShell session. ' +
-                            'If the issue persists, the tenant may require a custom app registration.'
-                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                            [System.Exception]::new($AcrsMsg, $Err.Exception),
-                            'RoleAssignmentRequestAcrsValidationFailed',
-                            [System.Management.Automation.ErrorCategory]::AuthenticationError, $null))
-                        continue
-                    } elseif ($AllMsgs -match 'JustificationRule') {
+                $Response = try {
+                    Invoke-OPIMGraphRequest -Method POST -Uri $GraphUri -Body $Request
+                } catch {
+                    $Err = $PSItem
+                    $AllMsgs = "$($Err.FullyQualifiedErrorId) $($Err.Exception.Message)"
+                    if ($AllMsgs -match 'JustificationRule') {
                         $JustMsg = 'Your PIM policy requires a justification for this role. Use the -Justification parameter.'
                         $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                             [System.Exception]::new($JustMsg, $Err.Exception),
@@ -165,8 +154,7 @@
                         continue
                     }
                 }
-
-                $Response = $Result
+                if ($null -eq $Response) { continue }
 
                 # Rehydrate expanded navigation properties from the eligibility schedule
                 'roleDefinition', 'principal', 'directoryScope' | Restore-GraphProperty $Request $Response $Role

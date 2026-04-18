@@ -32,6 +32,7 @@ function Disable-OPIMAzureRole {
         [String]$Identity
     )
     process {
+        Initialize-OPIMAuth -IncludeARM
         if ($Identity) {
             $Role = Get-OPIMAzureRole -Activated | Where-Object Name -EQ $Identity | Select-Object -First 1
             if (-not $Role) {

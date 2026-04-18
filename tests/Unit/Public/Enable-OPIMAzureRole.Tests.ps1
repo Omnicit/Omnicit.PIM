@@ -1,4 +1,4 @@
-﻿Describe 'Enable-OPIMAzureRole' {
+Describe 'Enable-OPIMAzureRole' {
     BeforeAll {
         Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
         Import-Module Omnicit.PIM -Force
@@ -9,6 +9,7 @@
 
     Context 'When called with -RoleName (happy path)' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $fakeRole = [PSCustomObject]@{
                 Name                      = 'elig-001'
                 ScopeId                   = '/subscriptions/sub-001'
@@ -66,6 +67,7 @@
 
     Context 'When called with multiple role names' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $fakeRoleA = [PSCustomObject]@{
                 Name                      = 'elig-001'
                 ScopeId                   = '/subscriptions/sub-001'
@@ -99,6 +101,7 @@
 
     Context 'When called with pipeline input (-Role parameter set)' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $fakeRole = [PSCustomObject]@{
                 Name                      = 'elig-002'
                 ScopeId                   = '/subscriptions/sub-002'
@@ -138,6 +141,7 @@
 
     Context 'When -Until is specified' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $fakeRole = [PSCustomObject]@{
                 Name                      = 'elig-001'
                 ScopeId                   = '/subscriptions/sub-001'
@@ -180,6 +184,7 @@
 
     Context 'When -Hours overrides the default duration' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $fakeRole = [PSCustomObject]@{
                 Name                      = 'elig-001'
                 ScopeId                   = '/subscriptions/sub-001'
@@ -214,6 +219,7 @@
 
     Context 'When ticket information is provided' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $fakeRole = [PSCustomObject]@{
                 Name                      = 'elig-001'
                 ScopeId                   = '/subscriptions/sub-001'
@@ -248,6 +254,7 @@
 
     Context 'When -Justification is provided' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $fakeRole = [PSCustomObject]@{
                 Name                      = 'elig-001'
                 ScopeId                   = '/subscriptions/sub-001'
@@ -275,6 +282,7 @@
 
     Context 'When -WhatIf is specified' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $fakeRole = [PSCustomObject]@{
                 Name                      = 'elig-001'
                 ScopeId                   = '/subscriptions/sub-001'
@@ -295,6 +303,7 @@
 
     Context 'When the API returns a general error' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $fakeRole = [PSCustomObject]@{
                 Name                      = 'elig-001'
                 ScopeId                   = '/subscriptions/sub-001'
@@ -329,6 +338,7 @@
 
     Context 'When the API returns a JustificationRule policy violation' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $fakeRole = [PSCustomObject]@{
                 Name                      = 'elig-001'
                 ScopeId                   = '/subscriptions/sub-001'
@@ -358,6 +368,7 @@
 
     Context 'When the API returns an ExpirationRule policy violation' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $fakeRole = [PSCustomObject]@{
                 Name                      = 'elig-001'
                 ScopeId                   = '/subscriptions/sub-001'
@@ -387,6 +398,7 @@
 
     Context 'When -Wait is specified' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $fakeRole = [PSCustomObject]@{
                 Name                      = 'elig-001'
                 ScopeId                   = '/subscriptions/sub-001'
@@ -424,6 +436,7 @@
 
     Context 'When the API throws an exception that has an InnerException' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeRole = [PSCustomObject]@{
                 Name                      = 'elig-001'
                 ScopeId                   = '/subscriptions/sub-001'
@@ -452,6 +465,7 @@
 
     Context 'When -Identity is specified and the role is found' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeElig = [PSCustomObject]@{
                 Name                            = 'elig-010'
                 RoleDefinitionId                = '/providers/Microsoft.Authorization/roleDefinitions/role-def-001'
@@ -484,6 +498,7 @@
 
     Context 'When -Identity is specified but no eligible role is found' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return $null }
         }
 
@@ -496,6 +511,7 @@
 
     Context 'When positional parameters are used' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeElig = [PSCustomObject]@{
                 Name                            = 'elig-pos-001'
                 RoleDefinitionId                = '/providers/Microsoft.Authorization/roleDefinitions/role-def-001'
@@ -526,6 +542,7 @@
 
     Context 'When an AzureAssignmentScheduleInstance is piped from Get-OPIMAzureRole -All' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest { }
         }
 

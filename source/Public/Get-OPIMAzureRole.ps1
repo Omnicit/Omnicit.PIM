@@ -67,6 +67,7 @@ function Get-OPIMAzureRole {
         [String]$Identity
     )
     process {
+        Initialize-OPIMAuth -IncludeARM
         # Resolve RoleName to a schedule Name if provided (extract Name from trailing '(name)' suffix)
         [string]$ResolvedName = $Identity
         if ($RoleName) {

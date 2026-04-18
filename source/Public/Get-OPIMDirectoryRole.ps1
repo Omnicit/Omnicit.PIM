@@ -73,6 +73,7 @@
         [String]$Filter
     )
     process {
+        Initialize-OPIMAuth
         # Resolve RoleName to a schedule Identity if provided (extract ID from trailing '(id)' suffix)
         if ($RoleName) {
             if ($RoleName -match '\(([^)]+)\)$') {
@@ -111,17 +112,17 @@
             )) {
                 [string]$RequestUri = "v1.0/roleManagement/directory/$($TypeConfig.Type)${UserFilter}${Expand}${ObjectFilter}"
                 try {
-                    $Items = Invoke-MgGraphRequest -Uri $RequestUri -ErrorAction Stop -Verbose:$false |
+                    $Items = Invoke-OPIMGraphRequest -Uri $RequestUri |
                         Select-Object -ExpandProperty Value
                 } catch {
-                    $PSCmdlet.WriteError((Convert-GraphHttpException $PSItem))
+                    $PSCmdlet.WriteError($PSItem)
                     continue
                 }
                 foreach ($Item in $Items) {
                     if ($Item.directoryScopeId -eq '/') {
                         $Item['directoryScope'] = @{ id = '/' }
                     } else {
-                        $Item['directoryScope'] = Invoke-MgGraphRequest -Verbose:$false -ErrorAction Stop -Method Get -Uri "v1.0/directory$($Item.directoryScopeId)"
+                        $Item['directoryScope'] = Invoke-OPIMGraphRequest -Method Get -Uri "v1.0/directory$($Item.directoryScopeId)"
                     }
                     $Obj = [PSCustomObject]$Item
                     $Obj | Add-Member -NotePropertyName Status -NotePropertyValue $TypeConfig.Status -Force
@@ -142,10 +143,10 @@
         $RequestUri = "v1.0/roleManagement/directory/${Type}${UserFilter}${Expand}${ObjectFilter}"
 
         try {
-            $Items = Invoke-MgGraphRequest -Uri $RequestUri -ErrorAction Stop -Verbose:$false |
+            $Items = Invoke-OPIMGraphRequest -Uri $RequestUri |
                 Select-Object -ExpandProperty Value
         } catch {
-            $PSCmdlet.WriteError((Convert-GraphHttpException $PSItem))
+            $PSCmdlet.WriteError($PSItem)
             return
         }
 
@@ -161,7 +162,7 @@
             if ($Item.directoryScopeId -eq '/') {
                 $Item['directoryScope'] = @{ id = '/' }
             } else {
-                $Item['directoryScope'] = Invoke-MgGraphRequest -Verbose:$false -ErrorAction Stop -Method Get -Uri "v1.0/directory$($Item.directoryScopeId)"
+                $Item['directoryScope'] = Invoke-OPIMGraphRequest -Method Get -Uri "v1.0/directory$($Item.directoryScopeId)"
             }
             # Cast to PSCustomObject so custom Format views are used instead of the
             # built-in hashtable Key/Value formatter.

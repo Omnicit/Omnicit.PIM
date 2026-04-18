@@ -12,6 +12,7 @@ Describe 'Install-OPIMConfiguration' {
 
     Context 'When creating a new tenant alias with no existing TenantMap file' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
             Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
             Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
@@ -43,6 +44,7 @@ Describe 'Install-OPIMConfiguration' {
 
     Context 'When a directory role object is piped' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
             Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
             Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
@@ -66,6 +68,7 @@ Describe 'Install-OPIMConfiguration' {
 
     Context 'When a group object is piped' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
             Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
             Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
@@ -89,6 +92,7 @@ Describe 'Install-OPIMConfiguration' {
 
     Context 'When an Azure role object is piped' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
             Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
             Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
@@ -111,6 +115,7 @@ Describe 'Install-OPIMConfiguration' {
 
     Context 'When an unrecognised InputObject type is piped' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
             Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
         }
@@ -123,6 +128,7 @@ Describe 'Install-OPIMConfiguration' {
 
     Context 'When the tenant alias already exists' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }
             Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
                 return @{
@@ -152,6 +158,7 @@ Describe 'Install-OPIMConfiguration' {
 
     Context 'When the TenantMap directory does not exist' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -notlike '*.psd1' }
             Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
         }
@@ -164,6 +171,7 @@ Describe 'Install-OPIMConfiguration' {
 
     Context 'When -WhatIf is specified' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
             Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
         }
