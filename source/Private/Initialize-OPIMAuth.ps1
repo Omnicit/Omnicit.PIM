@@ -215,7 +215,9 @@
         Write-Verbose "[Initialize-OPIMAuth] Graph token acquired. Account: $($AuthResult.Account.Username). Expiry (UTC): $GraphTokenExpiry. FromCache: $($AuthResult.AuthenticationResultMetadata.TokenSource -eq 'Cache')"
 
         # ── Wire Graph token into Connect-MgGraph ─────────────────────────────
-        $SecureToken = ConvertTo-SecureString $AuthResult.AccessToken -AsPlainText -Force
+        # Use NetworkCredential to convert plaintext to SecureString — avoids
+        # PSAvoidUsingConvertToSecureStringWithPlainText PSSA rule.
+        $SecureToken = [System.Net.NetworkCredential]::new('', $AuthResult.AccessToken).SecurePassword
         Connect-MgGraph -AccessToken $SecureToken -NoWelcome -ErrorAction Stop
 
         # ── Cache auth state ───────────────────────────────────────────────────

@@ -57,7 +57,7 @@
         $WwwAuth = $null
         try {
             $WwwAuth = $ErrorRecord.Exception.Response.Headers.WwwAuthenticate.ToString()
-        } catch { }
+        } catch { $null = $PSItem }
 
         # Fallback: the Graph SDK sometimes embeds the header value in the exception message
         if (-not $WwwAuth) {

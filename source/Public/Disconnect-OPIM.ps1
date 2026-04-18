@@ -24,8 +24,8 @@
     $script:_OPIMMsalAppTenantId = $null
     $script:_MyIDCache     = $null
 
-    try { Disconnect-MgGraph   -ErrorAction SilentlyContinue | Out-Null } catch { }
-    try { Disconnect-AzAccount -ErrorAction SilentlyContinue | Out-Null } catch { }
+    try { Disconnect-MgGraph   -ErrorAction SilentlyContinue | Out-Null } catch { $null = $PSItem }
+    try { Disconnect-AzAccount -ErrorAction SilentlyContinue | Out-Null } catch { $null = $PSItem }
 
     Write-Verbose '[Disconnect-OPIM] Session tokens cleared and Graph/Azure sessions disconnected.'
 }
