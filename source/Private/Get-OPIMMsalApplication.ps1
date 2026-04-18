@@ -56,10 +56,10 @@
     #            into the default ALC (works on first call before any auth has occurred)
     $MsalAssembly = try {
         [System.Runtime.Loader.AssemblyLoadContext]::All |
-            ForEach-Object { try { $_.Assemblies } catch {} } |
+            ForEach-Object { try { $_.Assemblies } catch { $null = $PSItem } } |
             Where-Object { $_.FullName -match '^Microsoft\.Identity\.Client, Version=[45]' } |
             Select-Object -First 1
-    } catch { $null }
+    } catch { $null = $PSItem }
 
     if (-not $MsalAssembly) {
         $GraphModule = Get-Module 'Microsoft.Graph.Authentication' -ErrorAction SilentlyContinue
