@@ -61,6 +61,7 @@
         [Switch]$Wait
     )
     process {
+        Initialize-OPIMAuth
         if ($Identity) {
             $Group = Get-OPIMEntraIDGroup -Identity $Identity | Select-Object -First 1
             if (-not $Group) {
@@ -117,24 +118,12 @@
                     "Activate PIM Group from $NotBefore to $ExpireTime"
                 )) {
                 $GraphUri = 'v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests'
-                $Result = Invoke-GraphWithAcrsRetry -Uri $GraphUri -Body $Request
-
-                # Invoke-GraphWithAcrsRetry returns a hashtable with _AcrsError key when the call failed.
-                # Success returns a plain response hashtable without this key.
-                if ($Result -is [hashtable] -and $Result.ContainsKey('_AcrsError')) {
-                    $Err     = $Result._ErrorRecord
-                    $AllMsgs = $Result._AllMsgs
-                    if ($Result._AcrsError -and ($Result._NoClaimsExtracted -or $Result._NoMsal -or $Result._MsalBuildFailed -or $Result._NoWithClaims -or $Result._TokenFailed -or $Result._RetryFailed)) {
-                        $AcrsMsg = 'PIM requires Conditional Access authentication context that your current ' +
-                            'session token does not satisfy. The automatic claims-challenge retry failed. ' +
-                            'Run Disconnect-MgGraph, then Connect-MgGraph in a new PowerShell session. ' +
-                            'If the issue persists, the tenant may require a custom app registration.'
-                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                            [System.Exception]::new($AcrsMsg, $Err.Exception),
-                            'RoleAssignmentRequestAcrsValidationFailed',
-                            [System.Management.Automation.ErrorCategory]::AuthenticationError, $null))
-                        continue
-                    } elseif ($AllMsgs -match 'JustificationRule') {
+                $Response = try {
+                    Invoke-OPIMGraphRequest -Method POST -Uri $GraphUri -Body $Request
+                } catch {
+                    $Err = $PSItem
+                    $AllMsgs = "$($Err.FullyQualifiedErrorId) $($Err.Exception.Message)"
+                    if ($AllMsgs -match 'JustificationRule') {
                         $JustMsg = 'Your PIM policy requires a justification for this group. Use the -Justification parameter.'
                         $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                             [System.Exception]::new($JustMsg, $Err.Exception),
@@ -153,8 +142,7 @@
                         continue
                     }
                 }
-
-                $Response = $Result
+                if ($null -eq $Response) { continue }
 
                 # Rehydrate group info from the eligibility schedule
                 if (-not $Response.group) { $Response['group'] = $Group.group }
@@ -163,7 +151,7 @@
                     $PollId = $Response.id
                     do {
                         Start-Sleep 2
-                        $Status = (Invoke-MgGraphRequest -Verbose:$false -Uri "v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests/$PollId" -ErrorAction Stop).status
+                        $Status = (Invoke-OPIMGraphRequest -Uri "v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests/$PollId").status
                     } while ($Status -like 'Pending*')
                 }
 

@@ -1,4 +1,4 @@
-﻿Describe 'Disable-OPIMAzureRole' {
+Describe 'Disable-OPIMAzureRole' {
     BeforeAll {
         Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
         Import-Module Omnicit.PIM -Force
@@ -9,6 +9,7 @@
 
     Context 'When called with -RoleName (happy path)' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeRole = [PSCustomObject]@{
                 Name                      = 'active-001'
                 ScopeId                   = '/subscriptions/sub-001'
@@ -61,6 +62,7 @@
 
     Context 'When called with pipeline input (-Role parameter set)' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeRole = [PSCustomObject]@{
                 Name                      = 'active-002'
                 ScopeId                   = '/subscriptions/sub-002'
@@ -96,6 +98,7 @@
 
     Context 'When -WhatIf is specified' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeRole = [PSCustomObject]@{
                 Name                      = 'active-001'
                 ScopeId                   = '/subscriptions/sub-001'
@@ -116,6 +119,7 @@
 
     Context 'When the API returns a general error' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeRole = [PSCustomObject]@{
                 Name                      = 'active-001'
                 ScopeId                   = '/subscriptions/sub-001'
@@ -150,6 +154,7 @@
 
     Context 'When the API returns an ActiveDurationTooShort error' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeRole = [PSCustomObject]@{
                 Name                      = 'active-001'
                 ScopeId                   = '/subscriptions/sub-001'
@@ -179,6 +184,7 @@
 
     Context 'When -Identity is specified and the role is found' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeActive = [PSCustomObject]@{
                 Name                      = 'active-002'
                 AssignmentType            = 'Activated'
@@ -211,6 +217,7 @@
 
     Context 'When -Identity is specified but no active role is found' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return $null }
         }
 
@@ -223,6 +230,7 @@
 
     Context 'When an AzureEligibilitySchedule is piped from Get-OPIMAzureRole -All' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest { }
         }
 

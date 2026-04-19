@@ -9,6 +9,7 @@ Describe 'Get-OPIMAzureRole' {
 
     Context 'When called with default parameters (eligible roles)' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeEligible = [PSCustomObject]@{
                 Name                      = 'elig-001'
                 RoleDefinitionId          = '/providers/Microsoft.Authorization/roleDefinitions/role-def-001'
@@ -33,6 +34,7 @@ Describe 'Get-OPIMAzureRole' {
 
     Context 'When -Activated is specified' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeActive = [PSCustomObject]@{
                 Name                      = 'active-001'
                 AssignmentType            = 'Activated'
@@ -64,6 +66,7 @@ Describe 'Get-OPIMAzureRole' {
 
     Context 'When -Activated returns mixed assignment types' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeActive = [PSCustomObject]@{
                 Name           = 'active-001'
                 AssignmentType = 'Activated'
@@ -86,6 +89,7 @@ Describe 'Get-OPIMAzureRole' {
 
     Context 'When -All is specified' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule { return @() } -ParameterFilter { $Filter -eq 'asTarget()' }
             Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance { return @() } -ParameterFilter { $Filter -eq 'asTarget()' }
         }
@@ -103,6 +107,7 @@ Describe 'Get-OPIMAzureRole' {
 
     Context 'When -All returns both eligible and active results' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeEligible = [PSCustomObject]@{
                 Name                      = 'elig-001'
                 RoleDefinitionDisplayName = 'Contributor'
@@ -138,6 +143,7 @@ Describe 'Get-OPIMAzureRole' {
 
     Context 'When -Identity is specified' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeEligible = [PSCustomObject]@{
                 Name                      = 'elig-001'
                 RoleDefinitionDisplayName = 'Contributor'
@@ -173,6 +179,7 @@ Describe 'Get-OPIMAzureRole' {
 
     Context 'When -RoleName is specified' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeEligible = [PSCustomObject]@{
                 Name                      = 'elig-001'
                 RoleDefinitionDisplayName = 'Contributor'
@@ -209,6 +216,7 @@ Describe 'Get-OPIMAzureRole' {
 
     Context 'When -Activated -Scope filters to a specific scope' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FakeActiveOnScope = [PSCustomObject]@{
                 Name           = 'active-sub-001'
                 AssignmentType = 'Activated'
@@ -233,6 +241,7 @@ Describe 'Get-OPIMAzureRole' {
 
     Context 'When -Scope is specified' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule { return @() }
         }
 
@@ -246,6 +255,7 @@ Describe 'Get-OPIMAzureRole' {
 
     Context 'When the result set is empty' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule { return @() }
         }
 
@@ -261,6 +271,7 @@ Describe 'Get-OPIMAzureRole' {
 
     Context 'When the API returns an InsufficientPermissions error' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
                 Write-Error -Message 'Insufficient permissions' `
                     -ErrorId 'InsufficientPermissions' `
@@ -284,6 +295,7 @@ Describe 'Get-OPIMAzureRole' {
 
     Context 'When -All is specified and the API returns an InsufficientPermissions error' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
                 $PSCmdlet.ThrowTerminatingError(
                     [System.Management.Automation.ErrorRecord]::new(
@@ -307,6 +319,7 @@ Describe 'Get-OPIMAzureRole' {
 
     Context 'When the API returns a non-permissions error' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
                 Write-Error -Message 'Service unavailable' `
                     -ErrorId 'ServiceUnavailable' `
@@ -324,6 +337,7 @@ Describe 'Get-OPIMAzureRole' {
 
     Context 'When scope is provided via pipeline' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule { return @() }
         }
 

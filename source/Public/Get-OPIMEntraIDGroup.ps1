@@ -81,6 +81,7 @@
         [String]$AccessType
     )
     process {
+        Initialize-OPIMAuth
         # Resolve GroupName to a schedule Identity if provided (extract ID from trailing '(id)' suffix)
         [string]$ResolvedId = $Identity
         if ($GroupName) {
@@ -119,10 +120,10 @@
             )) {
                 $RequestUri = "${Base}/$($TypeConfig.Type)${UserFilter}${Expand}${OdataFilter}"
                 try {
-                    $Items = Invoke-MgGraphRequest -Uri $RequestUri -ErrorAction Stop -Verbose:$false |
+                    $Items = Invoke-OPIMGraphRequest -Uri $RequestUri |
                         Select-Object -ExpandProperty Value
                 } catch {
-                    $PSCmdlet.WriteError((Convert-GraphHttpException $PSItem))
+                    $PSCmdlet.WriteError($PSItem)
                     continue
                 }
                 foreach ($Item in $Items) {
@@ -145,10 +146,10 @@
         $RequestUri = "${Base}/${Type}${UserFilter}${Expand}${OdataFilter}"
 
         try {
-            $Items = Invoke-MgGraphRequest -Uri $RequestUri -ErrorAction Stop -Verbose:$false |
+            $Items = Invoke-OPIMGraphRequest -Uri $RequestUri |
                 Select-Object -ExpandProperty Value
         } catch {
-            $PSCmdlet.WriteError((Convert-GraphHttpException $PSItem))
+            $PSCmdlet.WriteError($PSItem)
             return
         }
 

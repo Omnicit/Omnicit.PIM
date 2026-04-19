@@ -44,6 +44,7 @@ function Wait-OPIMDirectoryRole {
         [Switch]$NoSummary
     )
     begin {
+        Initialize-OPIMAuth
         [List[PSObject]]$RoleRequests = [List[PSObject]]::new()
         $parentId = Get-Random
         $effectiveTimeout = $Timeout

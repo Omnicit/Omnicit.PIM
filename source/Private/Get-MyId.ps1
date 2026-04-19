@@ -24,7 +24,7 @@ function Get-MyId ($user) {
 
     if (-not $user) {
         $Context = Get-MgContext
-        if (-not $Context) { throw 'You are not connected to Microsoft Graph. Please run connect-mggraph first.' }
+        if (-not $Context) { throw 'Not connected. Run any Get-OPIM*/Enable-OPIM* cmdlet or call Connect-OPIM.' }
         $user = $Context.Account
     }
 
@@ -35,8 +35,8 @@ function Get-MyId ($user) {
     }
 
     #Cache Miss
-    $Response = Invoke-MgGraphRequest -Uri 'v1.0/me' -Body @{select = 'userPrincipalName,id' } -Verbose:$false -ErrorAction Stop
-    if ($Response.userprincipalname -notmatch $Context.Account) { throw 'The userPrincipalName in the response does not match your Mg context. This is probably a bug, please report it.' }
+    $Response = Invoke-OPIMGraphRequest -Uri 'v1.0/me'
+    if ($Response.userprincipalname -notmatch $user) { throw 'The userPrincipalName in the response does not match the requested user. This is probably a bug, please report it.' }
     $script:_MyIDCache[$Response.userPrincipalName] = $Response.id
     return [guid]($Response.id)
 }

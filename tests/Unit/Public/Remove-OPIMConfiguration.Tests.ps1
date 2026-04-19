@@ -1,4 +1,4 @@
-﻿Describe 'Remove-OPIMConfiguration' {
+Describe 'Remove-OPIMConfiguration' {
     BeforeAll {
         Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
         Import-Module Omnicit.PIM -Force
@@ -10,6 +10,7 @@
 
     Context 'When the TenantMap file does not exist' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $false }
         }
 
@@ -27,6 +28,7 @@
 
     Context 'When the alias does not exist in the file' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }
             Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
                 return @{
@@ -50,6 +52,7 @@
 
     Context 'When the alias exists and is removed' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }
             Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
                 return @{
@@ -86,6 +89,7 @@
 
     Context 'When -WhatIf is specified' {
         BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }
             Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
                 return @{

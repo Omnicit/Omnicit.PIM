@@ -99,16 +99,9 @@
         return
     }
 
-    $GraphScopes = @(
-        'RoleEligibilitySchedule.ReadWrite.Directory'
-        'RoleAssignmentSchedule.ReadWrite.Directory'
-        'PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup'
-        'PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup'
-        'AdministrativeUnit.Read.All'
-    )
-
     # ── Resolve tenant config and connect ─────────────────────────────────────
     $Config = $null
+    [string]$ResolvedTenantId = $null
     if ($TenantAlias) {
         if (-not (Test-Path $TenantMapPath)) {
             $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
@@ -129,17 +122,12 @@
                 [System.Management.Automation.ErrorCategory]::ObjectNotFound, $TenantAlias))
             return
         }
-        $TenantId = if ($Config -is [hashtable]) { $Config.TenantId } else { [string]$Config }
-        Connect-MgGraph -TenantId $TenantId -Scopes $GraphScopes -NoWelcome -ErrorAction Stop
-        if ($Config -is [hashtable] -and $Config.AzureRoles) {
-            Connect-AzAccount -TenantId $TenantId -ErrorAction Stop | Out-Null
-        }
-    } else {
-        Connect-MgGraph -Scopes $GraphScopes -NoWelcome -ErrorAction Stop
-        if ($AllEligible -or $AllEligibleAzureRoles) {
-            Connect-AzAccount -ErrorAction Stop | Out-Null
-        }
+        $ResolvedTenantId = if ($Config -is [hashtable]) { $Config.TenantId } else { [string]$Config }
     }
+
+    [bool]$NeedsArm = $AllEligible -or $AllEligibleAzureRoles -or
+                      ($Config -is [hashtable] -and $Config.AzureRoles)
+    Initialize-OPIMAuth -TenantId $ResolvedTenantId -IncludeARM:$NeedsArm
 
     $ActivateParams = @{ Hours = $Hours }
     if ($Justification) { $ActivateParams.Justification = $Justification }

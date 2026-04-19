@@ -66,6 +66,7 @@ function Enable-OPIMAzureRole {
         [Switch]$Wait
     )
     process {
+        Initialize-OPIMAuth -IncludeARM
         if ($Identity) {
             $Role = Get-OPIMAzureRole | Where-Object Name -EQ $Identity | Select-Object -First 1
             if (-not $Role) {
