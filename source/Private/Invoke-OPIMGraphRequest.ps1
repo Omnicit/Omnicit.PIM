@@ -54,17 +54,17 @@
     # ── Helper: extract claims from a WWW-Authenticate header ─────────────────
     function Get-ClaimsFromException ([System.Management.Automation.ErrorRecord]$ErrorRecord) {
         # Try the structured HTTP response headers first (most reliable)
-        $WwwAuth = $null
+        $WwwAuthenticate = $null
         try {
-            $WwwAuth = $ErrorRecord.Exception.Response.Headers.WwwAuthenticate.ToString()
+            $WwwAuthenticate = $ErrorRecord.Exception.Response.Headers.WwwAuthenticate.ToString()
         } catch { $null = $PSItem }
 
         # Fallback: the Graph SDK sometimes embeds the header value in the exception message
-        if (-not $WwwAuth) {
-            $WwwAuth = $ErrorRecord.Exception.Message
+        if (-not $WwwAuthenticate) {
+            $WwwAuthenticate = $ErrorRecord.Exception.Message
         }
 
-        if ($WwwAuth -and ($WwwAuth -match 'claims="([^"]+)"')) {
+        if ($WwwAuthenticate -and ($WwwAuthenticate -match 'claims="([^"]+)"')) {
             $Encoded = $Matches[1]
             # Base64url → standard Base64 padding
             $Padded  = $Encoded.Replace('-', '+').Replace('_', '/')

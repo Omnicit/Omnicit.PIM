@@ -3,6 +3,8 @@ using namespace System.Collections.Generic
 using namespace System.Management.Automation
 using namespace System.Management.Automation.Language
 
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '', Justification = 'Write-Host used intentionally in completer for error visibility')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '', Justification = 'Result is used in return statement')]
 class GroupActivatedCompleter : IArgumentCompleter {
     [IEnumerable[CompletionResult]] CompleteArgument(
         [string] $CommandName,
@@ -21,7 +23,7 @@ class GroupActivatedCompleter : IArgumentCompleter {
                 $PSItem.replace("'", '') -like "$($wordToComplete.replace("'",''))*"
             }
             Write-Progress -Id 51806 -Activity 'Get Activated PIM Groups' -Completed
-            return $result
+            return $Result
         } catch {
             Write-Host ''
             Write-Host -Fore Red "Completer Error: $PSItem"

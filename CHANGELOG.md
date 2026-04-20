@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `Connect-OPIM` (alias `Connect-PIM`) — new public cmdlet to pre-authenticate against Microsoft Graph and optionally Azure. A single browser prompt covers all PIM surfaces (directory roles, Entra ID groups, Azure RBAC). All `Get-/Enable-/Disable-OPIM*` cmdlets call this automatically on first use.
+- `ConvertTo-ActiveDurationTooShortError` and `ConvertTo-PolicyValidationError` private helpers centralise the cooldown and PIM-policy error-handling patterns previously duplicated across all six `Enable-/Disable-OPIM*` cmdlets.
+- PSScriptAnalyzer suppressions added to all six argument-completer classes (`AzureEligibleRoleCompleter`, `AzureActivatedRoleCompleter`, `DirectoryEligibleRoleCompleter`, `DirectoryActivatedRoleCompleter`, `GroupEligibleCompleter`, `GroupActivatedCompleter`).
+
+### Changed
+
+- `Write-CmdletError` revamped: new `ErrorRecord` parameter set (pass-through), `InnerException` parameter for exception chaining, `[CmdletBinding()]` added. All public and private functions now use `Write-CmdletError` as the single error-emission entry point.
+- All variable names across `Convert-GraphHttpException`, `Get-MyId`, `Invoke-OPIMGraphRequest`, `Export-OPIMTenantMap`, and completer classes updated to PascalCase per module code-style rules.
+
+ (alias `Connect-PIM`) — new public cmdlet to pre-authenticate against Microsoft Graph and optionally Azure. A single browser prompt covers all PIM surfaces (directory roles, Entra ID groups, Azure RBAC). All `Get-/Enable-/Disable-OPIM*` cmdlets call this automatically on first use.
 - `Disconnect-OPIM` (alias `Disconnect-PIM`) — new public cmdlet to clear all cached session tokens and disconnect from Graph and Azure.
 - Centralized MSAL-based authentication layer (`Initialize-OPIMAuth`, `Get-OPIMMsalApplication` private helpers). All PIM cmdlets now share a single token-acquisition flow that caches the result and is idempotent when called multiple times in the same session.
 - ACRS Conditional Access claims-challenge handling moved into `Invoke-OPIMGraphRequest`. A single reactive browser re-prompt is issued when Graph returns a step-up challenge, eliminating repeated browser windows when activating multiple roles in one `Enable-OPIMMyRole` call.

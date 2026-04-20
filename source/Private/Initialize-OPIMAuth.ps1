@@ -192,23 +192,26 @@
             try {
                 $AuthResult = $InteractiveBuilder.ExecuteAsync().GetAwaiter().GetResult()
             } catch {
-                $PSCmdlet.ThrowTerminatingError(
-                    [System.Management.Automation.ErrorRecord]::new(
-                        [System.Exception]::new(
-                            "Interactive authentication failed: $($_.Exception.Message). " +
-                            'On headless systems (Linux without a display server) the system browser ' +
-                            'cannot be launched. Run this command on a desktop system.', $_.Exception),
-                        'InteractiveAuthFailed',
-                        [System.Management.Automation.ErrorCategory]::AuthenticationError, $null))
+                Write-CmdletError `
+                    -Message ([System.Exception]::new(
+                        "Interactive authentication failed: $($PSItem.Exception.Message). " +
+                        'On headless systems (Linux without a display server) the system browser ' +
+                        'cannot be launched. Run this command on a desktop system.')) `
+                    -InnerException $PSItem.Exception `
+                    -ErrorId 'InteractiveAuthFailed' `
+                    -Category AuthenticationError `
+                    -Cmdlet $PSCmdlet `
+                    -Terminating
             }
         }
 
         if (-not $AuthResult -or -not $AuthResult.AccessToken) {
-            $PSCmdlet.ThrowTerminatingError(
-                [System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new('Authentication completed but no access token was returned.'),
-                    'NoAccessToken',
-                    [System.Management.Automation.ErrorCategory]::AuthenticationError, $null))
+            Write-CmdletError `
+                -Message ([System.Exception]::new('Authentication completed but no access token was returned.')) `
+                -ErrorId 'NoAccessToken' `
+                -Category AuthenticationError `
+                -Cmdlet $PSCmdlet `
+                -Terminating
         }
 
         $GraphTokenExpiry = $AuthResult.ExpiresOn.UtcDateTime
@@ -243,11 +246,12 @@
         try {
             Connect-AzAccount @AzParams | Out-Null
         } catch {
-            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                [System.Exception]::new(
-                    "Azure connection failed: $($_.Exception.Message)", $_.Exception),
-                'AzureConnectFailed',
-                [System.Management.Automation.ErrorCategory]::AuthenticationError, $null))
+            Write-CmdletError `
+                -Message ([System.Exception]::new("Azure connection failed: $($PSItem.Exception.Message)")) `
+                -InnerException $PSItem.Exception `
+                -ErrorId 'AzureConnectFailed' `
+                -Category AuthenticationError `
+                -Cmdlet $PSCmdlet
         }
     } elseif ($IncludeARM -and $AzAlreadyConnected) {
         Write-Verbose "[Initialize-OPIMAuth] Azure already connected: $($AzCtxAtStart.Account.Id)"

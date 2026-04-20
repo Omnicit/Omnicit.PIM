@@ -74,6 +74,8 @@ function Wait-OPIMDirectoryRole {
             function Get-Timestamp ($created = $created) {
                 $since = [datetime]::UtcNow - $created
                 if ($since.TotalSeconds -gt $USING:effectiveTimeout) {
+                    # bare throw is intentional: $PSCmdlet is unavailable inside
+                    # ForEach-Object -Parallel runspaces, so WriteError cannot be used
                     throw "$name`: Exceeded timeout of $($USING:effectiveTimeout) seconds waiting for role request to complete"
                 }
                 ' - ' + [int]($since.TotalSeconds) + ' secs elapsed'
@@ -139,6 +141,7 @@ function Wait-OPIMDirectoryRole {
 
             if (-not $NoSummary) { Start-Sleep 1 }
             Write-Progress -Id $parentId -Activity 'Azure AD PIM Directory Role Activation' -Completed
+        # bare re-throw is intentional: propagates exceptions from parallel jobs to the caller
         } catch { throw } finally {
             $waitJobs | Receive-Job -Wait -AutoRemoveJob
         }

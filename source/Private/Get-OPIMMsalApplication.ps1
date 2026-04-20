@@ -76,14 +76,15 @@
     }
 
     if (-not $MsalAssembly) {
-        $PSCmdlet.ThrowTerminatingError(
-            [System.Management.Automation.ErrorRecord]::new(
-                [System.Exception]::new(
-                    'Microsoft.Identity.Client assembly not found. ' +
-                    'Ensure Microsoft.Graph.Authentication >= 2.36.0 is installed: ' +
-                    'Install-Module Microsoft.Graph.Authentication -MinimumVersion 2.36.0'),
-                'MsalAssemblyNotFound',
-                [System.Management.Automation.ErrorCategory]::NotInstalled, $null))
+        Write-CmdletError `
+            -Message ([System.Exception]::new(
+                'Microsoft.Identity.Client assembly not found. ' +
+                'Ensure Microsoft.Graph.Authentication >= 2.36.0 is installed: ' +
+                'Install-Module Microsoft.Graph.Authentication -MinimumVersion 2.36.0')) `
+            -ErrorId 'MsalAssemblyNotFound' `
+            -Category NotInstalled `
+            -Cmdlet $PSCmdlet `
+            -Terminating
     }
 
     Write-Verbose "[Get-OPIMMsalApplication] Located MSAL assembly: $($MsalAssembly.FullName)"
@@ -95,13 +96,14 @@
 
     $BuilderType = $MsalAssembly.GetType('Microsoft.Identity.Client.PublicClientApplicationBuilder')
     if (-not $BuilderType) {
-        $PSCmdlet.ThrowTerminatingError(
-            [System.Management.Automation.ErrorRecord]::new(
-                [System.Exception]::new(
-                    'Microsoft.Identity.Client.PublicClientApplicationBuilder type not found in MSAL assembly. ' +
-                    'The installed version may be incompatible.'),
-                'MsalBuilderTypeNotFound',
-                [System.Management.Automation.ErrorCategory]::NotInstalled, $null))
+        Write-CmdletError `
+            -Message ([System.Exception]::new(
+                'Microsoft.Identity.Client.PublicClientApplicationBuilder type not found in MSAL assembly. ' +
+                'The installed version may be incompatible.')) `
+            -ErrorId 'MsalBuilderTypeNotFound' `
+            -Category NotInstalled `
+            -Cmdlet $PSCmdlet `
+            -Terminating
     }
 
     # PublicClientApplicationBuilder.Create(string clientId) — static factory.
@@ -141,11 +143,12 @@
     $MsalApp = $Builder.GetType().GetMethod('Build').Invoke($Builder, @())
 
     if (-not $MsalApp) {
-        $PSCmdlet.ThrowTerminatingError(
-            [System.Management.Automation.ErrorRecord]::new(
-                [System.Exception]::new('Failed to build MSAL PublicClientApplication via reflection.'),
-                'MsalBuildFailed',
-                [System.Management.Automation.ErrorCategory]::NotInstalled, $null))
+        Write-CmdletError `
+            -Message ([System.Exception]::new('Failed to build MSAL PublicClientApplication via reflection.')) `
+            -ErrorId 'MsalBuildFailed' `
+            -Category NotInstalled `
+            -Cmdlet $PSCmdlet `
+            -Terminating
     }
 
     $script:_OPIMMsalApp         = $MsalApp

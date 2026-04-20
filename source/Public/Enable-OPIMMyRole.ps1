@@ -90,12 +90,13 @@
     # ── Guard: require explicit activation target ──────────────────────────────
     if (-not $TenantAlias -and -not $AllEligible -and -not $AllEligibleDirectoryRoles -and
         -not $AllEligibleEntraIDGroups -and -not $AllEligibleAzureRoles) {
-        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-            [System.Exception]::new(
+        Write-CmdletError `
+            -Message ([System.Exception]::new(
                 'No activation target specified. Supply -TenantAlias or use ' +
-                '-AllEligible, -AllEligibleDirectoryRoles, -AllEligibleEntraIDGroups, or -AllEligibleAzureRoles.'),
-            'NoActivationTargetSpecified',
-            [System.Management.Automation.ErrorCategory]::InvalidArgument, $null))
+                '-AllEligible, -AllEligibleDirectoryRoles, -AllEligibleEntraIDGroups, or -AllEligibleAzureRoles.')) `
+            -ErrorId 'NoActivationTargetSpecified' `
+            -Category InvalidArgument `
+            -Cmdlet $PSCmdlet
         return
     }
 
@@ -104,22 +105,26 @@
     [string]$ResolvedTenantId = $null
     if ($TenantAlias) {
         if (-not (Test-Path $TenantMapPath)) {
-            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                [System.Exception]::new(
-                    "TenantMap file not found at '$TenantMapPath'. Run: Install-OPIMConfiguration -TenantAlias <alias> -TenantId <guid>"),
-                'TenantMapNotFound',
-                [System.Management.Automation.ErrorCategory]::ObjectNotFound, $TenantMapPath))
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    "TenantMap file not found at '$TenantMapPath'. Run: Install-OPIMConfiguration -TenantAlias <alias> -TenantId <guid>")) `
+                -ErrorId 'TenantMapNotFound' `
+                -Category ObjectNotFound `
+                -TargetObject $TenantMapPath `
+                -Cmdlet $PSCmdlet
             return
         }
         $Map    = Import-PowerShellDataFile $TenantMapPath
         $Config = $Map[$TenantAlias]
         if (-not $Config) {
             $Available = ($Map.Keys | Sort-Object) -join ', '
-            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                [System.Exception]::new(
-                    "Tenant alias '$TenantAlias' not found in '$TenantMapPath'. Available aliases: $Available"),
-                'TenantAliasNotFound',
-                [System.Management.Automation.ErrorCategory]::ObjectNotFound, $TenantAlias))
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    "Tenant alias '$TenantAlias' not found in '$TenantMapPath'. Available aliases: $Available")) `
+                -ErrorId 'TenantAliasNotFound' `
+                -Category ObjectNotFound `
+                -TargetObject $TenantAlias `
+                -Cmdlet $PSCmdlet
             return
         }
         $ResolvedTenantId = if ($Config -is [hashtable]) { $Config.TenantId } else { [string]$Config }

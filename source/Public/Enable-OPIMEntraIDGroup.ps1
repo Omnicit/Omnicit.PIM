@@ -65,10 +65,12 @@
         if ($Identity) {
             $Group = Get-OPIMEntraIDGroup -Identity $Identity | Select-Object -First 1
             if (-not $Group) {
-                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new("No eligible PIM group assignment found with identity '$Identity'."),
-                    'IdentityNotFound',
-                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Identity))
+                Write-CmdletError `
+                    -Message ([System.Exception]::new("No eligible PIM group assignment found with identity '$Identity'.")) `
+                    -ErrorId 'IdentityNotFound' `
+                    -Category ObjectNotFound `
+                    -TargetObject $Identity `
+                    -Cmdlet $PSCmdlet
                 return
             }
         }
@@ -122,25 +124,10 @@
                     Invoke-OPIMGraphRequest -Method POST -Uri $GraphUri -Body $Request
                 } catch {
                     $Err = $PSItem
-                    $AllMsgs = "$($Err.FullyQualifiedErrorId) $($Err.Exception.Message)"
-                    if ($AllMsgs -match 'JustificationRule') {
-                        $JustMsg = 'Your PIM policy requires a justification for this group. Use the -Justification parameter.'
-                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                            [System.Exception]::new($JustMsg, $Err.Exception),
-                            'RoleAssignmentRequestPolicyValidationFailed',
-                            [System.Management.Automation.ErrorCategory]::OperationStopped, $null))
-                        continue
-                    } elseif ($AllMsgs -match 'ExpirationRule') {
-                        $ExpMsg = 'Your PIM policy requires a shorter expiration. Use -NotAfter to specify an earlier time.'
-                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                            [System.Exception]::new($ExpMsg, $Err.Exception),
-                            'RoleAssignmentRequestPolicyValidationFailed',
-                            [System.Management.Automation.ErrorCategory]::OperationStopped, $null))
-                        continue
-                    } else {
+                    if (-not (ConvertTo-PolicyValidationError -CaughtError $Err -ResourceType 'group' -Cmdlet $PSCmdlet)) {
                         $PSCmdlet.WriteError($Err)
-                        continue
                     }
+                    continue
                 }
                 if ($null -eq $Response) { continue }
 

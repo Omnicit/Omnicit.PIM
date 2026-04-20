@@ -41,10 +41,12 @@
         if ($Identity) {
             $Role = Get-OPIMDirectoryRole -Activated -Identity $Identity | Select-Object -First 1
             if (-not $Role) {
-                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new("No active directory role found with identity '$Identity'."),
-                    'IdentityNotFound',
-                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Identity))
+                Write-CmdletError `
+                    -Message ([System.Exception]::new("No active directory role found with identity '$Identity'.")) `
+                    -ErrorId 'IdentityNotFound' `
+                    -Category ObjectNotFound `
+                    -TargetObject $Identity `
+                    -Cmdlet $PSCmdlet
                 return
             }
         }
@@ -72,17 +74,9 @@
                 Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/roleManagement/directory/roleAssignmentScheduleRequests' -Body $Request
             } catch {
                 $Err = $PSItem
-                $IsActiveToShort = ($Err.FullyQualifiedErrorId -like 'ActiveDurationTooShort*') -or
-                                   ($Err.Exception.Message -match 'ActiveDurationTooShort')
-                if (-not $IsActiveToShort) {
+                if (-not (ConvertTo-ActiveDurationTooShortError -CaughtError $Err -ResourceType 'role' -Cmdlet $PSCmdlet)) {
                     $PSCmdlet.WriteError($Err)
-                    return
                 }
-                $CooldownMsg = 'You must wait at least 5 minutes after activating a role before you can deactivate it.'
-                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new($CooldownMsg, $Err.Exception),
-                    'ActiveDurationTooShort',
-                    [System.Management.Automation.ErrorCategory]::ResourceUnavailable, $null))
                 return
             }
 

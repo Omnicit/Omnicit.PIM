@@ -29,25 +29,25 @@
         [string]$Path
     )
 
-    $Sb = [System.Text.StringBuilder]::new()
-    [void]$Sb.AppendLine('@{')
+    $StringBuilder = [System.Text.StringBuilder]::new()
+    [void]$StringBuilder.AppendLine('@{')
     foreach ($Kv in $MapData.GetEnumerator() | Sort-Object Key) {
-        $V = $Kv.Value
-        [void]$Sb.AppendLine("    '$($Kv.Key)' = @{")
+        $ConfigValue = $Kv.Value
+        [void]$StringBuilder.AppendLine("    '$($Kv.Key)' = @{")
         # Support both legacy flat-string format and current nested hashtable/OrderedDictionary
-        $TenantIdVal = if ($V -is [System.Collections.IDictionary]) { $V.TenantId } else { $V }
-        [void]$Sb.AppendLine("        TenantId       = '$TenantIdVal'")
-        if ($V -is [System.Collections.IDictionary]) {
+        $TenantIdVal = if ($ConfigValue -is [System.Collections.IDictionary]) { $ConfigValue.TenantId } else { $ConfigValue }
+        [void]$StringBuilder.AppendLine("        TenantId       = '$TenantIdVal'")
+        if ($ConfigValue -is [System.Collections.IDictionary]) {
             foreach ($RoleKey in 'DirectoryRoles', 'EntraIDGroups', 'AzureRoles') {
-                if ($V[$RoleKey]) {
-                    $Vals = ($V[$RoleKey] | ForEach-Object { "'$_'" }) -join ', '
-                    [void]$Sb.AppendLine("        $(($RoleKey).PadRight(14)) = @($Vals)")
+                if ($ConfigValue[$RoleKey]) {
+                    $RoleValues = ($ConfigValue[$RoleKey] | ForEach-Object { "'$_'" }) -join ', '
+                    [void]$StringBuilder.AppendLine("        $(($RoleKey).PadRight(14)) = @($RoleValues)")
                 }
             }
         }
-        [void]$Sb.AppendLine('    }')
+        [void]$StringBuilder.AppendLine('    }')
     }
-    [void]$Sb.AppendLine('}')
+    [void]$StringBuilder.AppendLine('}')
 
-    $Sb.ToString() | Set-Content -Path $Path -Encoding UTF8
+    $StringBuilder.ToString() | Set-Content -Path $Path -Encoding UTF8
 }
