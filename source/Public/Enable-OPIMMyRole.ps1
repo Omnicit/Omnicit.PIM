@@ -132,7 +132,7 @@
 
     [bool]$NeedsArm = $AllEligible -or $AllEligibleAzureRoles -or
                       ($Config -is [hashtable] -and $Config.AzureRoles)
-    Initialize-OPIMAuth -TenantId $ResolvedTenantId -IncludeARM:$NeedsArm
+    Connect-OPIM -TenantId $ResolvedTenantId -IncludeARM:$NeedsArm
 
     $ActivateParams = @{ Hours = $Hours }
     if ($Justification) { $ActivateParams.Justification = $Justification }
@@ -150,7 +150,7 @@
                     $DirectoryRoles = $DirectoryRoles | Where-Object { $_.roleDefinitionId -in $Config.DirectoryRoles }
                 }
                 if ($DirectoryRoles) {
-                    $DirectoryRoles | Enable-OPIMDirectoryRole @ActivateParams -Wait:$Wait
+                    $DirectoryRoles | Enable-OPIMDirectoryRole @ActivateParams -Wait:$Wait | ConvertTo-OPIMMyRoleResult
                 } else {
                     Write-Verbose 'No eligible directory roles matched the configured set.'
                 }
@@ -158,7 +158,7 @@
         } elseif ($PSCmdlet.ShouldProcess('all eligible directory roles', 'Activate')) {
             $DirectoryRoles = Get-OPIMDirectoryRole
             if ($DirectoryRoles) {
-                $DirectoryRoles | Enable-OPIMDirectoryRole @ActivateParams -Wait:$Wait
+                $DirectoryRoles | Enable-OPIMDirectoryRole @ActivateParams -Wait:$Wait | ConvertTo-OPIMMyRoleResult
             } else {
                 Write-Verbose 'No eligible directory roles found.'
             }
@@ -176,7 +176,7 @@
                     $Groups = $Groups | Where-Object { "$($_.groupId)_$($_.accessId)" -in $Config.EntraIDGroups }
                 }
                 if ($Groups) {
-                    $Groups | Enable-OPIMEntraIDGroup @ActivateParams
+                    $Groups | Enable-OPIMEntraIDGroup @ActivateParams | ConvertTo-OPIMMyRoleResult
                 } else {
                     Write-Verbose 'No eligible Entra ID group assignments matched the configured set.'
                 }
@@ -184,7 +184,7 @@
         } elseif ($PSCmdlet.ShouldProcess('all eligible Entra ID group assignments', 'Activate')) {
             $Groups = Get-OPIMEntraIDGroup
             if ($Groups) {
-                $Groups | Enable-OPIMEntraIDGroup @ActivateParams
+                $Groups | Enable-OPIMEntraIDGroup @ActivateParams | ConvertTo-OPIMMyRoleResult
             } else {
                 Write-Verbose 'No eligible Entra ID group assignments found.'
             }
@@ -202,7 +202,7 @@
                     $AzureRoles = $AzureRoles | Where-Object { $_.Name -in $Config.AzureRoles }
                 }
                 if ($AzureRoles) {
-                    $AzureRoles | Enable-OPIMAzureRole @ActivateParams
+                    $AzureRoles | Enable-OPIMAzureRole @ActivateParams | ConvertTo-OPIMMyRoleResult
                 } else {
                     Write-Verbose 'No eligible Azure roles matched the configured set.'
                 }
@@ -210,7 +210,7 @@
         } elseif ($PSCmdlet.ShouldProcess('all eligible Azure RBAC roles', 'Activate')) {
             $AzureRoles = Get-OPIMAzureRole
             if ($AzureRoles) {
-                $AzureRoles | Enable-OPIMAzureRole @ActivateParams
+                $AzureRoles | Enable-OPIMAzureRole @ActivateParams | ConvertTo-OPIMMyRoleResult
             } else {
                 Write-Verbose 'No eligible Azure RBAC roles found.'
             }

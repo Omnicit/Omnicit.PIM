@@ -71,6 +71,25 @@
                          -not $ClaimsChallenge -and
                          $script:_OPIMAuthState.GraphTokenExpiry -gt $FiveMinutesFromNow
 
+    # Fallback idempotency check via Get-MgContext — handles the case where the caller supplies
+    # a different label for the same tenant (e.g. 'organizations' vs a specific GUID).
+    # If the Graph SDK is already connected to the target tenant and the cached token hasn't
+    # expired, we can skip re-authentication entirely and update the cached TenantId so that
+    # the strict check passes on subsequent calls.
+    if (-not $GraphCached -and -not $ClaimsChallenge -and
+        $script:_OPIMAuthState -and
+        $script:_OPIMAuthState.GraphTokenExpiry -gt $FiveMinutesFromNow) {
+        $LiveMgContext = Get-MgContext -ErrorAction SilentlyContinue
+        if ($LiveMgContext -and (
+                $EffectiveTenant -eq 'organizations' -or
+                $LiveMgContext.TenantId -eq $EffectiveTenant
+            )) {
+            Write-Verbose "[Initialize-OPIMAuth] Graph context already connected to tenant '$($LiveMgContext.TenantId)' (requested '$EffectiveTenant'). Updating cached tenant label."
+            $script:_OPIMAuthState.TenantId = $EffectiveTenant
+            $GraphCached = $true
+        }
+    }
+
     # Evaluate Azure connectivity once here and reuse below to avoid a second Get-AzContext call.
     $AzCtxAtStart = if ($IncludeARM) { Get-AzContext -ErrorAction SilentlyContinue } else { $null }
     [bool]$AzAlreadyConnected = -not $IncludeARM -or (

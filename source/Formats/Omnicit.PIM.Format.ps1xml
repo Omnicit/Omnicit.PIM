@@ -396,5 +396,39 @@
       </TableControl>
     </View>
 
+<!-- ═══════════════════════════════════════════════════════════════
+         MyRole unified result (Enable-OPIMMyRole / Disable-OPIMMyRole)
+         ═══════════════════════════════════════════════════════════════ -->
+
+    <View>
+      <Name>Omnicit.PIM.MyRoleResult</Name>
+      <ViewSelectedBy>
+        <TypeName>Omnicit.PIM.MyRoleResult</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <AutoSize />
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader><Label>EndDateTime</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Category</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Action</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Status</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>DisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Scope</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>EndDateTime</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
   </ViewDefinitions>
 </Configuration>

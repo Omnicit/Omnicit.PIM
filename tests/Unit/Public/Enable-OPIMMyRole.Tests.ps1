@@ -2,7 +2,7 @@ Describe 'Enable-OPIMMyRole' {
     BeforeAll {
         Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
         Import-Module Omnicit.PIM -Force
-        Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+        Mock -ModuleName Omnicit.PIM Connect-OPIM {}
         Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @() }
         Mock -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole { }
         Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @() }
@@ -15,9 +15,9 @@ Describe 'Enable-OPIMMyRole' {
     }
 
     Context 'When called without -TenantAlias (uses current MgGraph context)' {
-        It 'calls Initialize-OPIMAuth with -IncludeARM when -AllEligible is specified' {
+        It 'calls Connect-OPIM with -IncludeARM when -AllEligible is specified' {
             Enable-OPIMMyRole -AllEligible -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
                 $IncludeARM -eq $true
             }
         }
@@ -42,7 +42,7 @@ Describe 'Enable-OPIMMyRole' {
 
     Context 'When eligible roles are returned (no TenantAlias)' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
             $fakeDirectoryRole = [PSCustomObject]@{
                 id               = 'elig-001'
                 roleDefinitionId = 'role-def-001'
@@ -102,7 +102,7 @@ Describe 'Enable-OPIMMyRole' {
 
     Context 'When called with -TenantAlias (simple string TenantId in TenantMap)' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
             $fakeTenantId = '00000000-0000-0000-0000-000000000001'
             Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
             Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
@@ -110,16 +110,16 @@ Describe 'Enable-OPIMMyRole' {
             }
         }
 
-        It 'calls Initialize-OPIMAuth with the resolved TenantId' {
+        It 'calls Connect-OPIM with the resolved TenantId' {
             Enable-OPIMMyRole -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
                 $TenantId -eq $fakeTenantId
             }
         }
 
-        It 'calls Initialize-OPIMAuth without -IncludeARM when config has no AzureRoles' {
+        It 'calls Connect-OPIM without -IncludeARM when config has no AzureRoles' {
             Enable-OPIMMyRole -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
                 $IncludeARM -eq $false
             }
         }
@@ -127,7 +127,7 @@ Describe 'Enable-OPIMMyRole' {
 
     Context 'When called with -TenantAlias pointing to a hashtable config with AzureRoles' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
             $fakeTenantId = '00000000-0000-0000-0000-000000000002'
             Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
             Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
@@ -140,16 +140,16 @@ Describe 'Enable-OPIMMyRole' {
             }
         }
 
-        It 'calls Initialize-OPIMAuth with the resolved TenantId' {
+        It 'calls Connect-OPIM with the resolved TenantId' {
             Enable-OPIMMyRole -TenantAlias 'fabrikam' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
                 $TenantId -eq $fakeTenantId
             }
         }
 
-        It 'calls Initialize-OPIMAuth with -IncludeARM when AzureRoles are configured' {
+        It 'calls Connect-OPIM with -IncludeARM when AzureRoles are configured' {
             Enable-OPIMMyRole -TenantAlias 'fabrikam' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
                 $IncludeARM -eq $true
             }
         }
@@ -157,7 +157,7 @@ Describe 'Enable-OPIMMyRole' {
 
     Context 'When -TenantMapPath does not exist' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
         }
 
@@ -167,15 +167,15 @@ Describe 'Enable-OPIMMyRole' {
             $Errors.Count | Should -BeGreaterThan 0
         }
 
-        It 'does not call Initialize-OPIMAuth when the TenantMap file is missing' {
+        It 'does not call Connect-OPIM when the TenantMap file is missing' {
             Enable-OPIMMyRole -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\missing.psd1' -ErrorAction SilentlyContinue
-            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 0 -Scope It
         }
     }
 
     Context 'When -TenantAlias is not found in TenantMap' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
             Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
                 return @{ contoso = '00000000-0000-0000-0000-000000000001' }
@@ -191,7 +191,7 @@ Describe 'Enable-OPIMMyRole' {
 
     Context 'When no eligible roles or groups are found' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
             Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @() }
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @() }
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @() }
@@ -215,7 +215,7 @@ Describe 'Enable-OPIMMyRole' {
 
     Context 'When -Wait is specified' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
             $fakeDirectoryRole = [PSCustomObject]@{
                 id               = 'elig-w01'
                 roleDefinitionId = 'role-def-w01'
@@ -242,9 +242,9 @@ Describe 'Enable-OPIMMyRole' {
             $Errors.Count | Should -BeGreaterThan 0
         }
 
-        It 'does not call Initialize-OPIMAuth' {
+        It 'does not call Connect-OPIM' {
             Enable-OPIMMyRole -ErrorAction SilentlyContinue
-            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 0 -Scope It
         }
 
         It 'does not call any Enable-OPIM* cmdlet' {
@@ -257,7 +257,7 @@ Describe 'Enable-OPIMMyRole' {
 
     Context 'When -AllEligible is specified' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
             $FakeDirectoryRole = [PSCustomObject]@{
                 id               = 'elig-all-001'
                 roleDefinitionId = 'role-def-001'
@@ -289,9 +289,9 @@ Describe 'Enable-OPIMMyRole' {
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 0 -Scope It
         }
 
-        It 'calls Initialize-OPIMAuth with -IncludeARM when -AllEligible is used' {
+        It 'calls Connect-OPIM with -IncludeARM when -AllEligible is used' {
             Enable-OPIMMyRole -AllEligible -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
                 $IncludeARM -eq $true
             }
         }
@@ -299,7 +299,7 @@ Describe 'Enable-OPIMMyRole' {
 
     Context 'When -AllEligibleDirectoryRoles is specified' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
             $FakeDirectoryRole = [PSCustomObject]@{
                 id               = 'elig-dr-001'
                 roleDefinitionId = 'role-def-001'
@@ -318,9 +318,9 @@ Describe 'Enable-OPIMMyRole' {
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 0 -Scope It
         }
 
-        It 'calls Initialize-OPIMAuth without -IncludeARM' {
+        It 'calls Connect-OPIM without -IncludeARM' {
             Enable-OPIMMyRole -AllEligibleDirectoryRoles -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
                 $IncludeARM -eq $false
             }
         }
@@ -328,7 +328,7 @@ Describe 'Enable-OPIMMyRole' {
 
     Context 'When -AllEligibleEntraIDGroups is specified' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
             $FakeGroup = [PSCustomObject]@{ id = 'grp-elig-002'; groupId = 'group-id-002'; accessId = 'owner' }
             $FakeGroup.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupEligibilitySchedule')
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @($FakeGroup) }
@@ -341,9 +341,9 @@ Describe 'Enable-OPIMMyRole' {
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 0 -Scope It
         }
 
-        It 'calls Initialize-OPIMAuth without -IncludeARM' {
+        It 'calls Connect-OPIM without -IncludeARM' {
             Enable-OPIMMyRole -AllEligibleDirectoryRoles -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
                 $IncludeARM -eq $false
             }
         }
@@ -351,7 +351,7 @@ Describe 'Enable-OPIMMyRole' {
 
     Context 'When -AllEligibleAzureRoles is specified' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
             $FakeAzureRole = [PSCustomObject]@{ Name = 'az-role-002'; Scope = '/subscriptions/sub-002' }
             $FakeAzureRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($FakeAzureRole) }
@@ -364,9 +364,9 @@ Describe 'Enable-OPIMMyRole' {
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 1 -Scope It
         }
 
-        It 'calls Initialize-OPIMAuth with -IncludeARM when -AllEligibleAzureRoles is used' {
+        It 'calls Connect-OPIM with -IncludeARM when -AllEligibleAzureRoles is used' {
             Enable-OPIMMyRole -AllEligibleAzureRoles -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
                 $IncludeARM -eq $true
             }
         }
@@ -374,7 +374,7 @@ Describe 'Enable-OPIMMyRole' {
 
     Context 'When -TenantAlias is used with a hashtable config that has no category lists' {
         BeforeAll {
-            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
             $FakeTenantId = '00000000-0000-0000-0000-000000000003'
             Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
             Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
