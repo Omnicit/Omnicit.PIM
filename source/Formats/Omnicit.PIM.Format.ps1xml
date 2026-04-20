@@ -1,0 +1,434 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Consolidated format definitions for all Omnicit.PIM output types.
+  Loaded via FormatsToProcess in the module manifest.
+-->
+<Configuration>
+  <ViewDefinitions>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         Azure RBAC
+         ═══════════════════════════════════════════════════════════════ -->
+
+    <View>
+      <Name>Omnicit.PIM.AzureEligibilitySchedule</Name>
+      <ViewSelectedBy>
+        <TypeName>Omnicit.PIM.AzureEligibilitySchedule</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <AutoSize />
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader><Label>EndDateTime</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>PrincipalDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>RoleDefinitionDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>ScopeDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>MemberType</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>if ($_.EndDateTime) { $_.EndDateTime } else { 'Never' }</ScriptBlock></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <View>
+      <Name>Omnicit.PIM.AzureAssignmentScheduleInstance</Name>
+      <ViewSelectedBy>
+        <TypeName>Omnicit.PIM.AzureAssignmentScheduleInstance</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <AutoSize />
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader><Label>EndDateTime</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>PrincipalDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>RoleDefinitionDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>ScopeDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>AssignmentType</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>if ($_.EndDateTime) { $_.EndDateTime } else { 'Never' }</ScriptBlock></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <View>
+      <Name>Omnicit.PIM.AzureAssignmentScheduleRequest</Name>
+      <ViewSelectedBy>
+        <TypeName>Omnicit.PIM.AzureAssignmentScheduleRequest</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <AutoSize />
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader><Label>Expiry</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>RequestType</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Status</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>PrincipalDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>RoleDefinitionDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>ScopeDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>ScheduleInfoStartDateTime</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>if ($_.ExpirationType -eq 'AfterDateTime') { $_.ExpirationEndDateTime } else { $_.ExpirationDuration }</ScriptBlock></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <View>
+      <Name>Omnicit.PIM.AzureCombinedSchedule</Name>
+      <ViewSelectedBy>
+        <TypeName>Omnicit.PIM.AzureCombinedSchedule</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <AutoSize />
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader><Label>EndDateTime</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Status</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>PrincipalDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>RoleDefinitionDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>ScopeDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>if ($_.EndDateTime) { $_.EndDateTime } else { 'Never' }</ScriptBlock></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         Directory Roles (Entra ID)
+         ═══════════════════════════════════════════════════════════════ -->
+
+    <View>
+      <Name>Omnicit.PIM.DirectoryEligibilitySchedule</Name>
+      <ViewSelectedBy>
+        <TypeName>Omnicit.PIM.DirectoryEligibilitySchedule</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <AutoSize />
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>PrincipalDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>RoleName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Scope</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>MemberType</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>EndDateTime</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <View>
+      <Name>Omnicit.PIM.DirectoryAssignmentScheduleInstance</Name>
+      <ViewSelectedBy>
+        <TypeName>Omnicit.PIM.DirectoryAssignmentScheduleInstance</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <AutoSize />
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader><Label>EndDateTime</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>PrincipalDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>RoleName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Scope</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>MemberType</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>if ($_.EndDateTime) { $_.EndDateTime } else { 'Never' }</ScriptBlock></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <View>
+      <Name>Omnicit.PIM.DirectoryAssignmentScheduleRequest</Name>
+      <ViewSelectedBy>
+        <TypeName>Omnicit.PIM.DirectoryAssignmentScheduleRequest</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <AutoSize />
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>action</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>status</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>PrincipalDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>RoleName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Scope</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>StartDateTime</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>EndDateTime</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <View>
+      <Name>Omnicit.PIM.DirectoryCombinedSchedule</Name>
+      <ViewSelectedBy>
+        <TypeName>Omnicit.PIM.DirectoryCombinedSchedule</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <AutoSize />
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader><Label>EndDateTime</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Status</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>PrincipalDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>RoleName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Scope</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>MemberType</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>if ($_.EndDateTime) { $_.EndDateTime } else { 'Never' }</ScriptBlock></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         PIM for Groups (Entra ID)
+         ═══════════════════════════════════════════════════════════════ -->
+
+    <View>
+      <Name>Omnicit.PIM.GroupEligibilitySchedule</Name>
+      <ViewSelectedBy>
+        <TypeName>Omnicit.PIM.GroupEligibilitySchedule</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <AutoSize />
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>PrincipalDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>GroupDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>AccessId</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>MemberType</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>EndDateTime</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <View>
+      <Name>Omnicit.PIM.GroupAssignmentScheduleInstance</Name>
+      <ViewSelectedBy>
+        <TypeName>Omnicit.PIM.GroupAssignmentScheduleInstance</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <AutoSize />
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader><Label>EndDateTime</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>PrincipalDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>GroupDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>AccessId</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>AssignmentType</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>if ($_.EndDateTime) { $_.EndDateTime } else { 'Never' }</ScriptBlock></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <View>
+      <Name>Omnicit.PIM.GroupAssignmentScheduleRequest</Name>
+      <ViewSelectedBy>
+        <TypeName>Omnicit.PIM.GroupAssignmentScheduleRequest</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <AutoSize />
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Action</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Status</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>GroupDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>AccessId</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>EndDateTime</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <View>
+      <Name>Omnicit.PIM.GroupCombinedSchedule</Name>
+      <ViewSelectedBy>
+        <TypeName>Omnicit.PIM.GroupCombinedSchedule</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <AutoSize />
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader><Label>EndDateTime</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Status</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>PrincipalDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>GroupDisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>AccessId</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>if ($_.EndDateTime) { $_.EndDateTime } else { 'Never' }</ScriptBlock></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         Configuration
+         ═══════════════════════════════════════════════════════════════ -->
+
+    <View>
+      <Name>Omnicit.PIM.TenantConfiguration</Name>
+      <ViewSelectedBy>
+        <TypeName>Omnicit.PIM.TenantConfiguration</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <AutoSize />
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>TenantAlias</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>TenantId</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>DirectoryRoleCount</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>EntraIDGroupCount</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>AzureRoleCount</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+<!-- ═══════════════════════════════════════════════════════════════
+         MyRole unified result (Enable-OPIMMyRole / Disable-OPIMMyRole)
+         ═══════════════════════════════════════════════════════════════ -->
+
+    <View>
+      <Name>Omnicit.PIM.MyRoleResult</Name>
+      <ViewSelectedBy>
+        <TypeName>Omnicit.PIM.MyRoleResult</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <AutoSize />
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader><Label>EndDateTime</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Category</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Action</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Status</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>DisplayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Scope</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>EndDateTime</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+  </ViewDefinitions>
+</Configuration>

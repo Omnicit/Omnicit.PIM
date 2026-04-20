@@ -90,12 +90,13 @@
     # ── Guard: require explicit activation target ──────────────────────────────
     if (-not $TenantAlias -and -not $AllEligible -and -not $AllEligibleDirectoryRoles -and
         -not $AllEligibleEntraIDGroups -and -not $AllEligibleAzureRoles) {
-        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-            [System.Exception]::new(
+        Write-CmdletError `
+            -Message ([System.Exception]::new(
                 'No activation target specified. Supply -TenantAlias or use ' +
-                '-AllEligible, -AllEligibleDirectoryRoles, -AllEligibleEntraIDGroups, or -AllEligibleAzureRoles.'),
-            'NoActivationTargetSpecified',
-            [System.Management.Automation.ErrorCategory]::InvalidArgument, $null))
+                '-AllEligible, -AllEligibleDirectoryRoles, -AllEligibleEntraIDGroups, or -AllEligibleAzureRoles.')) `
+            -ErrorId 'NoActivationTargetSpecified' `
+            -Category InvalidArgument `
+            -Cmdlet $PSCmdlet
         return
     }
 
@@ -104,22 +105,26 @@
     [string]$ResolvedTenantId = $null
     if ($TenantAlias) {
         if (-not (Test-Path $TenantMapPath)) {
-            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                [System.Exception]::new(
-                    "TenantMap file not found at '$TenantMapPath'. Run: Install-OPIMConfiguration -TenantAlias <alias> -TenantId <guid>"),
-                'TenantMapNotFound',
-                [System.Management.Automation.ErrorCategory]::ObjectNotFound, $TenantMapPath))
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    "TenantMap file not found at '$TenantMapPath'. Run: Install-OPIMConfiguration -TenantAlias <alias> -TenantId <guid>")) `
+                -ErrorId 'TenantMapNotFound' `
+                -Category ObjectNotFound `
+                -TargetObject $TenantMapPath `
+                -Cmdlet $PSCmdlet
             return
         }
         $Map    = Import-PowerShellDataFile $TenantMapPath
         $Config = $Map[$TenantAlias]
         if (-not $Config) {
             $Available = ($Map.Keys | Sort-Object) -join ', '
-            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                [System.Exception]::new(
-                    "Tenant alias '$TenantAlias' not found in '$TenantMapPath'. Available aliases: $Available"),
-                'TenantAliasNotFound',
-                [System.Management.Automation.ErrorCategory]::ObjectNotFound, $TenantAlias))
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    "Tenant alias '$TenantAlias' not found in '$TenantMapPath'. Available aliases: $Available")) `
+                -ErrorId 'TenantAliasNotFound' `
+                -Category ObjectNotFound `
+                -TargetObject $TenantAlias `
+                -Cmdlet $PSCmdlet
             return
         }
         $ResolvedTenantId = if ($Config -is [hashtable]) { $Config.TenantId } else { [string]$Config }
@@ -127,7 +132,7 @@
 
     [bool]$NeedsArm = $AllEligible -or $AllEligibleAzureRoles -or
                       ($Config -is [hashtable] -and $Config.AzureRoles)
-    Initialize-OPIMAuth -TenantId $ResolvedTenantId -IncludeARM:$NeedsArm
+    Connect-OPIM -TenantId $ResolvedTenantId -IncludeARM:$NeedsArm
 
     $ActivateParams = @{ Hours = $Hours }
     if ($Justification) { $ActivateParams.Justification = $Justification }
@@ -138,14 +143,14 @@
     if ($TenantAlias -or $AllEligible -or $AllEligibleDirectoryRoles) {
         if ($TenantAlias) {
             if ($Config -is [hashtable] -and -not $Config.DirectoryRoles) {
-                Write-Warning "No DirectoryRoles configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add roles, or run with -AllEligibleDirectoryRoles."
+                Write-Verbose "No DirectoryRoles configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add roles, or run with -AllEligibleDirectoryRoles."
             } else {
                 $DirectoryRoles = Get-OPIMDirectoryRole
                 if ($Config -is [hashtable] -and $Config.DirectoryRoles) {
                     $DirectoryRoles = $DirectoryRoles | Where-Object { $_.roleDefinitionId -in $Config.DirectoryRoles }
                 }
                 if ($DirectoryRoles) {
-                    $DirectoryRoles | Enable-OPIMDirectoryRole @ActivateParams -Wait:$Wait
+                    $DirectoryRoles | Enable-OPIMDirectoryRole @ActivateParams -Wait:$Wait | ConvertTo-OPIMMyRoleResult
                 } else {
                     Write-Verbose 'No eligible directory roles matched the configured set.'
                 }
@@ -153,7 +158,7 @@
         } elseif ($PSCmdlet.ShouldProcess('all eligible directory roles', 'Activate')) {
             $DirectoryRoles = Get-OPIMDirectoryRole
             if ($DirectoryRoles) {
-                $DirectoryRoles | Enable-OPIMDirectoryRole @ActivateParams -Wait:$Wait
+                $DirectoryRoles | Enable-OPIMDirectoryRole @ActivateParams -Wait:$Wait | ConvertTo-OPIMMyRoleResult
             } else {
                 Write-Verbose 'No eligible directory roles found.'
             }
@@ -164,14 +169,14 @@
     if ($TenantAlias -or $AllEligible -or $AllEligibleEntraIDGroups) {
         if ($TenantAlias) {
             if ($Config -is [hashtable] -and -not $Config.EntraIDGroups) {
-                Write-Warning "No EntraIDGroups configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add groups, or run with -AllEligibleEntraIDGroups."
+                Write-Verbose "No EntraIDGroups configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add groups, or run with -AllEligibleEntraIDGroups."
             } else {
                 $Groups = Get-OPIMEntraIDGroup
                 if ($Config -is [hashtable] -and $Config.EntraIDGroups) {
                     $Groups = $Groups | Where-Object { "$($_.groupId)_$($_.accessId)" -in $Config.EntraIDGroups }
                 }
                 if ($Groups) {
-                    $Groups | Enable-OPIMEntraIDGroup @ActivateParams
+                    $Groups | Enable-OPIMEntraIDGroup @ActivateParams | ConvertTo-OPIMMyRoleResult
                 } else {
                     Write-Verbose 'No eligible Entra ID group assignments matched the configured set.'
                 }
@@ -179,7 +184,7 @@
         } elseif ($PSCmdlet.ShouldProcess('all eligible Entra ID group assignments', 'Activate')) {
             $Groups = Get-OPIMEntraIDGroup
             if ($Groups) {
-                $Groups | Enable-OPIMEntraIDGroup @ActivateParams
+                $Groups | Enable-OPIMEntraIDGroup @ActivateParams | ConvertTo-OPIMMyRoleResult
             } else {
                 Write-Verbose 'No eligible Entra ID group assignments found.'
             }
@@ -190,14 +195,14 @@
     if ($TenantAlias -or $AllEligible -or $AllEligibleAzureRoles) {
         if ($TenantAlias) {
             if ($Config -is [hashtable] -and -not $Config.AzureRoles) {
-                Write-Warning "No AzureRoles configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add roles, or run with -AllEligibleAzureRoles."
+                Write-Verbose "No AzureRoles configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add roles, or run with -AllEligibleAzureRoles."
             } else {
                 $AzureRoles = Get-OPIMAzureRole
                 if ($Config -is [hashtable] -and $Config.AzureRoles) {
                     $AzureRoles = $AzureRoles | Where-Object { $_.Name -in $Config.AzureRoles }
                 }
                 if ($AzureRoles) {
-                    $AzureRoles | Enable-OPIMAzureRole @ActivateParams
+                    $AzureRoles | Enable-OPIMAzureRole @ActivateParams | ConvertTo-OPIMMyRoleResult
                 } else {
                     Write-Verbose 'No eligible Azure roles matched the configured set.'
                 }
@@ -205,7 +210,7 @@
         } elseif ($PSCmdlet.ShouldProcess('all eligible Azure RBAC roles', 'Activate')) {
             $AzureRoles = Get-OPIMAzureRole
             if ($AzureRoles) {
-                $AzureRoles | Enable-OPIMAzureRole @ActivateParams
+                $AzureRoles | Enable-OPIMAzureRole @ActivateParams | ConvertTo-OPIMMyRoleResult
             } else {
                 Write-Verbose 'No eligible Azure RBAC roles found.'
             }

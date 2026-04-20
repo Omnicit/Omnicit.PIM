@@ -144,21 +144,60 @@ Get-OPIMEntraIDGroup -Activated | Disable-OPIMEntraIDGroup
 
 ---
 
-## Enable-OPIMMyRoles / pim
+## Enable-OPIMMyRoles / pim  ·  Disable-OPIMMyRole / unpim
 
-`Enable-OPIMMyRoles` (alias: `pim`) is the all-in-one activation command. It connects to
-Microsoft Graph (and Azure if Azure roles are configured) and activates all eligible directory
-roles, PIM group assignments, and Azure RBAC roles for the current user.
+`Enable-OPIMMyRole` (aliases: `pim`, `Enable-OPIMMyRoles`) is the all-in-one activation command.
+`Disable-OPIMMyRole` (aliases: `unpim`, `Disable-OPIMMyRoles`) is its counterpart for deactivation.
+
+Both commands reuse an existing authenticated session — if you have already called `Connect-OPIM`
+or run any `Get-OPIM*` cmdlet, no additional browser prompt is shown.
+
+Output is a unified table across all three role types:
+
+```
+Category    Action       Status              DisplayName                       Scope          EndDateTime
+--------    ------       ------              -----------                       -----          -----------
+EntraIDGroup selfActivate PendingProvisioning role_sec_office365_administrator member         2026-04-20 21:54:57
+EntraIDGroup selfActivate PendingProvisioning role_sec_security_administrator  member         2026-04-20 21:55:08
+AzureRole    SelfActivate Provisioned        Owner                             EA - Security  2026-04-20 21:55:26
+```
+
+### Activation — pim
 
 ```powershell
-# Activate all eligible roles/groups for 1 hour (prompts for Graph login if not connected)
-pim
+# Activate all configured roles/groups for 1 hour (reuses existing token if already connected)
+pim -TenantAlias contoso
 
 # Activate using a named tenant alias looked up in TenantMap.psd1, for 4 hours
 pim -TenantAlias contoso -Hours 4 -Justification 'Incident response'
 
 # Wait until directory role activations are fully provisioned
 pim -TenantAlias corp -Wait
+
+# Activate ALL eligible roles without a stored alias (confirmation required per category)
+pim -AllEligible -Confirm:$false
+
+# Activate only directory roles and Azure roles
+Enable-OPIMMyRole -AllEligibleDirectoryRoles -AllEligibleAzureRoles
+```
+
+### Deactivation — unpim
+
+```powershell
+# Deactivate all configured roles/groups for a tenant alias
+unpim -TenantAlias contoso
+
+# Items that are not currently active are silently skipped (use -Verbose to see them)
+unpim -TenantAlias contoso -Verbose
+
+# Deactivate ALL currently active roles without a stored alias (confirmation required per category)
+unpim -AllActivated -Confirm:$false
+
+# Deactivate only directory roles and Entra ID groups
+Disable-OPIMMyRole -AllActivatedDirectoryRoles -AllActivatedEntraIDGroups
+
+# Preview without making changes
+unpim -TenantAlias contoso -WhatIf
 ```
 
 The default activation duration is 1 hour. Override persistently:
@@ -360,10 +399,12 @@ Get-OPIMEntraIDGroup |
 
 ```powershell
 # One-off override
-pim -TenantAlias contoso -TenantMapPath 'D:\config\MyTenants.psd1'
+pim    -TenantAlias contoso -TenantMapPath 'D:\config\MyTenants.psd1'
+unpim  -TenantAlias contoso -TenantMapPath 'D:\config\MyTenants.psd1'
 
 # Permanent: add to your profile
-$PSDefaultParameterValues['Enable-OPIMMyRoles:TenantMapPath']        = 'D:\config\MyTenants.psd1'
+$PSDefaultParameterValues['Enable-OPIMMyRole:TenantMapPath']         = 'D:\config\MyTenants.psd1'
+$PSDefaultParameterValues['Disable-OPIMMyRole:TenantMapPath']        = 'D:\config\MyTenants.psd1'
 $PSDefaultParameterValues['Install-OPIMConfiguration:TenantMapPath'] = 'D:\config\MyTenants.psd1'
 $PSDefaultParameterValues['Get-OPIMConfiguration:TenantMapPath']     = 'D:\config\MyTenants.psd1'
 $PSDefaultParameterValues['Set-OPIMConfiguration:TenantMapPath']     = 'D:\config\MyTenants.psd1'
@@ -421,7 +462,8 @@ For backwards compatibility and convenience, short `PIM`-prefixed aliases are av
 | `Get-OPIMEntraIDGroup` | `Get-PIMGroup` |
 | `Enable-OPIMEntraIDGroup` | `Enable-PIMGroup` |
 | `Disable-OPIMEntraIDGroup` | `Disable-PIMGroup` |
-| `Enable-OPIMMyRoles` | `pim` |
+| `Enable-OPIMMyRole` | `pim`, `Enable-OPIMMyRoles` |
+| `Disable-OPIMMyRole` | `unpim`, `Disable-OPIMMyRoles` |
 
 ---
 
@@ -569,8 +611,8 @@ This module uses [Sampler](https://github.com/gaelcolas/Sampler) + [ModuleBuilde
 |---|---|---|
 | Import | `Import-Module ./Source/Omnicit.PIM.psd1 -Force` | `Import-Module ./output/module/Omnicit.PIM/<ver>/Omnicit.PIM.psd1` |
 | Functions | Dot-sourced at runtime by `Omnicit.PIM.psm1` | Merged into a single `Omnicit.PIM.psm1` by ModuleBuilder |
-| Type data | Loaded by `Omnicit.PIM.psm1` | Loaded by `suffix.ps1` (appended to built psm1) |
-| Format data | Loaded by `Omnicit.PIM.psm1` | Loaded by `suffix.ps1` (appended to built psm1) |
+| Type data | Loaded by `Omnicit.PIM.psm1` via `Update-TypeData` | Loaded by `suffix.ps1` via `Update-TypeData` |
+| Format data | Loaded natively via `FormatsToProcess` in manifest | Loaded natively via `FormatsToProcess` in manifest |
 
 ### Source `Omnicit.PIM.psm1`
 
@@ -580,7 +622,9 @@ Do not put runtime initialization logic here expecting it to run in the compiled
 
 ### `suffix.ps1` (and `prefix.ps1`)
 
-ModuleBuilder appends `suffix.ps1` to the compiled psm1 verbatim (configured in `build.yaml` as `suffix: suffix.ps1`). This is the correct place for any initialization that must run at module import time in the compiled module — type data registration, format data registration, alias setup, etc.
+ModuleBuilder appends `suffix.ps1` to the compiled psm1 verbatim (configured in `build.yaml` as `suffix: suffix.ps1`). This is the correct place for any initialization that must run at module import time in the compiled module — type data registration, alias setup, etc.
+
+> **Format data** is loaded natively via `FormatsToProcess` in the manifest (zero-cost). **Type data** is loaded by `suffix.ps1` via a single `Update-TypeData` call with `-ErrorAction SilentlyContinue` because `TypesToProcess` in the manifest does not support `-ErrorAction` and `Remove-Module` does not clean type data, causing "member already present" errors on `Import-Module -Force`.
 
 A `prefix.ps1` (not currently used) would be prepended to the compiled psm1 in the same way.
 

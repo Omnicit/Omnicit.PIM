@@ -62,23 +62,27 @@
     # ── Resolve TenantAlias → TenantId ────────────────────────────────────────
     if ($TenantAlias) {
         if (-not (Test-Path $TenantMapPath)) {
-            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                [System.Exception]::new(
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
                     "TenantMap file not found at '$TenantMapPath'. " +
-                    "Run: Install-OPIMConfiguration -TenantAlias <alias> -TenantId <guid>"),
-                'TenantMapNotFound',
-                [System.Management.Automation.ErrorCategory]::ObjectNotFound, $TenantMapPath))
+                    'Run: Install-OPIMConfiguration -TenantAlias <alias> -TenantId <guid>')) `
+                -ErrorId 'TenantMapNotFound' `
+                -Category ObjectNotFound `
+                -TargetObject $TenantMapPath `
+                -Cmdlet $PSCmdlet
             return
         }
         $Map    = Import-PowerShellDataFile $TenantMapPath
         $Config = $Map[$TenantAlias]
         if (-not $Config) {
             $Available = ($Map.Keys | Sort-Object) -join ', '
-            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                [System.Exception]::new(
-                    "Tenant alias '$TenantAlias' not found in '$TenantMapPath'. Available aliases: $Available"),
-                'TenantAliasNotFound',
-                [System.Management.Automation.ErrorCategory]::ObjectNotFound, $TenantAlias))
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    "Tenant alias '$TenantAlias' not found in '$TenantMapPath'. Available aliases: $Available")) `
+                -ErrorId 'TenantAliasNotFound' `
+                -Category ObjectNotFound `
+                -TargetObject $TenantAlias `
+                -Cmdlet $PSCmdlet
             return
         }
         $TenantId = if ($Config -is [hashtable]) { $Config.TenantId } else { [string]$Config }

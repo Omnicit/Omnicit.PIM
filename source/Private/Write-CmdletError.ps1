@@ -1,4 +1,4 @@
-using namespace System.Management.Automation
+﻿using namespace System.Management.Automation
 function Write-CmdletError {
     <#
     .SYNOPSIS
@@ -8,6 +8,13 @@ function Write-CmdletError {
     Creates a System.Management.Automation.ErrorRecord from the supplied exception and dispatches
     it through the provided cmdlet context. By default the error is non-terminating (WriteError).
     Specify -Terminating to call ThrowTerminatingError instead for pipeline-terminating errors.
+
+    Two parameter sets are available:
+
+    * Message (default) — builds a new ErrorRecord from a -Message exception. Use -InnerException
+      to chain a caught exception as the InnerException of the new record.
+    * ErrorRecord — emits a pre-built ErrorRecord directly (pass-through). Use this when
+      re-emitting a caught ErrorRecord without modification.
 
     .PARAMETER Message
     The Exception object used to construct the ErrorRecord. Its message and type are preserved in
@@ -25,9 +32,18 @@ function Write-CmdletError {
     The object being processed when the error occurred. Defaults to the current pipeline
     object ($PSItem). Surfaced as ErrorRecord.TargetObject for the caller to inspect.
 
-    .PARAMETER cmdlet
-    The PSCmdlet instance used to emit the error record. Defaults to $PSCmdlet of the calling
-    function. Supply a mock cmdlet object in tests to capture ErrorRecords without side effects.
+    .PARAMETER InnerException
+    Optional Exception to chain as the InnerException of a new System.Exception wrapping
+    the -Message text. Use in catch blocks to preserve the original exception:
+        Write-CmdletError -Message ([Exception]::new("Friendly text")) -InnerException $PSItem.Exception
+
+    .PARAMETER ErrorRecord
+    A pre-built ErrorRecord to emit directly. When this parameter is supplied the -Message,
+    -ErrorId, -Category, -TargetObject, -Details, and -InnerException parameters are ignored.
+
+    .PARAMETER Cmdlet
+    The PSCmdlet instance used to emit the error record. Supply the caller's $PSCmdlet so errors
+    are attributed to the correct command.
 
     .PARAMETER Terminating
     Switch that promotes the error to a terminating error via ThrowTerminatingError. Without this
@@ -38,37 +54,72 @@ function Write-CmdletError {
     in some hosts in addition to the exception message for extra context.
 
     .EXAMPLE
-    Write-CmdletError -Message ([System.Exception]::new('Role not found')) -ErrorId 'RoleNotFound' -cmdlet $PSCmdlet
+    Write-CmdletError -Message ([System.Exception]::new('Role not found')) -ErrorId 'RoleNotFound' -Cmdlet $PSCmdlet
 
     Emits a non-terminating InvalidOperation ErrorRecord from within a cmdlet or advanced function.
+
+    .EXAMPLE
+    Write-CmdletError -Message ([System.Exception]::new("Auth failed: $($PSItem.Exception.Message)")) `
+        -InnerException $PSItem.Exception -ErrorId 'AuthFailed' -Category AuthenticationError `
+        -Cmdlet $PSCmdlet -Terminating
+
+    Builds a chained exception and emits a terminating error.
+
+    .EXAMPLE
+    Write-CmdletError -ErrorRecord $PSItem -Cmdlet $PSCmdlet
+
+    Re-emits a caught ErrorRecord unchanged as a non-terminating error.
     #>
+    [CmdletBinding(DefaultParameterSetName = 'Message')]
     param(
+        [Parameter(ParameterSetName = 'Message')]
         [Exception]$Message = 'An Error Occured in the cmdlet',
+
+        [Parameter(ParameterSetName = 'Message')]
         [String]$ErrorId,
+
+        [Parameter(ParameterSetName = 'Message')]
         [ErrorCategory]$Category = 'InvalidOperation',
+
+        [Parameter(ParameterSetName = 'Message')]
         $TargetObject = $PSItem,
-        $cmdlet = $PSCmdlet,
-        [Switch]$Terminating,
-        [String]$Details
+
+        [Parameter(ParameterSetName = 'Message')]
+        [String]$Details,
+
+        [Parameter(ParameterSetName = 'Message')]
+        [Exception]$InnerException,
+
+        [Parameter(ParameterSetName = 'ErrorRecord', Mandatory)]
+        [ErrorRecord]$ErrorRecord,
+
+        $Cmdlet = $PSCmdlet,
+
+        [Switch]$Terminating
     )
     process {
-        $errorRecord = [ErrorRecord]::new(
-            $Message,
-            $ErrorId,
-            $Category,
-            $TargetObject
-        )
-        if ($Details) {
-            $errorRecord.ErrorDetails = [ErrorDetails]::new($Details)
+        if ($PSCmdlet.ParameterSetName -eq 'ErrorRecord') {
+            $ErrorRecordObj = $ErrorRecord
+        } else {
+            $EffectiveException = if ($InnerException) {
+                [System.Exception]::new($Message.Message, $InnerException)
+            } else {
+                $Message
+            }
+            $ErrorRecordObj = [ErrorRecord]::new(
+                $EffectiveException,
+                $ErrorId,
+                $Category,
+                $TargetObject
+            )
+            if ($Details) {
+                $ErrorRecordObj.ErrorDetails = [ErrorDetails]::new($Details)
+            }
         }
         if ($Terminating) {
-            $cmdlet.ThrowTerminatingError(
-                $ErrorRecord
-            )
+            $Cmdlet.ThrowTerminatingError($ErrorRecordObj)
         } else {
-            $cmdlet.WriteError(
-                $ErrorRecord
-            )
+            $Cmdlet.WriteError($ErrorRecordObj)
         }
     }
 }

@@ -1,0 +1,282 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Consolidated type extensions for all Omnicit.PIM output types.
+  Loaded via Update-TypeData in suffix.ps1 (not TypesToProcess) to allow
+  -ErrorAction SilentlyContinue on Import-Module -Force re-imports.
+  Only types that define ScriptProperty members are included.
+-->
+<Types>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       Directory Roles (Entra ID)
+       ═══════════════════════════════════════════════════════════════ -->
+
+  <Type>
+    <Name>Omnicit.PIM.DirectoryEligibilitySchedule</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>PrincipalDisplayName</Name>
+        <GetScriptBlock>
+          $this.principal.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>RoleName</Name>
+        <GetScriptBlock>
+          $this.roleDefinition.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>Scope</Name>
+        <GetScriptBlock>
+          if ($this.directoryScopeId -eq '/') {
+            'Directory'
+          } else {
+            $this.directoryScope.displayName + ' (AU)'
+          }
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>EndDateTime</Name>
+        <GetScriptBlock>
+          if ($this.scheduleInfo.expiration.type -eq 'noExpiration' -or -not $this.scheduleInfo.expiration.endDateTime) {
+            'Never'
+          } else {
+            $this.scheduleInfo.expiration.endDateTime
+          }
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+
+  <Type>
+    <Name>Omnicit.PIM.DirectoryAssignmentScheduleInstance</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>PrincipalDisplayName</Name>
+        <GetScriptBlock>
+          $this.principal.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>RoleName</Name>
+        <GetScriptBlock>
+          $this.roleDefinition.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>Scope</Name>
+        <GetScriptBlock>
+          if ($this.directoryScopeId -eq '/') {
+            'Directory'
+          } else {
+            $this.directoryScope.displayName + ' (AU)'
+          }
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>MemberType</Name>
+        <GetScriptBlock>
+          $this.memberType
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>EndDateTime</Name>
+        <GetScriptBlock>
+          if ($this.endDateTime) {
+            $this.endDateTime
+          } else {
+            'Never'
+          }
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+
+  <Type>
+    <Name>Omnicit.PIM.DirectoryAssignmentScheduleRequest</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>PrincipalDisplayName</Name>
+        <GetScriptBlock>
+          $this.principal.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>RoleName</Name>
+        <GetScriptBlock>
+          $this.roleDefinition.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>StartDateTime</Name>
+        <GetScriptBlock>
+          $this.scheduleInfo.startDateTime
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>Scope</Name>
+        <GetScriptBlock>
+          if ($this.directoryScopeId -eq '/') {
+            'Directory'
+          } else {
+            $this.directoryScope.displayName + ' (AU)'
+          }
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>EndDateTime</Name>
+        <GetScriptBlock>
+          $exp = $this.scheduleInfo.expiration
+          if ($exp.type -eq 'afterDuration') {
+            try {
+              ([datetime]$this.scheduleInfo.startDateTime) +
+                [System.Xml.XmlConvert]::ToTimeSpan($exp.duration)
+            } catch { $null }
+          } else {
+            $exp.endDateTime
+          }
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       PIM for Groups (Entra ID)
+       ═══════════════════════════════════════════════════════════════ -->
+
+  <Type>
+    <Name>Omnicit.PIM.GroupEligibilitySchedule</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>GroupDisplayName</Name>
+        <GetScriptBlock>
+          $this.group.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>PrincipalDisplayName</Name>
+        <GetScriptBlock>
+          $this.principal.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>AccessId</Name>
+        <GetScriptBlock>
+          $this.accessId
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>MemberType</Name>
+        <GetScriptBlock>
+          $this.memberType
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>EndDateTime</Name>
+        <GetScriptBlock>
+          if ($this.scheduleInfo.expiration.type -eq 'noExpiration' -or -not $this.scheduleInfo.expiration.endDateTime) {
+            'Never'
+          } else {
+            $this.scheduleInfo.expiration.endDateTime
+          }
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+
+  <Type>
+    <Name>Omnicit.PIM.GroupAssignmentScheduleInstance</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>GroupDisplayName</Name>
+        <GetScriptBlock>
+          $this.group.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>PrincipalDisplayName</Name>
+        <GetScriptBlock>
+          $this.principal.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>AccessId</Name>
+        <GetScriptBlock>
+          $this.accessId
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>AssignmentType</Name>
+        <GetScriptBlock>
+          $this.assignmentType
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>EndDateTime</Name>
+        <GetScriptBlock>
+          if ($this.endDateTime) {
+            $this.endDateTime
+          } else {
+            'Never'
+          }
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+
+  <Type>
+    <Name>Omnicit.PIM.GroupAssignmentScheduleRequest</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>GroupDisplayName</Name>
+        <GetScriptBlock>
+          $this.group.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>EndDateTime</Name>
+        <GetScriptBlock>
+          $exp = $this.scheduleInfo.expiration
+          if ($exp -and $exp.type -eq 'AfterDuration') {
+            try {
+              ([datetime]$this.scheduleInfo.startDateTime) +
+                [System.Xml.XmlConvert]::ToTimeSpan($exp.duration)
+            } catch { $null }
+          } else {
+            $exp.endDateTime
+          }
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       Configuration
+       ═══════════════════════════════════════════════════════════════ -->
+
+  <Type>
+    <Name>Omnicit.PIM.TenantConfiguration</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>DirectoryRoleCount</Name>
+        <GetScriptBlock>
+          if ($this.DirectoryRoles) { @($this.DirectoryRoles).Count } else { 0 }
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>EntraIDGroupCount</Name>
+        <GetScriptBlock>
+          if ($this.EntraIDGroups) { @($this.EntraIDGroups).Count } else { 0 }
+        </GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>AzureRoleCount</Name>
+        <GetScriptBlock>
+          if ($this.AzureRoles) { @($this.AzureRoles).Count } else { 0 }
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+
+</Types>

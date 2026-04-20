@@ -64,15 +64,16 @@ PowerShellVersion = '7.2'
 
 # Type files (.ps1xml) to be loaded when importing this module
     # Disabled: TypesToProcess re-registers type members on every Import-Module -Force but Remove-Module does NOT
-    # clean type data, so the second test file import fails with "member is already present" errors,
-    # preventing all public functions from loading. Types are loaded via Update-TypeData -AppendPath in the psm1 instead.
+    # clean type data, so the second test file import fails with "member is already present" errors.
+    # Types are loaded via a single Update-TypeData -AppendPath call in the psm1 suffix instead.
     TypesToProcess = @()
 
 # Format files (.ps1xml) to be loaded when importing this module
-    # Disabled: FormatsToProcess uses AppendPath internally, so Az.Resources formats (loaded via RequiredModules)
-    # take precedence over ours for Az-native types. Formats are loaded via Update-FormatData -PrependPath in the psm1 instead.
-    # Ref: https://github.com/PowerShell/PowerShell/issues/17345 (closed for inactivity, not fixed — confirmed still an issue Feb 2025)
-    # FormatsToProcess = @(...)
+    # Re-enabled: all format targets are Omnicit.PIM.* custom types (no Az-native type overrides), so
+    # the AppendPath precedence issue with Az.Resources no longer applies.
+    # The orphaned RoleAssignmentScheduleRequest override was removed because all Azure functions now
+    # wrap output with Omnicit.PIM.AzureAssignmentScheduleRequest before returning.
+    FormatsToProcess = @('Formats/Omnicit.PIM.Format.ps1xml')
 
 # Modules to import as nested modules of the module specified in RootModule/ModuleToProcess
 # NestedModules = @()
@@ -83,6 +84,7 @@ FunctionsToExport = @(
     'Disable-OPIMAzureRole'
     'Disable-OPIMDirectoryRole'
     'Disable-OPIMEntraIDGroup'
+    'Disable-OPIMMyRole'
     'Disconnect-OPIM'
     'Enable-OPIMAzureRole'
     'Enable-OPIMDirectoryRole'
@@ -107,6 +109,7 @@ VariablesToExport = @()
 # Aliases to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no aliases to export.
 AliasesToExport = @(
     'Connect-PIM'
+    'Disable-OPIMMyRoles'
     'Disable-PIMADRole'
     'Disable-PIMGroup'
     'Disable-PIMResourceRole'
@@ -124,6 +127,7 @@ AliasesToExport = @(
     'Get-PIMRole'
     'pim'
     'Remove-PIMConfig'
+    'unpim'
     'Set-PIMConfig'
     'Wait-PIMADRole'
     'Wait-PIMRole'

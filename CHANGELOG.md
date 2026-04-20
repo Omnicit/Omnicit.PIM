@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `Connect-OPIM` (alias `Connect-PIM`) — new public cmdlet to pre-authenticate against Microsoft Graph and optionally Azure. A single browser prompt covers all PIM surfaces (directory roles, Entra ID groups, Azure RBAC). All `Get-/Enable-/Disable-OPIM*` cmdlets call this automatically on first use.
+- `ConvertTo-ActiveDurationTooShortError` and `ConvertTo-PolicyValidationError` private helpers centralise the cooldown and PIM-policy error-handling patterns previously duplicated across all six `Enable-/Disable-OPIM*` cmdlets.
+- PSScriptAnalyzer suppressions added to all six argument-completer classes (`AzureEligibleRoleCompleter`, `AzureActivatedRoleCompleter`, `DirectoryEligibleRoleCompleter`, `DirectoryActivatedRoleCompleter`, `GroupEligibleCompleter`, `GroupActivatedCompleter`).
+
+### Changed
+
+- `Write-CmdletError` revamped: new `ErrorRecord` parameter set (pass-through), `InnerException` parameter for exception chaining, `[CmdletBinding()]` added. All public and private functions now use `Write-CmdletError` as the single error-emission entry point.
+- All variable names across `Convert-GraphHttpException`, `Get-MyId`, `Invoke-OPIMGraphRequest`, `Export-OPIMTenantMap`, and completer classes updated to PascalCase per module code-style rules.
+
+ (alias `Connect-PIM`) — new public cmdlet to pre-authenticate against Microsoft Graph and optionally Azure. A single browser prompt covers all PIM surfaces (directory roles, Entra ID groups, Azure RBAC). All `Get-/Enable-/Disable-OPIM*` cmdlets call this automatically on first use.
 - `Disconnect-OPIM` (alias `Disconnect-PIM`) — new public cmdlet to clear all cached session tokens and disconnect from Graph and Azure.
 - Centralized MSAL-based authentication layer (`Initialize-OPIMAuth`, `Get-OPIMMsalApplication` private helpers). All PIM cmdlets now share a single token-acquisition flow that caches the result and is idempotent when called multiple times in the same session.
 - ACRS Conditional Access claims-challenge handling moved into `Invoke-OPIMGraphRequest`. A single reactive browser re-prompt is issued when Graph returns a step-up challenge, eliminating repeated browser windows when activating multiple roles in one `Enable-OPIMMyRole` call.
@@ -20,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Get-OPIMAzureRole` — new `-RoleName` positional parameter (`[Position = 0]`) with tab completion via `AzureEligibleRoleCompleter`, and new `-Identity` parameter for direct look-up by schedule `Name`. Both perform dual-search across eligible and active endpoints.
 - Combined schedule view: When `-All`, `-RoleName`/`-GroupName`/`-Identity` trigger dual-search, all three `Get-OPIM*` cmdlets now return `Omnicit.PIM.*CombinedSchedule` typed objects with a `Status` column (`Eligible` or `Active`) for consistent table output across both result types.
 - New format/type files for combined schedule views: `Omnicit.PIM.DirectoryCombinedSchedule`, `Omnicit.PIM.GroupCombinedSchedule`, `Omnicit.PIM.AzureCombinedSchedule` — each with a `Status` column in the default table view.
+
+### Performance
+
+- **Module load time reduced by ~8 seconds** (~55% of total import time). Consolidated 13 individual `*.Format.ps1xml` files into a single `Omnicit.PIM.Format.ps1xml` and 13 `*.Types.ps1xml` files into a single `Omnicit.PIM.Types.ps1xml`. Previously each file triggered a full format/type table rebuild (~0.49s and ~0.11s per call respectively).
+- `FormatsToProcess` re-enabled in the module manifest — format data is now loaded natively by PowerShell at zero extra cost. This was previously disabled because `Update-FormatData -PrependPath` was needed to override Az.Resources native types; that override (`RoleAssignmentScheduleRequest`) is no longer needed since all output is wrapped as `Omnicit.PIM.*` custom types.
+- `suffix.ps1` now loads a single consolidated `Omnicit.PIM.Types.ps1xml` file (1 call to `Update-TypeData`) instead of enumerating and loading 13 individual files (14 calls). `TypesToProcess` remains disabled in the manifest because `Remove-Module` does not clean type data, causing "member already present" errors on `Import-Module -Force`.
+- Removed orphaned `RoleAssignmentScheduleRequest.Format.ps1xml` and `RoleAssignmentScheduleRequest.Types.ps1xml` — these targeted the native Az `Microsoft.Azure.PowerShell.Cmdlets.Resources.Authorization.Models.Api20201001Preview.RoleAssignmentScheduleRequest` type, but all Azure output is now wrapped with `Omnicit.PIM.AzureAssignmentScheduleRequest`.
 - Pipeline safety guards: `Enable-OPIMDirectoryRole`, `Enable-OPIMEntraIDGroup`, `Enable-OPIMAzureRole` now skip pipeline objects already tagged as active assignment instances (e.g. objects piped from `Get-OPIM* -All` that have `Status = Active`), emitting a `Write-Verbose` message instead of attempting an activation that would fail.
 - Pipeline safety guards: `Disable-OPIMDirectoryRole`, `Disable-OPIMEntraIDGroup`, `Disable-OPIMAzureRole` now skip pipeline objects tagged as eligible-only schedules (e.g. objects piped from `Get-OPIM* -All` that have `Status = Eligible`), emitting a non-terminating error instead of attempting a deactivation that would fail.
 

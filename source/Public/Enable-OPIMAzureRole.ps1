@@ -70,10 +70,12 @@ function Enable-OPIMAzureRole {
         if ($Identity) {
             $Role = Get-OPIMAzureRole | Where-Object Name -EQ $Identity | Select-Object -First 1
             if (-not $Role) {
-                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new("No eligible Azure role found with identity '$Identity'."),
-                    'IdentityNotFound',
-                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Identity))
+                Write-CmdletError `
+                    -Message ([System.Exception]::new("No eligible Azure role found with identity '$Identity'.")) `
+                    -ErrorId 'IdentityNotFound' `
+                    -Category ObjectNotFound `
+                    -TargetObject $Identity `
+                    -Cmdlet $PSCmdlet
                 return
             }
         }
@@ -119,27 +121,9 @@ function Enable-OPIMAzureRole {
                 try {
                     $Response = New-AzRoleAssignmentScheduleRequest @RoleActivateParams -ErrorAction Stop
                 } catch {
-                    $ExMsg = $PSItem.Exception.Message
-                    if ($null -ne $PSItem.Exception.InnerException) {
-                        $ExMsg += ' ' + $PSItem.Exception.InnerException.Message
+                    if (-not (ConvertTo-PolicyValidationError -CaughtError $PSItem -ResourceType 'role' -Cmdlet $PSCmdlet)) {
+                        $PSCmdlet.WriteError($PSItem)
                     }
-                    if ($ExMsg -match 'JustificationRule') {
-                        $JustMsg = 'Your PIM policy requires a justification for this role. Use the -Justification parameter.'
-                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                            [System.Exception]::new($JustMsg, $PSItem.Exception),
-                            'RoleAssignmentRequestPolicyValidationFailed',
-                            [System.Management.Automation.ErrorCategory]::OperationStopped, $null))
-                        continue
-                    }
-                    if ($ExMsg -match 'ExpirationRule') {
-                        $ExpMsg = 'Your PIM policy requires a shorter expiration. Use -NotAfter to specify an earlier time.'
-                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                            [System.Exception]::new($ExpMsg, $PSItem.Exception),
-                            'RoleAssignmentRequestPolicyValidationFailed',
-                            [System.Management.Automation.ErrorCategory]::OperationStopped, $null))
-                        continue
-                    }
-                    $PSCmdlet.WriteError($PSItem)
                     continue
                 }
 

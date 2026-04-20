@@ -36,10 +36,12 @@ function Disable-OPIMAzureRole {
         if ($Identity) {
             $Role = Get-OPIMAzureRole -Activated | Where-Object Name -EQ $Identity | Select-Object -First 1
             if (-not $Role) {
-                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new("No active Azure role found with identity '$Identity'."),
-                    'IdentityNotFound',
-                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Identity))
+                Write-CmdletError `
+                    -Message ([System.Exception]::new("No active Azure role found with identity '$Identity'.")) `
+                    -ErrorId 'IdentityNotFound' `
+                    -Category ObjectNotFound `
+                    -TargetObject $Identity `
+                    -Cmdlet $PSCmdlet
                 return
             }
         }
@@ -69,17 +71,9 @@ function Disable-OPIMAzureRole {
                 $Response.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleRequest')
                 $Response
             } catch {
-                $IsActiveToShort = ($PSItem.FullyQualifiedErrorId -like 'ActiveDurationTooShort*') -or
-                                   ($PSItem.Exception.Message -match 'ActiveDurationTooShort')
-                if (-not $IsActiveToShort) {
+                if (-not (ConvertTo-ActiveDurationTooShortError -CaughtError $PSItem -ResourceType 'role' -Cmdlet $PSCmdlet)) {
                     $PSCmdlet.WriteError($PSItem)
-                    return
                 }
-                $CooldownMsg = 'You must wait at least 5 minutes after activating a role before you can deactivate it.'
-                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new($CooldownMsg, $PSItem.Exception),
-                    'ActiveDurationTooShort',
-                    [System.Management.Automation.ErrorCategory]::ResourceUnavailable, $null))
                 return
             }
         }
