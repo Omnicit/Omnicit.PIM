@@ -569,8 +569,8 @@ This module uses [Sampler](https://github.com/gaelcolas/Sampler) + [ModuleBuilde
 |---|---|---|
 | Import | `Import-Module ./Source/Omnicit.PIM.psd1 -Force` | `Import-Module ./output/module/Omnicit.PIM/<ver>/Omnicit.PIM.psd1` |
 | Functions | Dot-sourced at runtime by `Omnicit.PIM.psm1` | Merged into a single `Omnicit.PIM.psm1` by ModuleBuilder |
-| Type data | Loaded by `Omnicit.PIM.psm1` | Loaded by `suffix.ps1` (appended to built psm1) |
-| Format data | Loaded by `Omnicit.PIM.psm1` | Loaded by `suffix.ps1` (appended to built psm1) |
+| Type data | Loaded by `Omnicit.PIM.psm1` via `Update-TypeData` | Loaded by `suffix.ps1` via `Update-TypeData` |
+| Format data | Loaded natively via `FormatsToProcess` in manifest | Loaded natively via `FormatsToProcess` in manifest |
 
 ### Source `Omnicit.PIM.psm1`
 
@@ -580,7 +580,9 @@ Do not put runtime initialization logic here expecting it to run in the compiled
 
 ### `suffix.ps1` (and `prefix.ps1`)
 
-ModuleBuilder appends `suffix.ps1` to the compiled psm1 verbatim (configured in `build.yaml` as `suffix: suffix.ps1`). This is the correct place for any initialization that must run at module import time in the compiled module — type data registration, format data registration, alias setup, etc.
+ModuleBuilder appends `suffix.ps1` to the compiled psm1 verbatim (configured in `build.yaml` as `suffix: suffix.ps1`). This is the correct place for any initialization that must run at module import time in the compiled module — type data registration, alias setup, etc.
+
+> **Format data** is loaded natively via `FormatsToProcess` in the manifest (zero-cost). **Type data** is loaded by `suffix.ps1` via a single `Update-TypeData` call with `-ErrorAction SilentlyContinue` because `TypesToProcess` in the manifest does not support `-ErrorAction` and `Remove-Module` does not clean type data, causing "member already present" errors on `Import-Module -Force`.
 
 A `prefix.ps1` (not currently used) would be prepended to the compiled psm1 in the same way.
 

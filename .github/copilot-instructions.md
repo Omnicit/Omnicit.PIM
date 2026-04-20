@@ -191,14 +191,14 @@ For `SelfDeactivate` supply the `roleAssignmentScheduleInstance` ID, **not** the
   `Resolve-RoleByName` (private) parses the trailing `(id)` back to find the schedule object. The ID property differs: Directory/Groups use `.id`, Azure uses `.Name`.
 - **Parallel polling** — `Wait-OPIMDirectoryRole` uses `ForEach-Object -AsJob -Parallel` with `ConcurrentDictionary` for concurrent multi-role waiting.
 - **directoryScopeId expand workaround** — Graph v1.0 cannot `$expand=directoryScope` in the same query; `Restore-GraphProperty` makes a second request to rehydrate scope display names.
-- **Format load order** — `FormatsToProcess` is disabled in the manifest (PowerShell bug [#17345](https://github.com/PowerShell/PowerShell/issues/17345)); formats are loaded via `Update-FormatData -PrependPath` in `Omnicit.PIM.psm1`.
+- **Format/Type loading** — All format and type definitions are consolidated into two files in `Source/Formats/`: `Omnicit.PIM.Format.ps1xml` (loaded via `FormatsToProcess` in the manifest) and `Omnicit.PIM.Types.ps1xml` (loaded via a single `Update-TypeData -AppendPath` call in `suffix.ps1`). `TypesToProcess` is not used because `Remove-Module` does not clean type data, causing "member already present" errors on `Import-Module -Force`.
 
 ## Checklist: Adding a New Function
 
 1. Create `Source/Public/Verb-OPIMNoun.ps1` — function name must match file name.
 2. Add to `FunctionsToExport` in `Omnicit.PIM.psd1`.
 3. If tab completion is needed, add an `IArgumentCompleter` class in `Source/Classes/`.
-4. Add `*.Types.ps1xml` and `*.Format.ps1xml` in `Source/Formats/` and register in `TypesToProcess` in the manifest.
+4. Add a `<View>` element to `Source/Formats/Omnicit.PIM.Format.ps1xml` and, if the type needs ScriptProperty members, a `<Type>` element to `Source/Formats/Omnicit.PIM.Types.ps1xml`.
 5. Declare aliases via the `[Alias()]` attribute on the function. The source-mode psm1 uses `Export-ModuleMember -Function $PublicFunctions -Alias *` to export them. The build process (ModuleBuilder) populates `AliasesToExport` in the manifest from the `[Alias()]` attributes automatically.
 
 ## Dependencies
@@ -223,8 +223,8 @@ See [README.md](../README.md) for full usage examples, connection scopes, `Insta
   $Out = [PSCustomObject]$Response
   $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.SomeTypeName')
   ```
-  The type name must match a `.Format.ps1xml` and `.Types.ps1xml` pair in `Source/Formats/`.
-- **`TypesToProcess` is active; `FormatsToProcess` is disabled** — formats are loaded via `Update-FormatData -PrependPath` in `Omnicit.PIM.psm1` (workaround for PS bug [#17345](https://github.com/PowerShell/PowerShell/issues/17345)).
+  The type name must have a matching `<View>` in `Source/Formats/Omnicit.PIM.Format.ps1xml` and, if it needs ScriptProperty members, a `<Type>` entry in `Source/Formats/Omnicit.PIM.Types.ps1xml`.
+- **`FormatsToProcess` is active; `TypesToProcess` is disabled** — Formats are loaded natively via the manifest. Types are loaded via a single `Update-TypeData -AppendPath` call in `suffix.ps1` with `-ErrorAction SilentlyContinue` to handle `Import-Module -Force` re-imports.
 - **Parallel runspaces require explicit Graph import** — `Wait-OPIMDirectoryRole` calls `Import-Module 'Microsoft.Graph.Authentication'` inside `ForEach-Object -Parallel`. Any new parallel block must do the same.
 - **`Invoke-MgGraphRequest` must always use `-Verbose:$false -ErrorAction Stop`** — suppresses SDK noise and ensures exceptions are catchable. This applies to ALL calls including secondary rehydration calls.
 - **`ErrorRecord.ErrorDetails` requires `[ErrorDetails]::new()`** — `$Err.ErrorDetails = 'plain string'` is silently ignored in some PowerShell versions. Always use:
