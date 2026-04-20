@@ -3,8 +3,10 @@ Describe 'Remove-OPIMConfiguration' {
         Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
         Import-Module Omnicit.PIM -Force
         Mock -ModuleName Omnicit.PIM Set-Content { }
+        $PSDefaultParameterValues['Remove-OPIMConfiguration:Confirm'] = $false
     }
     AfterAll {
+        $null = $PSDefaultParameterValues.Remove('Remove-OPIMConfiguration:Confirm')
         Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
     }
 

@@ -43,13 +43,12 @@ function Install-OPIMConfiguration {
     Role, group, or Azure role eligibility objects piped from Get-OPIMDirectoryRole, Get-OPIMEntraIDGroup, or Get-OPIMAzureRole.
     Objects not matching a known Omnicit.PIM type are silently ignored.
     #>
-    [CmdletBinding(SupportsShouldProcess)]
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     [OutputType([void])]
     param(
         [Parameter(Mandatory)]
         [string]$TenantAlias,
 
-        [Parameter(Mandatory)]
         [ValidatePattern('^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$',
             ErrorMessage = "'{0}' does not look like a valid GUID.")]
         [string]$TenantId,
@@ -85,6 +84,31 @@ function Install-OPIMConfiguration {
         }
     }
     end {
+        # ── Resolve TenantId from active Graph session when not supplied ──────
+        $TenantInfo = Get-OPIMCurrentTenantInfo
+        if (-not $TenantId) {
+            if (-not $TenantInfo.TenantId) {
+                $Err = [System.Management.Automation.ErrorRecord]::new(
+                    [System.InvalidOperationException]::new(
+                        'No -TenantId was supplied and no active Graph session was found. ' +
+                        'Either provide -TenantId explicitly or connect via Connect-OPIM first.'),
+                    'TenantIdNotResolvable',
+                    [System.Management.Automation.ErrorCategory]::InvalidOperation,
+                    $null
+                )
+                $Err.ErrorDetails = [System.Management.Automation.ErrorDetails]::new(
+                    'No -TenantId was supplied and no active Graph session was found. ' +
+                    'Either provide -TenantId explicitly or connect via Connect-OPIM first.')
+                $PSCmdlet.WriteError($Err)
+                return
+            }
+            $TenantId = $TenantInfo.TenantId
+            Write-Verbose "TenantId auto-resolved from active Graph session: $TenantId"
+        } elseif ($TenantInfo.TenantId -and $TenantId -ne $TenantInfo.TenantId) {
+            Write-Warning "The provided TenantId ($TenantId) differs from the currently connected tenant ($($TenantInfo.TenantId)). Confirm you are configuring the correct tenant."
+        }
+        $TenantDisplayName = if ($TenantInfo.DisplayName) { $TenantInfo.DisplayName } else { 'N/A' }
+
         # ── Ensure TenantMap directory and file exist ─────────────────────────
         $TenantMapDir = Split-Path $TenantMapPath -Parent
         if (-not (Test-Path $TenantMapDir)) {
@@ -127,7 +151,7 @@ function Install-OPIMConfiguration {
 
         $MapData[$TenantAlias] = $Entry
 
-        if ($PSCmdlet.ShouldProcess($TenantMapPath, "Add tenant alias '$TenantAlias'")) {
+        if ($PSCmdlet.ShouldProcess($TenantMapPath, "Add alias '$TenantAlias' for tenant '$TenantDisplayName' ($TenantId)")) {
             Export-OPIMTenantMap -MapData $MapData -Path $TenantMapPath
             Write-Information "Added tenant alias '$TenantAlias' in $TenantMapPath"
         }
