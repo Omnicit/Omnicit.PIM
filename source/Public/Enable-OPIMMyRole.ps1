@@ -138,7 +138,7 @@
     if ($TenantAlias -or $AllEligible -or $AllEligibleDirectoryRoles) {
         if ($TenantAlias) {
             if ($Config -is [hashtable] -and -not $Config.DirectoryRoles) {
-                Write-Warning "No DirectoryRoles configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add roles, or run with -AllEligibleDirectoryRoles."
+                Write-Verbose "No DirectoryRoles configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add roles, or run with -AllEligibleDirectoryRoles."
             } else {
                 $DirectoryRoles = Get-OPIMDirectoryRole
                 if ($Config -is [hashtable] -and $Config.DirectoryRoles) {
@@ -164,7 +164,7 @@
     if ($TenantAlias -or $AllEligible -or $AllEligibleEntraIDGroups) {
         if ($TenantAlias) {
             if ($Config -is [hashtable] -and -not $Config.EntraIDGroups) {
-                Write-Warning "No EntraIDGroups configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add groups, or run with -AllEligibleEntraIDGroups."
+                Write-Verbose "No EntraIDGroups configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add groups, or run with -AllEligibleEntraIDGroups."
             } else {
                 $Groups = Get-OPIMEntraIDGroup
                 if ($Config -is [hashtable] -and $Config.EntraIDGroups) {
@@ -190,7 +190,7 @@
     if ($TenantAlias -or $AllEligible -or $AllEligibleAzureRoles) {
         if ($TenantAlias) {
             if ($Config -is [hashtable] -and -not $Config.AzureRoles) {
-                Write-Warning "No AzureRoles configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add roles, or run with -AllEligibleAzureRoles."
+                Write-Verbose "No AzureRoles configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add roles, or run with -AllEligibleAzureRoles."
             } else {
                 $AzureRoles = Get-OPIMAzureRole
                 if ($Config -is [hashtable] -and $Config.AzureRoles) {
