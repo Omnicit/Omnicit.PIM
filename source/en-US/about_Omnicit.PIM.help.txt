@@ -28,17 +28,30 @@ LONG DESCRIPTION
     No other Microsoft.Graph.* SDK modules are needed; all Graph calls use
     Invoke-MgGraphRequest directly.
 
-    CONNECTION SCOPES
+    CONNECTION AND AUTHENTICATION
 
-    Directory roles and Entra ID groups require Microsoft Graph scopes:
-      Connect-MgGraph -Scopes 'RoleEligibilitySchedule.ReadWrite.Directory',
-                               'RoleAssignmentSchedule.ReadWrite.Directory',
-                               'PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup',
-                               'PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup',
-                               'AdministrativeUnit.Read.All'
+    All Get-/Enable-/Disable-OPIM* cmdlets authenticate automatically on first use via a
+    MSAL-based browser prompt (system browser, no WAM). Call Connect-OPIM to pre-authenticate
+    or to target a specific tenant before running other cmdlets. The token is cached for the
+    session — subsequent calls are idempotent. Call Disconnect-OPIM to clear all cached tokens.
 
-    Azure RBAC roles require:
-      Connect-AzAccount
+      Connect-OPIM                                           # default / home tenant
+      Connect-OPIM -TenantId 'contoso.onmicrosoft.com'      # specific tenant
+      Connect-OPIM -IncludeARM                               # also acquire Azure ARM token
+      Disconnect-OPIM                                        # clear all cached tokens
+
+    The following Microsoft Graph scopes are requested automatically. These are listed for
+    reference (least-privilege review, custom app registration scenarios):
+
+      RoleEligibilitySchedule.ReadWrite.Directory
+      RoleAssignmentSchedule.ReadWrite.Directory
+      PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup
+      PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup
+      AdministrativeUnit.Read.All
+
+    Azure RBAC cmdlets (Get-/Enable-/Disable-OPIMAzureRole) also require an Azure Resource
+    Manager connection, acquired automatically on first use or when -IncludeARM is passed to
+    Connect-OPIM.
 
     CONFIGURATION (TENANTMAP)
 
@@ -82,8 +95,8 @@ EXAMPLES
     PS C:\> Get-OPIMDirectoryRole | Enable-OPIMDirectoryRole -Hours 4 -Justification 'Incident response'
     Activates all eligible directory roles for 4 hours.
 
-    PS C:\> Enable-OPIMDirectoryRole -RoleName 'Global Administrator' -Wait
-    Activates the specified role and waits until it is fully provisioned.
+    PS C:\> Get-OPIMDirectoryRole | Where-Object { $_.roleDefinition.displayName -eq 'Global Administrator' } | Enable-OPIMDirectoryRole -Wait
+    Activates the Global Administrator directory role and waits until it is fully provisioned.
 
     PS C:\> Get-OPIMAzureRole -Activated | Disable-OPIMAzureRole
     Deactivates all active Azure RBAC roles.
@@ -116,7 +129,7 @@ TROUBLESHOOTING NOTE:
     new PowerShell session and reconnect:
 
         # In a fresh PowerShell window:
-        Connect-MgGraph -Scopes 'RoleEligibilitySchedule.ReadWrite.Directory', ...
+        Connect-OPIM
         Enable-OPIMDirectoryRole -RoleName '...'
 
     If the issue persists, the tenant may require a custom app registration

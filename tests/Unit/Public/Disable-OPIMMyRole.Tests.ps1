@@ -464,4 +464,40 @@
             $Errors.Count | Should -BeGreaterThan 0
         }
     }
+
+    Context 'Write-Progress -Completed is called when deactivation finishes' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @() } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @() } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @() } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Write-Progress {}
+        }
+
+        It 'calls Write-Progress -Completed after all pillars run' {
+            Disable-OPIMMyRole -AllActivated -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Write-Progress -Scope It -ParameterFilter { $Completed }
+        }
+    }
+
+    Context 'Write-Progress PercentComplete stays within bounds for single-pillar modes' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @() } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @() } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @() } -ParameterFilter { $Activated }
+        }
+
+        It 'does not exceed PercentComplete 100 when only the Directory Roles pillar is active' {
+            { Disable-OPIMMyRole -AllActivatedDirectoryRoles -Confirm:$false } | Should -Not -Throw
+        }
+
+        It 'does not exceed PercentComplete 100 when only the Entra ID Groups pillar is active' {
+            { Disable-OPIMMyRole -AllActivatedEntraIDGroups -Confirm:$false } | Should -Not -Throw
+        }
+
+        It 'does not exceed PercentComplete 100 when only the Azure RBAC Roles pillar is active' {
+            { Disable-OPIMMyRole -AllActivatedAzureRoles -Confirm:$false } | Should -Not -Throw
+        }
+    }
 }

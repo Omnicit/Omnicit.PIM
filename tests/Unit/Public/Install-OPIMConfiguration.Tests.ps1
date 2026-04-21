@@ -5,8 +5,13 @@ Describe 'Install-OPIMConfiguration' {
         Mock -ModuleName Omnicit.PIM Write-Host { }
         Mock -ModuleName Omnicit.PIM Set-Content { }
         Mock -ModuleName Omnicit.PIM New-Item { }
+        Mock -ModuleName Omnicit.PIM Get-OPIMCurrentTenantInfo {
+            return [PSCustomObject]@{ TenantId = '00000000-0000-0000-0000-000000000001'; DisplayName = 'Mock Tenant' }
+        }
+        $PSDefaultParameterValues['Install-OPIMConfiguration:Confirm'] = $false
     }
     AfterAll {
+        $null = $PSDefaultParameterValues.Remove('Install-OPIMConfiguration:Confirm')
         Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
     }
 
@@ -178,6 +183,55 @@ Describe 'Install-OPIMConfiguration' {
 
         It 'does not call Set-Content' {
             Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
+        }
+    }
+
+    Context 'When TenantId is not provided but an active Graph session exists' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMCurrentTenantInfo {
+                return [PSCustomObject]@{ TenantId = 'cccccccc-0000-0000-0000-000000000003'; DisplayName = 'Auto Tenant' }
+            }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'resolves the TenantId from the Graph session and writes it into the PSD1' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Match 'cccccccc-0000-0000-0000-000000000003'
+        }
+
+        It 'does not write an error when TenantId is omitted but a session exists' {
+            $Errors = @()
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -Be 0
+        }
+    }
+
+    Context 'When TenantId is not provided and there is no active Graph session' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMCurrentTenantInfo {
+                return [PSCustomObject]@{ TenantId = $null; DisplayName = $null }
+            }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
+        }
+
+        It 'writes a non-terminating error with error id TenantIdNotResolvable' {
+            $Errors = @()
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errors -ErrorAction SilentlyContinue
+            $Errors.Count | Should -BeGreaterThan 0
+            $Errors[0].FullyQualifiedErrorId | Should -Match 'TenantIdNotResolvable'
+        }
+
+        It 'does not call Set-Content when TenantId cannot be resolved' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction SilentlyContinue
             Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
         }
     }

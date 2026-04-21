@@ -4,7 +4,8 @@
     Get eligible or activated PIM group assignments for the current user.
     .DESCRIPTION
     Retrieves eligible or active Entra ID group (PIM for Groups) assignment schedules via the
-    Microsoft Graph API. Requires a Graph connection with appropriate scopes.
+    Microsoft Graph API. Authentication is handled automatically on first use. Call Connect-OPIM
+    to pre-authenticate or to specify a target tenant. Call Disconnect-OPIM to clear cached tokens.
 
     Without any switch: returns eligible (inactive) group assignments for the current user.
     With -Activated: returns currently active group assignment schedule instances.

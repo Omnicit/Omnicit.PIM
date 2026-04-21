@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `ConvertTo-ActiveDurationTooShortError` and `ConvertTo-PolicyValidationError` private helpers centralise the cooldown and PIM-policy error-handling patterns previously duplicated across all six `Enable-/Disable-OPIM*` cmdlets.
+- `Get-OPIMCurrentTenantInfo` private helper — resolves the current tenant GUID and display name from the active Graph session. Used by `Install-`, `Set-`, and `Remove-OPIMConfiguration` to enrich the confirmation prompt.
+- `Install-OPIMConfiguration` now auto-resolves `-TenantId` from the active Graph context when the parameter is omitted. A non-terminating error is emitted when no `-TenantId` is supplied and no active Graph session is available.
+
+### Changed
+
+- `Install-OPIMConfiguration`, `Set-OPIMConfiguration`, and `Remove-OPIMConfiguration` now have `ConfirmImpact = 'High'`. The `ShouldProcess` confirmation prompt includes the tenant alias, display name, and resolved GUID, making it clear which tenant is being modified before any write occurs.
+- `-TenantId` in `Install-OPIMConfiguration` is no longer `[Mandatory]`; it is auto-resolved from `Get-MgContext` when omitted.
 - PSScriptAnalyzer suppressions added to all six argument-completer classes (`AzureEligibleRoleCompleter`, `AzureActivatedRoleCompleter`, `DirectoryEligibleRoleCompleter`, `DirectoryActivatedRoleCompleter`, `GroupEligibleCompleter`, `GroupActivatedCompleter`).
 
 ### Changed

@@ -25,7 +25,7 @@
     Path to the TenantMap.psd1 configuration file. Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
     #>
     [Alias('Remove-PIMConfig')]
-    [CmdletBinding(SupportsShouldProcess)]
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     [OutputType([void])]
     param(
         [Parameter(Mandatory)]
@@ -61,11 +61,14 @@
         return
     }
 
+    $StoredEntry    = $MapData[$TenantAlias]
+    $StoredTenantId = if ($StoredEntry -is [System.Collections.IDictionary]) { $StoredEntry.TenantId } else { [string]$StoredEntry }
+
     if ($MapData.Count -eq 1) {
         Write-Warning "Removing '$TenantAlias' will leave the TenantMap file empty."
     }
 
-    if ($PSCmdlet.ShouldProcess($TenantMapPath, "Remove tenant alias '$TenantAlias'")) {
+    if ($PSCmdlet.ShouldProcess($TenantMapPath, "Remove alias '$TenantAlias' (mapped to tenant $StoredTenantId)")) {
         [void]$MapData.Remove($TenantAlias)
         Export-OPIMTenantMap -MapData $MapData -Path $TenantMapPath
         Write-Information "Removed tenant alias '$TenantAlias' from $TenantMapPath"
