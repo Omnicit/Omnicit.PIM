@@ -39,8 +39,20 @@ Source/
   Omnicit.PIM.psd1          # Manifest — source of truth for exports, aliases, required modules
   Omnicit.PIM.psm1          # Loader: Classes → Private → Public (this order is intentional)
   Classes/                  # Argument completers (IArgumentCompleter). Loaded FIRST.
-  Private/                  # Internal helpers (not exported)
+  Private/                  # Internal helpers (not exported):
+                            #   Auth:        Initialize-OPIMAuth, Get-OPIMMsalApplication,
+                            #                Get-OPIMCurrentTenantInfo
+                            #   Graph:       Invoke-OPIMGraphRequest, Convert-GraphHttpException,
+                            #                Restore-GraphProperty
+                            #   Converters:  ConvertTo-OPIMMyRoleResult, ConvertTo-PolicyValidationError,
+                            #                ConvertTo-ActiveDurationTooShortError
+                            #   Helpers:     Get-MyId, Resolve-RoleByName, Export-OPIMTenantMap,
+                            #                Write-CmdletError
   Public/                   # Exported cmdlets — one file per function, filename == function name
+                            #   Auth:        Connect-OPIM, Disconnect-OPIM
+                            #   Convenience: Enable-OPIMMyRole (alias: pim), Disable-OPIMMyRole (alias: unpim)
+                            #   Pillars:     Enable/Disable/Get-OPIM{DirectoryRole,AzureRole,EntraIDGroup}
+                            #   Config:      Install/Get/Set/Remove-OPIMConfiguration, Wait-OPIMDirectoryRole
   Formats/                  # *.Types.ps1xml and *.Format.ps1xml output formatters
 ```
 
@@ -84,6 +96,8 @@ Build output lands in `output/module/<version>/`. Uses **Sampler** + **ModuleBui
 | Azure RBAC noun | `AzureRole` | `Enable-OPIMAzureRole` |
 | PIM Groups noun | `EntraIDGroup` | `Enable-OPIMEntraIDGroup` |
 | Configuration CRUD | `*-OPIMConfiguration` | `Get/Set/Remove/Install-OPIMConfiguration` |
+| Authentication | `Connect/Disconnect-OPIM` | `Connect-OPIM` (alias `Connect-PIM`), `Disconnect-OPIM` (alias `Disconnect-PIM`) |
+| Convenience activation | `Enable/Disable-OPIMMyRole` | `Enable-OPIMMyRole` (alias `pim`), `Disable-OPIMMyRole` (alias `unpim`) |
 | Filename | `Verb-OPIMNoun.ps1` | `Disable-OPIMDirectoryRole.ps1` |
 
 ### Configuration CRUD
@@ -183,7 +197,17 @@ For `SelfDeactivate` supply the `roleAssignmentScheduleInstance` ID, **not** the
 
 - **Duration formatting** — Use `[System.Xml.XmlConvert]::ToString([timespan]...)` for ISO 8601 durations required by PIM APIs, e.g. `PT1H`.
 - **Current user ID** — Use `Get-MyId` (private) which caches the result in `$SCRIPT:_MyIDCache`.
-- **ACRS claims-challenge retry** — `Invoke-GraphWithAcrsRetry` (private) wraps `Invoke-MgGraphRequest` POST calls for PIM activation. When the Graph API returns `RoleAssignmentRequestAcrsValidationFailed`, it extracts the claims JSON, acquires a new token via MSAL `AcquireTokenInteractive` with `WithClaims` (using reflection — MSAL types live in a separate Assembly Load Context), and retries with `Invoke-RestMethod`. On success it returns the response hashtable; on failure it returns a hashtable with `_AcrsError = $true` and diagnostic keys (`_ErrorRecord`, `_AllMsgs`, `_NoClaimsExtracted`, `_NoMsal`, etc.) for the caller to inspect. Callers (`Enable-OPIMDirectoryRole`, `Enable-OPIMEntraIDGroup`) check `$Result.ContainsKey('_AcrsError')` to distinguish success from error. **Do not mock `Invoke-MgGraphRequest` when testing ACRS error paths** — mock `Invoke-GraphWithAcrsRetry` directly to avoid triggering the real MSAL reflection code.
+- **Graph requests — `Invoke-OPIMGraphRequest`** — All Graph calls in Omnicit.PIM go through the private `Invoke-OPIMGraphRequest` wrapper. **Never call `Invoke-MgGraphRequest` directly from a public or private function** — always use `Invoke-OPIMGraphRequest`. It provides three layers above the raw SDK call:
+  1. **Bearer token security** — removes the `$Error` record containing the raw `HttpRequestMessage` (which carries the `Authorization: Bearer` header) immediately in every `catch` block.
+  2. **Transparent ACRS claims-challenge retry** — when Graph returns a 401 whose `WWW-Authenticate` header contains a `claims="<base64url>"` value, the function decodes it, calls `Initialize-OPIMAuth -ClaimsChallenge <json>` for an interactive step-up, and retries the original request exactly once. A second 401 after step-up is surfaced as a normal error. This is **entirely transparent to callers** — there is no `_AcrsError` hashtable protocol; callers receive either a response hashtable or a thrown `ErrorRecord`.
+  3. **Structured error conversion** — non-claims errors go through `Convert-GraphHttpException` and are thrown as `ErrorRecord` objects with the Graph `error.code` as `FullyQualifiedErrorId`.
+  In tests, **mock `Invoke-OPIMGraphRequest` (not `Invoke-MgGraphRequest`)** for all Graph call assertions.
+- **Authentication architecture** — `Initialize-OPIMAuth` (private) is the **single auth entry point**. Every Get-/Enable-/Disable-OPIM* cmdlet calls it at the start of its `begin` block. It is **idempotent**: if a valid Graph token is already cached for the same tenant with at least 5 minutes remaining, it returns immediately without any network call or browser prompt.
+  - Token acquisition order: `AcquireTokenSilent` (MSAL in-memory refresh token) → `AcquireTokenInteractive` (system browser; WAM is never used). ACRS step-up chains `.WithClaims()` in the same interactive call via the `-ClaimsChallenge` parameter.
+  - Azure auth is triggered by `-IncludeARM` — calls `Connect-AzAccount` independently of the Graph token; Az.Resources cmdlets require this.
+  - Auth state is cached in `$script:_OPIMAuthState` (`TenantId`, `Account`, `GraphTokenExpiry`, `ClaimsSatisfied`).
+  - `Get-OPIMMsalApplication` (private) builds and caches `IPublicClientApplication` via reflection into the Graph SDK's `AssemblyLoadContext`. Cached in `$script:_OPIMMsalApp`. Uses the Microsoft Graph Command Line Tools client ID (public, no app registration required).
+  - `Connect-OPIM` (public) is an optional pre-authentication shortcut — all PIM cmdlets call `Initialize-OPIMAuth` automatically on first use. `Disconnect-OPIM` clears `$script:_OPIMAuthState`, `$script:_OPIMMsalApp`, and calls `Disconnect-MgGraph` / `Disconnect-AzAccount`.
 - **Tab completers** — Return strings in a format that includes the schedule ID in trailing parentheses. Format differs by pillar:
   - Directory roles: `'DisplayName -> ScopeName (id)'` (scope omitted for root `/`)
   - Azure RBAC roles: `'RoleName -> ScopeDisplayName (Name)'` (ID is `.Name`, not `.id`)
@@ -200,13 +224,14 @@ For `SelfDeactivate` supply the `roleAssignmentScheduleInstance` ID, **not** the
 3. If tab completion is needed, add an `IArgumentCompleter` class in `Source/Classes/`.
 4. Add a `<View>` element to `Source/Formats/Omnicit.PIM.Format.ps1xml` and, if the type needs ScriptProperty members, a `<Type>` element to `Source/Formats/Omnicit.PIM.Types.ps1xml`.
 5. Declare aliases via the `[Alias()]` attribute on the function. The source-mode psm1 uses `Export-ModuleMember -Function $PublicFunctions -Alias *` to export them. The build process (ModuleBuilder) populates `AliasesToExport` in the manifest from the `[Alias()]` attributes automatically.
+6. Call `Initialize-OPIMAuth` at the start of the `begin` block for every new public function that makes Graph or Azure API calls. Pass `-IncludeARM` for any function that calls Az.Resources cmdlets.
 
 ## Dependencies
 
 | Module | Version | Used for |
 |---|---|---|
 | `Az.Resources` | ≥ 9.0.3 | Azure RBAC PIM (`Get/Enable/Disable-OPIMAzureRole`) |
-| `Microsoft.Graph.Authentication` | ≥ 2.36.0 | All Graph calls via `Invoke-MgGraphRequest` |
+| `Microsoft.Graph.Authentication` | ≥ 2.36.0 | All Graph calls via `Invoke-OPIMGraphRequest` (internal wrapper around `Invoke-MgGraphRequest`) |
 
 **Do not add other `Microsoft.Graph.*` SDK modules** — the module intentionally uses raw `Invoke-MgGraphRequest` to avoid typed SDK coupling and SDK version drift.
 
@@ -218,7 +243,7 @@ See [README.md](../README.md) for full usage examples, connection scopes, `Insta
 
 - **`DefaultCommandPrefix` is absent** — the manifest does NOT use `DefaultCommandPrefix = 'OPIM'`. Function names carry the prefix explicitly. Adding it would double-prefix to `OPIM-OPIMFoo`.
 - **`Write-CmdletError -Message` expects `[Exception]`**, not a string. Wrap bare strings: `[System.Exception]::new('message')`.
-- **Output tagging is required** — never return raw `Invoke-MgGraphRequest` hashtables (the default `Key/Value` formatter applies). Always convert to `[PSCustomObject]` and tag:
+- **Output tagging is required** — never return raw `Invoke-OPIMGraphRequest` hashtables (the default `Key/Value` formatter applies). Always convert to `[PSCustomObject]` and tag:
   ```powershell
   $Out = [PSCustomObject]$Response
   $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.SomeTypeName')
@@ -226,7 +251,7 @@ See [README.md](../README.md) for full usage examples, connection scopes, `Insta
   The type name must have a matching `<View>` in `Source/Formats/Omnicit.PIM.Format.ps1xml` and, if it needs ScriptProperty members, a `<Type>` entry in `Source/Formats/Omnicit.PIM.Types.ps1xml`.
 - **`FormatsToProcess` is active; `TypesToProcess` is disabled** — Formats are loaded natively via the manifest. Types are loaded via a single `Update-TypeData -AppendPath` call in `suffix.ps1` with `-ErrorAction SilentlyContinue` to handle `Import-Module -Force` re-imports.
 - **Parallel runspaces require explicit Graph import** — `Wait-OPIMDirectoryRole` calls `Import-Module 'Microsoft.Graph.Authentication'` inside `ForEach-Object -Parallel`. Any new parallel block must do the same.
-- **`Invoke-MgGraphRequest` must always use `-Verbose:$false -ErrorAction Stop`** — suppresses SDK noise and ensures exceptions are catchable. This applies to ALL calls including secondary rehydration calls.
+- **`Invoke-MgGraphRequest` must always use `-Verbose:$false -ErrorAction Stop`** — suppresses SDK noise and ensures exceptions are catchable. This is enforced inside `Invoke-OPIMGraphRequest` and `Restore-GraphProperty` — the only two places that call the raw SDK directly. All other code must call `Invoke-OPIMGraphRequest` instead.
 - **`ErrorRecord.ErrorDetails` requires `[ErrorDetails]::new()`** — `$Err.ErrorDetails = 'plain string'` is silently ignored in some PowerShell versions. Always use:
   ```powershell
   $Err.ErrorDetails = [System.Management.Automation.ErrorDetails]::new('Your message here.')
@@ -237,6 +262,9 @@ See [README.md](../README.md) for full usage examples, connection scopes, `Insta
 - **PowerShell 7.2+ Core only** — `CompatiblePSEditions = @('Core')`. Do not suggest Windows PowerShell 5.x or Desktop-compatible code.
 - **`Install-OPIMConfiguration` is create-only** — it does NOT have a `-Force` parameter. Updating an existing alias is done via `Set-OPIMConfiguration`. Do not add `-Force` back.
 - **`Export-OPIMTenantMap` (private) owns PSD1 serialization** — always call this helper from `Install`, `Set`, and `Remove` instead of inlining the StringBuilder block.
+- **In unit tests, mock `Invoke-OPIMGraphRequest`, not `Invoke-MgGraphRequest`** — all public and private functions call the wrapper, not the raw SDK. Mocking `Invoke-MgGraphRequest` in unit tests will have no effect because the call stack goes through `Invoke-OPIMGraphRequest` first. Use `Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest { ... }` for every Graph assertion.
+- **In unit tests, always mock `Initialize-OPIMAuth`** — every Get-/Enable-/Disable-OPIM* function calls `Initialize-OPIMAuth` at the start of its `begin` block. Without mocking it, tests will attempt interactive MSAL authentication and hang. Add `Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}` to every public function test's `BeforeAll`.
+- **`$script:_OPIMAuthState` and `$script:_OPIMMsalApp` are module-scoped caches** — tests that exercise `Initialize-OPIMAuth` or `Get-OPIMMsalApplication` directly must reset these in `BeforeEach` to prevent cross-test leakage (analogous to `$script:_MyIDCache`): `InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null; $script:_OPIMMsalApp = $null }`.
 - **Mocking functions called from `.NET` classes (`IArgumentCompleter`)** — Pester's `InModuleScope { Mock ... }` does NOT intercept calls made from class methods because .NET class method bodies are bound to the module's runspace at class-load time, not the Pester mock scope. The completer classes work around this by calling `Get-OPIM*` via `& ([scriptblock]::Create('Get-OPIMDirectoryRole'))` instead of a direct function call — `[scriptblock]::Create()` forces command resolution through the normal pipeline where Pester can intercept. **Do not revert this to a direct call** or mocks will break. Always use `Mock -ModuleName Omnicit.PIM FunctionName { ... }` at the outer `It` / `Context` level when testing completer classes. Class types defined in a module are NOT accessible in the outer test scope (calling `[ClassName]::new()` outside `InModuleScope` raises "Unable to find type"). Use `InModuleScope` for class instantiation, method calls, and assertions — use `Mock -ModuleName` (outside `InModuleScope`) for mocking. Correct pattern:
   ```powershell
   It 'test' {

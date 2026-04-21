@@ -26,15 +26,42 @@ Import-Module Omnicit.PIM
 
 ---
 
+## Authentication
+
+All `Get-/Enable-/Disable-OPIM*` cmdlets authenticate automatically on first use — a browser
+window opens once, the token is cached via MSAL for the session, and subsequent calls are
+idempotent. You never need to call `Connect-MgGraph` or `Connect-AzAccount` manually.
+
+`Connect-OPIM` is the module's optional pre-authentication command. Use it when you want the
+browser prompt at a predictable time or need to target a specific tenant:
+
+```powershell
+Connect-OPIM                                          # home / default tenant
+Connect-OPIM -TenantId 'contoso.onmicrosoft.com'     # specific tenant
+Connect-OPIM -TenantAlias corp                        # resolve alias from TenantMap.psd1
+Connect-OPIM -IncludeARM                              # also acquire an Azure ARM token
+```
+
+For Azure RBAC cmdlets (`Get-/Enable-/Disable-OPIMAzureRole`) an Azure Resource Manager token
+is also needed. Pass `-IncludeARM` to `Connect-OPIM`, or the cmdlets will acquire it
+automatically on first use.
+
+To clear all cached tokens and disconnect:
+
+```powershell
+Disconnect-OPIM
+```
+
+---
+
 ## Quick Start
 
 ### Azure AD / Entra ID Directory Roles
 
 ```powershell
-# Connect (request only what you need)
-Connect-MgGraph -Scopes 'RoleEligibilitySchedule.ReadWrite.Directory',
-                         'RoleAssignmentSchedule.ReadWrite.Directory',
-                         'AdministrativeUnit.Read.All'
+# Connect — browser prompt appears automatically on first use, or pre-authenticate explicitly
+Connect-OPIM                                          # home / default tenant
+Connect-OPIM -TenantId 'contoso.onmicrosoft.com'     # specific tenant
 
 # List eligible roles
 Get-OPIMDirectoryRole
@@ -70,8 +97,9 @@ Get-OPIMDirectoryRole | Enable-OPIMDirectoryRole -Wait
 ### Azure Resource (RBAC) Roles
 
 ```powershell
-# Connect
-Connect-AzAccount
+# Connect — -IncludeARM acquires both Graph and Azure ARM tokens in a single browser prompt
+Connect-OPIM -IncludeARM
+Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -IncludeARM
 
 # List eligible roles (current user, all scopes)
 Get-OPIMAzureRole
@@ -107,9 +135,8 @@ Get-OPIMAzureRole -Activated | Disable-OPIMAzureRole
 ### Entra ID PIM Groups
 
 ```powershell
-# Connect (additional scope required)
-Connect-MgGraph -Scopes 'RoleEligibilitySchedule.ReadWrite.Directory',
-                         'PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup'
+# Connect — the same Connect-OPIM call covers directory roles, groups, and (with -IncludeARM) Azure
+Connect-OPIM
 
 # List eligible group memberships/ownerships
 Get-OPIMEntraIDGroup
@@ -421,12 +448,7 @@ Install-OPIMConfiguration -TenantAlias corp    -TenantId 'xxxxxxxx-xxxx-xxxx-xxx
 Install-OPIMConfiguration -TenantAlias partner -TenantId 'yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy'
 
 # 2. Connect to the corp tenant and configure default roles
-Connect-MgGraph -TenantId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -Scopes `
-    'RoleEligibilitySchedule.ReadWrite.Directory', `
-    'RoleAssignmentSchedule.ReadWrite.Directory', `
-    'PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup', `
-    'PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup', `
-    'AdministrativeUnit.Read.All'
+Connect-OPIM -TenantId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
 
 Get-OPIMDirectoryRole |
     Where-Object { $_.roleDefinition.displayName -in 'Compliance Administrator','Security Reader' } |

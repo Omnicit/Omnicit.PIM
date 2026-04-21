@@ -4,7 +4,8 @@
     Get eligible or activated Azure AD PIM directory roles for the current user.
     .DESCRIPTION
     Retrieves eligible or active role assignment schedules for the current user via the Microsoft
-    Graph API. Requires a Microsoft Graph connection (Connect-MgGraph).
+    Graph API. Authentication is handled automatically on first use. Call Connect-OPIM to
+    pre-authenticate or to specify a target tenant. Call Disconnect-OPIM to clear cached tokens.
 
     Without any switch: returns eligible (inactive) directory roles for the current user.
     With -Activated: returns currently active role assignment schedule instances.
