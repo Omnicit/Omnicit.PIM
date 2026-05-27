@@ -5,6 +5,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- CI build (`Build & Package Module`) no longer fails with "The required module 'Configuration' is not loaded" when importing `ModuleBuilder`. `Configuration` and `Metadata` (ModuleBuilder's transitive runtime dependencies) are now listed explicitly in `RequiredModules.psd1` because PSResourceGet 1.0.1 does not install transitive `RequiredModules` during the bootstrap on a clean agent.
+
 ### Added
 
 - `Get-OPIMCurrentTenantInfo` private helper — resolves the current tenant GUID and display name from the active Graph session. Used by `Install-`, `Set-`, and `Remove-OPIMConfiguration` to enrich the confirmation prompt.
