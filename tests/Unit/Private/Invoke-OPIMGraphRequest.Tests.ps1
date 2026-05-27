@@ -126,4 +126,67 @@
             }
         }
     }
+
+    Context 'When a PIM 400 body-form ACRS challenge is received and retry succeeds' {
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{ TenantId = 'test-tenant'; ClaimsSatisfied = $false }
+                $script:_CallCount = 0
+                Mock Invoke-MgGraphRequest {
+                    $script:_CallCount++
+                    if ($script:_CallCount -eq 1) {
+                        # RoleAssignmentRequestAcrsValidationFailed: claims arrive URL-encoded
+                        # in the error body as &claims=%7B...%7D (NOT base64, NOT quoted).
+                        throw [System.Net.Http.HttpRequestException]::new(
+                            '{"error":{"code":"RoleAssignmentRequestAcrsValidationFailed",' +
+                            '"message":"...&claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%20%22value%22%3A%22c1%22%7D%7D%7D"}}'
+                        )
+                    }
+                    return @{ id = 'req-001'; status = 'Provisioned' }
+                }
+                Mock Initialize-OPIMAuth {}
+            }
+        }
+
+        It 'decodes the URL-encoded claims and passes them to Initialize-OPIMAuth' {
+            InModuleScope Omnicit.PIM {
+                $Result = Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{}
+                $Result.id | Should -Be 'req-001'
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+                    $ClaimsChallenge -match 'access_token' -and
+                    $ClaimsChallenge -match 'acrs' -and
+                    $ClaimsChallenge -match 'c1'
+                }
+            }
+        }
+    }
+
+    Context 'When the token is rejected as invalid/expired (no claims)' {
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{ TenantId = 'test-tenant'; ClaimsSatisfied = $false }
+                $script:_CallCount = 0
+                Mock Invoke-MgGraphRequest {
+                    $script:_CallCount++
+                    if ($script:_CallCount -eq 1) {
+                        throw [System.Net.Http.HttpRequestException]::new(
+                            '{"error":{"code":"InvalidAuthenticationToken","message":"Access token has expired."}}'
+                        )
+                    }
+                    return @{ value = @(@{ id = 'after-refresh' }) }
+                }
+                Mock Initialize-OPIMAuth {}
+            }
+        }
+
+        It 'forces a token refresh and retries once' {
+            InModuleScope Omnicit.PIM {
+                $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/some/resource'
+                $Result.value[0].id | Should -Be 'after-refresh'
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+                    $ForceRefresh -eq $true
+                }
+            }
+        }
+    }
 }

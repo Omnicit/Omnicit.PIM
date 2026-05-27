@@ -40,6 +40,12 @@
     When supplied the function bypasses AcquireTokenSilent and calls
     AcquireTokenInteractive(...).WithClaims($ClaimsChallenge) to perform an ACRS step-up.
 
+    .PARAMETER ForceRefresh
+    Bypass the cached-token idempotency check and force MSAL to mint a fresh access token via
+    the refresh token (AcquireTokenSilent(...).WithForceRefresh($true)). Used by
+    Invoke-OPIMGraphRequest to recover transparently when Graph rejects a bearer token as
+    invalid or expired. Usually completes without a browser prompt.
+
     .EXAMPLE
     Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com'
 
@@ -53,7 +59,8 @@
     param(
         [string]$TenantId,
         [switch]$IncludeARM,
-        [string]$ClaimsChallenge
+        [string]$ClaimsChallenge,
+        [switch]$ForceRefresh
     )
 
     # Resolve effective tenant; fall back to 'organizations' when caller supplies nothing.
@@ -69,6 +76,7 @@
     [bool]$GraphCached = $script:_OPIMAuthState -and
                          $script:_OPIMAuthState.TenantId -eq $EffectiveTenant -and
                          -not $ClaimsChallenge -and
+                         -not $ForceRefresh -and
                          $script:_OPIMAuthState.GraphTokenExpiry -gt $FiveMinutesFromNow
 
     # Fallback idempotency check via Get-MgContext — handles the case where the caller supplies
@@ -76,7 +84,7 @@
     # If the Graph SDK is already connected to the target tenant and the cached token hasn't
     # expired, we can skip re-authentication entirely and update the cached TenantId so that
     # the strict check passes on subsequent calls.
-    if (-not $GraphCached -and -not $ClaimsChallenge -and
+    if (-not $GraphCached -and -not $ClaimsChallenge -and -not $ForceRefresh -and
         $script:_OPIMAuthState -and
         $script:_OPIMAuthState.GraphTokenExpiry -gt $FiveMinutesFromNow) {
         $LiveMgContext = Get-MgContext -ErrorAction SilentlyContinue
@@ -154,6 +162,17 @@
                 $SilentArgs[0] = $GraphScopes
                 $SilentArgs[1] = $CachedAccount
                 $SilentBuilder = $SilentMethod.Invoke($MsalApp, $SilentArgs)
+
+                # Force MSAL to bypass its cached access token and refresh from the STS when
+                # the caller asked for it (e.g. Graph rejected the current token as expired).
+                if ($ForceRefresh) {
+                    $WithForceRefreshMethod = $SilentBuilder.GetType().GetMethod('WithForceRefresh', [Type[]]@([bool]))
+                    if ($WithForceRefreshMethod) {
+                        $SilentBuilder = $WithForceRefreshMethod.Invoke($SilentBuilder, @($true))
+                        Write-Verbose '[Initialize-OPIMAuth] Silent acquisition forced to refresh (WithForceRefresh).'
+                    }
+                }
+
                 $AuthResult    = $SilentBuilder.ExecuteAsync().GetAwaiter().GetResult()
                 Write-Verbose "[Initialize-OPIMAuth] Silent acquisition succeeded. Token expiry: $($AuthResult.ExpiresOn.UtcDateTime)"
             } catch {
@@ -258,6 +277,15 @@
     # prompt the first time, then caches the context in the Az module.
     if ($IncludeARM -and -not $AzAlreadyConnected) {
         Write-Verbose "[Initialize-OPIMAuth] Connecting to Azure via Connect-AzAccount..."
+
+        # Force browser-based sign-in for parity with the Graph side. Since Az.Accounts 12.0.0
+        # the Windows default is the WAM broker (the "Please select the account" picker), which
+        # hangs in some terminals. Disable it at PROCESS scope only — the user's persisted Az
+        # config is never touched. No-op on Linux/macOS, where browser login is already default.
+        try {
+            Update-AzConfig -EnableLoginByWam $false -Scope Process -ErrorAction SilentlyContinue | Out-Null
+        } catch { $null = $PSItem }
+
         $AzParams = @{ ErrorAction = 'Stop' }
         if ($EffectiveTenant -ne 'organizations') {
             $AzParams.Tenant = $EffectiveTenant

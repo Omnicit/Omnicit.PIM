@@ -5,6 +5,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `Invoke-OPIMGraphRequest` now recovers from the PIM `RoleAssignmentRequestAcrsValidationFailed` activation error automatically. The claims challenge in this 400 response body is URL-encoded (`&claims=%7B...%7D`), a different encoding from the base64url `WWW-Authenticate: claims="..."` 401 form the parser previously handled. `Get-ClaimsFromException` now decodes both encodings (and raw JSON) and feeds the result to the existing MSAL `AcquireTokenInteractive().WithClaims()` step-up, so activations requiring a Conditional Access authentication context succeed with a single browser prompt and **no** manual `Disconnect-OPIM`.
+- `Invoke-OPIMGraphRequest` ACRS retry no longer gates on the session-sticky `$script:_OPIMAuthState.ClaimsSatisfied` flag. Each call performs at most one step-up retry on its own, so a second activation in the same session that requires a claims challenge is no longer silently skipped.
+- `Invoke-OPIMGraphRequest` now transparently re-authenticates and retries once when Graph rejects a bearer token as invalid/expired (HTTP 401 or `InvalidAuthenticationToken`/`CompactToken`/`token is expired`/`Lifetime validation failed`), via the new `Initialize-OPIMAuth -ForceRefresh` path (MSAL `AcquireTokenSilent().WithForceRefresh($true)`) — recovering without a destructive full disconnect.
+
+### Changed
+
+- `Initialize-OPIMAuth` now disables the Web Account Manager (WAM) broker at **process scope** (`Update-AzConfig -EnableLoginByWam $false -Scope Process`) immediately before `Connect-AzAccount`, so Azure RBAC sign-in uses the system browser consistently with the Graph side instead of the WAM account picker that hangs in some terminals. The user's persisted Az config is never modified. (Unlike the previously removed Graph-side `Set-MgGraphOption -DisableLoginByWAM`, the Az-side `Update-AzConfig -EnableLoginByWam` toggle is honoured by `Connect-AzAccount`.)
+- `Initialize-OPIMAuth` gains a `-ForceRefresh` switch that bypasses the cached-token idempotency check and forces MSAL to mint a fresh access token from the refresh token.
+
 ### Added
 
 - `Get-OPIMCurrentTenantInfo` private helper — resolves the current tenant GUID and display name from the active Graph session. Used by `Install-`, `Set-`, and `Remove-OPIMConfiguration` to enrich the confirmation prompt.
