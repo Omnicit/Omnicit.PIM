@@ -51,33 +51,48 @@
         [hashtable]$Body
     )
 
-    # ── Helper: extract claims from a WWW-Authenticate header ─────────────────
+    # ── Helper: extract claims from a Graph failure ──────────────────────────
+    # Two distinct encodings must be handled:
+    #   1. 401 WWW-Authenticate step-up: claims="<base64url-encoded JSON>" (quoted).
+    #   2. PIM 400 RoleAssignmentRequestAcrsValidationFailed: the response body carries
+    #      &claims=<URL-encoded JSON> (unquoted, e.g. &claims=%7B%22access_token%22...).
+    # The decoded result is always the MSAL claims-request JSON, e.g.
+    #   {"access_token":{"acrs":{"essential":true,"value":"c1"}}}
     function Get-ClaimsFromException ([System.Management.Automation.ErrorRecord]$ErrorRecord) {
-        # Try the structured HTTP response headers first (most reliable)
-        $WwwAuthenticate = $null
+        # Gather every place the challenge might live, most-reliable first.
+        $Candidates = [System.Collections.Generic.List[string]]::new()
+        try { $Candidates.Add($ErrorRecord.Exception.Response.Headers.WwwAuthenticate.ToString()) } catch { $null = $PSItem }
         try {
-            $WwwAuthenticate = $ErrorRecord.Exception.Response.Headers.WwwAuthenticate.ToString()
+            if ($ErrorRecord.Exception.Response -and $ErrorRecord.Exception.Response.Content) {
+                $Candidates.Add($ErrorRecord.Exception.Response.Content.ReadAsStringAsync().GetAwaiter().GetResult())
+            }
         } catch { $null = $PSItem }
+        $Candidates.Add($ErrorRecord.Exception.Message)
 
-        # Fallback: the Graph SDK sometimes embeds the header value in the exception message
-        if (-not $WwwAuthenticate) {
-            $WwwAuthenticate = $ErrorRecord.Exception.Message
-        }
+        foreach ($Text in $Candidates) {
+            # Capture quoted ("...") or unquoted (stop at & / whitespace / quote) value.
+            if (-not ($Text -and ($Text -match 'claims=(?:"([^"]+)"|([^"&\s]+))'))) { continue }
+            $Encoded = if ($Matches[1]) { $Matches[1] } else { $Matches[2] }
 
-        if ($WwwAuthenticate -and ($WwwAuthenticate -match 'claims="([^"]+)"')) {
-            $Encoded = $Matches[1]
-            # Base64url → standard Base64 padding
-            $Padded  = $Encoded.Replace('-', '+').Replace('_', '/')
+            # 1. URL-encoded JSON (PIM body form).
+            if ($Encoded -match '%') {
+                $Decoded = [System.Uri]::UnescapeDataString($Encoded)
+                if ($Decoded -match '^\s*\{') { return $Decoded }
+            }
+
+            # 2. Base64url-encoded JSON (WWW-Authenticate step-up form).
+            $Padded = $Encoded.Replace('-', '+').Replace('_', '/')
             switch ($Padded.Length % 4) {
                 2 { $Padded += '==' }
                 3 { $Padded += '='  }
             }
             try {
-                return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Padded))
-            } catch {
-                # Not base64-encoded — may already be JSON (rare but handle gracefully)
-                if ($Encoded -match '^\{') { return $Encoded }
-            }
+                $Decoded = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Padded))
+                if ($Decoded -match '^\s*\{') { return $Decoded }
+            } catch { $null = $PSItem }
+
+            # 3. Already raw JSON.
+            if ($Encoded -match '^\s*\{') { return $Encoded }
         }
         return $null
     }
@@ -101,9 +116,11 @@
     }
 
     # ── Check for ACRS claims challenge on the first failure ──────────────────
+    # No session-sticky guard: this function retries at most once per call (the retry block
+    # below has no loop and a second failure throws), so each command can step up as needed.
     $ClaimsJson = Get-ClaimsFromException $FirstError
 
-    if ($ClaimsJson -and -not $script:_OPIMAuthState.ClaimsSatisfied) {
+    if ($ClaimsJson) {
         Write-Verbose "[Invoke-OPIMGraphRequest] ACRS claims challenge detected. Performing step-up authentication..."
         Write-Verbose "[Invoke-OPIMGraphRequest] Claims: $ClaimsJson"
 
@@ -119,6 +136,26 @@
         }
     }
 
-    # ── Not a claims challenge (or already retried) — convert and re-throw ────
+    # ── Token rejected/expired (not a claims challenge) — re-auth and retry ───
+    # A 401 here means the bearer token is invalid or expired (claims challenges were already
+    # handled above). Force a token refresh (MSAL refresh-token path, usually no prompt) and
+    # retry once instead of surfacing the failure.
+    $StatusCode = $null
+    try { $StatusCode = [int]$FirstError.Exception.Response.StatusCode } catch { $null = $PSItem }
+    [bool]$TokenInvalid = $StatusCode -eq 401 -or
+        $FirstError.Exception.Message -match 'InvalidAuthenticationToken|CompactToken|token is expired|Lifetime validation failed'
+
+    if ($TokenInvalid -and $script:_OPIMAuthState) {
+        Write-Verbose "[Invoke-OPIMGraphRequest] Token rejected (status=$StatusCode). Forcing re-authentication and retrying once..."
+        Initialize-OPIMAuth -TenantId $script:_OPIMAuthState.TenantId -ForceRefresh
+        try {
+            return Invoke-MgGraphRequest @InvokeParams
+        } catch {
+            $null = $Error.Remove($PSItem)
+            throw Convert-GraphHttpException $PSItem
+        }
+    }
+
+    # ── Not recoverable — convert and re-throw ────────────────────────────────
     throw Convert-GraphHttpException $FirstError
 }

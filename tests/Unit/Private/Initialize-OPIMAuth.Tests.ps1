@@ -124,6 +124,39 @@
         }
     }
 
+    Context 'When -ForceRefresh is set and a valid token is already cached' {
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{
+                    TenantId         = 'contoso.onmicrosoft.com'
+                    Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)  # still valid
+                    ClaimsSatisfied  = $false
+                }
+                $FakeMsalApp = [PSCustomObject]@{}
+                Add-Member -InputObject $FakeMsalApp -MemberType ScriptMethod -Name 'AcquireTokenSilent' -Value {
+                    param($Scopes, $Account)
+                    throw [System.Exception]::new('MsalUiRequiredException: UI required')
+                }
+                Mock Get-OPIMMsalApplication { return $FakeMsalApp }
+                Mock Connect-MgGraph {}
+                Mock Connect-AzAccount {}
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+
+        It 'bypasses the cache and re-acquires a token' {
+            InModuleScope Omnicit.PIM {
+                # The cached token is valid, so without -ForceRefresh the call would short-circuit
+                # and never touch the MSAL app. -ForceRefresh must force re-acquisition.
+                try { Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -ForceRefresh } catch {}
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Scope It
+            }
+        }
+    }
+
     Context 'When -IncludeARM and Graph token is cached but Azure is not connected' {
         BeforeAll {
             InModuleScope Omnicit.PIM {
