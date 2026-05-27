@@ -16,6 +16,12 @@
     PSScriptAnalyzer            = 'latest'
     Pester                      = 'latest'
     ModuleBuilder               = 'latest'
+    # ModuleBuilder's runtime dependencies (Configuration → Metadata). Listed explicitly
+    # because PSResourceGet 1.0.1 does not install transitive RequiredModules during the
+    # bootstrap on a clean agent, which made `Import-Module ModuleBuilder` fail in CI with
+    # "The required module 'Configuration' is not loaded".
+    Configuration               = 'latest'
+    Metadata                    = 'latest'
     ChangelogManagement         = 'latest'
     Sampler                     = 'latest'
     'Sampler.GitHubTasks'       = 'latest'
