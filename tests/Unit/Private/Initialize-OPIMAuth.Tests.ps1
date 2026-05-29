@@ -233,6 +233,10 @@
                         Account = [PSCustomObject]@{ Id  = 'user@contoso.com' }
                     }
                 }
+                # The cached context is now validated by minting an ARM token silently. A
+                # successful Get-AzAccessToken proves the context is usable, preserving the
+                # idempotent skip of Connect-AzAccount.
+                Mock Get-AzAccessToken { return [PSCustomObject]@{ Token = 'fake-arm-token' } }
                 Mock Connect-AzAccount {}
                 Mock Get-OPIMMsalApplication {}
                 Mock Connect-MgGraph {}
@@ -253,6 +257,42 @@
             InModuleScope Omnicit.PIM {
                 Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -IncludeARM
                 Should -Invoke Get-OPIMMsalApplication -Times 0 -Scope It
+            }
+        }
+    }
+
+    Context 'When -IncludeARM and a stale autosaved Az context cannot acquire a token' {
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{
+                    TenantId         = 'contoso.onmicrosoft.com'
+                    Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    ClaimsSatisfied  = $false
+                }
+                # Return value inlined — BeforeAll locals are not visible inside mock bodies.
+                Mock Get-AzContext {
+                    return [PSCustomObject]@{
+                        Tenant  = [PSCustomObject]@{ Id  = 'contoso.onmicrosoft.com' }
+                        Account = [PSCustomObject]@{ Id  = 'user@contoso.com' }
+                    }
+                }
+                # A stale autosaved context resurfaces for the right tenant, but the underlying
+                # token has expired / needs an interactive step-up: silent token minting fails.
+                Mock Get-AzAccessToken { throw [System.Exception]::new('interaction required') }
+                Mock Connect-AzAccount {}
+                Mock Get-OPIMMsalApplication {}
+                Mock Connect-MgGraph {}
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+
+        It 'calls Connect-AzAccount when the cached Az context cannot acquire a token silently' {
+            InModuleScope Omnicit.PIM {
+                Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -IncludeARM
+                Should -Invoke Connect-AzAccount -Times 1 -Scope It
             }
         }
     }
