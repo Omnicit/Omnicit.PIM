@@ -7,8 +7,9 @@
     .DESCRIPTION
     All Get-/Enable-/Disable-OPIM* cmdlets call this function at their entry point.
     It is idempotent: when a valid Graph token is already cached for the requested tenant and
-    (when -IncludeARM is given) an Azure context is already connected, it returns immediately
-    without making any network calls or showing any browser prompt.
+    (when -IncludeARM is given) the cached Azure context is validated by silently minting an ARM
+    access token via Get-AzAccessToken, it returns immediately without making any network calls
+    or showing any browser prompt.
 
     Graph token acquisition order:
       1. AcquireTokenSilent — uses the MSAL in-memory cache (refresh token).
@@ -31,9 +32,11 @@
     user intends to manage PIM in.
 
     .PARAMETER IncludeARM
-    When set, ensures an Azure context is available by calling Connect-AzAccount when
-    Get-AzContext returns no current connection for the target tenant. The Az module
-    handles its own token caching independently of the MSAL/Graph cache.
+    When set, ensures an Azure context is available. A cached Az context is trusted only after it
+    is validated with a silent Get-AzAccessToken (not merely detected via Get-AzContext); the Az
+    module autosaves its context to disk, so a stale context can resurface in a fresh session with
+    an expired token. When no usable context exists, Connect-AzAccount is called to establish one.
+    The Az module handles its own token caching independently of the MSAL/Graph cache.
 
     .PARAMETER ClaimsChallenge
     The decoded JSON claims challenge string extracted from a 401 WWW-Authenticate header.
@@ -100,12 +103,26 @@
 
     # Evaluate Azure connectivity once here and reuse below to avoid a second Get-AzContext call.
     $AzCtxAtStart = if ($IncludeARM) { Get-AzContext -ErrorAction SilentlyContinue } else { $null }
-    [bool]$AzAlreadyConnected = -not $IncludeARM -or (
-        $AzCtxAtStart -and (
+
+    # A cached Az context object alone is NOT proof of a usable connection. The Az module
+    # autosaves its context to disk (Enable-AzContextAutosave, on by default), so a brand-new
+    # PowerShell session resurfaces a context for the right tenant whose underlying token may have
+    # expired or now needs an interactive Conditional Access / MFA step-up. Trusting the bare
+    # context skips the required Connect-AzAccount, leaving only the Graph browser prompt while the
+    # later ARM call fails with "User interaction is required". Verify we can actually mint an ARM
+    # access token silently (no browser) before treating Azure as already connected.
+    [bool]$AzAlreadyConnected = -not $IncludeARM
+    if ($IncludeARM -and $AzCtxAtStart -and (
             $EffectiveTenant -eq 'organizations' -or
             $AzCtxAtStart.Tenant.Id -eq $EffectiveTenant
-        )
-    )
+        )) {
+        try {
+            $null = Get-AzAccessToken -TenantId $AzCtxAtStart.Tenant.Id -AsSecureString -WarningAction SilentlyContinue -ErrorAction Stop
+            $AzAlreadyConnected = $true
+        } catch {
+            Write-Verbose "[Initialize-OPIMAuth] Cached Azure context for tenant '$($AzCtxAtStart.Tenant.Id)' cannot acquire an ARM token silently ($($PSItem.Exception.GetType().Name)); reconnecting via Connect-AzAccount."
+        }
+    }
 
     if ($GraphCached -and $AzAlreadyConnected) {
         Write-Verbose "[Initialize-OPIMAuth] Returning cached auth state for tenant '$EffectiveTenant'."
