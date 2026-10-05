@@ -92,7 +92,7 @@ Include **all** that apply to the target function:
 | `-Until` overrides `-Hours` | `Enable-*` functions |
 | Policy validation errors (`JustificationRule`, `ExpirationRule`) | `Enable-*` functions |
 | `ActiveDurationTooShort` error | `Disable-*` functions |
-| `-PassThru` switch | `Wait-OPIMDirectoryRole` |
+| `-PassThru` switch | `Wait-OPIMDirectoryRole` (skipped today -- reaches the real transport; see CLAUDE.md Testing Conventions) |
 
 ### Mocking -- authentication
 

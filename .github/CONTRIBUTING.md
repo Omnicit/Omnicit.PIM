@@ -63,8 +63,9 @@ If that fails with `Requested value 'V2' was not found` (a PSResourceGet compati
 ## Tests
 
 - **Tests are written in Pester 5 syntax**, one `*.Tests.ps1` file per source file under
-  `tests/Unit/{Classes,Private,Public}/`. The build resolves the newest Pester. The QA gate
-  requires a unit test file for every function the module defines.
+  `tests/Unit/{Classes,Private,Public}/` -- except the six completer classes, which share
+  `tests/Unit/Classes/ArgumentCompleters.Tests.ps1`. The build resolves the newest Pester. The QA
+  gate requires a unit test file for every function the module defines.
 - **Import the module by name, not by path**, in the root `BeforeAll`:
   ```powershell
   BeforeAll {

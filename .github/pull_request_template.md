@@ -32,7 +32,3 @@
       `docs/live-verification/`), or this PR is explicitly marked not applicable to live
       verification, with the reason stated here:
   - Live verification: N/A because ...
-
-<!-- docs/live-verification/ does not exist yet; the first change that attaches a live-verification
-     checklist adds the folder. Live runs happen only in the designated test tenant, as a dedicated
-     test identity (see `CLAUDE.md` "SECURITY (Hard Rules - High Privilege)"). -->

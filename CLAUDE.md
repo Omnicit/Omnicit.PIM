@@ -274,9 +274,12 @@ publish it.
   as a prerelease for a preview). `GitVersion.yml` runs `mode: ContinuousDelivery`, where the
   preview counter advances on a TAG and not per commit: measured in Omnicit.EntraRBAC with
   GitVersion 5.12.0, two merges with no tag between them compute the SAME version. If a publish
-  succeeds but the tag step fails, the next merge publishes nothing (the idempotence check finds
-  the version on the Gallery and skips); push the missing tag by hand onto the commit that was
-  published.
+  succeeds but the tag step fails, the next merge computes the same version, skips the publish
+  (the idempotence check finds the version on the Gallery) and then creates the tag and release on
+  ITS OWN commit -- not on the commit whose build the Gallery holds. So re-run the failed job
+  before anything else merges: the re-run tags the commit it published. If a merge has already
+  happened, move the tag and its release to the published commit by hand (a preview tag is outside
+  the `Stable Version` ruleset; a stable tag can be moved only by that ruleset's bypass list).
 - **Never create a version tag by hand outside that repair or a deliberate release.** The rule
   under **CHANGELOG and Version** has teeth here: a stray tag changes what gets PUBLISHED.
 - **No approval stands between a merge or a `v` tag and the Gallery**, by decision, as in
@@ -462,8 +465,12 @@ for the same tenant label, has more than 5 minutes left, and neither `-ClaimsCha
 when the module's own `$script:_OPIMAuthState` already exists with more than 5 minutes left
 (`:90-92`): it then accepts the live Graph context for the requested tenant -- or any tenant when
 the request names none, which means `organizations` -- and relabels the module's own session
-(`:93-101`). It never adopts a `Connect-MgGraph` session made outside the module, since without
-module state the fallback does not run. With `-IncludeARM`, Azure counts as
+(`:93-101`). The fallback does not check where the live Graph context came from: while the
+module's own state is fresh, a `Connect-MgGraph` made outside the module for the requested tenant
+-- or for any tenant when none is requested (`organizations`) -- is accepted, and the module's
+state is relabelled with the requested tenant label, keeping the old `GraphTokenExpiry`
+(`Initialize-OPIMAuth.ps1:90-101`). Only without fresh module state, or with `-ClaimsChallenge`
+or `-ForceRefresh`, does the fallback not run. With `-IncludeARM`, Azure counts as
 connected only when a cached Az context for the tenant can mint an ARM token silently through
 `Get-AzAccessToken` (`:105-125`): the Az module autosaves its context, so a bare context can
 resurface in a new session with an expired token.
@@ -478,9 +485,10 @@ The application is cached in `$script:_OPIMMsalApp`, its tenant in `$script:_OPI
 and it is rebuilt only when the tenant changes (`:35-38`, `:154-155`). The reflection is of two
 kinds. `Create`, `WithAuthority`, `WithRedirectUri` (`Get-OPIMMsalApplication.ps1:113-140`),
 `AcquireTokenSilent` and `AcquireTokenInteractive` (`Initialize-OPIMAuth.ps1:165-172`, `:205-210`)
-are found by name through `GetMethods()` and filtered on parameter count and type NAME, because
-types from the Graph SDK's load context are not identical to the same types in the default one
-(the source's own comments: `Initialize-OPIMAuth.ps1:148-151`,
+are found by name through `GetMethods()` and filtered on parameter count -- and, for
+`WithAuthority`, `AcquireTokenSilent` and `AcquireTokenInteractive`, also on parameter type NAME
+-- because types from the Graph SDK's load context are not identical to the same types in the
+default one (the source's own comments: `Initialize-OPIMAuth.ps1:148-151`,
 `Get-OPIMMsalApplication.ps1:109-112`).
 A typed `GetMethod(name, [Type[]])` is used only with `[bool]` or `[string]` parameters --
 `WithForceRefresh`, `WithUseEmbeddedWebView`, `WithLoginHint`, `WithClaims`
@@ -1056,8 +1064,10 @@ version drift.
 
 ## Checklist: Adding a New Function
 
-1. **Create the file:** `source/{Public|Private}/Verb-OPIMNoun.ps1`. The filename must match the
-   function name exactly. Declare it with `function`, not `filter` (see **Common Pitfalls**).
+1. **Create the file:** `source/Public/Verb-OPIMNoun.ps1` for a public function, or
+   `source/Private/<FunctionName>.ps1` for a private helper (several, such as `Get-MyId` and
+   `Resolve-RoleByName`, carry no OPIM prefix). Either way the filename must match the function
+   name exactly. Declare it with `function`, not `filter` (see **Common Pitfalls**).
 2. **If public:** add it to `FunctionsToExport` in `source/Omnicit.PIM.psd1`, declare any alias
    with `[Alias()]` on the function, and add the alias to `AliasesToExport` there.
 3. **If tab completion is needed:** add an `IArgumentCompleter` class in `source/Classes/` that
@@ -1072,7 +1082,7 @@ version drift.
    `<Type>` in `source/Formats/Omnicit.PIM.Types.ps1xml`.
 7. **Add full comment-based help:** `.SYNOPSIS`, a `.DESCRIPTION` over 40 characters, one
    `.PARAMETER` per parameter, and at least one `.EXAMPLE` -- the QA gate checks all four.
-8. **Add a unit test file:** `tests/Unit/{Public|Private}/Verb-OPIMNoun.Tests.ps1`. Import by
+8. **Add a unit test file:** `tests/Unit/{Public|Private}/<FunctionName>.Tests.ps1`. Import by
    module name in `BeforeAll`, and mock `Initialize-OPIMAuth` and `Invoke-OPIMGraphRequest` (the
    shapes are under **Testing Conventions**).
 9. **Document a change to the shipped module** in `CHANGELOG.md`'s `[Unreleased]` section, in

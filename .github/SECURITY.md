@@ -17,7 +17,9 @@ Private vulnerability reporting is not switched on for this repository yet, so t
 form to point you at. Until it is, open an issue that asks for a private contact for a security
 report, and put no detail in it: no cmdlet name, no reproduction steps, no output -- only that you
 have a security report and need a private way to send it. The maintainers will answer in that issue
-with a way to send the details privately. This section is updated when private reporting is
+with a way to send the details privately. Send nothing until a repository maintainer -- an account
+shown with the Member, Owner or Collaborator badge on this repository -- answers in that issue, and
+ignore a contact or link offered by anyone else. This section is updated when private reporting is
 switched on. No response-time commitment is made.
 
 ## What to include
