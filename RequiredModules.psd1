@@ -16,7 +16,7 @@
     PSScriptAnalyzer            = 'latest'
     Pester                      = 'latest'
     ModuleBuilder               = 'latest'
-    # ModuleBuilder's runtime dependencies (Configuration → Metadata). Listed explicitly
+    # ModuleBuilder's runtime dependencies (Configuration, which needs Metadata). Listed explicitly
     # because PSResourceGet 1.0.1 does not install transitive RequiredModules during the
     # bootstrap on a clean agent, which made `Import-Module ModuleBuilder` fail in CI with
     # "The required module 'Configuration' is not loaded".
@@ -26,8 +26,10 @@
     Sampler                     = 'latest'
     'Sampler.GitHubTasks'       = 'latest'
 
-    # Runtime dependencies — must be present so Sampler's package_module_nupkg task
-    # can bundle them alongside the module in the NuGet package.
+    # Runtime dependencies. The module under test imports them, so the build and the tests need
+    # them, and the workflow installs exactly these versions before Publish-PSResource validates
+    # the manifest (.github/workflows/build-and-test.yml). Keep them equal to the manifest's
+    # RequiredModules floors.
     'Az.Resources'                    = '9.0.3'
     'Microsoft.Graph.Authentication'  = '2.36.0'
 
