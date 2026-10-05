@@ -458,9 +458,12 @@ cmdlets do not authenticate.
 
 **It is idempotent.** It returns without a network call or a prompt when the cached Graph token is
 for the same tenant label, has more than 5 minutes left, and neither `-ClaimsChallenge` nor
-`-ForceRefresh` was passed (`Initialize-OPIMAuth.ps1:78-83`). A `Get-MgContext` fallback accepts a
-live Graph context for the requested tenant -- or any tenant when the request names none, which
-means `organizations` -- and relabels the cache (`:90-102`). With `-IncludeARM`, Azure counts as
+`-ForceRefresh` was passed (`Initialize-OPIMAuth.ps1:78-83`). A `Get-MgContext` fallback runs only
+when the module's own `$script:_OPIMAuthState` already exists with more than 5 minutes left
+(`:90-92`): it then accepts the live Graph context for the requested tenant -- or any tenant when
+the request names none, which means `organizations` -- and relabels the module's own session
+(`:93-101`). It never adopts a `Connect-MgGraph` session made outside the module, since without
+module state the fallback does not run. With `-IncludeARM`, Azure counts as
 connected only when a cached Az context for the tenant can mint an ARM token silently through
 `Get-AzAccessToken` (`:105-125`): the Az module autosaves its context, so a bare context can
 resurface in a new session with an expired token.
@@ -472,9 +475,17 @@ its own `AssemblyLoadContext`, falling back to loading the DLL from that module'
 Graph Command Line Tools public client id -- no app registration -- with the authority
 `https://login.microsoftonline.com/<tenant>` and the redirect URI `http://localhost` (`:93-140`).
 The application is cached in `$script:_OPIMMsalApp`, its tenant in `$script:_OPIMMsalAppTenantId`,
-and it is rebuilt only when the tenant changes (`:35-38`, `:154-155`). All reflection uses
-name-based `GetMethods()` lookups, because types loaded in the Graph SDK's load context are not
-identical to the same types in the default one.
+and it is rebuilt only when the tenant changes (`:35-38`, `:154-155`). The reflection is of two
+kinds. `Create`, `WithAuthority`, `WithRedirectUri` (`Get-OPIMMsalApplication.ps1:113-140`),
+`AcquireTokenSilent` and `AcquireTokenInteractive` (`Initialize-OPIMAuth.ps1:165-172`, `:205-210`)
+are found by name through `GetMethods()` and filtered on parameter count and type NAME, because
+types from the Graph SDK's load context are not identical to the same types in the default one
+(the source's own comments: `Initialize-OPIMAuth.ps1:148-151`,
+`Get-OPIMMsalApplication.ps1:109-112`).
+A typed `GetMethod(name, [Type[]])` is used only with `[bool]` or `[string]` parameters --
+`WithForceRefresh`, `WithUseEmbeddedWebView`, `WithLoginHint`, `WithClaims`
+(`Initialize-OPIMAuth.ps1:186`, `:217`, `:224`, `:232`) -- or with none: `GetMethod('Build')`
+(`Get-OPIMMsalApplication.ps1:143`).
 
 **Acquisition order:** `AcquireTokenSilent` when an account is cached and no claims challenge was
 given, chained with `.WithForceRefresh($true)` under `-ForceRefresh`
@@ -505,7 +516,9 @@ touched) and calls `Connect-AzAccount`, with `-Tenant` unless the tenant is `org
 cmdlets then run in that Az context.
 
 **State.** `$script:_OPIMAuthState` holds `TenantId`, `Account`, `GraphTokenExpiry` and
-`ClaimsSatisfied` (`:282-287`) -- never a token.
+`ClaimsSatisfied` (`:282-287`) -- never a token. The tokens themselves live in the MSAL
+application's in-memory cache (`$script:_OPIMMsalApp`) and in the Graph SDK's context; see
+**SECURITY**.
 
 **`Disconnect-OPIM`** sets `$script:_OPIMAuthState`, `$script:_OPIMMsalApp`,
 `$script:_OPIMMsalAppTenantId` and `$script:_MyIDCache` to `$null`, then calls `Disconnect-MgGraph`
@@ -720,9 +733,10 @@ called by `Install`, `Set` and `Remove`; never inline it.
   it in `$script:_MyIDCache`, keyed by user principal name. Use it rather than a new lookup. No
   module function calls it today.
 - **PSScriptAnalyzer:** the QA gate requires zero findings, with the default rules, for every
-  function's source file. No function file carries a suppression today (the six completer classes
-  carry two each, with a `Justification`). A targeted suppression is acceptable only for a known
-  false positive and only with a `Justification` string.
+  function's source file. A targeted suppression is acceptable only for a known false positive and
+  only with a `Justification` string; **never suppress a rule that hides a real bug.** No function
+  file carries a suppression today; the six completer classes carry two each
+  (`PSAvoidUsingWriteHost` and `PSUseDeclaredVarsMoreThanAssignments`), each with a `Justification`.
 
 ---
 
@@ -741,12 +755,14 @@ already carries a UTF-8 BOM.
 Use `--` (two hyphens) for em-dash contexts in comments and help text and `->` for an arrow. Use
 straight quotes `'` and `"` only.
 
-**This repository is not there yet.** Measured on 2026-10-05: 39 of the 44 tracked files under
-`source/` and 11 of the 33 under `tests/` contain non-ASCII characters (mostly em-dashes and
-box-drawing rules in comments), and 48 of those 50 carry a UTF-8 BOM -- which is why the
-per-function PSScriptAnalyzer run passes today. The two without a BOM are `source/Omnicit.PIM.psm1`
-and `source/en-US/about_Omnicit.PIM.help.txt`, neither of which that run analyses. A source-hygiene
-gate for ASCII and BOM is planned, not yet in this repository. Until it lands:
+**This repository is not there yet.** Measured on 2026-10-05, on the text after any leading BOM:
+18 of the 44 tracked files under `source/` and 3 of the 33 under `tests/` contain non-ASCII
+characters (mostly em-dashes and box-drawing rules in comments), and 19 of those 21 carry a UTF-8
+BOM -- which is why the per-function PSScriptAnalyzer run passes today. The two without a BOM are
+`source/Omnicit.PIM.psm1` and `source/en-US/about_Omnicit.PIM.help.txt`, neither of which that run
+analyses. A further 29 files (21 under `source/`, 8 under `tests/`) carry a BOM over pure ASCII
+text. A source-hygiene gate for ASCII and BOM is planned, not yet in this repository. Until it
+lands:
 
 - **New files** are ASCII and UTF-8 without BOM.
 - **New or edited lines** in an existing file are ASCII, whatever the rest of the file holds.
@@ -763,7 +779,8 @@ gate for ASCII and BOM is planned, not yet in this repository. Until it lands:
   `throw` in a public function -- it terminates the pipeline and prevents
   `-ErrorAction SilentlyContinue` from working. The two in `Wait-OPIMDirectoryRole` are deliberate
   and commented: `:79` runs inside `ForEach-Object -Parallel`, where `$PSCmdlet` does not exist,
-  and `:145` re-throws what the parallel jobs raised.
+  and `:145` is a bare re-throw in the `catch` around the progress loop (`:125-145`). Errors from
+  the parallel jobs themselves surface through `Receive-Job -Wait` in the `finally` (`:146`).
 - **Private helpers** such as `Resolve-RoleByName`, `Restore-GraphProperty` and `Get-MyId` may
   `throw` on caller error, and `Invoke-OPIMGraphRequest` throws the converted Graph error by
   design: the caller is responsible for catching and routing it.
@@ -830,6 +847,11 @@ gate for ASCII and BOM is planned, not yet in this repository. Until it lands:
   2026-10-05. One `*.Tests.ps1` per source file -- the six completer classes share
   `Unit/Classes/ArgumentCompleters.Tests.ps1`. The QA gate (`tests/QA/module.tests.ps1`) requires
   a unit test file for every function.
+- **Structure:** one `Describe` per file, named exactly after the function under test. Group
+  scenarios (happy path, error cases, parameter sets) in `Context` blocks, with a `BeforeAll`
+  inside each `Context` for shared arrangement; use `BeforeEach` only for state that must reset
+  per `It`. `It` names start with a third-person singular verb: "calls", "returns", "writes",
+  "throws". Write the scope prefix in lower case, `$script:_MyIDCache`, never `$SCRIPT:`.
 - **Import by module name, not by path**, in the root `BeforeAll` -- importing by path breaks the
   Sampler coverage measurement, which targets the built module:
   ```powershell
@@ -929,9 +951,17 @@ gate for ASCII and BOM is planned, not yet in this repository. Until it lands:
   ```
 - **A `Mock -ModuleName` covers only calls made from inside the module.** A command the test body
   calls itself runs for real unless it has its own test-scope `Mock`. Mocks do not cross
-  `ForEach-Object -Parallel` runspaces either, so the polling block in `Wait-OPIMDirectoryRole` has
-  no unit test: its `-PassThru` test is skipped for that reason (the skip comment's "integration
-  tests" do not exist in this repository).
+  `ForEach-Object -Parallel` runspaces either.
+- **Known exception: `Wait-OPIMDirectoryRole`'s tests reach the REAL Graph transport.** Three of
+  them (`tests/Unit/Public/Wait-OPIMDirectoryRole.Tests.ps1:52-55`, `:75-78`, `:111-119`) pipe a
+  request that has not expired with `-Timeout 0`, so the cmdlet starts its
+  `ForEach-Object -Parallel -AsJob` block. The polling loop's first Graph call is the real, unmocked
+  `Invoke-MgGraphRequest` at `source/Public/Wait-OPIMDirectoryRole.ps1:101`, run inside a thread
+  job, where no mock reaches. It fails -- and the tests pass -- only because the test process holds
+  no Graph context. Until the planned transport tripwire lands, that is the rule: **never run the
+  unit tests in a pwsh session that holds a Graph context** (after `Connect-MgGraph` or
+  `Connect-OPIM`) -- start a fresh process. The `-PassThru` test is skipped for the same reason (its
+  skip comment's "integration tests" do not exist in this repository).
 - **Pin `-ErrorAction` on any call whose non-terminating error the test observes or has to
   survive.** Module code reads the GLOBAL `$ErrorActionPreference`, which the workflow's
   `shell: pwsh` steps and many operator profiles set to Stop, and a test-local
@@ -954,7 +984,7 @@ gate for ASCII and BOM is planned, not yet in this repository. Until it lands:
 - **A transport tripwire is planned, not yet in this repository.** In Omnicit.EntraRBAC every unit
   test file installs one that records and refuses any unmocked call reaching the SDK transport.
   Here nothing catches a missing mock yet except review -- or a test that hangs on a browser
-  prompt.
+  prompt -- and the `Wait-OPIMDirectoryRole` exception above stays open until it lands.
 
 ---
 
@@ -970,7 +1000,11 @@ memberships** for the signed-in user. These rules are non-negotiable:
 2. **Every unit test mocks authentication and the transport at the module boundary**:
    `Initialize-OPIMAuth` always, `Invoke-OPIMGraphRequest` for Graph, the `Az.Resources` cmdlets
    for Azure, and the raw SDK calls only where a function makes them directly (see **Testing
-   Conventions**). Nothing in CI or tests authenticates for real.
+   Conventions**). Nothing in CI or tests authenticates. One known exception reaches the
+   transport: `Wait-OPIMDirectoryRole`'s tests run a real `Invoke-MgGraphRequest` in a thread job,
+   which fails only because the test process holds no Graph context -- so never run the unit tests
+   in a pwsh session that holds one; start a fresh process. The planned transport tripwire is what
+   will close this.
 3. **Every state change supports `-WhatIf` and `-Confirm`** via
    `[CmdletBinding(SupportsShouldProcess)]` -- every Enable- and Disable- cmdlet, and
    `Install`/`Set`/`Remove-OPIMConfiguration` (`ConfirmImpact = 'High'`).
@@ -979,11 +1013,13 @@ memberships** for the signed-in user. These rules are non-negotiable:
    -- for the requested duration. A broader activation (another role, a wider scope, another group
    or access type, a longer duration, another tenant) is always a defect, never a feature; so is a
    deactivation the user did not ask for.
-5. **Never log or write tokens.** The module keeps no token in its state: `$script:_OPIMAuthState`
-   holds none, and the Graph token goes to `Connect-MgGraph` as a SecureString. Never write an
-   access token, a refresh token or an `Authorization` header to output, to a verbose or debug
-   stream, to a file or to a test fixture, and never print or persist an error record from a
-   failed request (see **Error Handling**).
+5. **Never log or write tokens.** `$script:_OPIMAuthState` holds no token, but tokens do live in
+   the process: in the in-memory token cache of the MSAL application (`$script:_OPIMMsalApp`) and
+   in the Graph SDK's context, which `Connect-MgGraph -AccessToken` receives as a SecureString.
+   Never write either object out, log it or put it in an error record. Never write an access
+   token, a refresh token or an `Authorization` header to output, to a verbose or debug stream, to
+   a file or to a test fixture, and never print or persist an error record from a failed request
+   (see **Error Handling**).
 
 ---
 
