@@ -22,10 +22,11 @@ package-lock.json
 # to be tracked.
 docs/superpowers/
 
-# docs/live-verification/ is where live tenant console output gets pasted in on purpose, and no
-# rule above has ever reached it. Redaction is done on the way INTO a checklist; a gate for it is
-# planned. These two rules cover the raw material that redaction is done FROM, so an unredacted
-# transcript cannot be staged by a stray `git add docs/`.
+# docs/live-verification/ is where live tenant console output will be pasted in on purpose, once
+# the first live-verified change adds the folder; no rule above reaches it. Redaction is done on
+# the way INTO a checklist there, and a gate for it is planned. These two rules cover the raw
+# material that redaction is done FROM, so an unredacted transcript cannot be staged by a stray
+# `git add docs/`.
 docs/live-verification/raw/
 docs/live-verification/*.log
 
@@ -33,6 +34,6 @@ docs/live-verification/*.log
 # value to anyone else and stale the moment it is shared.
 .claude/
 
-# Neither block untracks anything: .gitignore never does. The checklists under
+# Neither block untracks anything: .gitignore never does. The checklists that will live under
 # docs/live-verification/ stay tracked deliberately -- they are the verification record, and only
 # the raw material beside them is ignored.
