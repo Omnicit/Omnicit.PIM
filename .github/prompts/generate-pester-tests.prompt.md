@@ -1,4 +1,4 @@
-﻿---
+---
 description: "Generate a Pester unit test file for a single Omnicit.PIM public function."
 ---
 
@@ -7,38 +7,41 @@ You are generating a Pester unit test file for **one** function in the Omnicit.P
 **Target function:** `${input:functionName}`
 *(Example: `Get-OPIMDirectoryRole`, `Enable-OPIMDirectoryRole`, `Disable-OPIMAzureRole`)*
 
+**Authority:** [CLAUDE.md](../../CLAUDE.md), section "Testing Conventions", owns every test rule for this repository; read it first. Where this prompt and that section differ, the section wins.
+
 ---
 
-## Step 1 — Read the source files
+## Step 1 -- Read the source files
 
 Read the source file for the target function:
 
 ```
-Source/Public/${input:functionName}.ps1
+source/Public/${input:functionName}.ps1
 ```
 
 Also read the private helpers it may call:
 
-- `Source/Private/Get-MyId.ps1`
-- `Source/Private/Resolve-RoleByName.ps1`
-- `Source/Private/Convert-GraphHttpException.ps1`
+- `source/Private/Invoke-OPIMGraphRequest.ps1`
+- `source/Private/Get-MyId.ps1`
+- `source/Private/Resolve-RoleByName.ps1`
+- `source/Private/Convert-GraphHttpException.ps1`
 
 Identify:
 - All parameters and parameter sets
-- Which external APIs are called (`Invoke-MgGraphRequest`, `Get-AzRole*`, `New-AzRole*`, etc.)
+- Which external APIs are called (`Invoke-OPIMGraphRequest`, `Get-AzRole*`, `New-AzRole*`, etc.)
 - The output type name(s) tagged on returned objects (e.g. `Omnicit.PIM.DirectoryEligibilitySchedule`)
 - Whether the function supports `-WhatIf` (`SupportsShouldProcess`)
 - Whether it accepts pipeline input
 
 ---
 
-## Step 2 — Conventions (apply every rule below — do not deviate)
+## Step 2 -- Conventions (apply every rule below -- do not deviate)
 
 ### File structure
 
 - Output path: `tests/Unit/Public/${input:functionName}.Tests.ps1`
 - **One `Describe` block** per file; name must match the function exactly.
-- `BeforeAll` at the `Describe` level imports the module from source; `AfterAll` removes it.
+- `BeforeAll` at the `Describe` level imports the module **by name** (never by path -- coverage is measured against the built module); `AfterAll` removes it.
 - Use `Context` blocks to group scenarios; use `BeforeAll` inside each `Context` for shared arrangement.
 - Use `BeforeEach` only when state must reset per `It`.
 - `It` descriptions start with a third-person singular verb: *calls*, *returns*, *writes*, *throws*.
@@ -46,7 +49,8 @@ Identify:
 ```powershell
 Describe '${input:functionName}' {
     BeforeAll {
-        Import-Module "$PSScriptRoot/../../../Source/Omnicit.PIM.psd1" -Force
+        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
+        Import-Module Omnicit.PIM -Force
     }
     AfterAll {
         Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
@@ -54,7 +58,8 @@ Describe '${input:functionName}' {
 
     Context 'When called with default parameters (happy path)' {
         BeforeAll {
-            # Arrange mocks here
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            # Arrange the remaining mocks here
         }
         It 'calls <API> with the expected method' { ... }
         It 'returns a typed PSCustomObject' { ... }
@@ -76,10 +81,10 @@ Include **all** that apply to the target function:
 
 | Scenario | Required for |
 |---|---|
-| Happy path — default parameters | All functions |
-| Empty result set — returns nothing, no throw | All `Get-*` functions |
-| API error path — non-terminating error emitted | All functions |
-| `-WhatIf` / ShouldProcess — assert 0 API calls | `Enable-*` and `Disable-*` only |
+| Happy path -- default parameters | All functions |
+| Empty result set -- returns nothing, no throw | All `Get-*` functions |
+| API error path -- non-terminating error emitted | All functions |
+| `-WhatIf` / ShouldProcess -- assert 0 API calls | `Enable-*` and `Disable-*` only |
 | `-Activated` parameter set | `Get-*` and `Disable-*` where applicable |
 | `-All` parameter set | `Get-*` where applicable |
 | `-Identity` and `-Filter` parameters | `Get-*` where applicable |
@@ -89,12 +94,20 @@ Include **all** that apply to the target function:
 | `ActiveDurationTooShort` error | `Disable-*` functions |
 | `-PassThru` switch | `Wait-OPIMDirectoryRole` |
 
-### Mocking — Graph API
+### Mocking -- authentication
 
-**Never make real API calls.** Always provide `-ParameterFilter` to scope the mock:
+The `Get-`, `Enable-` and `Disable-` cmdlets for directory roles, Azure roles and groups, and `Wait-OPIMDirectoryRole`, call `Initialize-OPIMAuth` first. **Always** mock it, in every `Context` that calls the function:
 
 ```powershell
-Mock Invoke-MgGraphRequest {
+Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+```
+
+### Mocking -- Graph API
+
+**Never make real API calls.** Mock the module's Graph wrapper, `Invoke-OPIMGraphRequest`, always with `-ModuleName Omnicit.PIM` and a `-ParameterFilter` to scope the mock:
+
+```powershell
+Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
     return @{
         value = @(
             @{
@@ -105,36 +118,41 @@ Mock Invoke-MgGraphRequest {
             }
         )
     }
-} -ParameterFilter { $Method -eq 'GET' }
+} -ParameterFilter { $Uri -like '*roleEligibilitySchedules*' }
 ```
 
-To simulate a Graph error:
+To simulate a Graph error, throw what the wrapper throws -- an `ErrorRecord` whose `FullyQualifiedErrorId` is the Graph error code:
 
 ```powershell
-Mock Invoke-MgGraphRequest {
-    throw [System.Net.Http.HttpRequestException]::new(
-        '{"error":{"code":"InsufficientPermissions","message":"Access denied"}}'
+Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+    $PSCmdlet.ThrowTerminatingError(
+        [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('InsufficientPermissions: Access denied'),
+            'InsufficientPermissions',
+            [System.Management.Automation.ErrorCategory]::OperationStopped,
+            $null
+        )
     )
 } -ParameterFilter { $Uri -like '*roleEligibilitySchedules*' }
 ```
 
 > Without `-ParameterFilter`, all Graph calls (including scope-rehydration second calls) share the same mock, which causes unexpected failures in multi-call scenarios.
 
-### Mocking — Azure RBAC (Az.Resources)
+### Mocking -- Azure RBAC (Az.Resources)
 
 ```powershell
-Mock Get-AzRoleEligibilitySchedule        { return @() }
-Mock Get-AzRoleAssignmentScheduleInstance { return @() }
-Mock New-AzRoleAssignmentScheduleRequest  { }
+Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule        { return @() }
+Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance { return @() }
+Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest  { }
 ```
 
-### Mocking — Private helpers
+### Mocking -- Private helpers
 
 Private helpers live in module scope; always use `-ModuleName Omnicit.PIM`:
 
 ```powershell
-Mock -ModuleName Omnicit.PIM Get-MyId             { return 'user-object-id-001' }
-Mock -ModuleName Omnicit.PIM Resolve-RoleByName   { return $fakeRoleObject }
+Mock -ModuleName Omnicit.PIM Get-MyId              { return 'user-object-id-001' }
+Mock -ModuleName Omnicit.PIM Resolve-RoleByName    { return $FakeRoleObject }
 Mock -ModuleName Omnicit.PIM Restore-GraphProperty { return $InputObject }
 ```
 
@@ -143,7 +161,7 @@ Mock -ModuleName Omnicit.PIM Restore-GraphProperty { return $InputObject }
 ### Constructing pipeline input objects
 
 ```powershell
-$eligibleRole = [PSCustomObject]@{
+$EligibleRole = [PSCustomObject]@{
     id               = 'elig-001'
     roleDefinitionId = 'role-def-001'
     directoryScopeId = '/'
@@ -151,7 +169,7 @@ $eligibleRole = [PSCustomObject]@{
     roleDefinition   = [PSCustomObject]@{ displayName = 'Global Administrator' }
     principal        = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
 }
-$eligibleRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
+$EligibleRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
 ```
 
 **Type names:**
@@ -164,10 +182,10 @@ $eligibleRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySche
 
 ### Asserting typed output
 
-Always verify the type tag — never assert a raw hashtable:
+Always verify the type tag -- never assert a raw hashtable:
 
 ```powershell
-$result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryAssignmentScheduleRequest'
+$Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryAssignmentScheduleRequest'
 ```
 
 ### Testing -WhatIf
@@ -175,31 +193,31 @@ $result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryAssignmentSch
 ```powershell
 It 'does not call the API when -WhatIf is specified' {
     Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -WhatIf
-    Should -Invoke Invoke-MgGraphRequest -Times 0 -Scope It
+    Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It
 }
 ```
 
-> Test `-WhatIf` via `Should -Invoke` count — not by catching exceptions. `$PSCmdlet.ShouldProcess` is called inside the function.
+> Test `-WhatIf` via `Should -Invoke` count -- not by catching exceptions. `$PSCmdlet.ShouldProcess` is called inside the function.
 
 ### Testing error paths
 
 ```powershell
 It 'writes a non-terminating error on API failure' {
-    $errors = @()
-    ${input:functionName} -ErrorVariable errors -ErrorAction SilentlyContinue
-    $errors.Count | Should -BeGreaterThan 0
+    $Errors = @()
+    ${input:functionName} -ErrorVariable Errors -ErrorAction SilentlyContinue
+    $Errors.Count | Should -BeGreaterThan 0
 }
 ```
 
 ### Common pitfalls
 
-- **Never** call `Connect-MgGraph` or `Connect-AzAccount` in tests.
+- **Never** call `Connect-MgGraph` or `Connect-AzAccount` in tests, and always mock `Initialize-OPIMAuth`.
 - **ISO 8601 durations** in request body assertions: `PT1H`, not `01:00:00`.
-- Module import path for `tests/Unit/Public/` is `"$PSScriptRoot/../../../Source/Omnicit.PIM.psd1"`.
+- Import the module by name (`Import-Module Omnicit.PIM -Force`), never by a path into `source/`.
 
 ---
 
-## Step 3 — Generate the test file
+## Step 3 -- Generate the test file
 
 Create `tests/Unit/Public/${input:functionName}.Tests.ps1` following every rule above.
 
