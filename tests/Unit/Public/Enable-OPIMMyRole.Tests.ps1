@@ -1,7 +1,16 @@
+BeforeAll {
+    Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
+    Import-Module Omnicit.PIM -Force
+    . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
+    Install-OPIMTransportTripwire
+}
+
+AfterAll {
+    try { Assert-OPIMTransportTripwire } finally { Uninstall-OPIMTransportTripwire }
+}
+
 Describe 'Enable-OPIMMyRole' {
     BeforeAll {
-        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-        Import-Module Omnicit.PIM -Force
         Mock -ModuleName Omnicit.PIM Connect-OPIM {}
         Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @() }
         Mock -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole { }
@@ -9,9 +18,6 @@ Describe 'Enable-OPIMMyRole' {
         Mock -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup { }
         Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @() }
         Mock -ModuleName Omnicit.PIM Enable-OPIMAzureRole { }
-    }
-    AfterAll {
-        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
     }
 
     Context 'When called without -TenantAlias (uses current MgGraph context)' {

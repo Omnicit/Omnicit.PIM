@@ -1,7 +1,16 @@
+BeforeAll {
+    Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
+    Import-Module Omnicit.PIM -Force
+    . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
+    Install-OPIMTransportTripwire
+}
+
+AfterAll {
+    try { Assert-OPIMTransportTripwire } finally { Uninstall-OPIMTransportTripwire }
+}
+
 Describe 'Set-OPIMConfiguration' {
     BeforeAll {
-        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-        Import-Module Omnicit.PIM -Force
         Mock -ModuleName Omnicit.PIM Set-Content { }
         Mock -ModuleName Omnicit.PIM Get-OPIMCurrentTenantInfo {
             return [PSCustomObject]@{ TenantId = '00000000-0000-0000-0000-000000000001'; DisplayName = 'Mock Tenant' }
@@ -10,7 +19,6 @@ Describe 'Set-OPIMConfiguration' {
     }
     AfterAll {
         $null = $PSDefaultParameterValues.Remove('Set-OPIMConfiguration:Confirm')
-        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
     }
 
     Context 'When the TenantMap file does not exist' {

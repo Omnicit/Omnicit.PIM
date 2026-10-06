@@ -1,6 +1,16 @@
+BeforeAll {
+    Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
+    Import-Module Omnicit.PIM -Force
+    . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
+    Install-OPIMTransportTripwire
+}
+
+AfterAll {
+    try { Assert-OPIMTransportTripwire } finally { Uninstall-OPIMTransportTripwire }
+}
+
 Describe 'Write-CmdletError' {
     BeforeAll {
-        Import-Module Omnicit.PIM -Force
         InModuleScope Omnicit.PIM {
             $script:fakeCmdlet = [PSCustomObject]@{
                 CapturedErrorRecord    = $null
@@ -16,9 +26,6 @@ Describe 'Write-CmdletError' {
                 throw $errorRecord.Exception
             }
         }
-    }
-    AfterAll {
-        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
     }
 
     BeforeEach {
