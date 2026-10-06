@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'Get-OPIMCurrentTenantInfo' {
-
     Context 'When connected and the organization call succeeds' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Get-MgContext {

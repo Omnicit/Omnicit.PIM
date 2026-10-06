@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'Initialize-OPIMAuth' {
-
     Context 'When auth state is already cached for the same tenant with a valid token' {
         BeforeAll {
             InModuleScope Omnicit.PIM {

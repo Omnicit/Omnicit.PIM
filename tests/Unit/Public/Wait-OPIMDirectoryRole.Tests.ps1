@@ -143,12 +143,12 @@ Describe 'Wait-OPIMDirectoryRole' {
             Register-OPIMParallelTransportStandIn -Name 'Invoke-MgGraphRequest' -Response @{ value = @(@{ status = 'PendingProvisioning' }) }
             try {
                 InModuleScope Omnicit.PIM -ArgumentList $expiredRole, $validRole {
-                    param($expired, $valid)
+                    param($Expired, $Valid)
                     try {
-                        $expired, $valid | Wait-OPIMDirectoryRole -NoSummary -Timeout 0 2>$null
+                        $Expired, $Valid | Wait-OPIMDirectoryRole -NoSummary -Timeout 0 2>$null
                     } catch { }
                 }
-                Should -Invoke -ModuleName Omnicit.PIM Write-CmdletError -Times 1 -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Write-CmdletError -Times 1 -Exactly -Scope It
                 $Calls = @(Get-OPIMParallelTransportStandInCall)
                 $Calls.Count | Should -Be 1 -Because 'only the request that has not expired reaches the -Parallel poll'
                 foreach ($Call in $Calls) { $Call.Command | Should -Be 'Invoke-MgGraphRequest' }

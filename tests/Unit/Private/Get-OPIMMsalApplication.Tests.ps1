@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'Get-OPIMMsalApplication' {
-
     Context 'When a cached app exists for the same tenant' {
         BeforeAll {
             InModuleScope Omnicit.PIM {

@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'Get-MyId' {
-
     Context 'When not connected to Microsoft Graph' {
         It 'throws an informative error' {
             InModuleScope Omnicit.PIM {

@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'Get-OPIMAzureRole' {
-
     Context 'When called with default parameters (eligible roles)' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

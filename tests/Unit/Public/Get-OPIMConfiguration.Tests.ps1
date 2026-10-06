@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'Get-OPIMConfiguration' {
-
     Context 'When the TenantMap file does not exist' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

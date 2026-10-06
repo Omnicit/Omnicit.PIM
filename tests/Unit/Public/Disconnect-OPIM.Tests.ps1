@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'Disconnect-OPIM' {
-
     Context 'When called successfully' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Disconnect-MgGraph {}

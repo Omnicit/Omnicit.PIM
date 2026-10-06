@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'Resolve-RoleByName' {
-
     Context 'When -AD is specified and a matching role exists' {
         It 'calls Get-OPIMDirectoryRole to resolve the schedule' {
             InModuleScope Omnicit.PIM {

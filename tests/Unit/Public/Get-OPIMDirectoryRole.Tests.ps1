@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'Get-OPIMDirectoryRole' {
-
     Context 'When called with default parameters (eligible roles, root scope)' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

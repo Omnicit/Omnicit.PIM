@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'Convert-GraphHttpException' {
-
     Context 'When the exception message contains a parseable JSON error body (message fallback path)' {
         It 'returns a new ErrorRecord with the parsed error code as FullyQualifiedErrorId' {
             InModuleScope Omnicit.PIM {

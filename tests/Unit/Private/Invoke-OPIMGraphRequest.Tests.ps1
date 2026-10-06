@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'Invoke-OPIMGraphRequest' {
-
     Context 'When the request succeeds on the first attempt' {
         BeforeAll {
             InModuleScope Omnicit.PIM {

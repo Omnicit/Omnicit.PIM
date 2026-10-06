@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'Restore-GraphProperty' {
-
     Context 'When the response ID matches the request ID (happy path)' {
         It 'copies the named property from the request into the response' {
             InModuleScope Omnicit.PIM {

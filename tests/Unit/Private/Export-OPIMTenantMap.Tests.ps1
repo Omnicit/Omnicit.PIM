@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'Export-OPIMTenantMap' {
-
     Context 'When called with a single entry' {
         It 'calls Set-Content exactly once' {
             InModuleScope Omnicit.PIM {

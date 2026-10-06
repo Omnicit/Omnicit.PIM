@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'Connect-OPIM' {
-
     Context 'When called with -TenantId' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

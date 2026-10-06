@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'Enable-OPIMEntraIDGroup' {
-
     Context 'When called with -GroupName (happy path)' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'AzureActivatedRoleCompleter' {
-
     Context 'When activated Azure roles are returned' {
         It 'returns a completion result for each role' {
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole {
@@ -55,7 +54,6 @@ Describe 'AzureActivatedRoleCompleter' {
 }
 
 Describe 'AzureEligibleRoleCompleter' {
-
     Context 'When eligible Azure roles are returned' {
         It 'returns a completion result for each role' {
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole {
@@ -100,7 +98,6 @@ Describe 'AzureEligibleRoleCompleter' {
 }
 
 Describe 'DirectoryActivatedRoleCompleter' {
-
     Context 'When activated directory roles are returned at the root scope' {
         It 'returns a completion result for each role' {
             Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole {
@@ -150,7 +147,6 @@ Describe 'DirectoryActivatedRoleCompleter' {
 }
 
 Describe 'DirectoryEligibleRoleCompleter' {
-
     Context 'When eligible directory roles are returned at the root scope' {
         It 'returns a completion result for each role' {
             Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole {
@@ -200,7 +196,6 @@ Describe 'DirectoryEligibleRoleCompleter' {
 }
 
 Describe 'GroupActivatedCompleter' {
-
     Context 'When activated PIM groups are returned' {
         It 'returns a completion result for each group' {
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup {
@@ -245,7 +240,6 @@ Describe 'GroupActivatedCompleter' {
 }
 
 Describe 'GroupEligibleCompleter' {
-
     Context 'When eligible PIM groups are returned' {
         It 'returns a completion result for each group' {
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup {

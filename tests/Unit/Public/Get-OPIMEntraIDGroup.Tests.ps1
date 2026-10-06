@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'Get-OPIMEntraIDGroup' {
-
     Context 'When called with default parameters (eligible schedules)' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

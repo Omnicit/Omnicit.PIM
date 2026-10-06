@@ -123,7 +123,7 @@ Describe 'OPIMTransportTripwire' {
         Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
     }
 
-    It 'the helper names exactly the expected fifteen commands, with their modules and forms' -ForEach @(@{ ExpectedSpecs = $script:Expected }) {
+    It 'names exactly the expected fifteen commands, with their modules and forms' -ForEach @(@{ ExpectedSpecs = $script:Expected }) {
         @($ExpectedSpecs).Count | Should -Be 15 -Because 'the known-answer list itself must not be empty or short, or the comparison below proves nothing'
         $Actual = Get-OPIMTransportTripwireName
         (@($Actual.Keys) | Sort-Object) -join ',' | Should -Be ((@($ExpectedSpecs | ForEach-Object { $_.Name }) | Sort-Object) -join ',')
@@ -133,13 +133,13 @@ Describe 'OPIMTransportTripwire' {
         }
     }
 
-    It '<Name> resolves from the module scope to the tripwire' -ForEach $script:Expected {
+    It 'resolves <Name> from the module scope to the tripwire' -ForEach $script:Expected {
         $Resolved = Resolve-TripwireKnownAnswerCommand -Name $Name
         $Resolved | Should -BeOfType ([System.Management.Automation.FunctionInfo])
         Test-OPIMTransportTripwireFunction -Command $Resolved | Should -BeTrue
     }
 
-    It "<Name>'s replacement has exactly the real command's parameters and parameter sets, and no dynamicparam" -ForEach $script:Expected {
+    It "gives the <Name> replacement exactly the real command's parameters and parameter sets, and no dynamicparam" -ForEach $script:Expected {
         $Function = Resolve-TripwireKnownAnswerCommand -Name $Name -CommandType Function
         Test-OPIMTransportTripwireFunction -Command $Function | Should -BeTrue
         $Real = @(Get-TripwireKnownAnswerRealCommand -Name $Name -Module $Module)
@@ -177,7 +177,7 @@ Describe 'OPIMTransportTripwire' {
         $Ast.DynamicParamBlock | Should -BeNullOrEmpty
     }
 
-    It 'a Mock -ModuleName on <Name> still wins and records no hit' -ForEach $script:Expected {
+    It 'keeps a Mock -ModuleName on <Name> winning and records no hit' -ForEach $script:Expected {
         Mock -ModuleName Omnicit.PIM -CommandName $Name -MockWith { 'mocked' }
         $Before = $global:OPIMTransportTripwireHits.Count
 
@@ -193,7 +193,7 @@ Describe 'OPIMTransportTripwire' {
         Should -Invoke -ModuleName Omnicit.PIM -CommandName $Name -Times 1 -Exactly
     }
 
-    It 'an unmocked call to <Name> is recorded and refused' -ForEach $script:Expected {
+    It 'records and refuses an unmocked call to <Name>' -ForEach $script:Expected {
         $Resolved = Resolve-TripwireKnownAnswerCommand -Name $Name -CommandType Function
         Test-OPIMTransportTripwireFunction -Command $Resolved | Should -BeTrue
         $Before = $global:OPIMTransportTripwireHits.Count
@@ -216,7 +216,7 @@ Describe 'OPIMTransportTripwire' {
         }
     }
 
-    It 'a hit records parameter names, never values' {
+    It 'records parameter names in a hit, never values' {
         $Resolved = Resolve-TripwireKnownAnswerCommand -Name 'Invoke-WebRequest' -CommandType Function
         Test-OPIMTransportTripwireFunction -Command $Resolved | Should -BeTrue
         $Before = $global:OPIMTransportTripwireHits.Count
@@ -239,7 +239,7 @@ Describe 'OPIMTransportTripwire' {
         }
     }
 
-    It 'a Mock -ModuleName on Update-AzConfig with a -ParameterFilter on EnableLoginByWam binds and matches the call shape module code uses' {
+    It 'binds a Mock -ModuleName on Update-AzConfig with a -ParameterFilter on EnableLoginByWam to the call shape module code uses' {
         # Initialize-OPIMAuth.ps1:303 calls Update-AzConfig -EnableLoginByWam $false -Scope Process
         # -ErrorAction SilentlyContinue. EnableLoginByWam is a DYNAMIC parameter of the real cmdlet,
         # so this proves the materialized static parameter binds under a mock and the filter sees it.
@@ -256,7 +256,7 @@ Describe 'OPIMTransportTripwire' {
         Should -Invoke -ModuleName Omnicit.PIM Update-AzConfig -ParameterFilter { $EnableLoginByWam -eq $false -and $Scope -eq 'Process' } -Times 1 -Exactly
     }
 
-    It 'Assert-OPIMTransportTripwire fails on a recorded hit' {
+    It 'throws from Assert-OPIMTransportTripwire on a recorded hit' {
         $global:OPIMTransportTripwireHits.Add([pscustomobject]@{ Command = 'Invoke-WebRequest'; Caller = 'known-answer'; Parameters = 'Uri' })
         try {
             { Assert-OPIMTransportTripwire } | Should -Throw -ExpectedMessage '*reached Invoke-WebRequest from known-answer (parameters: Uri)*'
@@ -265,7 +265,7 @@ Describe 'OPIMTransportTripwire' {
         }
     }
 
-    It 'Assert-OPIMTransportTripwire fails on a recorded -Parallel hit' {
+    It 'throws from Assert-OPIMTransportTripwire on a recorded -Parallel hit' {
         $Queue = [System.AppDomain]::CurrentDomain.GetData('OPIMTransportTripwire.ParallelHits')
         $Queue -is [System.Collections.Concurrent.ConcurrentQueue[object]] | Should -BeTrue -Because 'the queue must exist, or the enqueue below records nothing'
         $Saved = @($Queue.ToArray())
@@ -278,7 +278,7 @@ Describe 'OPIMTransportTripwire' {
         }
     }
 
-    It 'Assert-OPIMTransportTripwire fails when a name no longer resolves' {
+    It 'throws from Assert-OPIMTransportTripwire when a name no longer resolves' {
         $Carry = Get-TripwireKnownAnswerCarry
         try {
             # Unqualified on purpose: Remove-Item honours no scope qualifier on the function: drive,
@@ -293,7 +293,7 @@ Describe 'OPIMTransportTripwire' {
         }
     }
 
-    It 'Assert-OPIMTransportTripwire fails when the runspace form is no longer first on PSModulePath' {
+    It 'throws from Assert-OPIMTransportTripwire when the runspace form is no longer first on PSModulePath' {
         $Saved = $env:PSModulePath
         try {
             $env:PSModulePath = (Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath 'opim-tripwire-known-answer') + [System.IO.Path]::PathSeparator + $env:PSModulePath
@@ -304,7 +304,7 @@ Describe 'OPIMTransportTripwire' {
         { Assert-OPIMTransportTripwire } | Should -Not -Throw -Because 'with PSModulePath restored the same check must pass, or the throw above came from something else'
     }
 
-    It 'a re-import of Omnicit.PIM is reported by Assert-OPIMTransportTripwire, and Install-OPIMTransportTripwire puts it back' -ForEach @(@{ ExpectedSpecs = $script:Expected }) {
+    It 'reports a re-import of Omnicit.PIM from Assert-OPIMTransportTripwire, and restores the tripwire with Install-OPIMTransportTripwire' -ForEach @(@{ ExpectedSpecs = $script:Expected }) {
         $FunctionNames = @($ExpectedSpecs | Where-Object { $_.Form -eq 'ModuleFunction' } | ForEach-Object { $_.Name })
         $GlobalNames = @($ExpectedSpecs | Where-Object { $_.Form -ne 'ModuleFunction' } | ForEach-Object { $_.Name })
         $FunctionNames.Count | Should -Be 4
@@ -334,7 +334,7 @@ Describe 'OPIMTransportTripwire' {
         }
     }
 
-    It 'a -Parallel runspace loads the stand-in, which refuses and records an unmocked call, and serves a registered stand-in instead' {
+    It 'loads the stand-in in a -Parallel runspace, refusing and recording an unmocked call and serving a registered stand-in instead' {
         $Root = $global:OPIMTransportTripwireRunspaceRoot
         $Root | Should -Not -BeNullOrEmpty
         @($env:PSModulePath -split [System.IO.Path]::PathSeparator)[0] | Should -BeExactly $Root
@@ -399,7 +399,7 @@ Describe 'OPIMTransportTripwire' {
         @(Get-OPIMParallelTransportStandInCall).Count | Should -Be 0 -Because 'Unregister-OPIMParallelTransportStandIn drains the call records'
     }
 
-    It 'Get-OPIMMsalApplication with no cache and no Get-MgContext mock is stopped by the tripwire before the MSAL build' {
+    It 'stops Get-OPIMMsalApplication with no cache and no Get-MgContext mock before the MSAL build' {
         # R3: Get-OPIMMsalApplication reaches the MSAL reflection only after its Get-MgContext call
         # (Get-OPIMMsalApplication.ps1:46), so an unmocked path stops there.
         $Resolved = Resolve-TripwireKnownAnswerCommand -Name 'Get-MgContext'
@@ -433,8 +433,55 @@ Describe 'OPIMTransportTripwire' {
         }
     }
 
+    # Uninstalls twice, and puts the tripwire back in a finally. On the second uninstall the nearest
+    # definition seen from the module scope is the REAL Az.Resources function, which is the case
+    # Uninstall's module-scope guard exists for: without it, that unqualified Remove-Item deletes the
+    # real function. Measured 2026-10-06: the next Get-Command (Uninstall's own final check runs one)
+    # then brings it back by module autoloading as a NEW FunctionInfo around the SAME script block,
+    # so the test compares the FunctionInfo objects, read through the function: drive, which never
+    # autoloads.
+    It 'leaves the real Az.Resources functions in place when Uninstall-OPIMTransportTripwire runs a second time' -ForEach @(@{ ExpectedSpecs = $script:Expected }) {
+        $FunctionNames = @($ExpectedSpecs | Where-Object { $_.Form -eq 'ModuleFunction' } | ForEach-Object { $_.Name })
+        $FunctionNames.Count | Should -Be 4
+        $Carry = Get-TripwireKnownAnswerCarry
+        $Module = Get-Module -Name Omnicit.PIM | Select-Object -First 1
+        try {
+            Uninstall-OPIMTransportTripwire
+            $Original = @{}
+            foreach ($Name in $FunctionNames) {
+                $Real = Get-Item -Path ('function:' + $Name) -ErrorAction Ignore
+                $Real | Should -BeOfType ([System.Management.Automation.FunctionInfo])
+                $Real.Source | Should -Be 'Az.Resources' -Because 'after one uninstall the real function must be the nearest definition, or the second uninstall tests nothing'
+                $FromModule = & $Module { param($N) Get-Item -Path ('function:' + $N) -ErrorAction Ignore } $Name
+                [object]::ReferenceEquals($FromModule, $Real) | Should -BeTrue -Because 'the module scope must see the same real function before the second uninstall'
+                $Original[$Name] = $Real
+            }
+
+            Uninstall-OPIMTransportTripwire
+
+            foreach ($Name in $FunctionNames) {
+                $FromTest = Get-Item -Path ('function:' + $Name) -ErrorAction Ignore
+                $FromTest | Should -BeOfType ([System.Management.Automation.FunctionInfo])
+                $FromTest.Source | Should -Be 'Az.Resources'
+                [object]::ReferenceEquals($FromTest, $Original[$Name]) | Should -BeTrue -Because ('the second uninstall must leave the real {0} in place, not delete it for autoloading to recreate' -f $Name)
+                $FromModule = & $Module { param($N) Get-Item -Path ('function:' + $N) -ErrorAction Ignore } $Name
+                $FromModule | Should -BeOfType ([System.Management.Automation.FunctionInfo])
+                $FromModule.Source | Should -Be 'Az.Resources'
+                [object]::ReferenceEquals($FromModule, $Original[$Name]) | Should -BeTrue
+            }
+        } finally {
+            Install-OPIMTransportTripwire
+            Restore-TripwireKnownAnswerCarry -Carry $Carry
+        }
+        foreach ($Spec in $ExpectedSpecs) {
+            $Resolved = Resolve-TripwireKnownAnswerCommand -Name $Spec.Name
+            $Resolved | Should -BeOfType ([System.Management.Automation.FunctionInfo])
+            Test-OPIMTransportTripwireFunction -Command $Resolved | Should -BeTrue
+        }
+    }
+
     # LAST in the file: it uninstalls, and puts the tripwire back in a finally.
-    It 'uninstall restores the real commands and removes the runspace form, and install puts the tripwire back' -ForEach @(@{ ExpectedSpecs = $script:Expected }) {
+    It 'restores the real commands and removes the runspace form on uninstall, and puts the tripwire back on install' -ForEach @(@{ ExpectedSpecs = $script:Expected }) {
         @($ExpectedSpecs).Count | Should -Be 15
         $Carry = Get-TripwireKnownAnswerCarry
         $Root = $global:OPIMTransportTripwireRunspaceRoot

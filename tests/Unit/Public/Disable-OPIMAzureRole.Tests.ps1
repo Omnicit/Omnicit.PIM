@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'Disable-OPIMAzureRole' {
-
     Context 'When called with -RoleName (happy path)' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

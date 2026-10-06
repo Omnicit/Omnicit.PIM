@@ -10,7 +10,6 @@ AfterAll {
 }
 
 Describe 'ConvertTo-OPIMMyRoleResult' {
-
     Context 'When a DirectoryAssignmentScheduleRequest is piped in' {
         It 'returns an object tagged with Omnicit.PIM.MyRoleResult' {
             InModuleScope Omnicit.PIM {
