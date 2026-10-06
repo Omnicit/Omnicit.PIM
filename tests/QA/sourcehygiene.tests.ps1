@@ -8,18 +8,20 @@ BeforeAll {
     #
     # '*.txt' and '*.md' are deliberately NOT in the include list. The about topic
     # (source/en-US/about_Omnicit.PIM.help.txt) belongs to the about-topic check,
-    # tests/QA/about.tests.ps1, which reads its bytes; source/Formats/README.md is a shipped note
-    # that no command shows. Every path below is compared with '/' separators, so the gate holds
-    # on every operating system.
+    # tests/QA/about.tests.ps1, added later on this branch, which reads its bytes. If that coverage
+    # is ever removed, add '*.txt' to this scan instead of leaving the file ungated.
+    # source/Formats/README.md is a shipped note that no command shows. Every path below is
+    # compared with '/' separators, so the gate holds on every operating system.
     #
     # The floors sit just under the counts measured on 2026-10-06: source/ held 42 authored files
     # of these extensions, tests/ 37 (this file included), and source/**/*.ps1 38 files carrying
-    # 332 Verb-OPIM tokens. Raise a floor when the tree genuinely grows.
+    # 349 Verb-OPIM tokens. The tests/ floor leaves no slack, since tests/Unit/Classes holds a
+    # single file. Raise a floor when the tree genuinely grows.
     # =====================================================================================
     $script:SourceFileFloor = 40
-    $script:TestFileFloor = 35
+    $script:TestFileFloor = 36
     $script:CmdletRefFileFloor = 36
-    $script:CmdletRefTokenFloor = 320
+    $script:CmdletRefTokenFloor = 340
 
     $script:HygieneRoots = @(
         (Join-Path -Path $script:ProjectPath -ChildPath 'source')
@@ -52,10 +54,11 @@ BeforeAll {
     #
     # A name is known when it is the basename of a function file under source/Public or
     # source/Private, or an alias in the source manifest's AliasesToExport (Enable-OPIMMyRoles and
-    # Disable-OPIMMyRoles are aliases, not files). The pattern is case-sensitive; a family form
-    # with a trailing '*' (Get-OPIM*) names no command and is not matched.
+    # Disable-OPIMMyRoles are aliases, not files). The pattern is case-sensitive; the verb may
+    # carry an inner capital (ConvertTo-OPIM...), and a family form with a trailing '*'
+    # (Get-OPIM*) names no command and is not matched.
     # =====================================================================================
-    $script:CmdletRefPattern = '\b[A-Z][a-z]+-OPIM[A-Za-z]*\b(?!\*)'
+    $script:CmdletRefPattern = '\b[A-Z][A-Za-z]+-OPIM[A-Za-z]*\b(?!\*)'
 
     $script:KnownCommandNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     foreach ($File in $script:HygieneFiles) {
@@ -119,10 +122,13 @@ Describe 'Source encoding' -Tags 'SourceHygiene' {
             $Checked++
             <#
                 Fast path on the DECODED text: invalid UTF-8 decodes to U+FFFD and a BOM to U+FEFF,
-                both above 0x7F, so a dirty file always trips the match. The per-byte count and
-                offset run only for a file already known to be dirty, for the diagnostic.
+                both above 0x7F, so a dirty file always trips the match. The match is
+                case-SENSITIVE on purpose: a case-insensitive [^\x00-\x7F] lets U+212A (KELVIN SIGN)
+                and U+0130 through, since the regex engine treats them as case variants of the ASCII
+                letters k and i (measured on pwsh 7.6.6: -match False, -cmatch True). The per-byte
+                count and offset run only for a file already known to be dirty, for the diagnostic.
             #>
-            if ($File.Text -notmatch '[^\x00-\x7F]') { continue }
+            if ($File.Text -cnotmatch '[^\x00-\x7F]') { continue }
 
             $Count = 0
             foreach ($Byte in $File.Bytes) {
@@ -170,7 +176,7 @@ Describe 'Cmdlet reference hygiene' -Tags 'SourceHygiene' {
         $script:CmdletRefFiles.Count | Should -BeGreaterThan $script:CmdletRefFileFloor -Because (
             'source/ held 38 .ps1 files when this gate was written; a scan that drops to the floor or below has lost a directory, not shrunk')
         $script:CmdletRefTokenCount | Should -BeGreaterThan $script:CmdletRefTokenFloor -Because (
-            'source/**/*.ps1 carried 332 Verb-OPIM tokens when this gate was written; a scan that drops to the floor or below has broken detection, not found fewer references')
+            'source/**/*.ps1 carried 349 Verb-OPIM tokens when this gate was written; a scan that drops to the floor or below has broken detection, not found fewer references')
         $script:ManifestAliases | Should -Contain 'Enable-OPIMMyRoles' -Because (
             'the known names must include the manifest aliases; if the AliasesToExport read returned nothing, an alias reference would be reported as stale')
     }
@@ -195,7 +201,9 @@ Describe 'suffix.ps1 / psm1 mirror sync' -Tags 'SourceHygiene' {
             (source/Omnicit.PIM.psm1) carries the same block for an import from source (CLAUDE.md,
             "Common Pitfalls"). The region runs from the line '# TypesToProcess is disabled in the
             manifest' to END OF FILE, so a block appended to either file later is inside the
-            comparison with no gate edit.
+            comparison with no gate edit. In suffix.ps1 the anchor must also be the FIRST line:
+            ModuleBuilder appends the whole file, so a line above the anchor would reach the built
+            module without ever being compared. (The psm1 legitimately holds the loader above it.)
 
             The bytes are decoded as Latin-1, which maps every byte to exactly one character, so the
             string comparison below IS a byte comparison. A UTF-8 BOM can stand only before the
@@ -213,6 +221,7 @@ Describe 'suffix.ps1 / psm1 mirror sync' -Tags 'SourceHygiene' {
         # otherwise pass the equality check vacuously.
         $SuffixRegion | Should -Not -BeNullOrEmpty -Because 'the mirrored region must be found in suffix.ps1 by its anchor line, or this gate compares nothing'
         $Psm1Region | Should -Not -BeNullOrEmpty -Because 'the mirrored region must be found in the dev-mode psm1 by its anchor line, or this gate compares nothing'
+        $SuffixMatch.Index | Should -Be 0 -Because 'ModuleBuilder appends the whole of suffix.ps1 to the built module, so the anchor line must open the file; anything above it would ship without being compared with the psm1'
         $SuffixRegion | Should -Match 'Update-TypeData' -Because 'the compared region must hold the Update-TypeData call it exists to keep in step'
         $Psm1Region | Should -Match 'Update-TypeData' -Because 'the compared region must hold the Update-TypeData call it exists to keep in step'
 
