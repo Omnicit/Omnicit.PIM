@@ -1,0 +1,594 @@
+# Build and test on every platform the module supports, so that pull requests are validated on
+# GitHub itself. The build call is `./build.ps1 -ResolveDependency -Tasks build`; nothing here runs
+# `pack`, since the .nupkg it builds is never published.
+#
+# PUBLISHING LIVES HERE, and only here. Every push to main publishes the tested build to the
+# PowerShell Gallery as a preview, and pushing a `v<X.Y.Z>` tag on a green main tip publishes the
+# full release. Both go through the `publish` job at the bottom of this file, which is the only
+# thing in this repository that can publish anything. `./build.ps1 -Tasks publish` stays
+# deliberately undefined, so there is no local publishing path at all; build.yaml's comment has the
+# measured reasons Sampler's own publish tasks were not used.
+#
+# A PUBLISHED VERSION IS PERMANENT. The Gallery can unlist a version but it cannot delete one, so
+# everything between the Test step and Publish-PSResource is about proving that the bytes being
+# published are the bytes the four required checks actually tested.
+#
+# Every action is pinned to a full commit SHA, with the release it was verified against in the
+# trailing comment; a tag can be moved, a SHA cannot. Bump the SHA and the comment together, after
+# reading that commit's action.yml.
+#
+# `shell: pwsh` runs each step under $ErrorActionPreference = 'stop' in the global scope, and that
+# is kept on purpose: it is what operator profiles and most CI hosts run under, and module code
+# reads the GLOBAL preference. See "Testing Conventions" in CLAUDE.md.
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+    # A full release is cut by pushing v<X.Y.Z>. The exclusion keeps the preview tags this workflow
+    # creates after each publish (v0.5.2-preview0001 and the rest) from starting a run of their
+    # own. A tag pushed with GITHUB_TOKEN does not trigger a workflow in the first place, so this
+    # is the second lock on that door rather than the only one.
+    tags: ['v*', '!v*-*']
+  pull_request:
+    branches: [main]
+    # NEVER add paths-ignore here. ubuntu-latest, windows-latest, macos-latest and package are
+    # REQUIRED checks on main, and a workflow run that never happens never reports them -- a
+    # required check that never reports stays Pending forever and blocks the pull request
+    # permanently.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # A superseded pull-request run is cancelled; a run on main is never cut short, so every merged
+  # commit keeps a completed check.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }}
+    # Standard runners are free and unmetered only on PUBLIC repositories. On a private one every
+    # push to a pull request would bill three runners, macOS at a 10x multiplier, so the job is
+    # skipped there unless someone starts it on purpose with workflow_dispatch.
+    if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Check out the full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # GitVersion walks the whole history and every tag; a shallow clone computes a wrong version.
+          fetch-depth: 0
+
+      - name: Provision .NET for GitVersion
+        # GitVersion is a .NET global tool, and its apphost must be able to find a .NET install. The
+        # macOS arm64 image ships dotnet under ~/.dotnet behind a /usr/local/bin symlink with
+        # DOTNET_ROOT unset, so the apphost found no runtime there (measured in Omnicit.EntraRBAC).
+        # setup-dotnet provisions .NET explicitly and exports DOTNET_ROOT on every image. Deriving
+        # DOTNET_ROOT from the image's own `dotnet --list-sdks` also works (measured there on all
+        # three images) and costs no time, but it keeps this job dependent on where each image
+        # happens to put .NET, which is what broke.
+        # 10.0 is the LTS line; GitVersion.Tool 5.12.0 declares rollForward LatestMajor and runs on it.
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Calculate ModuleVersion (GitVersion 5)
+        shell: pwsh
+        # GitVersion 5, not 6: GitVersion.yml uses the v5 schema. Pinned to the release measured
+        # locally. The version is exported as ModuleVersion, which Sampler reads, so the build
+        # stamps exactly what this step prints. A native command's nonzero exit code does not stop a
+        # pwsh step on its own, so each one is checked, and nothing reaches GITHUB_ENV unless the
+        # version is non-empty: an empty ModuleVersion must stop the job, never reach the build.
+        run: |
+          dotnet tool install --global GitVersion.Tool --version 5.12.0
+          if ($LASTEXITCODE -ne 0) { throw "dotnet tool install GitVersion.Tool failed with exit code $LASTEXITCODE." }
+          $GitVersionJson = dotnet-gitversion
+          if ($LASTEXITCODE -ne 0) { throw "dotnet-gitversion failed with exit code $LASTEXITCODE." }
+          $GitVersion = ($GitVersionJson -join "`n") | ConvertFrom-Json
+          $ModuleVersion = [string]$GitVersion.NuGetVersionV2
+          if ([string]::IsNullOrWhiteSpace($ModuleVersion)) { throw 'GitVersion returned no NuGetVersionV2, so no ModuleVersion is exported.' }
+          "ModuleVersion=$ModuleVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "ModuleVersion $ModuleVersion (FullSemVer $($GitVersion.FullSemVer))"
+
+      - name: Build
+        shell: pwsh
+        run: ./build.ps1 -ResolveDependency -Tasks build
+
+      - name: Report resolved dependency versions
+        # RequiredModules.psd1 asks for 'latest' on every build tool and pins only the two runtime
+        # dependencies -- see "Build and Test Commands" in CLAUDE.md. That makes a newly released
+        # version of any build tool a possible cause of a red build, so the run has to say which
+        # versions it actually resolved; without this the only way to find out is to guess and
+        # re-run. Runs on failure too (`if: always()`), since a build that broke on a dependency is
+        # exactly the run whose versions are worth reading. It only reports: it must never fail the
+        # job, so a missing directory prints a line instead of throwing under this step's 'stop'
+        # preference.
+        #
+        # A module folder holds one directory per installed version, but it can hold more. The
+        # bootstrapper unpacks a .nupkg into the module folder ITSELF, alongside the version
+        # subfolder, leaving the package's own internal directories behind: _manifest, _rels,
+        # dependencies and package, seen next to Microsoft.PowerShell.PSResourceGet's 1.0.1
+        # (measured in Omnicit.EntraRBAC). These are NOT runner artefacts -- the same four sat in a
+        # local output/RequiredModules resolved the same way there. A tree resolved with
+        # -UseModuleFast, a different resolver, appears not to have them.
+        #
+        # Those directories are not versions, so they are reported SEPARATELY rather than dropped.
+        # A diagnostic step that silently hides rows is the same shape as the defect this step
+        # exists to expose, so everything under the root is accounted for on one line or the other.
+        # The version test is deliberately loose -- first character a digit -- so a four-part
+        # version such as 1.2.3.4, or a prerelease folder such as 2.0.0-preview1, is reported as a
+        # version rather than swallowed. Being loose errs toward listing, which is the safe
+        # direction here.
+        if: always()
+        shell: pwsh
+        run: |
+          $Root = Join-Path $PWD 'output/RequiredModules'
+          if (-not (Test-Path -Path $Root)) {
+              Write-Host "No $Root -- dependency resolution did not get that far."
+              return
+          }
+          $Skipped = [System.Collections.Generic.List[string]]::new()
+          $Resolved = Get-ChildItem -Path $Root -Directory | ForEach-Object {
+              $ModuleName = $_.Name
+              Get-ChildItem -Path $_.FullName -Directory | ForEach-Object {
+                  if ($_.Name -match '^[0-9]') {
+                      [PSCustomObject]@{ Module = $ModuleName; Version = $_.Name }
+                  }
+                  else {
+                      $Skipped.Add("$ModuleName/$($_.Name)")
+                  }
+              }
+          }
+          $Resolved |
+              Sort-Object -Property Module, Version |
+              Format-Table -AutoSize |
+              Out-String -Width 120 |
+              Write-Host
+          foreach ($Entry in ($Skipped | Sort-Object)) {
+              Write-Host "skipped, not a version folder: $Entry"
+          }
+
+      - name: Test
+        shell: pwsh
+        run: ./build.ps1 -Tasks test
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-${{ matrix.os }}
+          path: output/testResults/
+          if-no-files-found: ignore
+
+      # ---------------------------------------------------------------------------------------
+      # Everything below runs on the ubuntu-latest leg alone, and only when that leg's Test step
+      # SUCCEEDED (no `if: always()` here, deliberately): what it saves is the tested build, and
+      # an untested one must never reach the publish job. One leg, not three, because three legs
+      # produce three artefacts and a publish that had to choose between them would be choosing,
+      # not proving.
+      # ---------------------------------------------------------------------------------------
+      - name: Record the tested artefact
+        if: matrix.os == 'ubuntu-latest'
+        shell: pwsh
+        # Writes output/publish-meta.json: the commit, the version GitVersion computed, the version
+        # and prerelease the built manifest actually carries, and a SHA-256 per file. The package
+        # and publish jobs re-derive all of it from the downloaded artefact and refuse to go on if
+        # anything differs. The script owns both halves so they cannot drift apart.
+        run: ./.github/scripts/PublishArtefact.ps1 -Record -Path 'output' -Sha $env:GITHUB_SHA -ModuleVersion $env:ModuleVersion
+
+      - name: Upload the tested module artefact
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: module-ubuntu-latest
+          # Two paths whose least common ancestor is output/, so the artefact is rooted there and
+          # holds module/Omnicit.PIM/<version>/ beside publish-meta.json -- the same shape the
+          # recorder saw, which is what lets one script read both.
+          path: |
+            output/module/Omnicit.PIM/
+            output/publish-meta.json
+          # error, not ignore: a missing artefact here would surface as an unexplained failure two
+          # jobs later.
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------------------------------
+  # package: proof, on the pull request, that the artefact is publishable. It runs on every push
+  # and every pull request and it NEVER publishes: no environment, no secrets, and the only
+  # repository it publishes into is a folder under RUNNER_TEMP that dies with the runner.
+  # -------------------------------------------------------------------------------------------
+  package:
+    name: package
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the verification script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Only .github/scripts/PublishArtefact.ps1 and RequiredModules.psd1 are wanted here, so
+          # the history is not. This step runs BEFORE the download because actions/checkout cleans
+          # the workspace.
+          fetch-depth: 1
+
+      - name: Download the tested module artefact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: module-ubuntu-latest
+          path: artefact
+
+      - name: Verify the artefact against publish-meta.json
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        # Stops the job on the first disagreement: wrong commit, a changed, added or removed file,
+        # or a manifest version or prerelease that is not the recorded one.
+        run: |
+          $ModulePath = ./.github/scripts/PublishArtefact.ps1 -Verify -Path 'artefact' -Sha $env:EXPECTED_SHA
+          "ModulePath=$ModulePath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Install the module's runtime dependencies
+        shell: pwsh
+        # BEFORE Publish-PSResource, not after. Publish-PSResource validates the manifest with
+        # Test-ModuleManifest, which RESOLVES every RequiredModules entry on PSModulePath, and
+        # -SkipDependenciesCheck does not cover that -- it only waives the check that the
+        # dependencies exist in the destination repository. Nothing else in this job puts
+        # Az.Resources or Microsoft.Graph.Authentication on PSModulePath, and without them the
+        # publish fails on the manifest (measured in Omnicit.EntraRBAC on 2026-09-22, where the
+        # missing module was AzAuth: "The specified RequiredModules entry 'AzAuth' ... is invalid").
+        # They are wanted a second time anyway: Import-Module cannot load the module without them,
+        # since RequiredModules is not advisory.
+        #
+        # Do NOT replace this with Publish-PSResource -SkipModuleManifestValidate. That silences
+        # the symptom by switching off manifest validation on the way out -- the last check that
+        # what is being published is a loadable module.
+        run: |
+          # The versions come from RequiredModules.psd1 and nowhere else, so the YAML cannot drift
+          # from what the build and the tests resolved. A missing or 'latest' version is refused:
+          # installing whatever is newest would validate the manifest against something no test
+          # run saw.
+          $Required = Import-PowerShellDataFile -LiteralPath 'RequiredModules.psd1'
+          foreach ($Name in 'Az.Resources', 'Microsoft.Graph.Authentication') {
+              $Version = [string]$Required[$Name]
+              if ([string]::IsNullOrWhiteSpace($Version) -or $Version -eq 'latest') {
+                  throw "RequiredModules.psd1 names no fixed version for $Name ('$Version'). The publish path installs exactly the version the tests ran against, so it stops here."
+              }
+              Install-PSResource -Name $Name -Version "[$Version]" -Repository 'PSGallery' -TrustRepository -Scope 'CurrentUser'
+              Write-Host "Installed $Name $Version from RequiredModules.psd1."
+          }
+
+      - name: Test-publish, install and import from a temporary local repository
+        shell: pwsh
+        # The rehearsal of the real publish, on every pull request, before anything is permanent.
+        # It uses the same Publish-PSResource call against the same version folder, then proves the
+        # package it produced can be found, installed and imported by a consumer.
+        run: |
+          $ModuleName = 'Omnicit.PIM'
+          $RepositoryRoot = Join-Path $env:RUNNER_TEMP 'local-psresource'
+          $null = New-Item -ItemType Directory -Path $RepositoryRoot -Force
+          Register-PSResourceRepository -Name 'OPIMLocal' -Uri $RepositoryRoot -Trusted
+
+          # -SkipDependenciesCheck is needed HERE and nowhere else: Publish-PSResource also checks
+          # that every declared dependency exists in the DESTINATION repository, and Az.Resources
+          # and Microsoft.Graph.Authentication live on the Gallery, not in this empty folder.
+          # Without the switch this fails with "Dependency 'Microsoft.Graph.Authentication' was not
+          # found in repository 'OERLocal'" (measured in Omnicit.EntraRBAC, which uses that name).
+          # The real publish does NOT skip it, so that check still runs where it means something.
+          Publish-PSResource -Path $env:ModulePath -Repository 'OPIMLocal' -SkipDependenciesCheck
+          Write-Host "Published $env:ModulePath into the temporary repository."
+
+          $Found = @(Find-PSResource -Name $ModuleName -Repository 'OPIMLocal' -Prerelease)
+          if ($Found.Count -ne 1) { throw "Find-PSResource returned $($Found.Count) results from the temporary repository; expected exactly 1." }
+          Write-Host "Find-PSResource: $($Found[0].Name) $($Found[0].Version)$(if ($Found[0].Prerelease) { '-' + $Found[0].Prerelease })"
+
+          # The dependencies are already installed by the step above, so the module itself comes
+          # from the local repository alone.
+          Install-PSResource -Name $ModuleName -Repository 'OPIMLocal' -Prerelease -TrustRepository -Scope 'CurrentUser' -SkipDependencyCheck
+
+          $Installed = @(Get-InstalledPSResource -Name $ModuleName)
+          if ($Installed.Count -lt 1) { throw "Get-InstalledPSResource found no $ModuleName after Install-PSResource reported success." }
+          Write-Host "Installed: $($Installed[0].Name) $($Installed[0].Version)$(if ($Installed[0].Prerelease) { '-' + $Installed[0].Prerelease })"
+
+          # A CLEAN process. This process has already imported PSResourceGet and has the build's
+          # own paths on PSModulePath, so an import here would prove less than it looks.
+          $Expected = @((Import-PowerShellDataFile -LiteralPath (Join-Path $env:ModulePath "$ModuleName.psd1")).FunctionsToExport).Count
+          $Reported = pwsh -NoProfile -NonInteractive -Command "Import-Module -Name '$ModuleName' -ErrorAction Stop; (Get-Module -Name '$ModuleName').ExportedFunctions.Count"
+          if ($LASTEXITCODE -ne 0) { throw "Importing $ModuleName in a clean pwsh process failed with exit code $LASTEXITCODE." }
+
+          $Reported = [int]($Reported | Select-Object -Last 1)
+          Write-Host "Imported in a clean pwsh process and exported $Reported commands."
+          if ($Reported -ne $Expected) { throw "The installed module exported $Reported commands, but its manifest lists $Expected in FunctionsToExport." }
+          Write-Host "The exported command count matches FunctionsToExport ($Expected)."
+
+  # -------------------------------------------------------------------------------------------
+  # publish: the only job that can publish, and the only one carrying contents: write.
+  #
+  # main pushes publish a preview; a v<X.Y.Z> tag publishes the full release. Nothing else --
+  # a pull request cannot reach this job, and neither can a fork, since github.repository is
+  # pinned.
+  # -------------------------------------------------------------------------------------------
+  publish:
+    name: publish
+    needs: package
+    if: >-
+      github.repository == 'Omnicit/Omnicit.PIM'
+      && github.event_name == 'push'
+      && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # NOT an approval gate. The environment has no required reviewers, by decision, as in
+    # Omnicit.EntraRBAC: it scopes GALLERYAPITOKEN to this job and limits which refs can reach it
+    # at all -- branch main and the v<X.Y.Z> tag patterns, none of which admits a hyphen. A ref
+    # outside them is refused at deployment, before any step runs, and the secret is never handed
+    # out.
+    #
+    # The gate for a preview is the pull request and the four required checks on main. The gate
+    # for a full release is the tag itself: the 'Stable Version' tag ruleset lets only its bypass
+    # list create, move or delete a v<X.Y.Z> tag. Both live in repository settings on purpose. A
+    # tag push runs the workflow file AT the tagged commit, so a check written here is removed by
+    # the same commit that would abuse it. See "Publishing" in CLAUDE.md.
+    environment: 'PIM'
+    permissions:
+      # ONLY this job. The top-level default above stays contents: read. Needed for the tag and
+      # the GitHub release in the last step, and for nothing else here.
+      contents: write
+    steps:
+      - name: Check out the verification script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Also what gives the install step RequiredModules.psd1, and the gh CLI in the last step
+          # its repository context.
+          fetch-depth: 1
+
+      - name: Download the tested module artefact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: module-ubuntu-latest
+          path: artefact
+
+      - name: Verify the artefact against publish-meta.json
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        # The WHOLE verification again, from scratch. The package job's pass is not evidence here:
+        # this job downloads the artefact separately, and what it is about to do is irreversible.
+        #
+        # PublishVersion comes from the manifest, not from GitVersion. Publish-PSResource publishes
+        # the version the manifest carries, and the two strings are not always equal -- see WHICH
+        # VERSION IS PUBLISHED in .github/scripts/PublishArtefact.ps1.
+        run: |
+          $ModulePath = ./.github/scripts/PublishArtefact.ps1 -Verify -Path 'artefact' -Sha $env:EXPECTED_SHA
+          $Meta = Get-Content -LiteralPath 'artefact/publish-meta.json' -Raw | ConvertFrom-Json
+          "ModulePath=$ModulePath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PublishVersion=$($Meta.ComposedVersion)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PublishPrerelease=$($Meta.ManifestPrerelease)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Refuse a version the triggering ref does not call for
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # THIS GUARDS AGAINST MISTAKES, NOT AGAINST AN ADVERSARY. The gate stays in the repository
+        # settings described on this job: a tag push runs the workflow file at the tagged commit, so
+        # a changed workflow simply writes this step away. A mistake writes nothing away, though, and
+        # each of these three would otherwise put a permanent, unintended version on the Gallery
+        # before anything stopped it:
+        #
+        #   1. A tag run where GitVersion computes something other than the tag. The version would
+        #      be published, and only the release step would then fail, against the ruleset.
+        #   2. A stable tag on a commit that is not on main -- created in a checkout sitting on a
+        #      feature branch, say. That publishes unreviewed code as a full release.
+        #   3. A main run that computes a stable version, after a GitVersion.yml change for example.
+        #      A full release comes from a tag and from nothing else.
+        #
+        # It runs straight after the verification and before anything else, and it never sees
+        # GALLERYAPITOKEN: whatever it throws, nothing has been published yet. See "Publishing" in
+        # CLAUDE.md.
+        run: |
+          # gh's exit code is checked explicitly, the way the release step does it, so that a failed
+          # call says what it means for this run instead of surfacing as a bare native-command error.
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          $Ref = $env:GITHUB_REF
+          $Version = $env:PublishVersion
+          $Nothing = 'NOTHING has been published.'
+
+          # Every refusal on a tag leaves the tag where it is: this job may not move or delete one.
+          $Repair = ''
+          if ($Ref -clike 'refs/tags/*') {
+              $Tag = $env:GITHUB_REF_NAME
+              $Repair = " The tag $Tag is still there. Someone on the 'Stable Version' ruleset's bypass list removes it with: git push origin :refs/tags/$Tag"
+          }
+
+          # -clike and -ceq throughout: a git ref is case-sensitive, and V1.1.0 is not v1.1.0.
+          if ($Ref -clike 'refs/tags/v*') {
+              if ("v$Version" -cne $Tag) {
+                  throw "REFUSING TO PUBLISH. The tag $Tag calls for version '$($Tag.Substring(1))', but the tested build carries '$Version'. $Nothing$Repair"
+              }
+
+              # The checkout above is fetch-depth 1, so git cannot answer this; the compare API can.
+              # Its status describes GITHUB_SHA relative to main: identical or behind means main's
+              # history already contains the commit, ahead or diverged means it does not.
+              $Answer = @(gh api "repos/$env:GITHUB_REPOSITORY/compare/main...$env:GITHUB_SHA" --jq .status 2>&1)
+              $ExitCode = $LASTEXITCODE
+              if ($ExitCode -ne 0) {
+                  $Detail = (@($Answer | ForEach-Object { "$_".Trim() }) -join ' ').Trim()
+                  throw "REFUSING TO PUBLISH. Expected GitHub to say whether $env:GITHUB_SHA is on main; gh api exited with $ExitCode instead ($Detail). $Nothing If the failure was transient, re-run this job.$Repair"
+              }
+              $Status = (@($Answer | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$_".Trim() }) -join ' ').Trim()
+
+              if ($Status -cin @('ahead', 'diverged')) {
+                  throw "REFUSING TO PUBLISH. The tag $Tag must point at a commit on main, but $env:GITHUB_SHA is not in main's history (GitHub compares it to main as '$Status'). A full release ships reviewed code only. $Nothing$Repair"
+              }
+              if ($Status -cnotin @('identical', 'behind')) {
+                  throw "REFUSING TO PUBLISH. Expected GitHub to compare $env:GITHUB_SHA to main as identical, behind, ahead or diverged, and it answered '$Status'. $Nothing$Repair"
+              }
+
+              Write-Host "The tag $Tag calls for $Version, the tested build carries $Version, and $env:GITHUB_SHA is on main (compared to main: '$Status')."
+          }
+          elseif ($Ref -ceq 'refs/heads/main') {
+              if ([string]::IsNullOrEmpty($env:PublishPrerelease)) {
+                  throw "REFUSING TO PUBLISH. A run on main publishes a preview, so the tested build must carry a prerelease label, but it carries none and would publish '$Version' as a full release. A full release comes from a v<X.Y.Z> tag and from nothing else. $Nothing Look at GitVersion.yml and at the version tags on $env:GITHUB_SHA."
+              }
+
+              Write-Host "A run on main publishes a preview, and the tested build carries '$Version' (prerelease '$env:PublishPrerelease')."
+          }
+          else {
+              # The job's if: condition admits nothing else, so this is a second lock on that door.
+              # It matters when that condition is edited, since this step does not change with it.
+              throw "REFUSING TO PUBLISH. This job publishes from refs/heads/main or from a refs/tags/v<X.Y.Z> tag, but this run is for '$Ref'. The job's if: condition should not have let it in at all. $Nothing$Repair"
+          }
+
+      - name: Install the module's runtime dependencies
+        shell: pwsh
+        # Required before Publish-PSResource, for the reason spelled out on the same step in the
+        # package job: the publish validates the manifest with Test-ModuleManifest, which resolves
+        # every RequiredModules entry on PSModulePath. Nothing else in this job puts Az.Resources
+        # or Microsoft.Graph.Authentication there, and without them the publish fails on the
+        # manifest rather than on anything about the Gallery.
+        # -SkipModuleManifestValidate is not the answer: it switches off the last check that what
+        # is about to be published is a loadable module.
+        #
+        # No -SkipDependenciesCheck below, deliberately: both dependencies DO exist on the Gallery,
+        # so that check is a real safeguard here and is left switched on.
+        run: |
+          # The versions come from RequiredModules.psd1 and nowhere else, so the YAML cannot drift
+          # from what the build and the tests resolved. A missing or 'latest' version is refused:
+          # installing whatever is newest would validate the manifest against something no test
+          # run saw.
+          $Required = Import-PowerShellDataFile -LiteralPath 'RequiredModules.psd1'
+          foreach ($Name in 'Az.Resources', 'Microsoft.Graph.Authentication') {
+              $Version = [string]$Required[$Name]
+              if ([string]::IsNullOrWhiteSpace($Version) -or $Version -eq 'latest') {
+                  throw "RequiredModules.psd1 names no fixed version for $Name ('$Version'). The publish path installs exactly the version the tests ran against, so it stops here."
+              }
+              Install-PSResource -Name $Name -Version "[$Version]" -Repository 'PSGallery' -TrustRepository -Scope 'CurrentUser'
+              Write-Host "Installed $Name $Version from RequiredModules.psd1."
+          }
+
+      - name: Publish to the PowerShell Gallery
+        shell: pwsh
+        env:
+          # GitHub upper-cases a secret name, so the secret is GALLERYAPITOKEN. It is mapped to an
+          # env variable rather than interpolated into the script body, so its value never appears
+          # in the expanded step text.
+          GALLERY_API_TOKEN: ${{ secrets.GALLERYAPITOKEN }}
+        run: |
+          $ModuleName = 'Omnicit.PIM'
+          $Version = $env:PublishVersion
+
+          # A missing token FAILS here. Skipping silently on an absent token is precisely what
+          # Sampler's publish tasks do, and avoiding it is half the reason this job exists.
+          if ([string]::IsNullOrWhiteSpace($env:GALLERY_API_TOKEN)) {
+              throw 'The GALLERYAPITOKEN secret is empty or was not passed to this job. Failing rather than skipping: a silent skip reports success while publishing nothing.'
+          }
+
+          # IDEMPOTENCE. A re-run after a partial failure -- most likely a publish that succeeded
+          # while the release step did not -- must be able to carry on instead of dying on a
+          # version that is already out there. Find-PSResource -Version takes NuGet RANGE syntax,
+          # so a bare version means "at least this one"; the brackets are what make it exact.
+          # This also settles the race between two pushes to main computing the same version.
+          $Existing = @(Find-PSResource -Name $ModuleName -Repository 'PSGallery' -Version "[$Version]" -Prerelease -ErrorAction SilentlyContinue)
+
+          if ($Existing.Count -gt 0) {
+              Write-Host "SKIPPING THE PUBLISH: $ModuleName $Version is already on the PowerShell Gallery. A version cannot be republished or deleted, so this run goes straight on to the tag and release step."
+              return
+          }
+
+          # -Path is the VERSION FOLDER, which is what PublishArtefact.ps1 returns. The module
+          # folder's root fails with "No file with a .psd1 extension was found"
+          # (measured in Omnicit.EntraRBAC).
+          Write-Host "Publishing $ModuleName $Version from $env:ModulePath ..."
+          Publish-PSResource -Path $env:ModulePath -Repository 'PSGallery' -ApiKey $env:GALLERY_API_TOKEN
+          Write-Host "Publish-PSResource returned without error. That is not yet proof -- the next step asks the Gallery."
+
+      - name: Confirm the version is on the Gallery
+        shell: pwsh
+        # Against the GALLERY, never against the log above. Publish-PSResource returning cleanly
+        # says the upload was accepted, not that the version is there; indexing takes a moment.
+        run: |
+          $ModuleName = 'Omnicit.PIM'
+          $Version = $env:PublishVersion
+          $Deadline = (Get-Date).AddMinutes(10)
+          $Attempt = 0
+          $Found = @()
+
+          while ($true) {
+              $Attempt++
+              $Found = @(Find-PSResource -Name $ModuleName -Repository 'PSGallery' -Version "[$Version]" -Prerelease -ErrorAction SilentlyContinue)
+              if ($Found.Count -gt 0) { break }
+              if ((Get-Date) -ge $Deadline) { break }
+              Write-Host "Attempt $Attempt : $Version is not indexed yet. Waiting 20 seconds."
+              Start-Sleep -Seconds 20
+          }
+
+          if ($Found.Count -eq 0) {
+              throw "$ModuleName $Version did not appear on the PowerShell Gallery within 10 minutes. THE PUBLISH MAY WELL HAVE SUCCEEDED and simply not been confirmed -- check the Gallery before re-running, and do not assume this version is free. A published version cannot be deleted."
+          }
+
+          Write-Host "Confirmed on the Gallery: $($Found[0].Name) $($Found[0].Version)$(if ($Found[0].Prerelease) { '-' + $Found[0].Prerelease })"
+
+      - name: Tag the published commit and create the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # THE TAG IS THE MECHANISM, not bookkeeping. GitVersion.yml runs mode: ContinuousDelivery,
+        # where the preview counter does NOT move per commit: it moves when a tag gives the next
+        # build a new base. Measured in Omnicit.EntraRBAC on 2026-09-22 with GitVersion 5.12.0 on a
+        # clone of that repository: main's tip computed 1.0.1-preview0001; tagging that value and
+        # adding a commit computed 1.0.1-preview0002; adding a SECOND commit with no new tag
+        # computed 1.0.1-preview0002 AGAIN.
+        #
+        # SO, IF THIS STEP FAILS AFTER THE PUBLISH SUCCEEDED: the next merge to main computes the
+        # same version, the idempotence check above finds it on the Gallery and skips, and that
+        # merge publishes NOTHING. It is not a lost release, and nothing is broken on the Gallery,
+        # but the line stalls until someone pushes the missing tag by hand onto the commit that was
+        # published -- after which the next build counts up again.
+        #
+        # On a v-tag run the tag already exists and gh uses it rather than creating one. It must
+        # stay that way: the 'Stable Version' ruleset refuses GITHUB_TOKEN any create, move or
+        # delete of a v<X.Y.Z> tag, so a stable run that tried would fail HERE, after the publish.
+        run: |
+          # gh reports "no release found" with exit code 1, which is an ANSWER here, not a failure.
+          # Every gh exit code is checked explicitly instead, the way the GitVersion step does it.
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          $ModuleName = 'Omnicit.PIM'
+          $Version = $env:PublishVersion
+          $Tag = "v$Version"
+
+          $null = gh release view $Tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
+              Write-Host "SKIPPING: the release $Tag already exists. Nothing to create."
+              return
+          }
+
+          # From the BUILT MANIFEST's ReleaseNotes -- this version's notes. NOT output/ReleaseNotes.md,
+          # which is the whole changelog (measured in Omnicit.EntraRBAC).
+          $Manifest = Import-PowerShellDataFile -LiteralPath (Join-Path $env:ModulePath "$ModuleName.psd1")
+          $Notes = (@($Manifest.PrivateData.PSData.ReleaseNotes) -join [System.Environment]::NewLine).Trim()
+
+          if ([string]::IsNullOrWhiteSpace($Notes)) {
+              Write-Warning "The built manifest carries no ReleaseNotes. CHANGELOG.md's Unreleased section is the source of that value and tests/QA/module.tests.ps1 holds the section's body after its heading line to at least one sentence, so this should be unreachable."
+              $Notes = "$ModuleName $Version was published to the PowerShell Gallery from $env:GITHUB_SHA."
+          }
+
+          $NotesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          [System.IO.File]::WriteAllText($NotesPath, $Notes)
+
+          $Arguments = @('release', 'create', $Tag, '--target', $env:GITHUB_SHA, '--title', $Tag, '--notes-file', $NotesPath)
+          if (-not [string]::IsNullOrEmpty($env:PublishPrerelease)) {
+              $Arguments += '--prerelease'
+              Write-Host "$Version carries the prerelease label '$env:PublishPrerelease', so the release is marked as a prerelease."
+          }
+
+          gh @Arguments
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE. $ModuleName $Version IS ALREADY PUBLISHED -- read the comment on this step before re-running." }
+
+          Write-Host "Created the release $Tag on $env:GITHUB_SHA. The next build on main counts up from it."

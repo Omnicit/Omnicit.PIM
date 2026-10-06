@@ -1,8 +1,23 @@
 mode: ContinuousDelivery
 next-version: 0.0.1
-major-version-bump-message: '(breaking\schange|breaking|major)\b'
-minor-version-bump-message: '(adds?|features?|minor)\b'
-patch-version-bump-message: '\s?(fix|patch)'
+# The base version comes from the highest reachable version tag (v0.5.1 when this was written);
+# next-version 0.0.1 is below every tag and never wins. tests/QA/module.tests.ps1 independently
+# holds the built version at or above 0.5.1 and below 1.0.0 -- a move to 1.0.0 is a release
+# decision, never a side effect of a commit message.
+#
+# Only explicit tokens move the version: '+semver: breaking|major', '+semver: feature|minor',
+# '+semver: fix|patch' and '+semver: none|skip', plus a conventional-commit '!:' subject for a
+# major. Ordinary words ("add", "fix", "breaking") no longer do. The '!:' half is safe here
+# because the increment window starts at the newest version tag, and no commit after v0.5.1
+# carries one.
+#
+# GitVersion reads every reachable commit message, and a squash merge copies a pull request title
+# and body into main. Never quote one of these tokens in a commit message, a pull request title
+# or a pull request body -- name it in words instead. File content is never read and may quote
+# freely. See "CHANGELOG and Version" in CLAUDE.md.
+major-version-bump-message: '(\+semver:\s?(breaking|major))|(^[a-z]+(\(.+\))?!:)'
+minor-version-bump-message: '\+semver:\s?(feature|minor)'
+patch-version-bump-message: '\+semver:\s?(fix|patch)'
 no-bump-message: '\+semver:\s?(none|skip)'
 assembly-informational-format: '{NuGetVersionV2}+Sha.{Sha}.Date.{CommitDate}'
 branches:
@@ -11,15 +26,16 @@ branches:
     regex: ^main$
   pull-request:
     tag: PR
+  # Anchored, so a word inside a branch name ("off-the", "prefix-") never selects a config.
   feature:
     tag: useBranchName
     increment: Minor
-    regex: f(eature(s)?)?[\/-]
+    regex: ^feat(ure)?s?[\/-]
     source-branches: ['master']
   hotfix:
     tag: fix
     increment: Patch
-    regex: (hot)?fix(es)?[\/-]
+    regex: ^(hot)?fix(es)?[\/-]
     source-branches: ['master']
 
 ignore:
