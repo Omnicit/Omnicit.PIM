@@ -22,6 +22,7 @@ function Disable-OPIMAzureRole {
     #>
     [Alias('Disable-PIMResourceRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
+    [OutputType([PSCustomObject])]
     param(
         [Parameter(ParameterSetName = 'RoleObject', Mandatory, ValueFromPipeline)]
         $Role,

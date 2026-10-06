@@ -47,6 +47,7 @@ function Connect-OPIM {
     #>
     [Alias('Connect-PIM')]
     [CmdletBinding(DefaultParameterSetName = 'ByTenantId')]
+    [OutputType([void])]
     param(
         [Parameter(ParameterSetName = 'ByAlias', Mandatory)]
         [string]$TenantAlias,

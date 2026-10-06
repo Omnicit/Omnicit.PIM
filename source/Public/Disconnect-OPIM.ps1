@@ -17,6 +17,7 @@ function Disconnect-OPIM {
     #>
     [Alias('Disconnect-PIM')]
     [CmdletBinding()]
+    [OutputType([void])]
     param()
 
     $script:_OPIMAuthState = $null

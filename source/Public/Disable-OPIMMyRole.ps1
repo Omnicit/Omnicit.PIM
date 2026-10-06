@@ -58,6 +58,7 @@ function Disable-OPIMMyRole {
     #>
     [Alias('unpim', 'Disable-OPIMMyRoles')]
     [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([PSCustomObject])]
     param(
         [string]$TenantAlias,
         [Switch]$AllActivated,

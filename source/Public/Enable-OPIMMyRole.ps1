@@ -73,6 +73,7 @@ function Enable-OPIMMyRole {
     #>
     [Alias('pim', 'Enable-OPIMMyRoles')]
     [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([PSCustomObject])]
     param(
         [string]$TenantAlias,
         [Switch]$AllEligible,
