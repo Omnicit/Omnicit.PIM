@@ -490,7 +490,7 @@ and `Disable-` for `DirectoryRole`, `AzureRole` and `EntraIDGroup` -- and `Wait-
 call it as the first statement of their `process` block (of their `begin` block in
 `Enable-OPIMDirectoryRole` and `Wait-OPIMDirectoryRole`), and the three `*-OPIMAzureRole` cmdlets
 pass `-IncludeARM`. `Connect-OPIM` resolves `-TenantAlias` from `TenantMap.psd1` and passes its
-`-TenantId`, `-IncludeARM` and `-DeviceCode` on (`Connect-OPIM.ps1:81-109`); it is an optional
+`-TenantId`, `-IncludeARM` and `-DeviceCode` on (`Connect-OPIM.ps1:84-112`); it is an optional
 pre-authentication shortcut, since every pillar cmdlet authenticates on first use.
 `Enable-OPIMMyRole` and `Disable-OPIMMyRole` call `Connect-OPIM`, handing on their own
 `-DeviceCode`, and then the pillar cmdlets. The `*-OPIMConfiguration` cmdlets do not authenticate.
@@ -554,10 +554,14 @@ their last parameter and hand it down to `Initialize-OPIMAuth`; without it nothi
   session whose token is still valid starts no Graph sign-in; it only sets the mode for the next
   one (`:102-108`), while with `-IncludeARM` Azure can still connect, and then with a device code.
   `Disconnect-OPIM` clears the state, and the mode with it.
-- **Before the first sign-in the state holds only `DeviceCode`** (`:106`). A state without
-  `TenantId` and `GraphTokenExpiry` never counts as signed in (the cache checks at `:117-131` need
-  both), so a failed first sign-in -- a declined or expired code, Ctrl+C -- keeps the mode: the next
-  call asks for a code again instead of opening the system browser, until `Disconnect-OPIM`.
+- **Before the first sign-in the state holds only `DeviceCode`** (`:106`). The cache checks at
+  `:117-131` need `TenantId` and `GraphTokenExpiry`, so such a state never counts as a cached token,
+  and a failed first sign-in -- a declined or expired code, Ctrl+C -- keeps the mode: the next call
+  asks for a code again instead of opening the system browser, until `Disconnect-OPIM`. The
+  token-rejected retry in `Invoke-OPIMGraphRequest` checks only that a state exists
+  (`Invoke-OPIMGraphRequest.ps1:148-150`), so it does run on such a state: when a pillar cmdlet goes
+  on to Graph after a failed first sign-in and a Graph context made outside the module answers 401,
+  the retry asks for one more device code, for `organizations`, since the state has no `TenantId`.
 - **The mode lives in the module instance of the runspace that signed in.** A
   `Connect-OPIM -DeviceCode` inside a job does not carry over to the window's runspace, where the
   next cmdlet would sign in with the system browser.
