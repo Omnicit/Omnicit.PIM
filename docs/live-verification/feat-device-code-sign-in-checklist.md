@@ -53,9 +53,10 @@ owner, and Reader on both resource groups. Nothing in this file creates an objec
   `tests/Unit/Private/Invoke-OPIMDeviceCodeAuth.Tests.ps1` and
   `tests/Unit/Private/Invoke-OPIMGraphRequest.Tests.ps1`; the test roles carry no authentication
   context, so no live claims challenge is possible.
-- **A device code flow that fails or expires** (`DeviceCodeAuthFailed`) and **a null token** (never
-  the browser) -- `tests/Unit/Private/Invoke-OPIMDeviceCodeAuth.Tests.ps1` and
-  `tests/Unit/Private/Initialize-OPIMAuth.Tests.ps1`.
+- **A device code flow that expires** and **a null token** (never the browser) --
+  `tests/Unit/Private/Invoke-OPIMDeviceCodeAuth.Tests.ps1` and
+  `tests/Unit/Private/Initialize-OPIMAuth.Tests.ps1`. A declined code is checked live in 1.5, since a
+  unit test runs inside a `try` and cannot show what a person sees after a failed sign-in.
 - **`Enable-OPIMMyRole -DeviceCode` and `Disable-OPIMMyRole -DeviceCode`** pass the switch to
   `Connect-OPIM` -- `tests/Unit/Public/Enable-OPIMMyRole.Tests.ps1` and
   `tests/Unit/Public/Disable-OPIMMyRole.Tests.ps1`; the sign-in itself is the same `Connect-OPIM`
@@ -204,8 +205,9 @@ $Sign.Codes | Format-Table App, Stream, Tagged, Status -AutoSize
 ```
 
 **Expect:** `Disconnect-OPIM, Disconnect-MgGraph and Disconnect-AzAccount ran first`; one row
-`Graph Information True ok`; then `Signed in to Graph as the test user: True`, `Signed in to the test
-tenant: True` and `The module remembers the device code mode: True`. No browser window appeared (the
+`Graph Information True ok`; then the line `Signed in to Graph as the test user` (with its source in
+parentheses) ending `True`, `Signed in to the test tenant: True` and `The module remembers the device
+code mode: True`. No browser window appeared (the
 harness's Edge runs headless), and the block prints neither the account nor the tenant id.
 **Failure looks like:** `False` on any line, or a `STOP` -- STOP: run `Disconnect-OPIM`, close the
 window and run no other check. A `blocked` status is stop condition 5.1.
@@ -270,9 +272,10 @@ $Records = @(& $Module { param($TenantId) Initialize-OPIMAuth -TenantId $TenantI
 "Device code mode kept: $([bool](& $Module { $script:_OPIMAuthState }).DeviceCode)"
 ```
 
-**Record:** both lines. A silent refresh prints `0` and `True`.
-**Failure looks like:** a device code message -- the refresh token was not used; the harness would
-need to complete it, so record it and run 0.1 again before going on.
+**Record:** both lines. A silent refresh prints `0` and `True` within seconds.
+**Failure looks like:** a device code message -- the refresh token was not used. The block then waits
+for a code nobody completes: if it has not returned within 30 seconds, press Ctrl+C, record a
+non-silent refresh, and run 0.1 again before going on.
 
 Result:
 
@@ -295,6 +298,39 @@ $Sign.Codes | Format-Table App, Stream, Tagged, Status -AutoSize
 
 Result:
 
+### 1.5. A declined device code ends with one error and keeps the mode
+
+- [ ] **1.5** Window B. A device code declined on the confirmation page ends `Connect-OPIM -DeviceCode` with `DeviceCodeAuthFailed` alone, no browser opens, the mode stays, and the next sign-in is a device code again.
+
+```powershell
+$Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built.DirectoryName) { throw 'A different build of Omnicit.PIM is loaded; use a fresh window.' }
+if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
+Import-Module (Join-Path $env:OPIMLIVE_HOME 'OpimLive/OpimLive.psm1') -Force
+$Target = Get-OpimLiveTarget
+Disconnect-OPIM
+$Seen = [System.Collections.Generic.List[string]]::new()
+Connect-OPIM -DeviceCode -TenantId $Target.TenantId 6>&1 2>&1 | ForEach-Object {
+    if ($_ -is [System.Management.Automation.ErrorRecord]) { $Seen.Add($_.FullyQualifiedErrorId); return }
+    if ($_ -is [System.Management.Automation.InformationRecord] -and $_.Tags -contains 'OPIMDeviceCode' -and "$($_.MessageData)" -match 'enter the code\s+([A-Z0-9]{6,16})') {
+        $Done = Complete-OpimLiveDeviceCode -Code $Matches[1] -App Graph -UserPrincipalName $Target.UserPrincipalName -RawFolder 'docs/live-verification/raw/opim-s12' -Decline
+        "Edge: $($Done.Status)"
+    }
+}
+"Errors: $($Seen.Count): $($Seen -join ', ')"
+"Device code mode kept: $([bool](& (Get-Module Omnicit.PIM) { $script:_OPIMAuthState }).DeviceCode)"
+$Sign = Connect-OpimLiveUser -IncludeARM -NoDisconnect
+$Sign.Codes | Format-Table App, Stream, Tagged, Status -AutoSize
+```
+
+**Expect:** `Edge: declined`; `Errors: 1: DeviceCodeAuthFailed,Invoke-OPIMDeviceCodeAuth`; `Device code
+mode kept: True`; no browser window; then the two rows of 1.2 and every True/False line `True`, which
+leaves the window signed in for section 2.
+**Failure looks like:** a second error such as `NoAccessToken`, `Device code mode kept: False`, or a
+browser window -- record it; the failure path is not what the module promises. `False` after the new
+sign-in -- STOP as in 0.1.
+
+Result:
 ### 2. The listings
 
 ### 2.1. Exactly the two directory roles
