@@ -334,7 +334,7 @@ jobs:
     # list create, move or delete a v<X.Y.Z> tag. Both live in repository settings on purpose. A
     # tag push runs the workflow file AT the tagged commit, so a check written here is removed by
     # the same commit that would abuse it. See "Publishing" in CLAUDE.md.
-    environment: 'Omnicit PIM'
+    environment: 'PIM'
     permissions:
       # ONLY this job. The top-level default above stays contents: read. Needed for the tag and
       # the GitHub release in the last step, and for nothing else here.

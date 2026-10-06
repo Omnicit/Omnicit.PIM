@@ -283,7 +283,7 @@ publish it.
 - **Never create a version tag by hand outside that repair or a deliberate release.** The rule
   under **CHANGELOG and Version** has teeth here: a stray tag changes what gets PUBLISHED.
 - **No approval stands between a merge or a `v` tag and the Gallery**, by decision, as in
-  Omnicit.EntraRBAC. The `Omnicit PIM` environment has no required reviewers: it scopes the
+  Omnicit.EntraRBAC. The `PIM` environment has no required reviewers: it scopes the
   `GALLERYAPITOKEN` secret to the `publish` job and admits only branch `main` and the stable
   `v<X.Y.Z>` tag patterns, none of which admits a hyphen. The gate for a preview is the pull request
   and its four required checks; the gate for a full release is the tag, which only the
@@ -316,7 +316,7 @@ publish it.
    `Stable Version` ruleset's bypass list -- the repository admin role -- can create that tag, and
    the push IS the release decision: nothing asks for an approval after it. The tag run builds,
    tests and packages again, and the refusal step then requires the built version to equal the tag
-   and the commit to be on `main`. A tag outside the `Omnicit PIM` environment's patterns is refused
+   and the commit to be on `main`. A tag outside the `PIM` environment's patterns is refused
    by the environment, visibly, and publishes nothing; the repair is a new pattern the ruleset also
    covers, never `v*`. A `v1.0.0` or higher tag also fails the release version cap until that cap
    is raised -- see **CHANGELOG and Version**.
