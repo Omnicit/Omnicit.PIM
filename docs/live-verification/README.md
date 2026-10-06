@@ -1,0 +1,241 @@
+# Live verification checklists
+
+This folder holds the live-verification checklists for this module. Each one is written while a
+branch is in flight and is then run in the operator's designated test tenant -- never a customer
+tenant -- and only when the operator has asked for that run. The module runs there as a dedicated
+delegated test user, and the run's setup and teardown run as a dedicated app identity whose only
+credential is a certificate; neither is ever the operator's own account. Nothing in CI ever
+authenticates to a tenant (`CLAUDE.md`, SECURITY rule 1). The module activates privileged Entra ID
+directory roles, Azure resource roles and PIM group memberships, so a live run is always a
+deliberate act the operator switches on. The checklists record what was actually executed and what
+came back, which is what lets a later reader tell a verified claim from an assumed one. No
+checklist is committed yet; the first one arrives with the first live-verified change.
+
+That also makes this folder the one place in the repository where live tenant console output is
+pasted in on purpose. The rules below exist so the output can be kept without keeping the tenant
+data inside it.
+
+## Editing rule -- redact before you commit
+
+Before a checklist is committed, every tenant identifier pasted from console output is replaced with
+a placeholder:
+
+- **Object ids** become `00000000-0000-0000-0000-0000000000NN`. `NN` counts up from `01` per
+  DISTINCT identifier, in first-appearance order, and restarts in each file. The same identifier
+  always gets the same placeholder within a file. If it does not, the checklist's own traceability
+  breaks: several checks turn on two ids being the same, or on two ids differing.
+- **An abbreviated id** in console output -- the `abcd1234-...` form some views print -- is redacted
+  too, and is written out as the FULL placeholder, not an abbreviated one. Eight hex characters of a
+  real object id is still a correlatable partial identifier, and a file showing a real prefix beside
+  a placeholder for the same object contradicts itself.
+- **Email addresses** outside `example.com`, `contoso.com` and `fabrikam.com` become
+  `person1@example.com`, `person2@example.com`, ... on the same per-file, first-appearance rule.
+- **A tenant's initial domain** -- the label in front of `.onmicrosoft.com` -- becomes `contoso`,
+  or `fabrikam` where a second tenant has to be told apart from the first.
+- **Credentials never go in at all -- and a credential is ROTATED, not redacted.** See the section
+  below; this is the one rule here that redaction does not solve.
+
+**Display names of test objects may stay.** A name a checklist created for its own run is not an
+identifier: it is what makes the checklist readable, and it resolves to nothing outside the tenant
+that no longer holds the object.
+
+**The mapping from a real value to its placeholder is never written down in this repository.** Not
+in a comment, not in a checklist appendix, not in a commit message, not in a scratch file inside the
+working tree. A mapping table turns every placeholder back into the identifier it replaced, which
+undoes the whole exercise. For the same reason, a real value never goes into an assertion message, a
+test name, a commit message or a report -- refer to a hit by file and line number only.
+
+## The placeholder register
+
+Placeholders are allocated under two different rules, and confusing them is how they collide.
+
+- **Inside a live-verification checklist**, `NN` restarts at `01` per file, as the rule above says.
+  The same `NN` therefore denotes a DIFFERENT object in a different checklist, and that is fine:
+  each checklist is read on its own.
+- **Everywhere else** -- `source/`, `tests/`, `README.md` and `CHANGELOG.md` -- a placeholder is
+  allocated GLOBALLY and means one slot across the whole repository, because the same fixture is
+  read from several files at once. Those four are exactly what the gate scans for this rule.
+
+The register below is the second rule's allocation. **Its only purpose is to stop two different
+objects from being given the same placeholder**, which is the defect redaction hits more often than
+any other: a redaction pass reuses a number, and from then on two unrelated objects look like one.
+
+`tests/QA/dochygiene.tests.ps1` reads this register and fails on the ways it can disagree with
+itself or with the tree: two rows whose slots overlap, a slot description that repeats, a table
+without exactly one FREE row, an "Allocate from" sentence below that disagrees with the FREE rows,
+a slot taken at or above a FREE start that is not one of the named outliers, a placeholder cell it
+cannot read, and a placeholder used in `source/`, `tests/`, `README.md` or `CHANGELOG.md` that is
+not registered here as taken. What it still cannot check is whether a description means what the
+last person thought it meant: two objects given one registered slot look, to the gate, like one
+object used twice. **The unique description per row is that human check.** Writing one forces you
+to say what slot you are taking, and a slot that is already described is a collision you can see
+before you commit.
+
+Each row is a placeholder, a GENERIC description of the slot, and whether it is taken. **A
+description says what KIND of object occupies the slot and where it is read -- never which object.**
+Naming the object in clear text would rebuild the mapping this file just forbade.
+
+| Placeholder | Slot (generic) | Status |
+|---|---|---|
+| `...000` | the conventional "any id" stand-in in help examples and README | taken |
+| `...001` - `...005` | fixture ids in the unit tests: tenant ids and user object ids in the tenant-map, configuration, sign-in and `Get-MyId` tests | taken |
+| `...006` | a group id in README's tenant-map example | taken |
+| `...007` and up | -- | **FREE. Allocate from here.** |
+| `...099` | a deliberately different tenant id in the configuration tests | taken |
+
+Addresses follow the same global rule outside the checklists:
+
+| Placeholder | Slot (generic) | Status |
+|---|---|---|
+| `person1` and up | -- | **FREE. Allocate from here.** |
+
+`...099` sits outside the counting sequence and is listed so it is not handed out twice. Allocate
+new object ids from `...007` and new addresses from `person1`, and add a row here in the same commit
+that uses them -- a placeholder that is used but not registered is exactly the state the next person
+allocates over.
+
+**Four v4-shaped values are deliberately NOT placeholders**, and they are not in this register
+because they name nothing in any tenant: the module's own GUID in the manifest, the Microsoft Graph
+Command Line Tools first-party application id, and the Microsoft Entra built-in role template ids
+for Global Administrator and Privileged Role Administrator, which a help example and `README.md`
+use. They are named here in words only, since every GUID in a file under `docs/` must be a
+placeholder, this file included. They are pinned by value in `tests/QA/dochygiene.tests.ps1`, which
+fails if one of them stops being used. That pinned list is not a place to put a new value -- see
+"What enforces this" below for what the gate does instead.
+
+## Credentials -- the rule redaction cannot satisfy
+
+Console output from this module can contain credentials, not only identifiers. The one that arrives
+by accident is a **bearer token**, which nobody pastes on purpose. A failed Graph call produces an
+`ErrorRecord` whose `TargetObject` is the raw `HttpRequestMessage`, and rendering that record --
+with `Format-List`, in a transcript, or by pasting a console scrollback -- prints
+`Authorization: Bearer <jwt>` in full. It appears in the middle of an otherwise ordinary error dump,
+which is exactly why it gets missed. A **client secret** is the other shape the gate watches for. The
+setup identity has none -- its only credential is a certificate -- so one appearing here is a
+mistake by definition.
+
+**An object id is a name; a credential is access.** Replacing an id with a placeholder closes that
+leak. Replacing a credential with a placeholder closes nothing: by the time anyone notices, the
+value has been committed, pushed, fetched by CI and cloned. So the rule is different in kind from
+the ones above:
+
+1. **Never paste one into a tracked file.** Not even briefly, not even "to be cleaned up before the
+   PR". Redaction is the recovery path, not the plan.
+2. **If one did reach a tracked file, ROTATE what it grants.** A client secret is deleted in the app
+   registration and a new one issued. A bearer token expires on its own, but the session that
+   minted it does not: revoke the test user's sessions. Then redact the file. Redaction alone is not
+   a fix and must never be recorded as one.
+3. **The record's SHAPE may stay.** Keeping
+   `Authorization: Bearer <bearer-token-REDACTED>` inside a quoted error record is correct and often
+   the point of the write-up -- the header's presence is the finding. Keep the structure, drop the
+   value.
+4. **Never quote the value in a commit message, a PR body, a test name or an assertion message.**
+   That copies it out of the file it was removed from.
+
+`tests/QA/dochygiene.tests.ps1` fails on a JWT-shaped string, an `Authorization:` header carrying an
+actual value, or a client-secret-shaped string in any tracked file under `docs/`, `specs/`,
+`source/` or `tests/`, and in `README.md` and `CHANGELOG.md` -- this folder included. Like the other
+checks it reports file and line and never the value. Prose that merely names the header, and a
+`<...>` or `REDACTED` stand-in, both pass -- the gate is aimed at values, not at vocabulary.
+
+**A test fixture that has to be token-shaped says so in the value itself.** A test that proves the
+module keeps a bearer token out of an error record or an output stream cannot do its job without
+handing the module something shaped like a token, so forbidding the shape under `tests/` would
+forbid exactly the security tests that matter most. Such a fixture carries `NOT-A-REAL-TOKEN` inside
+the value, and the gate accepts that exactly as it accepts `REDACTED`. The marker has to be in the
+VALUE, not in a comment beside it, so the declaration belongs to that literal and cannot be borrowed
+by a real token pasted next to one -- which is also why a real credential pasted while debugging can
+never satisfy it by accident.
+
+A placeholder is only opaque while the real value it replaced appears nowhere else in the tree, so
+redact every copy of a value, not just the first. Redaction changes files going forward; it never
+rewrites history that already holds the original.
+
+## Where raw output goes
+
+Unredacted console output belongs in `docs/live-verification/raw/`, or in a `*.log` file in this
+folder (`docs/live-verification/*.log`). Both are git-ignored (`.gitignore:30-31`), so the raw
+material stays on disk while a run is being written up and is never staged. Redact on the way into
+the checklist; never paste an unredacted block into a tracked `.md`.
+
+`.gitignore` does not untrack anything already tracked, and that is deliberate here: the checklists
+are the verification record and stay tracked. Only the raw material is ignored.
+
+## What enforces this
+
+`tests/QA/dochygiene.tests.ps1` runs as part of `./build.ps1 -Tasks test`. It covers every TRACKED
+file under `docs/`, `specs/`, `source/` and `tests/`, and `README.md` and `CHANGELOG.md` at the
+root -- these checklists, the payload that ships inside the built module, the test fixtures, the
+repository's front page and the release notes. It reports the file and line of every hit and never
+prints the value it matched; printing it would copy the identifier, or the credential, into every CI
+log, which is precisely the leak the gate exists to prevent.
+
+**An object id wrapped over two lines is found too.** A formatted table breaks a long cell at the
+column edge and indents the rest, so a pasted id can land half on one line and half on the next,
+where neither line matches on its own. The object-id checks therefore also read each file with its
+line breaks, and the whitespace around them, removed, and report such an id at the line it starts
+on. Redact a wrapped id in place, keeping the break where the console put it.
+
+The email, tenant-domain and credential rules are the same everywhere. The **object-id** rule is
+not, because the tree holds two different kinds of writing:
+
+- **Under `docs/` and `specs/` every GUID is prose**, pasted out of a console. The rule is absolute:
+  it must be a `00000000-0000-0000-0000-0000000000NN` placeholder.
+- **Under `source/` and `tests/`, and in `README.md` and `CHANGELOG.md`, a GUID is a fixture or an
+  example**, typed on purpose -- the registered placeholders, and a few letter-repeat fixtures such
+  as `aaaaaaaa-...`. The rule there keys on the one structural property that separates a real
+  identifier from an invented one: **a tenant-generated Entra ID object id, and an ARM subscription
+  or resource id, is a version-4 UUID**, and no hand-written fixture needs to be. A v4-shaped GUID
+  in those places is therefore either a real identifier or a fixture typed to look like one -- which
+  is indistinguishable from the first by inspection, and just as bad.
+
+  It is a shape heuristic, not a proof, and it is worth knowing which way it errs. Some well-known
+  Microsoft identifiers are deliberately not v4 -- the Microsoft Graph service principal's own
+  application id is hand-assigned in the all-zeros style -- and the check lets those through, which
+  is right: a non-random id is a published constant, the same in every tenant, not somebody's
+  directory object. The residual gap is the mirror image, a tenant identifier that is somehow not
+  v4. Nothing generates one today. Redacting as you write, and the register above, stay the primary
+  control.
+
+That second rule is about SHAPE, not a list of approved values, and that is deliberate: it cannot be
+satisfied by adding an entry to something. The four pinned exceptions named in the register above
+are the whole of the list and do not grow.
+
+**A tenant's initial domain is held to two fictional labels.** The label in front of
+`.onmicrosoft.com`, `.onmicrosoft.us` or `.onmschina.cn` names exactly one tenant, as surely as its
+tenant id does, and none of the rules above reads it. The gate fails on any such label other than
+`contoso` and `fabrikam`, in every tracked file it covers. It reads `%40` as `@`, so a user principal
+name URL-encoded into a request path is found, and `\.` as `.`, so a domain written as a regular
+expression in a test is found too. A bare `onmicrosoft.com` with no label in front of it names no
+tenant and passes. Replace a real label with `contoso`: the allowlist does not grow to make the gate
+green, and an entry that no other file uses any more fails it until it is removed. Known gap:
+unlike the object-id rule, the tenant-domain rule has no pass across line breaks, so a domain
+wrapped by console output over two lines is not caught; redact as you write.
+
+**The placeholder register above is read, not just cited.** The gate parses it and fails when it
+disagrees with itself, on the defects listed in the register's own section, and when a placeholder
+used in `source/`, `tests/`, `README.md` or `CHANGELOG.md` -- an all-zeros object id or a
+`personN@example.com` address -- does not fall in a row marked taken. A reserved or FREE slot counts
+as unregistered. A row that names a range, such as `...001` - `...005`, covers only a tail made of
+three decimal digits, within its bounds read as decimal numbers, so `...00a` is not covered by it;
+a row that names one placeholder covers exactly that tail, letters included. Where it checks the
+register against itself, it orders the three characters after `...` as hexadecimal. It reads a
+status cell as FREE when it says FREE, as taken when it starts with "taken", and as reserved
+otherwise. A row it reads only partly is reported. A row whose first cell holds no well-formed
+backticked `...` or `person` token is taken for a header row and grants nothing, and a table left
+without its FREE row is reported.
+
+**A stand-in in angle brackets is written as code.** GitHub reads `<id>`, `<tenant-label>` or any
+other `<word>` outside code as an HTML tag and renders nothing, so the redaction disappears from the
+page and the sentence around it stops making sense. Put the stand-in inside backticks, or write it as
+`\<id>` where a backtick would close a code span the line already has; quotes alone do not help. In
+`CHANGELOG.md` use backticks only: the PowerShell Gallery shows its notes as plain text, where a
+backslash would show instead of escaping anything. The same gate fails on such a bracket in any
+tracked `.md` under `docs/` or `specs/`, and in `README.md` and `CHANGELOG.md`. Fenced blocks and
+code spans are skipped. Exactly one tag outside code is allowed: the logo on the first line of
+`README.md`, an `<img>` element whose `src` is under `assets/`. Any other tag fails, in `README.md`
+too.
+
+The gate is a backstop, not a substitute for redacting as you write. It cannot see the one failure
+the register above exists to prevent -- one registered placeholder given to two different objects --
+because every value involved is already a valid, registered placeholder.

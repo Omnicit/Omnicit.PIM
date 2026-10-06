@@ -331,7 +331,7 @@ the role/group arrays are optional — omit them and `pim` will activate **all**
     'corp' = @{
         TenantId       = 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
         DirectoryRoles = @('e8611ab8-c189-46e8-94e1-60213ab1f814')   # roleDefinitionId
-        EntraIDGroups  = @('75b93f19-07b0-4d87-8b7f-6bd04d79f023_member')  # groupId_accessId
+        EntraIDGroups  = @('00000000-0000-0000-0000-000000000006_member')  # groupId_accessId
         AzureRoles     = @('schedule-name-from-get-opimazurerole')
     }
     # Alias 'partner' — no role list: activates ALL eligible items at login

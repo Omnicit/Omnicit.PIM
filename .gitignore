@@ -24,7 +24,7 @@ docs/superpowers/
 
 # docs/live-verification/ is where live tenant console output will be pasted in on purpose, once
 # the first live-verified change adds the folder; no rule above reaches it. Redaction is done on
-# the way INTO a checklist there, and a gate for it is planned. These two rules cover the raw
+# the way INTO a checklist there, gated by tests/QA/dochygiene.tests.ps1. These two rules cover the raw
 # material that redaction is done FROM, so an unredacted transcript cannot be staged by a stray
 # `git add docs/`.
 docs/live-verification/raw/
