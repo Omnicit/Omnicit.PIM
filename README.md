@@ -41,8 +41,9 @@ Connect-OPIM -IncludeARM                              # also acquire an Azure AR
 ```
 
 On a machine without a browser -- a remote session, a container, a cloud PC -- sign in with a
-device code instead. The command shows a short code and the address
-`https://microsoft.com/devicelogin`; open the address on any device, enter the code and sign in.
+device code instead. The command shows a short code and the address to open (Microsoft Entra
+chooses it, for example `https://login.microsoft.com/device`); open it on any device, enter the code
+and sign in.
 With `-IncludeARM`, Azure shows a second code. The mode is remembered for the session: the refresh
 stays silent while it can, and any later sign-in that needs a prompt uses a device code until
 `Disconnect-OPIM`.
@@ -53,9 +54,10 @@ Connect-OPIM -TenantAlias corp -DeviceCode -IncludeARM
 pim -TenantAlias corp -DeviceCode                     # Enable-OPIMMyRole and Disable-OPIMMyRole take it too
 ```
 
-The message with the code goes to the Information stream with the tag `OPIMDeviceCode`; the code
-Azure shows goes to the Warning stream. A script reads both as they arrive by merging the two streams
-into a pipeline. Capturing the output in a variable instead (`$x = Connect-OPIM -DeviceCode 6>&1`)
+The message with the code goes to the Information stream with the tag `OPIMDeviceCode`. The code
+Azure shows comes from `Connect-AzAccount` itself: Az.Accounts 5.5.3 writes it as an information
+record, an older Az.Accounts as a warning. A script reads both as they arrive by merging the two
+streams into a pipeline. Capturing the output in a variable instead (`$x = Connect-OPIM -DeviceCode 6>&1`)
 shows nothing until the flow ends, which can take 15 minutes.
 
 ```powershell

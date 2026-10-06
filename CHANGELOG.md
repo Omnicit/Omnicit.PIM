@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 The module's source files are now plain ASCII without a byte-order mark. A few progress and confirmation messages and some help text show `--` and `->` where they used to show a typographic dash or arrow; apart from those characters, the ASCII change alters nothing about how the module behaves. `Get-Help about_Omnicit.PIM` now lists every command by area, and new automated checks keep the unit tests away from any real tenant and keep identifiers and credentials out of the documentation.
 
-`Connect-OPIM`, `Enable-OPIMMyRole` and `Disable-OPIMMyRole` take a new `-DeviceCode` switch for machines without a browser, such as a remote session or a cloud PC: the command shows a short code and the address https://microsoft.com/devicelogin, and you finish the sign-in on any device. With `-IncludeARM`, Azure signs in with a device code too. Once used, every later sign-in in the same PowerShell session uses a device code until `Disconnect-OPIM`. Without the switch, sign-in is unchanged.
+`Connect-OPIM`, `Enable-OPIMMyRole` and `Disable-OPIMMyRole` take a new `-DeviceCode` switch for machines without a browser, such as a remote session or a cloud PC: the command shows a short code and the address to open, and you finish the sign-in on any device. With `-IncludeARM`, Azure signs in with a device code too. Once used, every later sign-in in the same PowerShell session uses a device code until `Disconnect-OPIM`. Without the switch, sign-in is unchanged.
 
 ## [0.5.1] - 2026-05-29
 

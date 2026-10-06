@@ -363,7 +363,7 @@ function Initialize-OPIMAuth {
             $AzParams.Tenant = $EffectiveTenant
         }
         # Device code mode signs in to Azure with a device code too. Connect-AzAccount writes its
-        # own message with the code to the warning stream.
+        # own message with the code (Az.Accounts 5.5.3: an information record; older: a warning).
         if ($UseDeviceCode) {
             $AzParams.UseDeviceAuthentication = $true
         }

@@ -41,9 +41,10 @@ LONG DESCRIPTION
       Disconnect-OPIM                                        # clear all cached tokens
 
     On a machine without a browser, sign in with a device code. The command shows a code and
-    the address https://microsoft.com/devicelogin; enter the code there on any device. The
-    message is written to the Information stream with the tag OPIMDeviceCode. With -IncludeARM,
-    Azure shows a second code, on the Warning stream. The mode is remembered for the session: the
+    the address to open; enter the code there on any device. The message is written to the
+    Information stream with the tag OPIMDeviceCode. With -IncludeARM, Azure shows a second code,
+    written by Connect-AzAccount itself (Az.Accounts 5.5.3: an information record; an older
+    Az.Accounts: a warning). The mode is remembered for the session: the
     refresh stays silent while it can, and any later sign-in that needs a prompt uses a device
     code until Disconnect-OPIM. Enable-OPIMMyRole and Disable-OPIMMyRole take -DeviceCode too.
 

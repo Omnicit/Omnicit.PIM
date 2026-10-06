@@ -33,8 +33,8 @@ function Connect-OPIM {
     .EXAMPLE
     Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -DeviceCode -IncludeARM
     Sign in with device codes instead of the system browser, for example in a remote session. The
-    command shows a code and the address https://microsoft.com/devicelogin; open the address on any
-    device and enter the code. With -IncludeARM, Azure shows a second code.
+    command shows a code and the address to open; open the address on any device and enter the
+    code. With -IncludeARM, Azure shows a second code.
 
     .PARAMETER TenantAlias
     Short alias for the target tenant, resolved from the TenantMap.psd1 managed by
@@ -56,8 +56,9 @@ function Connect-OPIM {
     Sign in with a device code instead of the system browser, for a machine without one, such as a
     remote session or a cloud PC. The sign-in message with the code and the address is written to
     the Information stream with the tag OPIMDeviceCode and shown whatever the information preference
-    is. With -IncludeARM, Connect-AzAccount shows its own code for Azure on the warning stream. A
-    script reads both as they arrive by merging the streams into a pipeline, for example
+    is. With -IncludeARM, Connect-AzAccount shows its own code for Azure (Az.Accounts 5.5.3 writes
+    it as an information record, an older Az.Accounts as a warning). A script reads both as they
+    arrive by merging the streams into a pipeline, for example
     6>&1 3>&1 | ForEach-Object { $PSItem.ToString() }; capturing the output in a variable shows
     nothing until the flow ends, which can take 15 minutes. The mode is remembered for this
     PowerShell session: the refresh stays silent while it can, and any later sign-in that needs a

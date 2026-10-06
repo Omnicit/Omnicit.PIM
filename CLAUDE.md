@@ -490,7 +490,7 @@ and `Disable-` for `DirectoryRole`, `AzureRole` and `EntraIDGroup` -- and `Wait-
 call it as the first statement of their `process` block (of their `begin` block in
 `Enable-OPIMDirectoryRole` and `Wait-OPIMDirectoryRole`), and the three `*-OPIMAzureRole` cmdlets
 pass `-IncludeARM`. `Connect-OPIM` resolves `-TenantAlias` from `TenantMap.psd1` and passes its
-`-TenantId`, `-IncludeARM` and `-DeviceCode` on (`Connect-OPIM.ps1:84-112`); it is an optional
+`-TenantId`, `-IncludeARM` and `-DeviceCode` on (`Connect-OPIM.ps1:85-113`); it is an optional
 pre-authentication shortcut, since every pillar cmdlet authenticates on first use.
 `Enable-OPIMMyRole` and `Disable-OPIMMyRole` call `Connect-OPIM`, handing on their own
 `-DeviceCode`, and then the pillar cmdlets. The `*-OPIMConfiguration` cmdlets do not authenticate.
@@ -592,8 +592,11 @@ their last parameter and hand it down to `Initialize-OPIMAuth`; without it nothi
   flow (`:160-166`).
 - **Azure.** `-IncludeARM` adds `-UseDeviceAuthentication` to `Connect-AzAccount`
   (`Initialize-OPIMAuth.ps1:367-369`), still with `-Tenant` unless the tenant is `organizations`.
-  The Az module writes its own message with the code to the WARNING stream; the module does not
-  capture or rewrite it.
+  The Az module writes its own message with the code -- Az.Accounts 5.5.3 as an information record
+  (`[Login to Azure] ...`), an older Az.Accounts as a warning -- and the module does not capture or
+  rewrite it. Measured live 2026-10-06: code a harness runs in the module's process while
+  `Connect-AzAccount` waits for its code does not get past its first steps, so the live harness reads
+  the Azure code from the window's console output in a separate process.
 
 **The Graph scope list is fixed -- do not change it.** One prompt covers every PIM surface
 (`Initialize-OPIMAuth.ps1:178-185`):
