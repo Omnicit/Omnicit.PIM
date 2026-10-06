@@ -22,11 +22,11 @@ package-lock.json
 # to be tracked.
 docs/superpowers/
 
-# docs/live-verification/ is where live tenant console output will be pasted in on purpose, once
-# the first live-verified change adds the folder; no rule above reaches it. Redaction is done on
-# the way INTO a checklist there, gated by tests/QA/dochygiene.tests.ps1. These two rules cover the raw
-# material that redaction is done FROM, so an unredacted transcript cannot be staged by a stray
-# `git add docs/`.
+# docs/live-verification/ is where live tenant console output is pasted in on purpose. It holds
+# the placeholder register today; the checklists arrive with the first live-verified change. No
+# rule above reaches it. Redaction is done on the way INTO a checklist there, gated by
+# tests/QA/dochygiene.tests.ps1. These two rules cover the raw material that redaction is done
+# FROM, so an unredacted transcript cannot be staged by a stray `git add docs/`.
 docs/live-verification/raw/
 docs/live-verification/*.log
 

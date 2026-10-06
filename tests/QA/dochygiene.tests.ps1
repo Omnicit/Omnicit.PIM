@@ -432,8 +432,8 @@ from `person46`, and add a row here in the same commit that uses them.
                 Ported unchanged from Omnicit.EntraRBAC's gate. The algorithm is exactly the one in
                 Test-MdAngleBrackets.py, the maintainer's checker for the live-verification notes
                 kept outside this repository, and the two must agree hit for hit on the same tree.
-                It is close to CommonMark but not the same,
-                and where they differ the script is what this follows:
+                It is close to CommonMark but not the same, and where they differ the script is
+                what this follows:
 
                 - A line that opens with optional whitespace and then three or more backticks or
                   tildes opens a fenced block. The block runs to the next such line of the same
@@ -1812,31 +1812,65 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
         # record; a word missing from CHANGELOG.md on GitHub and from the GitHub release body built
         # from it. Fenced blocks and code spans are skipped by ConvertTo-DocHygieneMarkdownProse, a
         # backslash before the bracket escapes it, and what is left must hold no tag.
+        $TagPattern = [regex]'(?<!\\)<(?=[A-Za-z/!?])[^<>\n]*>'
+        $IsNeverAllowed = {
+            param ($Value, $Entry)
+
+            $false
+        }
+
+        # R17 -- the ONE exception: README's logo. README.md's first line carries a deliberate img
+        # element, right-aligned beside the title, which Markdown image syntax cannot place. The
+        # exception admits exactly ONE tag: the first tag of the logo form on README.md line 1,
+        # which $AdmitReadmeLogo blanks out before the scan, keeping every column. Nothing else is
+        # admitted -- not a second logo-form tag on line 1, not the same tag on any later line of
+        # README.md, not the form in any other file -- so every other tag outside code fails.
+        #
+        # The logo form is an img element with exactly one src attribute, double-quoted and under
+        # assets/, that does not climb out of it with '..'. Exactly one: an assets/ path tucked
+        # inside another attribute's value, beside a real src elsewhere, must not pass for one.
+        $IsLogoForm = {
+            param ($Tag)
+
+            ($Tag -match '^<img\s(?:[^<>]*\s)?src="assets/(?![^"]*\.\.)[^"<>]+"[^<>]*>$') -and
+            ([regex]::Matches($Tag, '(?i)src\s*=').Count -eq 1)
+        }
+
+        $AdmitReadmeLogo = {
+            param ($RelativePath, [string[]]$Lines)
+
+            $Admitted = $false
+
+            if ($RelativePath -eq 'README.md' -and $Lines.Count -gt 0) {
+                foreach ($Match in $TagPattern.Matches($Lines[0])) {
+                    if (& $IsLogoForm $Match.Value) {
+                        $Lines = [string[]]$Lines.Clone()
+                        $Lines[0] = $Lines[0].Substring(0, $Match.Index) + (' ' * $Match.Length) + $Lines[0].Substring($Match.Index + $Match.Length)
+                        $Admitted = $true
+                        break
+                    }
+                }
+            }
+
+            [PSCustomObject]@{
+                Lines    = $Lines
+                Admitted = $Admitted
+            }
+        }
+
         $Prose = @(
             foreach ($Entry in $script:DocHygieneMarkdownFiles) {
                 $Converted = ConvertTo-DocHygieneMarkdownProse -Line $Entry.Lines
+                $Admission = & $AdmitReadmeLogo $Entry.RelativePath $Converted.Lines
 
                 [PSCustomObject]@{
                     RelativePath  = $Entry.RelativePath
-                    Lines         = $Converted.Lines
+                    Lines         = $Admission.Lines
                     CodeSpanCount = $Converted.CodeSpanCount
+                    LogoAdmitted  = $Admission.Admitted
                 }
             }
         )
-
-        $TagPattern = [regex]'(?<!\\)<(?=[A-Za-z/!?])[^<>\n]*>'
-
-        # R17 -- the ONE exception: README's logo. README.md's first line carries a deliberate img
-        # element, right-aligned beside the title, which Markdown image syntax cannot place. It is
-        # allowed only in README.md, only as an img element, and only with a double-quoted src under
-        # assets/ that does not climb out of it with '..'. Every other tag outside code fails --
-        # in README.md too, including an img element whose src is anywhere else.
-        $IsAllowedLogo = {
-            param ($Value, $Entry)
-
-            ($Entry.RelativePath -eq 'README.md') -and
-            ($Value -match '^<img\s(?:[^<>]*\s)?src="assets/(?![^"]*\.\.)[^"<>]+"[^<>]*>$')
-        }
 
         # Emptiness guard. Zero files means the enumeration broke, not that the prose is clean.
         $Prose.Count |
@@ -1864,15 +1898,31 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
         $CodeSpanTotal |
             Should -BeGreaterThan 0 -Because 'the scan must have removed at least one code span; zero means it reached no prose at all and the check ran on nothing'
 
-        # Known answer. A tag pattern edited into one that never matches leaves every guard above
-        # green and this check green on every file, so a fixed sample proves the scan still finds
-        # what it is for: in the first sample the bare tag on line 1 is a hit, while the code span,
-        # the escaped form and the fenced block are all skipped, and line 7 is the logo form outside
-        # README.md, which the exception does not reach.
+        # Known answer for the logo form, one tag each: the logo as README.md line 1 writes it, then
+        # an img element with its src elsewhere, an element that is not img, a src that climbs out
+        # of assets/, and an assets/ path inside another attribute's value beside a remote src.
+        # Only the first is the logo form.
+        $LogoFormSample = @(
+            '<img align="right" width="110" height="110" src="assets/icon.png">'
+            '<img src="https://example.com/icon.png">'
+            '<image src="assets/icon.png">'
+            '<img src="assets/../icon.png">'
+            '<img src="https://example.com/icon.png" title=" src="assets/icon.png">'
+        )
+
+        (@($LogoFormSample | ForEach-Object { [bool](& $IsLogoForm $_) }) -join ',') |
+            Should -Be 'True,False,False,False,False' -Because 'only the logo as README.md line 1 writes it is the logo form; anything else means the form grew to admit a src outside assets/, another element, a climbing path, or an assets/ path that is not the one src'
+
+        # Known answer for the scan. A tag pattern edited into one that never matches leaves every
+        # guard above green and this check green on every file, so a fixed sample proves the scan
+        # still finds what it is for: in the first sample the bare tag on line 1 is a hit, while
+        # the code span, the escaped form and the fenced block are all skipped, and line 7 is the
+        # logo form outside README.md, which the exception does not reach.
         #
-        # The second sample carries README.md's path, since the R17 exception keys on it. Line 1 is
-        # the logo form and is the one tag allowed; lines 2, 3 and 4 are refused -- an img element
-        # with its src elsewhere, an element that is not img, and a src that climbs out of assets/.
+        # The second sample carries README.md's path, since the exception keys on it. Line 1 is the
+        # logo form and is the one tag admitted; lines 2, 3 and 4 are refused -- an img element with
+        # its src elsewhere, an element that is not img, and a src that climbs out of assets/ -- and
+        # so is line 5, the very logo of line 1 repeated on a later line.
         $Sample = ConvertTo-DocHygieneMarkdownProse -Line @(
             'A bare <hidden> tag, a `<coded>` one and an escaped \<shown> one.'
             ''
@@ -1887,19 +1937,29 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
             'A logo from elsewhere <img src="https://example.com/icon.png"> is refused.'
             'An <image src="assets/icon.png"> element is refused.'
             'A climbing <img src="assets/../icon.png"> is refused.'
+            'The logo again <img align="right" width="110" height="110" src="assets/icon.png"> is refused.'
         )
+        $SampleAdmission = & $AdmitReadmeLogo 'sample' $Sample.Lines
+        $ReadmeAdmission = & $AdmitReadmeLogo 'README.md' $ReadmeSample.Lines
         $SampleFiles = @(
-            [PSCustomObject]@{ RelativePath = 'sample'; Lines = $Sample.Lines }
-            [PSCustomObject]@{ RelativePath = 'README.md'; Lines = $ReadmeSample.Lines }
+            [PSCustomObject]@{ RelativePath = 'sample'; Lines = $SampleAdmission.Lines }
+            [PSCustomObject]@{ RelativePath = 'README.md'; Lines = $ReadmeAdmission.Lines }
         )
-        $SampleHits = @(Get-DocHygieneMatchLocation -File $SampleFiles -Pattern $TagPattern -IsAllowed $IsAllowedLogo)
+        $SampleHits = @(Get-DocHygieneMatchLocation -File $SampleFiles -Pattern $TagPattern -IsAllowed $IsNeverAllowed)
 
         ($SampleHits -join ', ') |
-            Should -Be 'sample:1, sample:7, README.md:2, README.md:3, README.md:4' -Because 'the known-answer samples must yield exactly their bare tag and every tag the logo exception refuses; anything else means the scan stopped finding tags, stopped skipping code, or the exception grew past the one logo form in README.md'
+            Should -Be 'sample:1, sample:7, README.md:2, README.md:3, README.md:4, README.md:5' -Because 'the known-answer samples must yield exactly their bare tag and every tag the logo exception refuses; anything else means the scan stopped finding tags, stopped skipping code, or the exception grew past the one logo on README.md line 1'
 
-        $Hits = @(Get-DocHygieneMatchLocation -File $Prose -Pattern $TagPattern -IsAllowed $IsAllowedLogo)
+        # Reach guard for the exception, and its stale-entry check in one. The real README.md must
+        # have its logo admitted on line 1: if the logo left line 1, or left the logo form, the
+        # exception admits nothing, and an exception with nothing to admit is a standing permission
+        # nobody reads. Put the logo back on line 1, or drop the exception and this assertion (R17).
+        @($Prose | Where-Object { $_.RelativePath -eq 'README.md' -and $_.LogoAdmitted }).Count |
+            Should -Be 1 -Because 'the logo exception must admit the img element on README.md line 1, its one use; zero means the logo moved or changed form and the exception now admits nothing'
+
+        $Hits = @(Get-DocHygieneMatchLocation -File $Prose -Pattern $TagPattern -IsAllowed $IsNeverAllowed)
 
         @($Hits).Count |
-            Should -Be 0 -Because ('no tracked .md under docs/ or specs/, and neither README.md nor CHANGELOG.md, may hold an angle bracket outside code that GitHub would render as an HTML tag: it is shown as nothing, so a redacted stand-in vanishes from the record. Put the token inside backticks, or write it with a backslash before the bracket where a backtick would close a code span the line already has (see docs/live-verification/README.md). In CHANGELOG.md use backticks only -- the Gallery shows its notes as plain text, where a backslash would show instead of escaping anything. An autolink or deliberate HTML is refused the same way: write a bare URL, or put the markup in backticks. The one exception is the logo img element in README.md whose src is under assets/. Locations, values deliberately not shown: {0}' -f ($Hits -join ', '))
+            Should -Be 0 -Because ('no tracked .md under docs/ or specs/, and neither README.md nor CHANGELOG.md, may hold an angle bracket outside code that GitHub would render as an HTML tag: it is shown as nothing, so a redacted stand-in vanishes from the record. Put the token inside backticks, or write it with a backslash before the bracket where a backtick would close a code span the line already has (see docs/live-verification/README.md). In CHANGELOG.md use backticks only -- the Gallery shows its notes as plain text, where a backslash would show instead of escaping anything. An autolink or deliberate HTML is refused the same way: write a bare URL, or put the markup in backticks. The one exception is the logo img element on README.md line 1, whose one src is under assets/. Locations, values deliberately not shown: {0}' -f ($Hits -join ', '))
     }
 }

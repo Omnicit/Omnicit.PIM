@@ -216,14 +216,15 @@ wrapped by console output over two lines is not caught; redact as you write.
 disagrees with itself, on the defects listed in the register's own section, and when a placeholder
 used in `source/`, `tests/`, `README.md` or `CHANGELOG.md` -- an all-zeros object id or a
 `personN@example.com` address -- does not fall in a row marked taken. A reserved or FREE slot counts
-as unregistered. A row that names a range, such as `...001` - `...005`, covers only a tail made of
-three decimal digits, within its bounds read as decimal numbers, so `...00a` is not covered by it;
-a row that names one placeholder covers exactly that tail, letters included. Where it checks the
-register against itself, it orders the three characters after `...` as hexadecimal. It reads a
-status cell as FREE when it says FREE, as taken when it starts with "taken", and as reserved
-otherwise. A row it reads only partly is reported. A row whose first cell holds no well-formed
-backticked `...` or `person` token is taken for a header row and grants nothing, and a table left
-without its FREE row is reported.
+as unregistered. A row that names a range covers only a tail made of three decimal digits, within
+its bounds read as decimal numbers: a row `...010` - `...020` would cover `...015`, but not
+`...01a`, although `...01a` lies inside that range read as hexadecimal. A row that names one
+placeholder covers exactly that tail, letters included. Where it checks the register against
+itself, it orders the three characters after `...` as hexadecimal. It reads a status cell as FREE
+when it says FREE, as taken when it starts with "taken", and as reserved otherwise. A row it reads
+only partly is reported. A row whose first cell holds no well-formed backticked `...` or `person`
+token is taken for a header row and grants nothing, and a table left without its FREE row is
+reported.
 
 **A stand-in in angle brackets is written as code.** GitHub reads `<id>`, `<tenant-label>` or any
 other `<word>` outside code as an HTML tag and renders nothing, so the redaction disappears from the
@@ -233,8 +234,9 @@ page and the sentence around it stops making sense. Put the stand-in inside back
 backslash would show instead of escaping anything. The same gate fails on such a bracket in any
 tracked `.md` under `docs/` or `specs/`, and in `README.md` and `CHANGELOG.md`. Fenced blocks and
 code spans are skipped. Exactly one tag outside code is allowed: the logo on the first line of
-`README.md`, an `<img>` element whose `src` is under `assets/`. Any other tag fails, in `README.md`
-too.
+`README.md`, the first `<img>` element there whose one `src` is under `assets/`. The same tag on any
+later line fails, and so does every other tag, in `README.md` too. If the logo leaves line 1, the
+gate fails until it is put back or the exception is dropped.
 
 The gate is a backstop, not a substitute for redacting as you write. It cannot see the one failure
 the register above exists to prevent -- one registered placeholder given to two different objects --
