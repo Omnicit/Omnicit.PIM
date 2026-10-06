@@ -1,4 +1,4 @@
-﻿function Enable-OPIMEntraIDGroup {
+function Enable-OPIMEntraIDGroup {
     <#
     .SYNOPSIS
     Activate an eligible PIM group membership or ownership.

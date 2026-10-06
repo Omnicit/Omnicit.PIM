@@ -1,7 +1,16 @@
+BeforeAll {
+    Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
+    Import-Module Omnicit.PIM -Force
+    . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
+    Install-OPIMTransportTripwire
+}
+
+AfterAll {
+    try { Assert-OPIMTransportTripwire } finally { Uninstall-OPIMTransportTripwire }
+}
+
 Describe 'Install-OPIMConfiguration' {
     BeforeAll {
-        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-        Import-Module Omnicit.PIM -Force
         Mock -ModuleName Omnicit.PIM Write-Host { }
         Mock -ModuleName Omnicit.PIM Set-Content { }
         Mock -ModuleName Omnicit.PIM New-Item { }
@@ -12,7 +21,6 @@ Describe 'Install-OPIMConfiguration' {
     }
     AfterAll {
         $null = $PSDefaultParameterValues.Remove('Install-OPIMConfiguration:Confirm')
-        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
     }
 
     Context 'When creating a new tenant alias with no existing TenantMap file' {

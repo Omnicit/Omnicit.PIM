@@ -1,12 +1,15 @@
-Describe 'Get-OPIMDirectoryRole' {
-    BeforeAll {
-        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-        Import-Module Omnicit.PIM -Force
-    }
-    AfterAll {
-        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
-    }
+BeforeAll {
+    Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
+    Import-Module Omnicit.PIM -Force
+    . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
+    Install-OPIMTransportTripwire
+}
 
+AfterAll {
+    try { Assert-OPIMTransportTripwire } finally { Uninstall-OPIMTransportTripwire }
+}
+
+Describe 'Get-OPIMDirectoryRole' {
     Context 'When called with default parameters (eligible roles, root scope)' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

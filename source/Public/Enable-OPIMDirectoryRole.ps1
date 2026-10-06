@@ -1,4 +1,4 @@
-﻿function Enable-OPIMDirectoryRole {
+function Enable-OPIMDirectoryRole {
     <#
     .SYNOPSIS
     Activate an Azure AD PIM eligible directory role.

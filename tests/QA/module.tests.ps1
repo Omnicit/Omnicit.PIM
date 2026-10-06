@@ -488,6 +488,23 @@ Describe 'Quality for module' -Tags 'TestQuality' {
                 throw 'ScriptAnalyzer not found!'
             }
         }
+
+        <#
+            The [OutputType] gate below is scoped to the EXPORTED functions only. $testCases holds
+            every function the module defines, private helpers included, which is right for the two
+            checks that stay on it (a unit test file, a clean Script Analyzer run). CLAUDE.md asks
+            for [OutputType] on "every function that returns type-tagged objects", and that rule is
+            about the public surface: a private helper must not start failing this gate.
+
+            The export list comes from $mut.ExportedFunctions, the module the first BeforeDiscovery
+            in this file already imported, so it is the module system's own resolved export list and
+            needs neither a second manifest read nor a source path. The set is case-insensitive, and
+            $exportedTestCases is filtered out of $testCases so it can never drift from the set the
+            two older checks run against.
+        #>
+        $exportedFunctionNames = [System.Collections.Generic.HashSet[string]]::new(
+            [string[]]$mut.ExportedFunctions.Keys, [System.StringComparer]::OrdinalIgnoreCase)
+        $exportedTestCases = @($testCases | Where-Object { $exportedFunctionNames.Contains($_.Name) })
     }
 
     It 'Should have a unit test for <Name>' -ForEach $testCases {
@@ -501,6 +518,57 @@ Describe 'Quality for module' -Tags 'TestQuality' {
         $report = $pssaResult | Format-Table -AutoSize | Out-String -Width 110
         $pssaResult | Should -BeNullOrEmpty -Because `
             "some rule triggered.`r`n`r`n $report"
+    }
+
+    It 'Should discover every exported function for the [OutputType] gate' -ForEach @(@{ DiscoveredNames = @($exportedTestCases | ForEach-Object { $_.Name }) }) {
+        <#
+            The [OutputType] gate below runs one It per discovered case, and an empty -ForEach
+            generates NO It. Whether that is an error depends on the Pester version and its
+            Run.FailOnNullOrEmptyForEach setting (Pester 6.2.0, measured, fails the whole container
+            with an unnamed error; a setting that allows it passes on nothing). This check holds the
+            discovered set against the SOURCE manifest's explicit FunctionsToExport -- a read that
+            does not go through the module under test -- so an empty or short set is a named red
+            gate here whichever way that setting falls.
+        #>
+        $manifest = Import-PowerShellDataFile -Path (
+            Join-Path -Path $sourcePath -ChildPath "$($script:moduleName).psd1")
+        $expectedNames = @($manifest.FunctionsToExport)
+
+        $expectedNames.Count | Should -BeGreaterThan 0 -Because 'the source manifest must list the exported functions; zero would make the comparison below vacuous'
+
+        $missingNames = @($expectedNames | Where-Object { $DiscoveredNames -notcontains $_ })
+        @($DiscoveredNames).Count | Should -Be $expectedNames.Count -Because (
+            'the [OutputType] gate must run for every exported function; it discovered {0} of {1}. Not discovered: {2}' -f
+            @($DiscoveredNames).Count, $expectedNames.Count, ($missingNames -join ', '))
+    }
+
+    It 'Should declare an [OutputType(...)] for <Name>' -ForEach $exportedTestCases {
+        <#
+            Every exported function must declare [OutputType(...)]: [PSCustomObject] for a cmdlet
+            that returns type-tagged objects, [void] for one that emits nothing. The check reads
+            the attribute from the PARAM BLOCK's own Attributes collection -- an [OutputType()]
+            written before param(...) attaches there, not to the FunctionDefinitionAst -- so it
+            does not care which line the attribute sits on, only that it is declared. The file
+            lookup and parse are the ones the help checks below use.
+        #>
+        $functionFile = Get-ChildItem -Path $sourcePath -Recurse -Include "$Name.ps1"
+
+        $scriptFileRawContent = Get-Content -Raw -Path $functionFile.FullName
+
+        $abstractSyntaxTree = [System.Management.Automation.Language.Parser]::ParseInput($scriptFileRawContent, [ref] $null, [ref] $null)
+
+        $astSearchDelegate = { $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }
+
+        $parsedFunction = $abstractSyntaxTree.FindAll( $astSearchDelegate, $true ) |
+            Where-Object -FilterScript {
+                $_.Name -eq $Name
+            }
+
+        $outputTypeAttribute = @($parsedFunction.Body.ParamBlock.Attributes) |
+            Where-Object { $_.TypeName.Name -eq 'OutputType' }
+
+        $outputTypeAttribute | Should -Not -BeNullOrEmpty -Because (
+            "$Name must declare [OutputType([PSCustomObject])] for tagged output or [OutputType([void])] when it emits nothing, beside its [CmdletBinding(...)]")
     }
 }
 
@@ -588,6 +656,69 @@ Describe 'Help for module' -Tags 'helpQuality' {
             $functionHelp.Parameters.($parameter.ToUpper()) | Should -Not -BeNullOrEmpty -Because ('the parameter {0} must have a description' -f $parameter)
             $functionHelp.Parameters.($parameter.ToUpper()).Length | Should -BeGreaterThan 25 -Because ('the parameter {0} must have descriptive description' -f $parameter)
         }
+    }
+}
+
+Describe 'README documentation' -Tags 'helpQuality' {
+    BeforeAll {
+        $script:readmePath = Join-Path -Path $projectPath -ChildPath 'README.md'
+        $script:readmeText = if (Test-Path -Path $script:readmePath)
+        {
+            Get-Content -Path $script:readmePath -Raw
+        }
+        else
+        {
+            ''
+        }
+
+        $manifest = Import-PowerShellDataFile -Path (
+            Join-Path -Path $sourcePath -ChildPath "$($script:moduleName).psd1")
+        $script:exportedNames = @($manifest.FunctionsToExport)
+
+        <#
+            The names README may use are the exported functions AND the exported aliases. Two of the
+            aliases, Enable-OPIMMyRoles and Disable-OPIMMyRoles, have the same Verb-OPIMNoun shape
+            as a cmdlet and README names them on purpose, so a check that knew only the functions
+            would call them unknown. The other aliases (pim, unpim, Connect-PIM, ...) do not match
+            the Verb-OPIM pattern and need no entry, but listing them all keeps the rule simple.
+        #>
+        $script:knownNames = $script:exportedNames + @($manifest.AliasesToExport)
+    }
+
+    It 'Should exist at the repository root' {
+        Test-Path -Path $script:readmePath | Should -BeTrue
+    }
+
+    It 'Should document every exported cmdlet' {
+        <#
+            An exported cmdlet counts as documented when README names it as a whole word and not as
+            a wildcard family form (Get-OPIM*), which names no command. The whole-word boundary
+            also keeps the alias Enable-OPIMMyRoles from standing in for Enable-OPIMMyRole.
+        #>
+        $script:exportedNames | Should -Not -BeNullOrEmpty -Because 'the manifest must list FunctionsToExport for this check to measure anything'
+
+        $missing = $script:exportedNames | Where-Object {
+            $script:readmeText -notmatch ('(?m)\b{0}\b(?!\*)' -f [regex]::Escape($_))
+        }
+
+        $missing | Should -BeNullOrEmpty -Because (
+            'README.md must name every cmdlet in FunctionsToExport; missing: {0}' -f ($missing -join ', '))
+    }
+
+    It 'Should not name a function that does not exist' {
+        <#
+            The pattern is a Verb-OPIMNoun token. The verb part is [A-Za-z]+ so a verb with an inner
+            capital (ConvertTo-) is matched, and the negative lookahead skips a family form written
+            with a trailing asterisk (Get-OPIM*, Enable-OPIM*), which names no single command.
+        #>
+        $named = [regex]::Matches($script:readmeText, '\b[A-Z][A-Za-z]+-OPIM[A-Za-z]*\b(?!\*)') |
+            ForEach-Object { $_.Value } | Sort-Object -Unique
+        $named | Should -Not -BeNullOrEmpty -Because 'README.md must name the module cmdlets'
+
+        $unknown = $named | Where-Object { $_ -notin $script:knownNames }
+
+        $unknown | Should -BeNullOrEmpty -Because (
+            'every Verb-OPIM name in README.md must resolve to an exported function or alias; unknown: {0}' -f ($unknown -join ', '))
     }
 }
 

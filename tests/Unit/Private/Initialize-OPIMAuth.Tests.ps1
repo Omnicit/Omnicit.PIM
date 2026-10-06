@@ -1,12 +1,15 @@
-﻿Describe 'Initialize-OPIMAuth' {
-    BeforeAll {
-        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-        Import-Module Omnicit.PIM -Force
-    }
-    AfterAll {
-        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
-    }
+BeforeAll {
+    Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
+    Import-Module Omnicit.PIM -Force
+    . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
+    Install-OPIMTransportTripwire
+}
 
+AfterAll {
+    try { Assert-OPIMTransportTripwire } finally { Uninstall-OPIMTransportTripwire }
+}
+
+Describe 'Initialize-OPIMAuth' {
     Context 'When auth state is already cached for the same tenant with a valid token' {
         BeforeAll {
             InModuleScope Omnicit.PIM {
@@ -167,6 +170,7 @@
                     ClaimsSatisfied  = $false
                 }
                 Mock Get-AzContext { return $null }
+                Mock Update-AzConfig {}
                 Mock Connect-AzAccount {}
                 Mock Get-OPIMMsalApplication {}
                 Mock Connect-MgGraph {}
@@ -225,7 +229,7 @@
                     GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
                     ClaimsSatisfied  = $false
                 }
-                # Return value inlined — $FakeAzCtx is a local variable in the BeforeAll
+                # Return value inlined -- $FakeAzCtx is a local variable in the BeforeAll
                 # scriptblock and is not accessible inside a mock body (late-binding scope).
                 Mock Get-AzContext {
                     return [PSCustomObject]@{
@@ -270,7 +274,7 @@
                     GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
                     ClaimsSatisfied  = $false
                 }
-                # Return value inlined — BeforeAll locals are not visible inside mock bodies.
+                # Return value inlined -- BeforeAll locals are not visible inside mock bodies.
                 Mock Get-AzContext {
                     return [PSCustomObject]@{
                         Tenant  = [PSCustomObject]@{ Id  = 'contoso.onmicrosoft.com' }
@@ -280,6 +284,7 @@
                 # A stale autosaved context resurfaces for the right tenant, but the underlying
                 # token has expired / needs an interactive step-up: silent token minting fails.
                 Mock Get-AzAccessToken { throw [System.Exception]::new('interaction required') }
+                Mock Update-AzConfig {}
                 Mock Connect-AzAccount {}
                 Mock Get-OPIMMsalApplication {}
                 Mock Connect-MgGraph {}
@@ -307,6 +312,7 @@
                     ClaimsSatisfied  = $false
                 }
                 Mock Get-AzContext { return $null }
+                Mock Update-AzConfig {}
                 Mock Connect-AzAccount { throw [System.Exception]::new('Azure auth failure') }
                 Mock Get-OPIMMsalApplication {}
                 Mock Connect-MgGraph {}

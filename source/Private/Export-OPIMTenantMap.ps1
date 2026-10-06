@@ -1,4 +1,4 @@
-﻿function Export-OPIMTenantMap {
+function Export-OPIMTenantMap {
     <#
     .SYNOPSIS
     Serializes a TenantMap hashtable to PSD1 format and writes it to disk.

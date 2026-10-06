@@ -1,4 +1,4 @@
-﻿function Invoke-OPIMGraphRequest {
+function Invoke-OPIMGraphRequest {
     <#
     .SYNOPSIS
     Wraps Invoke-MgGraphRequest with bearer-token security, ACRS claims-challenge handling,
@@ -22,7 +22,7 @@
 
     3. Error conversion: non-claims errors are run through Convert-GraphHttpException to
        produce structured ErrorRecord objects with the Graph error.code as the
-       FullyQualifiedErrorId. The caller receives either a response or a thrown ErrorRecord —
+       FullyQualifiedErrorId. The caller receives either a response or a thrown ErrorRecord --
        no _AcrsError hashtable protocol.
 
     .PARAMETER Method
@@ -51,7 +51,7 @@
         [hashtable]$Body
     )
 
-    # ── Helper: extract claims from a Graph failure ──────────────────────────
+    # -- Helper: extract claims from a Graph failure --------------------------
     # Two distinct encodings must be handled:
     #   1. 401 WWW-Authenticate step-up: claims="<base64url-encoded JSON>" (quoted).
     #   2. PIM 400 RoleAssignmentRequestAcrsValidationFailed: the response body carries
@@ -97,7 +97,7 @@
         return $null
     }
 
-    # ── First attempt ─────────────────────────────────────────────────────────
+    # -- First attempt ---------------------------------------------------------
     $InvokeParams = @{
         Method      = $Method
         Uri         = $Uri
@@ -115,7 +115,7 @@
         $FirstError = $PSItem
     }
 
-    # ── Check for ACRS claims challenge on the first failure ──────────────────
+    # -- Check for ACRS claims challenge on the first failure ------------------
     # No session-sticky guard: this function retries at most once per call (the retry block
     # below has no loop and a second failure throws), so each command can step up as needed.
     $ClaimsJson = Get-ClaimsFromException $FirstError
@@ -127,7 +127,7 @@
         $TenantId = $script:_OPIMAuthState.TenantId
         Initialize-OPIMAuth -TenantId $TenantId -ClaimsChallenge $ClaimsJson
 
-        # ── Retry once with the upgraded token ────────────────────────────────
+        # -- Retry once with the upgraded token --------------------------------
         try {
             return Invoke-MgGraphRequest @InvokeParams
         } catch {
@@ -136,7 +136,7 @@
         }
     }
 
-    # ── Token rejected/expired (not a claims challenge) — re-auth and retry ───
+    # -- Token rejected/expired (not a claims challenge) -- re-auth and retry ---
     # A 401 here means the bearer token is invalid or expired (claims challenges were already
     # handled above). Force a token refresh (MSAL refresh-token path, usually no prompt) and
     # retry once instead of surfacing the failure.
@@ -156,6 +156,6 @@
         }
     }
 
-    # ── Not recoverable — convert and re-throw ────────────────────────────────
+    # -- Not recoverable -- convert and re-throw --------------------------------
     throw Convert-GraphHttpException $FirstError
 }

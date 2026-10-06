@@ -1,4 +1,4 @@
-﻿using namespace System.Xml
+using namespace System.Xml
 
 #requires -module Az.Resources
 function Enable-OPIMAzureRole {
@@ -49,6 +49,7 @@ function Enable-OPIMAzureRole {
     #>
     [Alias('Enable-PIMResourceRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
+    [OutputType([PSCustomObject])]
     param(
         [Parameter(ParameterSetName = 'RoleObject', Mandatory, ValueFromPipeline)]
         $Role,

@@ -1,4 +1,4 @@
-﻿using namespace System.Collections.Generic
+using namespace System.Collections.Generic
 function Set-OPIMConfiguration {
     <#
     .SYNOPSIS
@@ -121,13 +121,13 @@ function Set-OPIMConfiguration {
 
         Write-Verbose "Updating tenant alias '$TenantAlias' in $TenantMapPath"
 
-        # ── Get tenant display name for the confirmation prompt (best-effort) ───
+        # -- Get tenant display name for the confirmation prompt (best-effort) ---
         $TenantInfo = Get-OPIMCurrentTenantInfo
         $TenantDisplayName = if ($TenantInfo.DisplayName) { $TenantInfo.DisplayName } else { 'N/A' }
 
         $MapData[$TenantAlias] = $Entry
 
-        if ($PSCmdlet.ShouldProcess($TenantMapPath, "Update alias '$TenantAlias' → tenant '$TenantDisplayName' ($ResolvedTenantId)")) {
+        if ($PSCmdlet.ShouldProcess($TenantMapPath, "Update alias '$TenantAlias' -> tenant '$TenantDisplayName' ($ResolvedTenantId)")) {
             Export-OPIMTenantMap -MapData $MapData -Path $TenantMapPath
             Write-Information "Updated tenant alias '$TenantAlias' in $TenantMapPath"
         }

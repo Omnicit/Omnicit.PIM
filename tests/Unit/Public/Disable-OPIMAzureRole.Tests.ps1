@@ -1,12 +1,15 @@
-Describe 'Disable-OPIMAzureRole' {
-    BeforeAll {
-        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-        Import-Module Omnicit.PIM -Force
-    }
-    AfterAll {
-        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
-    }
+BeforeAll {
+    Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
+    Import-Module Omnicit.PIM -Force
+    . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
+    Install-OPIMTransportTripwire
+}
 
+AfterAll {
+    try { Assert-OPIMTransportTripwire } finally { Uninstall-OPIMTransportTripwire }
+}
+
+Describe 'Disable-OPIMAzureRole' {
     Context 'When called with -RoleName (happy path)' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

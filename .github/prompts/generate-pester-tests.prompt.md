@@ -41,21 +41,15 @@ Identify:
 
 - Output path: `tests/Unit/Public/${input:functionName}.Tests.ps1`
 - **One `Describe` block** per file; name must match the function exactly.
-- `BeforeAll` at the `Describe` level imports the module **by name** (never by path -- coverage is measured against the built module); `AfterAll` removes it.
+- The file opens with the root form -- a root `BeforeAll` that imports the module **by name** and installs the transport tripwire, and a root `AfterAll` that checks and removes it -- copied verbatim from CLAUDE.md, section "Testing Conventions"; `tests/QA/testhygiene.tests.ps1` fails a file without it.
 - Use `Context` blocks to group scenarios; use `BeforeAll` inside each `Context` for shared arrangement.
 - Use `BeforeEach` only when state must reset per `It`.
 - `It` descriptions start with a third-person singular verb: *calls*, *returns*, *writes*, *throws*.
 
 ```powershell
-Describe '${input:functionName}' {
-    BeforeAll {
-        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-        Import-Module Omnicit.PIM -Force
-    }
-    AfterAll {
-        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
-    }
+# The root BeforeAll and AfterAll from CLAUDE.md, "Testing Conventions", go here.
 
+Describe '${input:functionName}' {
     Context 'When called with default parameters (happy path)' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
@@ -92,7 +86,7 @@ Include **all** that apply to the target function:
 | `-Until` overrides `-Hours` | `Enable-*` functions |
 | Policy validation errors (`JustificationRule`, `ExpirationRule`) | `Enable-*` functions |
 | `ActiveDurationTooShort` error | `Disable-*` functions |
-| `-PassThru` switch | `Wait-OPIMDirectoryRole` (skipped today -- reaches the real transport; see CLAUDE.md Testing Conventions) |
+| `-PassThru` switch | `Wait-OPIMDirectoryRole` (skipped today; see CLAUDE.md Testing Conventions) |
 
 ### Mocking -- authentication
 

@@ -1,12 +1,15 @@
-﻿Describe 'ConvertTo-OPIMMyRoleResult' {
-    BeforeAll {
-        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-        Import-Module Omnicit.PIM -Force
-    }
-    AfterAll {
-        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
-    }
+BeforeAll {
+    Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
+    Import-Module Omnicit.PIM -Force
+    . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
+    Install-OPIMTransportTripwire
+}
 
+AfterAll {
+    try { Assert-OPIMTransportTripwire } finally { Uninstall-OPIMTransportTripwire }
+}
+
+Describe 'ConvertTo-OPIMMyRoleResult' {
     Context 'When a DirectoryAssignmentScheduleRequest is piped in' {
         It 'returns an object tagged with Omnicit.PIM.MyRoleResult' {
             InModuleScope Omnicit.PIM {

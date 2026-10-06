@@ -5,7 +5,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes to the module since 0.5.1. A preview published from this point differs from 0.5.1 only in documentation, tests or the build.
+The module's source files are now plain ASCII without a byte-order mark. A few progress and confirmation messages and some help text show `--` and `->` where they used to show a typographic dash or arrow; nothing else about how the module behaves has changed. `Get-Help about_Omnicit.PIM` now lists every command by area, and new automated checks keep the unit tests away from any real tenant and keep identifiers and credentials out of the documentation.
 
 ## [0.5.1] - 2026-05-29
 

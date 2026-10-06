@@ -52,10 +52,10 @@ If that fails with `Requested value 'V2' was not found` (a PSResourceGet compati
   for an internal helper.
 - **Public functions are listed explicitly in `FunctionsToExport`** in `source/Omnicit.PIM.psd1`
   -- never `*`.
-- **New files are UTF-8 without BOM and ASCII-only, and so is every new or edited line in an
-  existing file.** No em-dashes, no smart quotes, no box-drawing characters. Use `--` for an
-  em-dash and straight quotes only. Some older files still hold non-ASCII characters; a gate for
-  this is planned, so review is what holds the rule until it lands.
+- **Every `.ps1`, `.psd1`, `.psm1` and `.ps1xml` file under `source/` and `tests/` is UTF-8
+  without BOM and ASCII-only.** No em-dashes, no smart quotes, no box-drawing characters. Use `--`
+  for an em-dash and straight quotes only. `tests/QA/sourcehygiene.tests.ps1` fails the test run on
+  a BOM or a non-ASCII byte in any of them. See `CLAUDE.md` "CRITICAL: ASCII-Only Source Files".
 - **PSScriptAnalyzer must report zero findings per function file.** A targeted suppression is only
   acceptable with a `Justification` string, for a known false positive -- never to hide a real
   finding.
@@ -66,18 +66,12 @@ If that fails with `Requested value 'V2' was not found` (a PSResourceGet compati
   `tests/Unit/{Classes,Private,Public}/` -- except the six completer classes, which share
   `tests/Unit/Classes/ArgumentCompleters.Tests.ps1`. The build resolves the newest Pester. The QA
   gate requires a unit test file for every function the module defines.
-- **Import the module by name, not by path**, in the root `BeforeAll`:
-  ```powershell
-  BeforeAll {
-      Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-      Import-Module Omnicit.PIM -Force
-  }
-
-  AfterAll {
-      Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
-  }
-  ```
-  Importing by path breaks the Sampler coverage measurement, which targets the built module.
+- **Open every unit test file with the root form** from `CLAUDE.md` "Testing Conventions" -- copy
+  the block from there. Its root `BeforeAll` imports the module by name, not by path (importing by
+  path breaks the Sampler coverage measurement, which targets the built module), and then installs
+  the transport tripwire; its root `AfterAll` checks the tripwire and removes it.
+  `tests/QA/testhygiene.tests.ps1` fails a unit test file that does not wire the tripwire in that
+  way.
 - **Mock at the module boundary**, with `Mock -ModuleName Omnicit.PIM`: `Initialize-OPIMAuth` in
   every test that touches auth, Graph, or Azure, and the module's own transport wrapper,
   `Invoke-OPIMGraphRequest`, rather than the `Invoke-MgGraphRequest` call beneath it. Mock the
@@ -86,11 +80,12 @@ If that fails with `Requested value 'V2' was not found` (a PSResourceGet compati
   Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
   Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest { @{ value = @() } }
   ```
-  Nothing in CI or in tests authenticates for real. Never run the unit tests in a pwsh session
-  that already holds a Graph context (after `Connect-MgGraph` or `Connect-OPIM`) -- start a fresh
-  process. A transport tripwire that fails a test reaching the real transport is planned, not yet
-  in this repository; until it lands, review is what catches a missing mock. See `CLAUDE.md`
-  "Testing Conventions".
+  Nothing in CI or in tests authenticates for real. A missing mock is caught by the transport
+  tripwire: it records and refuses any unmocked call that reaches a real transport command, such
+  as `Invoke-MgGraphRequest`, `Connect-AzAccount` or an `Az.Resources` schedule command, and fails
+  the test file. Inside a `ForEach-Object -Parallel` block, where no mock reaches, register a
+  stand-in response instead. Run the tests in a fresh pwsh process. See `CLAUDE.md` "Testing
+  Conventions".
 
 ## Everything else
 

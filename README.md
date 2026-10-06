@@ -331,7 +331,7 @@ the role/group arrays are optional — omit them and `pim` will activate **all**
     'corp' = @{
         TenantId       = 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
         DirectoryRoles = @('e8611ab8-c189-46e8-94e1-60213ab1f814')   # roleDefinitionId
-        EntraIDGroups  = @('75b93f19-07b0-4d87-8b7f-6bd04d79f023_member')  # groupId_accessId
+        EntraIDGroups  = @('00000000-0000-0000-0000-000000000006_member')  # groupId_accessId
         AzureRoles     = @('schedule-name-from-get-opimazurerole')
     }
     # Alias 'partner' — no role list: activates ALL eligible items at login
@@ -463,6 +463,45 @@ pim -TenantAlias corp -Hours 8 -Justification 'Daily operations'
 # Activate everything eligible in partner tenant (no stored role list)
 pim -TenantAlias partner -Hours 2 -Justification 'Partner review'
 ```
+
+---
+
+## Available Cmdlets
+
+Every exported cmdlet is listed once below, grouped by the surface it works on, with the number
+of cmdlets in each group. The groups are for orientation only. Run
+`Get-Command -Module Omnicit.PIM` for the live list; the `PIM`-prefixed spellings of these names
+are under [Short Aliases](#short-aliases).
+
+### Directory roles (4)
+
+- `Get-OPIMDirectoryRole` -- lists your eligible directory roles; `-Activated` lists the active ones and `-All` both.
+- `Enable-OPIMDirectoryRole` -- activates an eligible directory role, for 1 hour unless `-Hours` or `-Until` says otherwise.
+- `Disable-OPIMDirectoryRole` -- deactivates an active directory role.
+- `Wait-OPIMDirectoryRole` -- waits for a directory role activation request to finish provisioning.
+
+### Groups (3)
+
+- `Get-OPIMEntraIDGroup` -- lists your eligible PIM for Groups assignments, membership and ownership; `-Activated` and `-All` work as above.
+- `Enable-OPIMEntraIDGroup` -- activates an eligible group membership or ownership.
+- `Disable-OPIMEntraIDGroup` -- deactivates an active group membership or ownership.
+
+### Azure roles (3)
+
+- `Get-OPIMAzureRole` -- lists your eligible Azure resource roles, at the root scope unless `-Scope` names another; `-Activated` and `-All` work as above.
+- `Enable-OPIMAzureRole` -- activates an eligible Azure resource role.
+- `Disable-OPIMAzureRole` -- deactivates an active Azure resource role.
+
+### Sign-in and configuration (8)
+
+- `Connect-OPIM` (alias `Connect-PIM`) -- signs in to Microsoft Graph, and to Azure with `-IncludeARM`; optional, since every cmdlet signs in on first use.
+- `Disconnect-OPIM` (alias `Disconnect-PIM`) -- clears the cached tokens and disconnects from Microsoft Graph and Azure.
+- `Install-OPIMConfiguration` -- creates a tenant alias in `TenantMap.psd1`.
+- `Get-OPIMConfiguration` -- reads the tenant aliases in `TenantMap.psd1`.
+- `Set-OPIMConfiguration` -- updates an existing tenant alias.
+- `Remove-OPIMConfiguration` -- removes a tenant alias.
+- `Enable-OPIMMyRole` (alias `pim`) -- connects with `Connect-OPIM`, then activates the roles and groups stored for a tenant alias in the tenant map, or every eligible one with an `-AllEligible` switch.
+- `Disable-OPIMMyRole` (alias `unpim`) -- connects with `Connect-OPIM`, then deactivates the roles and groups stored for a tenant alias in the tenant map, or every active one with an `-AllActivated` switch.
 
 ---
 

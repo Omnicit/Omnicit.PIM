@@ -1,12 +1,15 @@
-﻿Describe 'Invoke-OPIMGraphRequest' {
-    BeforeAll {
-        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-        Import-Module Omnicit.PIM -Force
-    }
-    AfterAll {
-        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
-    }
+BeforeAll {
+    Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
+    Import-Module Omnicit.PIM -Force
+    . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
+    Install-OPIMTransportTripwire
+}
 
+AfterAll {
+    try { Assert-OPIMTransportTripwire } finally { Uninstall-OPIMTransportTripwire }
+}
+
+Describe 'Invoke-OPIMGraphRequest' {
     Context 'When the request succeeds on the first attempt' {
         BeforeAll {
             InModuleScope Omnicit.PIM {
@@ -97,7 +100,7 @@
                 Mock Invoke-MgGraphRequest {
                     $script:_CallCount++
                     if ($script:_CallCount -eq 1) {
-                                # Embed claims challenge in the message — the implementation's fallback path
+                                # Embed claims challenge in the message -- the implementation's fallback path
                         $Ex = [System.Net.Http.HttpRequestException]::new(
                             'Bearer realm="00000003-0000-0000-c000-000000000000", claims="eyJhY3JzIjpbImMxIl19", error="insufficient_claims"'
                         )

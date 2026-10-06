@@ -1,4 +1,4 @@
-﻿function Initialize-OPIMAuth {
+function Initialize-OPIMAuth {
     <#
     .SYNOPSIS
     The single authentication entry point for Omnicit.PIM. Acquires a Graph token via MSAL.NET,
@@ -12,9 +12,9 @@
     or showing any browser prompt.
 
     Graph token acquisition order:
-      1. AcquireTokenSilent — uses the MSAL in-memory cache (refresh token).
+      1. AcquireTokenSilent -- uses the MSAL in-memory cache (refresh token).
          Falls through to interactive only on MsalUiRequiredException.
-      2. AcquireTokenInteractive — opens the system browser exactly once.
+      2. AcquireTokenInteractive -- opens the system browser exactly once.
          If a ClaimsChallenge string is supplied the interactive call chains
          .WithClaims() so the step-up happens in the same single browser window.
 
@@ -23,7 +23,7 @@
     and may open its own browser window on first use. Subsequent calls reuse the Az module's
     cached context (checked via Get-AzContext) without any browser prompt.
 
-    Graph auth and Azure auth are intentionally independent — the Microsoft Graph Command Line
+    Graph auth and Azure auth are intentionally independent -- the Microsoft Graph Command Line
     Tools app registration (used by MSAL here) is not authorised for Azure Resource Manager.
 
     .PARAMETER TenantId
@@ -69,11 +69,11 @@
     # Resolve effective tenant; fall back to 'organizations' when caller supplies nothing.
     [string]$EffectiveTenant = if ($TenantId) { $TenantId } else { 'organizations' }
 
-    # ── Idempotency check ─────────────────────────────────────────────────────
+    # -- Idempotency check -----------------------------------------------------
     # Graph: cached token is valid for at least 5 more minutes, same tenant, no new claims
     # challenge.
     # Azure: only checked when -IncludeARM is specified. Get-AzContext returning a context
-    # for the right tenant means the Az module already has an active connection — no browser
+    # for the right tenant means the Az module already has an active connection -- no browser
     # prompt will be needed.
     $FiveMinutesFromNow = [DateTime]::UtcNow.AddMinutes(5)
     [bool]$GraphCached = $script:_OPIMAuthState -and
@@ -82,7 +82,7 @@
                          -not $ForceRefresh -and
                          $script:_OPIMAuthState.GraphTokenExpiry -gt $FiveMinutesFromNow
 
-    # Fallback idempotency check via Get-MgContext — handles the case where the caller supplies
+    # Fallback idempotency check via Get-MgContext -- handles the case where the caller supplies
     # a different label for the same tenant (e.g. 'organizations' vs a specific GUID).
     # If the Graph SDK is already connected to the target tenant and the cached token hasn't
     # expired, we can skip re-authentication entirely and update the cached TenantId so that
@@ -129,13 +129,13 @@
         return
     }
 
-    # ── Graph authentication (skipped when Graph token is still valid) ────────
+    # -- Graph authentication (skipped when Graph token is still valid) --------
     if (-not $GraphCached) {
         Write-Verbose "[Initialize-OPIMAuth] Acquiring Graph token for tenant '$EffectiveTenant'. ClaimsChallenge=$(if ($ClaimsChallenge) { 'YES' } else { 'NO' })"
 
         $MsalApp = Get-OPIMMsalApplication -TenantId $EffectiveTenant
 
-        # ── Graph scopes (all PIM surfaces in one prompt) ─────────────────────
+        # -- Graph scopes (all PIM surfaces in one prompt) ---------------------
         [string[]]$GraphScopes = @(
             'RoleEligibilitySchedule.ReadWrite.Directory'
             'RoleAssignmentSchedule.ReadWrite.Directory'
@@ -159,7 +159,7 @@
 
         $AuthResult = $null
 
-        # ── Try silent acquisition first (unless we have a claims challenge) ──
+        # -- Try silent acquisition first (unless we have a claims challenge) --
         if (-not $ClaimsChallenge -and $CachedAccount) {
             Write-Verbose "[Initialize-OPIMAuth] Attempting silent token acquisition..."
             $SilentMethod = $AppType.GetMethods() |
@@ -172,7 +172,7 @@
                 } | Select-Object -First 1
 
             try {
-                # Use [object[]]::new() instead of @(, $x, $y) — the unary-comma syntax
+                # Use [object[]]::new() instead of @(, $x, $y) -- the unary-comma syntax
                 # wraps $GraphScopes in a nested object[] which the runtime cannot coerce
                 # to IEnumerable<string>.
                 $SilentArgs    = [object[]]::new(2)
@@ -193,13 +193,13 @@
                 $AuthResult    = $SilentBuilder.ExecuteAsync().GetAwaiter().GetResult()
                 Write-Verbose "[Initialize-OPIMAuth] Silent acquisition succeeded. Token expiry: $($AuthResult.ExpiresOn.UtcDateTime)"
             } catch {
-                # MsalUiRequiredException or any reflection error → fall through to interactive
+                # MsalUiRequiredException or any reflection error -> fall through to interactive
                 Write-Verbose "[Initialize-OPIMAuth] Silent acquisition failed ($($_.Exception.GetType().Name)). Falling through to interactive."
                 $AuthResult = $null
             }
         }
 
-        # ── Interactive acquisition (initial auth or ACRS step-up) ───────────
+        # -- Interactive acquisition (initial auth or ACRS step-up) -----------
         if (-not $AuthResult) {
             Write-Verbose "[Initialize-OPIMAuth] Starting interactive authentication (system browser)..."
             $InteractiveMethod = $AppType.GetMethods() |
@@ -213,7 +213,7 @@
             $InteractiveArgs[0] = $GraphScopes
             $InteractiveBuilder = $InteractiveMethod.Invoke($MsalApp, $InteractiveArgs)
 
-            # Enforce system browser — no WAM, no embedded WebView
+            # Enforce system browser -- no WAM, no embedded WebView
             $WithEmbeddedMethod = $InteractiveBuilder.GetType().GetMethod('WithUseEmbeddedWebView', [Type[]]@([bool]))
             if ($WithEmbeddedMethod) {
                 $InteractiveBuilder = $WithEmbeddedMethod.Invoke($InteractiveBuilder, @($false))
@@ -272,13 +272,13 @@
         $GraphTokenExpiry = $AuthResult.ExpiresOn.UtcDateTime
         Write-Verbose "[Initialize-OPIMAuth] Graph token acquired. Account: $($AuthResult.Account.Username). Expiry (UTC): $GraphTokenExpiry. FromCache: $($AuthResult.AuthenticationResultMetadata.TokenSource -eq 'Cache')"
 
-        # ── Wire Graph token into Connect-MgGraph ─────────────────────────────
-        # Use NetworkCredential to convert plaintext to SecureString — avoids
+        # -- Wire Graph token into Connect-MgGraph -----------------------------
+        # Use NetworkCredential to convert plaintext to SecureString -- avoids
         # PSAvoidUsingConvertToSecureStringWithPlainText PSSA rule.
         $SecureToken = [System.Net.NetworkCredential]::new('', $AuthResult.AccessToken).SecurePassword
         Connect-MgGraph -AccessToken $SecureToken -NoWelcome -ErrorAction Stop
 
-        # ── Cache auth state ───────────────────────────────────────────────────
+        # -- Cache auth state ---------------------------------------------------
         $script:_OPIMAuthState = @{
             TenantId         = $EffectiveTenant
             Account          = $AuthResult.Account
@@ -287,17 +287,17 @@
         }
     }
 
-    # ── Azure connection (when requested) ─────────────────────────────────────
+    # -- Azure connection (when requested) -------------------------------------
     # The Az module manages its own authentication independently from MSAL/Graph.
     # The Microsoft Graph Command Line Tools app registration used above is NOT authorised
-    # for Azure Resource Manager — Connect-AzAccount handles Azure auth with its own browser
+    # for Azure Resource Manager -- Connect-AzAccount handles Azure auth with its own browser
     # prompt the first time, then caches the context in the Az module.
     if ($IncludeARM -and -not $AzAlreadyConnected) {
         Write-Verbose "[Initialize-OPIMAuth] Connecting to Azure via Connect-AzAccount..."
 
         # Force browser-based sign-in for parity with the Graph side. Since Az.Accounts 12.0.0
         # the Windows default is the WAM broker (the "Please select the account" picker), which
-        # hangs in some terminals. Disable it at PROCESS scope only — the user's persisted Az
+        # hangs in some terminals. Disable it at PROCESS scope only -- the user's persisted Az
         # config is never touched. No-op on Linux/macOS, where browser login is already default.
         try {
             Update-AzConfig -EnableLoginByWam $false -Scope Process -ErrorAction SilentlyContinue | Out-Null

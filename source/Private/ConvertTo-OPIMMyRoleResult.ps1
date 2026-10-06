@@ -1,4 +1,4 @@
-﻿function ConvertTo-OPIMMyRoleResult {
+function ConvertTo-OPIMMyRoleResult {
     <#
     .SYNOPSIS
     Internal helper used by Enable-OPIMMyRole and Disable-OPIMMyRole to normalise output objects

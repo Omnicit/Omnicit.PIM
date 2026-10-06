@@ -1,4 +1,4 @@
-﻿#requires -module Az.Resources
+#requires -module Az.Resources
 function Disable-OPIMAzureRole {
     <#
     .SYNOPSIS
@@ -22,6 +22,7 @@ function Disable-OPIMAzureRole {
     #>
     [Alias('Disable-PIMResourceRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
+    [OutputType([PSCustomObject])]
     param(
         [Parameter(ParameterSetName = 'RoleObject', Mandatory, ValueFromPipeline)]
         $Role,

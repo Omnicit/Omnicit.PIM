@@ -1,12 +1,15 @@
-Describe 'AzureActivatedRoleCompleter' {
-    BeforeAll {
-        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-        Import-Module Omnicit.PIM -Force
-    }
-    AfterAll {
-        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
-    }
+BeforeAll {
+    Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
+    Import-Module Omnicit.PIM -Force
+    . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
+    Install-OPIMTransportTripwire
+}
 
+AfterAll {
+    try { Assert-OPIMTransportTripwire } finally { Uninstall-OPIMTransportTripwire }
+}
+
+Describe 'AzureActivatedRoleCompleter' {
     Context 'When activated Azure roles are returned' {
         It 'returns a completion result for each role' {
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole {
@@ -51,14 +54,6 @@ Describe 'AzureActivatedRoleCompleter' {
 }
 
 Describe 'AzureEligibleRoleCompleter' {
-    BeforeAll {
-        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-        Import-Module Omnicit.PIM -Force
-    }
-    AfterAll {
-        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
-    }
-
     Context 'When eligible Azure roles are returned' {
         It 'returns a completion result for each role' {
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole {
@@ -103,14 +98,6 @@ Describe 'AzureEligibleRoleCompleter' {
 }
 
 Describe 'DirectoryActivatedRoleCompleter' {
-    BeforeAll {
-        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-        Import-Module Omnicit.PIM -Force
-    }
-    AfterAll {
-        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
-    }
-
     Context 'When activated directory roles are returned at the root scope' {
         It 'returns a completion result for each role' {
             Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole {
@@ -160,14 +147,6 @@ Describe 'DirectoryActivatedRoleCompleter' {
 }
 
 Describe 'DirectoryEligibleRoleCompleter' {
-    BeforeAll {
-        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-        Import-Module Omnicit.PIM -Force
-    }
-    AfterAll {
-        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
-    }
-
     Context 'When eligible directory roles are returned at the root scope' {
         It 'returns a completion result for each role' {
             Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole {
@@ -217,14 +196,6 @@ Describe 'DirectoryEligibleRoleCompleter' {
 }
 
 Describe 'GroupActivatedCompleter' {
-    BeforeAll {
-        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-        Import-Module Omnicit.PIM -Force
-    }
-    AfterAll {
-        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
-    }
-
     Context 'When activated PIM groups are returned' {
         It 'returns a completion result for each group' {
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup {
@@ -269,14 +240,6 @@ Describe 'GroupActivatedCompleter' {
 }
 
 Describe 'GroupEligibleCompleter' {
-    BeforeAll {
-        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-        Import-Module Omnicit.PIM -Force
-    }
-    AfterAll {
-        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
-    }
-
     Context 'When eligible PIM groups are returned' {
         It 'returns a completion result for each group' {
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup {

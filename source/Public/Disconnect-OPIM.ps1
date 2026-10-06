@@ -1,4 +1,4 @@
-﻿function Disconnect-OPIM {
+function Disconnect-OPIM {
     <#
     .SYNOPSIS
     Clear all Omnicit.PIM session tokens and disconnect from Microsoft Graph and Azure.
@@ -17,6 +17,7 @@
     #>
     [Alias('Disconnect-PIM')]
     [CmdletBinding()]
+    [OutputType([void])]
     param()
 
     $script:_OPIMAuthState = $null

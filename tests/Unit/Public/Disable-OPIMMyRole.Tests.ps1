@@ -1,7 +1,16 @@
-﻿Describe 'Disable-OPIMMyRole' {
+BeforeAll {
+    Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
+    Import-Module Omnicit.PIM -Force
+    . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
+    Install-OPIMTransportTripwire
+}
+
+AfterAll {
+    try { Assert-OPIMTransportTripwire } finally { Uninstall-OPIMTransportTripwire }
+}
+
+Describe 'Disable-OPIMMyRole' {
     BeforeAll {
-        Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-        Import-Module Omnicit.PIM -Force
         Mock -ModuleName Omnicit.PIM Connect-OPIM {}
         Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @() }
         Mock -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole { }
@@ -9,9 +18,6 @@
         Mock -ModuleName Omnicit.PIM Disable-OPIMEntraIDGroup { }
         Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @() }
         Mock -ModuleName Omnicit.PIM Disable-OPIMAzureRole { }
-    }
-    AfterAll {
-        Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
     }
 
     Context 'When called with no target switch and no TenantAlias' {
@@ -273,7 +279,7 @@
             }
             $FakeActiveRole001.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleInstance')
 
-            # role-def-002 is NOT active — should trigger a verbose message, not an error
+            # role-def-002 is NOT active -- should trigger a verbose message, not an error
             Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @($FakeActiveRole001) } -ParameterFilter { $Activated }
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @() } -ParameterFilter { $Activated }
         }
@@ -306,7 +312,7 @@
                 }
             }
 
-            # Eligible schedule — returned by Get-OPIMAzureRole without -Activated
+            # Eligible schedule -- returned by Get-OPIMAzureRole without -Activated
             $FakeEligibleAzureRole = [PSCustomObject]@{
                 Name                      = $FakeEligibleScheduleName
                 ScopeId                   = '/subscriptions/sub-003'
@@ -317,7 +323,7 @@
             }
             $FakeEligibleAzureRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
 
-            # Active instance — returned by Get-OPIMAzureRole -Activated; correlated via RoleDefinitionId + ScopeId
+            # Active instance -- returned by Get-OPIMAzureRole -Activated; correlated via RoleDefinitionId + ScopeId
             $FakeActiveAzureRole = [PSCustomObject]@{
                 Name                      = 'az-active-inst-003'
                 ScopeId                   = '/subscriptions/sub-003'
@@ -387,7 +393,7 @@
             $FakeEligibleAzureRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
 
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($FakeEligibleAzureRole) } -ParameterFilter { -not $Activated }
-            # No matching active instance — different RoleDefinitionId
+            # No matching active instance -- different RoleDefinitionId
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @() } -ParameterFilter { $Activated }
             Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @() } -ParameterFilter { $Activated }
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @() } -ParameterFilter { $Activated }

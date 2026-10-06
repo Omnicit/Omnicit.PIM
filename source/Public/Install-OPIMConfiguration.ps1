@@ -1,4 +1,4 @@
-﻿using namespace System.Collections.Generic
+using namespace System.Collections.Generic
 function Install-OPIMConfiguration {
     <#
     .SYNOPSIS
@@ -69,12 +69,12 @@ function Install-OPIMConfiguration {
         switch ($true) {
             { $InputObject.PSTypeNames -contains 'Omnicit.PIM.DirectoryEligibilitySchedule' -or
               $InputObject.PSTypeNames -contains 'Omnicit.PIM.DirectoryAssignmentScheduleInstance' } {
-                # Store roleDefinitionId — stable across eligibility renewals
+                # Store roleDefinitionId -- stable across eligibility renewals
                 [void]$_directoryRoleIds.Add($InputObject.roleDefinitionId); break
             }
             { $InputObject.PSTypeNames -contains 'Omnicit.PIM.GroupEligibilitySchedule' -or
               $InputObject.PSTypeNames -contains 'Omnicit.PIM.GroupAssignmentScheduleInstance' } {
-                # Store groupId_accessId — stable and encodes member vs owner
+                # Store groupId_accessId -- stable and encodes member vs owner
                 [void]$_groupIds.Add("$($InputObject.groupId)_$($InputObject.accessId)"); break
             }
             { $null -ne $InputObject.RoleDefinitionId -and $null -ne $InputObject.ScopeId } {
@@ -84,7 +84,7 @@ function Install-OPIMConfiguration {
         }
     }
     end {
-        # ── Resolve TenantId from active Graph session when not supplied ──────
+        # -- Resolve TenantId from active Graph session when not supplied ------
         $TenantInfo = Get-OPIMCurrentTenantInfo
         if (-not $TenantId) {
             if (-not $TenantInfo.TenantId) {
@@ -109,7 +109,7 @@ function Install-OPIMConfiguration {
         }
         $TenantDisplayName = if ($TenantInfo.DisplayName) { $TenantInfo.DisplayName } else { 'N/A' }
 
-        # ── Ensure TenantMap directory and file exist ─────────────────────────
+        # -- Ensure TenantMap directory and file exist -------------------------
         $TenantMapDir = Split-Path $TenantMapPath -Parent
         if (-not (Test-Path $TenantMapDir)) {
             if ($PSCmdlet.ShouldProcess($TenantMapDir, 'Create TenantMap directory')) {
@@ -135,7 +135,7 @@ function Install-OPIMConfiguration {
             return
         }
 
-        # ── Build the new entry ───────────────────────────────────────────────
+        # -- Build the new entry -----------------------------------------------
         $Entry = [ordered]@{ TenantId = $TenantId }
 
         if ($_directoryRoleIds.Count) { $Entry.DirectoryRoles = @($_directoryRoleIds) }

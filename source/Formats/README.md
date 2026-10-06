@@ -1,4 +1,4 @@
-﻿# Format & Type Files
+# Format & Type Files
 
 All format and type definitions are consolidated into two files:
 
@@ -13,9 +13,9 @@ All format and type definitions are consolidated into two files:
 
 > **Why `FormatsToProcess` is safe now:** All format targets are `Omnicit.PIM.*` custom types. The orphaned
 > `RoleAssignmentScheduleRequest` Az-native type override was removed because all Azure functions wrap output
-> with `Omnicit.PIM.AzureAssignmentScheduleRequest` before returning — the native Az format was never applied.
+> with `Omnicit.PIM.AzureAssignmentScheduleRequest` before returning -- the native Az format was never applied.
 
-## Type → Format mapping
+## Type -> Format mapping
 
 | Type name | Assigned by |
 |---|---|
