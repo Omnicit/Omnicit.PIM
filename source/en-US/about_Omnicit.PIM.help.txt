@@ -88,6 +88,28 @@ LONG DESCRIPTION
     All Enable-* and Disable-* commands support -WhatIf and -Confirm:
       Get-OPIMDirectoryRole | Enable-OPIMDirectoryRole -WhatIf
 
+COMMAND COHORTS
+
+    The cohorts below are for orientation only: they group the cmdlets by the surface
+    they work on. Use Get-Command -Module Omnicit.PIM to list every exported command.
+
+    Directory roles
+        Get-OPIMDirectoryRole, Enable-OPIMDirectoryRole, Disable-OPIMDirectoryRole,
+        Wait-OPIMDirectoryRole
+
+    Groups
+        Get-OPIMEntraIDGroup, Enable-OPIMEntraIDGroup, Disable-OPIMEntraIDGroup
+
+    Azure roles
+        Get-OPIMAzureRole, Enable-OPIMAzureRole, Disable-OPIMAzureRole
+
+    Sign-in and configuration
+        Connect-OPIM, Disconnect-OPIM
+        Install-OPIMConfiguration, Get-OPIMConfiguration, Set-OPIMConfiguration,
+        Remove-OPIMConfiguration
+        Enable-OPIMMyRole (alias pim) and Disable-OPIMMyRole (alias unpim) call Connect-OPIM
+        first, then work from the tenant map for a -TenantAlias.
+
 EXAMPLES
     PS C:\> Get-OPIMDirectoryRole
     Lists all eligible directory roles for the current user.

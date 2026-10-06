@@ -8,8 +8,8 @@ BeforeAll {
     #
     # '*.txt' and '*.md' are deliberately NOT in the include list. The about topic
     # (source/en-US/about_Omnicit.PIM.help.txt) belongs to the about-topic check,
-    # tests/QA/about.tests.ps1, added later on this branch, which reads its bytes. If that coverage
-    # is ever removed, add '*.txt' to this scan instead of leaving the file ungated.
+    # tests/QA/about.tests.ps1, which reads its bytes. If that coverage is ever removed, add
+    # '*.txt' to this scan instead of leaving the file ungated.
     # source/Formats/README.md is a shipped note that no command shows. Every path below is
     # compared with '/' separators, so the gate holds on every operating system.
     #
