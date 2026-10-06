@@ -259,41 +259,60 @@ The sections, in this order:
 
 1. **The title line**, `# Live verification checklist -- <claim> (<branch>)`: `<claim>` is one
    clause saying what the branch now does, `<branch>` the branch name, slash included.
-2. **The preamble rule.** Three parts. First, the branch does not merge until every box has a
+2. **The preamble rule.** Four parts. First, the branch does not merge until every box has a
    written result, and an unticked box with no result line is an unrun check, never a passed one.
    Second, a check that is impossible to run says "cannot be verified, and therefore we do not know"
    on its result line, with the reason, and its box is marked `[~]`, never `[x]`. Third, a check
    that says **Record:** where the others say **Expect:** is one whose outcome is not known in
-   advance: write down what actually happened, not what looked plausible.
+   advance: write down what actually happened, not what looked plausible. Fourth, the boundary: the
+   file runs only in the operator's designated test tenant, never a customer tenant, and only when
+   the operator has asked for the run; the module runs as the dedicated delegated test user and
+   setup and teardown as a dedicated app identity, never the operator's own account; and the run
+   writes to nothing outside the name prefix of its test objects.
 3. **`## What changed and why this needs a live tenant`.** The changes, named by commit SUBJECT and
    never by hash, since a rebase onto `main` changes every hash; what a mock cannot show about
    them; and the objects the run creates, with the name prefix they all carry.
 4. **`## What this file does not check, and why`.** Every claim of the branch that the checklist
    leaves to the unit tests, with the test file that proves it.
 5. **`## Setup, once`.** Numbered `S.1`, `S.2`, ..., each a check in the same shape as the numbered
-   checks below, so the setup is recorded too: build the module under test and create the test
-   objects. The module itself signs in on first use, as the dedicated test user.
-6. **The numbered sections and their checks.** A section is a heading `### 1. <section title>`;
-   each check under it is `### 1.1. <title>`, `### 1.2. <title>`, and so on. Every check has, in
-   this order:
+   checks below, so the setup is recorded too. A Setup check that comes before `0.1` does not call
+   the module: it finds the build under test and ties it to the branch head, since the version
+   alone cannot (GitVersion can compute the same version for two builds of one branch). The test
+   objects are NOT created by a check. The operator's prerequisite script creates them, from
+   outside the repository, as the dedicated app identity: it is planned with `-WhatIf` before it
+   writes, and it writes a baseline of the tenant's counts before it creates anything. The checks
+   VERIFY that step by reading the objects back as the test user; they do not perform it. The
+   module itself signs in on first use, as the dedicated test user.
+6. **The numbered sections and their checks.** Section 0, `### 0. Preparation`, comes first, and its
+   check `### 0.1. Identity check` runs before any other check calls the module. It prints only
+   `True` or `False` lines -- the signed-in account is the test user, the tenant is the test tenant
+   -- and never the account or the tenant id themselves: it compares them with values the operator
+   holds outside the repository and has set as variables in the session. A `False` stops the run.
+   Every later section is a heading `### 1. <section title>`; each check under any section is
+   `### 1.1. <title>`, `### 1.2. <title>`, and so on. Every check has, in this order:
    - the box `- [ ] **1.1** <one-line claim>`;
    - a fenced PowerShell block;
    - `**Expect:**` with what a pass looks like, or `**Record:**` where that is not known;
    - `**Failure looks like:**` with what a fail looks like, and whether to stop;
    - `Result:`, left empty when the file is written and filled in at the run.
-7. **`## Teardown`.** Numbered `T.1`, `T.2`, ..., and removing every object and every eligibility
-   the run created. An Azure resource role eligibility is removed BEFORE the resource group it sits
+7. **`## Teardown`.** Numbered `T.1`, `T.2`, ..., accounting for every object and every eligibility
+   the run created. The prerequisite script removes them (`-Teardown`, planned with `-WhatIf`
+   first, the tenant's counts compared with the baseline), and the checks VERIFY what the module can
+   still see afterwards; they do not perform the removal, and a claim in a box is only what its
+   block can see. An Azure resource role eligibility is removed BEFORE the resource group it sits
    under, so that none is left pointing at a scope that no longer exists. It ends by saying what is
    left in the tenant on purpose, if anything.
 
-Three rules for the code blocks, because a later step generates a note from each checklist:
+Four rules for the code blocks, because a later step generates a note from each checklist:
 
 - A block starts at column 0, never indented and never inside a list item.
 - A block holds no angle-bracket placeholder. Use a concrete fictional value -- the test objects
   carry one prefix, here `opim-demo-` -- and keep the redaction stand-ins out of it.
-- Every block that runs the module starts with the same lines, so that it also runs on its own in a
-  fresh window; in a window that already holds the module, the import is skipped and the sign-in is
-  reused. The paths are relative, so every block runs from the repository root.
+- Every block that runs the module starts with the same three lines, the prologue: it finds this
+  branch's build, stops when a different build of the module is already loaded in the window, and
+  imports the build otherwise. The paths are relative, so every block runs from the repository root.
+- A block is run in the window that `0.1` signed in. A fresh window runs `0.1` again first, since
+  the sign-in belongs to the window and its identity is what `0.1` proves.
 
 A checklist as it is written, before any run:
 
@@ -309,13 +328,20 @@ not leave it blank and do not tick it. A check that could not run for a stated r
 Where a check says **Record:** instead of **Expect:**, the outcome is genuinely not known in
 advance. Write down what actually happened rather than what looked plausible.
 
+**This file runs only in the operator's designated test tenant** -- never a customer tenant -- and
+only when the operator has asked for the run. The module runs there as the dedicated delegated test
+user, and setup and teardown run as a dedicated app identity whose only credential is a
+certificate; neither is ever the operator's own account. The run writes to nothing outside the
+prefix `opim-demo-`. Check 0.1 proves the identity before any other check calls the module.
+
 ## What changed and why this needs a live tenant
 
 - **A. The WhatIf plan of an activation** ("Show the group in the WhatIf plan"). The plan names the
   group and its access type, and sends nothing. A mock cannot show that no request reached the
   tenant, so the check counts the active assignments before and after.
 
-The run creates one group, `opim-demo-grp`, and makes the test user eligible for it as a member.
+The run uses one group, `opim-demo-grp`, with the test user eligible for it as a member. The
+operator's prerequisite script creates both (see Setup); no check here does.
 
 ## What this file does not check, and why
 
@@ -324,19 +350,75 @@ The run creates one group, `opim-demo-grp`, and makes the test user eligible for
 
 ## Setup, once
 
-### S.1. Build the module under test
+The operator sets the session variables `OPIM_LIVE_TEST_USER` (the test user's sign-in name) and
+`OPIM_LIVE_TEST_TENANT` (the test tenant's id) from notes kept outside the repository; no checklist
+holds either value. The test group and the test user's eligibility for it are created by the
+operator's prerequisite script, planned with `-WhatIf` first and run as the dedicated app identity,
+which also writes the baseline of the tenant's counts. The checks below read them back; they create
+nothing.
 
-- [ ] **S.1** The build in `output/module/Omnicit.PIM/` is this branch's.
+### S.1. Find the build under test and tie it to the branch head
+
+- [ ] **S.1** The newest build in `output/module/Omnicit.PIM/` was made after the branch head was committed.
 
 ```powershell
-$Manifest = (Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
-$Manifest
-(Import-PowerShellDataFile -Path $Manifest).ModuleVersion
+$Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$HeadTime = [datetimeoffset]::Parse((git log -1 --format=%cI))
+"Branch head: $(git log -1 --format='%h %s')"
+"Built version folder: $($Built.Directory.Name)"
+"Built after the branch head was committed: $([datetimeoffset]$Built.LastWriteTime -gt $HeadTime)"
+"Tracked changes in the working tree: $(@(git status --porcelain --untracked-files=no).Count)"
 ```
 
-**Expect:** a path under `output/module/Omnicit.PIM/` whose folder is the version the branch's
-build printed.
-**Failure looks like:** no path, or an older version -- build again before any check below.
+**Expect:** the branch head's hash and subject; the version folder the branch's build printed;
+`Built after the branch head was committed: True`; `Tracked changes in the working tree: 0`.
+**Failure looks like:** `False`, or a tracked change -- the build may not be of this head, so build
+again before any check below. The version alone proves nothing: GitVersion can compute the same
+version for two builds of one branch.
+
+Result:
+
+### 0. Preparation
+
+### 0.1. Identity check
+
+- [ ] **0.1** The signed-in account is the test user and the tenant is the test tenant.
+
+```powershell
+$Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built.DirectoryName) { throw 'A different build of Omnicit.PIM is loaded; use a fresh window.' }
+if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
+$TestUser = $env:OPIM_LIVE_TEST_USER
+$TestTenant = $env:OPIM_LIVE_TEST_TENANT
+if (-not $TestUser -or -not $TestTenant) { throw 'Set OPIM_LIVE_TEST_USER and OPIM_LIVE_TEST_TENANT from the operator notes first.' }
+Connect-OPIM -TenantId $TestTenant
+$Context = Get-MgContext
+"Signed in as the test user: $($Context.Account -eq $TestUser)"
+"Signed in to the test tenant: $($Context.TenantId -eq $TestTenant)"
+```
+
+**Expect:** `Signed in as the test user: True` and `Signed in to the test tenant: True`. The block
+prints neither the account nor the tenant id, and nothing pasted into the result may either.
+**Failure looks like:** `False` on either line, or a `throw` -- STOP: run `Disconnect-OPIM`, close
+the window and run no other check.
+
+Result:
+
+### 0.2. The test group is eligible for the test user
+
+- [ ] **0.2** The test user is eligible for `opim-demo-grp` as a member, through exactly one row.
+
+```powershell
+$Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built.DirectoryName) { throw 'A different build of Omnicit.PIM is loaded; use a fresh window.' }
+if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
+$Rows = @(Get-OPIMEntraIDGroup -AccessType member | Where-Object { $_.group.displayName -eq 'opim-demo-grp' })
+"Eligible member rows for opim-demo-grp: $($Rows.Count)"
+```
+
+**Expect:** `Eligible member rows for opim-demo-grp: 1`.
+**Failure looks like:** any other number -- STOP: `0` means the prerequisite script did not leave the
+setup this file assumes, and `2` means a second group shares the name.
 
 Result:
 
@@ -347,35 +429,47 @@ Result:
 - [ ] **1.1** The plan names `opim-demo-grp` and the number of active assignments stays the same.
 
 ```powershell
-$Manifest = (Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
-if (-not (Get-Module Omnicit.PIM)) { Import-Module $Manifest }
+$Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built.DirectoryName) { throw 'A different build of Omnicit.PIM is loaded; use a fresh window.' }
+if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
+$Target = @(Get-OPIMEntraIDGroup -AccessType member | Where-Object { $_.group.displayName -eq 'opim-demo-grp' })
+if ($Target.Count -ne 1) { throw "Expected exactly one eligible member row for opim-demo-grp, found $($Target.Count)." }
 $Before = @(Get-OPIMEntraIDGroup -Activated).Count
-Get-OPIMEntraIDGroup -AccessType member | Select-Object -First 1 | Enable-OPIMEntraIDGroup -Hours 1 -WhatIf
+$Target | Enable-OPIMEntraIDGroup -Hours 1 -WhatIf
 $After = @(Get-OPIMEntraIDGroup -Activated).Count
 "Active group assignments before: $Before; after the WhatIf: $After"
 ```
 
 **Expect:** one `What if:` line whose target is `opim-demo-grp (member)`, then
 `Active group assignments before: 0; after the WhatIf: 0`.
-**Failure looks like:** a different group in the target, or an `after` count above `before` -- STOP,
-a request was sent.
+**Failure looks like:** the `throw` -- the selection did not find exactly one row, nothing was
+sent, and the setup has to be put right first. A `What if:` target other than
+`opim-demo-grp (member)` is a wrong selection, and with `-WhatIf` nothing was sent either. Only an
+`after` count above `before` means a request went out -- STOP.
 
 Result:
 
 ## Teardown
 
-### T.1. Remove the test objects
+The prerequisite script's `-Teardown`, planned with `-WhatIf` first and run as the dedicated app
+identity, removes the group and the eligibility and compares the tenant's counts with the baseline.
+The check below reads back what the test user can still see. It cannot see the group object, so the
+script's own report is the record of that removal.
 
-- [ ] **T.1** `opim-demo-grp` and the eligibility for it are gone.
+### T.1. No assignment for a test group is left
+
+- [ ] **T.1** The test user holds no eligible or active assignment for a group whose name starts with `opim-demo-`.
 
 ```powershell
-$Manifest = (Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
-if (-not (Get-Module Omnicit.PIM)) { Import-Module $Manifest }
-@(Get-OPIMEntraIDGroup -All | Where-Object { $_.group.displayName -like 'opim-demo-*' }).Count
+$Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built.DirectoryName) { throw 'A different build of Omnicit.PIM is loaded; use a fresh window.' }
+if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
+"Assignments left for opim-demo- groups: $(@(Get-OPIMEntraIDGroup -All | Where-Object { $_.group.displayName -like 'opim-demo-*' }).Count)"
 ```
 
-**Expect:** `0`. Nothing is left in the tenant on purpose.
-**Failure looks like:** any other number -- record each remaining object and remove it by hand.
+**Expect:** `Assignments left for opim-demo- groups: 0`. Nothing is left in the tenant on purpose.
+**Failure looks like:** any other number -- record each remaining assignment by group name and run
+the prerequisite script's teardown again.
 
 Result:
 ````
