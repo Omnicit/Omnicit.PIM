@@ -330,6 +330,20 @@ Describe 'Enable-OPIMMyRole' {
                 $IncludeARM -eq $false
             }
         }
+
+        It 'passes -DeviceCode to Connect-OPIM when specified' {
+            Enable-OPIMMyRole -AllEligibleDirectoryRoles -DeviceCode -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It -ParameterFilter {
+                $DeviceCode -eq $true
+            }
+        }
+
+        It 'does not ask for device code mode without -DeviceCode' {
+            Enable-OPIMMyRole -AllEligibleDirectoryRoles -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It -ParameterFilter {
+                -not $DeviceCode
+            }
+        }
     }
 
     Context 'When -AllEligibleEntraIDGroups is specified' {

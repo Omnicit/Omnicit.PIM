@@ -5,8 +5,10 @@ function Disconnect-OPIM {
 
     .DESCRIPTION
     Clears the module-scoped authentication state ($script:_OPIMAuthState), the cached MSAL
-    PublicClientApplication, and the cached user-ID lookup table. Then calls Disconnect-MgGraph
-    and Disconnect-AzAccount to invalidate those sessions.
+    PublicClientApplication, and the cached user-ID lookup table. Clearing the auth state also
+    forgets a device code sign-in mode (-DeviceCode), so the next sign-in uses the system browser
+    unless -DeviceCode is given again. Then calls Disconnect-MgGraph and Disconnect-AzAccount to
+    invalidate those sessions.
 
     After calling Disconnect-OPIM, the next PIM cmdlet (or an explicit Connect-OPIM) will
     trigger a fresh browser authentication prompt.

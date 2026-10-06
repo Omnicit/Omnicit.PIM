@@ -35,6 +35,9 @@ function Disable-OPIMMyRole {
     .EXAMPLE
     Disable-OPIMMyRole -AllActivatedDirectoryRoles -AllActivatedAzureRoles
     Deactivate all active directory roles and Azure RBAC roles, prompting per category.
+    .EXAMPLE
+    unpim -TenantAlias contoso -DeviceCode
+    Sign in with a device code instead of the system browser, then deactivate the configured roles.
     .PARAMETER TenantAlias
     Short alias for the target tenant matched against TenantMap.psd1. Run Install-OPIMConfiguration
     to create or update tenant aliases. Only categories explicitly listed in the configuration are
@@ -55,6 +58,9 @@ function Disable-OPIMMyRole {
     .PARAMETER TenantMapPath
     Path to the TenantMap.psd1 file managed by Install-OPIMConfiguration.
     Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
+    .PARAMETER DeviceCode
+    Sign in with a device code instead of the system browser. Passed to Connect-OPIM, which
+    remembers the mode for the session; see Get-Help Connect-OPIM -Parameter DeviceCode.
     #>
     [Alias('unpim', 'Disable-OPIMMyRoles')]
     [CmdletBinding(SupportsShouldProcess)]
@@ -65,7 +71,8 @@ function Disable-OPIMMyRole {
         [Switch]$AllActivatedDirectoryRoles,
         [Switch]$AllActivatedEntraIDGroups,
         [Switch]$AllActivatedAzureRoles,
-        [string]$TenantMapPath = "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1"
+        [string]$TenantMapPath = "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1",
+        [Switch]$DeviceCode
     )
 
     # -- Guard: require explicit deactivation target ---------------------------
@@ -122,7 +129,7 @@ function Disable-OPIMMyRole {
     [int]$ProgressPillarIndex = 0
     Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status 'Connecting...' -PercentComplete 3
 
-    Connect-OPIM -TenantId $ResolvedTenantId -IncludeARM:$NeedsArm
+    Connect-OPIM -TenantId $ResolvedTenantId -IncludeARM:$NeedsArm -DeviceCode:$DeviceCode
 
     # -- Directory Roles -------------------------------------------------------
     if ($TenantAlias -or $AllActivated -or $AllActivatedDirectoryRoles) {

@@ -47,4 +47,22 @@ Describe 'Disconnect-OPIM' {
             Should -Invoke -ModuleName Omnicit.PIM Disconnect-AzAccount -Times 1 -Scope It
         }
     }
+
+    Context 'When the session signed in with a device code' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Disconnect-MgGraph {}
+            Mock -ModuleName Omnicit.PIM Disconnect-AzAccount {}
+        }
+
+        It 'clears the remembered device code mode with the auth state' {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com'; DeviceCode = $true }
+            }
+            Disconnect-OPIM
+            Should -Invoke -ModuleName Omnicit.PIM Disconnect-MgGraph -Times 1 -Exactly -Scope It
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState | Should -BeNullOrEmpty
+            }
+        }
+    }
 }
