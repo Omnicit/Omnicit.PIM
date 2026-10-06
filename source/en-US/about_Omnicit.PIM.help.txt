@@ -40,6 +40,14 @@ LONG DESCRIPTION
       Connect-OPIM -IncludeARM                               # also acquire Azure ARM token
       Disconnect-OPIM                                        # clear all cached tokens
 
+    On a machine without a browser, sign in with a device code. The command shows a code and
+    the address https://microsoft.com/devicelogin; enter the code there on any device. The
+    message is written to the Information stream with the tag OPIMDeviceCode. With -IncludeARM,
+    Azure shows a second code. Every later sign-in in the session uses a device code until
+    Disconnect-OPIM. Enable-OPIMMyRole and Disable-OPIMMyRole take -DeviceCode too.
+
+      Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -DeviceCode
+
     The following Microsoft Graph scopes are requested automatically. These are listed for
     reference (least-privilege review, custom app registration scenarios):
 

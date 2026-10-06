@@ -167,7 +167,7 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   `CHANGELOG.md`, the git diff against `origin/main` and the BUILT manifest (see **CHANGELOG and
   Version**); module import and removal; for every function the module defines -- public and
   private alike, since the cases are enumerated from inside the module with
-  `Get-Command -CommandType Function` (30 on 2026-10-06) -- a unit test file under `tests/`, a
+  `Get-Command -CommandType Function` (31 on 2026-10-06) -- a unit test file under `tests/`, a
   clean `Invoke-ScriptAnalyzer` run on its source file, and help quality: `.SYNOPSIS`, a
   `.DESCRIPTION` over 40 characters, at least one `.EXAMPLE`, every parameter described; an
   `[OutputType()]` on every EXPORTED function; and a `README.md` that names every exported cmdlet
@@ -221,7 +221,7 @@ and `testhygiene`, `sourcehygiene`, `dochygiene` and `docsync` read files static
 
 # Full test suite -- the authoritative gate, and the command every CI leg runs.
 # QA tests + unit tests + per-function PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-06: 840 passed, 0 failed, 1 skipped; coverage 80.28% over 1,699 analysed
+# (measured 2026-10-06: 883 passed, 0 failed, 1 skipped; coverage 82.94% over 1,764 analysed
 #  commands; Pester 6.2.0)
 ./build.ps1 -Tasks test
 
@@ -238,10 +238,11 @@ The Sampler test task measures coverage against the **built** module output, not
 `build.yaml`'s `test` workflow does not include `build` (`build.yaml:63-70`; only the default
 workflow, `./build.ps1` with no `-Tasks`, runs both). Always run `-Tasks build` before `-Tasks test`
 after changing source files -- and never build while the tests are running. The coverage threshold
-is 80 % (`build.yaml:152`), and the margin over it is thin: measured on 2026-10-06, 1,364 of
-1,699 commands are covered, four more than 80 % requires. The MSAL reflection lines in
+is 80 % (`build.yaml:152`), and the margin over it is modest: measured on 2026-10-06, 1,463 of
+1,764 commands are covered, 51 more than 80 % requires. The MSAL reflection lines in
 `Get-OPIMMsalApplication` are no longer run by any unit test, since reaching them builds a real
-MSAL client (see **Testing Conventions**), and that took coverage from 83.7 % to 80.28 %.
+MSAL client (see **Testing Conventions**), and that took coverage from 83.7 % to 80.28 % -- four
+commands above the line; it measured 82.94 % once the device code sign-in and its tests were in.
 
 **The build stamps the version GitVersion computes, and a local build needs GitVersion to do it.**
 Sampler (`Get-SamplerBuildVersion`, Sampler 0.120.1) takes `$env:ModuleVersion` when it is set,
@@ -482,32 +483,32 @@ one of those shapes does splits by level, and only one level is caught:
 
 **Public:** `Connect-OPIM` (alias `Connect-PIM`), `Disconnect-OPIM` (alias `Disconnect-PIM`).
 **Private:** `Initialize-OPIMAuth` (the single entry point), `Get-OPIMMsalApplication`,
-`Invoke-OPIMGraphRequest`.
+`Invoke-OPIMDeviceCodeAuth` (the device code flow), `Invoke-OPIMGraphRequest`.
 
 **`Initialize-OPIMAuth` is the single entry point.** The nine pillar cmdlets -- `Get-`, `Enable-`
 and `Disable-` for `DirectoryRole`, `AzureRole` and `EntraIDGroup` -- and `Wait-OPIMDirectoryRole`
 call it as the first statement of their `process` block (of their `begin` block in
 `Enable-OPIMDirectoryRole` and `Wait-OPIMDirectoryRole`), and the three `*-OPIMAzureRole` cmdlets
 pass `-IncludeARM`. `Connect-OPIM` resolves `-TenantAlias` from `TenantMap.psd1` and passes its
-`-TenantId` and `-IncludeARM` on (`Connect-OPIM.ps1:64-92`); it is an optional pre-authentication
-shortcut, since every pillar cmdlet authenticates on first use. `Enable-OPIMMyRole` and
-`Disable-OPIMMyRole` call `Connect-OPIM` and then the pillar cmdlets. The `*-OPIMConfiguration`
-cmdlets do not authenticate.
+`-TenantId`, `-IncludeARM` and `-DeviceCode` on (`Connect-OPIM.ps1:81-109`); it is an optional
+pre-authentication shortcut, since every pillar cmdlet authenticates on first use.
+`Enable-OPIMMyRole` and `Disable-OPIMMyRole` call `Connect-OPIM`, handing on their own
+`-DeviceCode`, and then the pillar cmdlets. The `*-OPIMConfiguration` cmdlets do not authenticate.
 
 **It is idempotent.** It returns without a network call or a prompt when the cached Graph token is
 for the same tenant label, has more than 5 minutes left, and neither `-ClaimsChallenge` nor
-`-ForceRefresh` was passed (`Initialize-OPIMAuth.ps1:78-83`). A `Get-MgContext` fallback runs only
+`-ForceRefresh` was passed (`Initialize-OPIMAuth.ps1:106-111`). A `Get-MgContext` fallback runs only
 when the module's own `$script:_OPIMAuthState` already exists with more than 5 minutes left
-(`:90-92`): it then accepts the live Graph context for the requested tenant -- or any tenant when
+(`:118-120`): it then accepts the live Graph context for the requested tenant -- or any tenant when
 the request names none, which means `organizations` -- and relabels the module's own session
-(`:93-101`). The fallback does not check where the live Graph context came from: while the
+(`:121-129`). The fallback does not check where the live Graph context came from: while the
 module's own state is fresh, a `Connect-MgGraph` made outside the module for the requested tenant
 -- or for any tenant when none is requested (`organizations`) -- is accepted, and the module's
 state is relabelled with the requested tenant label, keeping the old `GraphTokenExpiry`
-(`Initialize-OPIMAuth.ps1:90-101`). Only without fresh module state, or with `-ClaimsChallenge`
+(`Initialize-OPIMAuth.ps1:118-129`). Only without fresh module state, or with `-ClaimsChallenge`
 or `-ForceRefresh`, does the fallback not run. With `-IncludeARM`, Azure counts as
 connected only when a cached Az context for the tenant can mint an ARM token silently through
-`Get-AzAccessToken` (`:105-125`): the Az module autosaves its context, so a bare context can
+`Get-AzAccessToken` (`:133-153`): the Az module autosaves its context, so a bare context can
 resurface in a new session with an expired token.
 
 **Graph tokens come from MSAL.NET, reached by reflection.** `Get-OPIMMsalApplication` finds the
@@ -519,27 +520,67 @@ Graph Command Line Tools public client id -- no app registration -- with the aut
 The application is cached in `$script:_OPIMMsalApp`, its tenant in `$script:_OPIMMsalAppTenantId`,
 and it is rebuilt only when the tenant changes (`:35-38`, `:154-155`). The reflection is of two
 kinds. `Create`, `WithAuthority`, `WithRedirectUri` (`Get-OPIMMsalApplication.ps1:113-140`),
-`AcquireTokenSilent` and `AcquireTokenInteractive` (`Initialize-OPIMAuth.ps1:165-172`, `:205-210`)
+`AcquireTokenSilent` and `AcquireTokenInteractive` (`Initialize-OPIMAuth.ps1:193-200`, `:241-246`)
+and `AcquireTokenWithDeviceCode` (`Invoke-OPIMDeviceCodeAuth.ps1:61-68`)
 are found by name through `GetMethods()` and filtered on parameter count -- and, for
-`WithAuthority`, `AcquireTokenSilent` and `AcquireTokenInteractive`, also on parameter type NAME
+`WithAuthority`, `AcquireTokenSilent`, `AcquireTokenInteractive` and `AcquireTokenWithDeviceCode`,
+also on parameter type NAME
 -- because types from the Graph SDK's load context are not identical to the same types in the
-default one (the source's own comments: `Initialize-OPIMAuth.ps1:148-151`,
+default one (the source's own comments: `Initialize-OPIMAuth.ps1:176-179`,
 `Get-OPIMMsalApplication.ps1:109-112`).
 A typed `GetMethod(name, [Type[]])` is used only with `[bool]` or `[string]` parameters --
 `WithForceRefresh`, `WithUseEmbeddedWebView`, `WithLoginHint`, `WithClaims`
-(`Initialize-OPIMAuth.ps1:186`, `:217`, `:224`, `:232`) -- or with none: `GetMethod('Build')`
+(`Initialize-OPIMAuth.ps1:214`, `:253`, `:260`, `:268`, and `WithClaims` again at
+`Invoke-OPIMDeviceCodeAuth.ps1:116`) -- or with none: `GetMethod('Build')`
 (`Get-OPIMMsalApplication.ps1:143`).
 
 **Acquisition order:** `AcquireTokenSilent` when an account is cached and no claims challenge was
 given, chained with `.WithForceRefresh($true)` under `-ForceRefresh`
-(`Initialize-OPIMAuth.ps1:163-200`); otherwise, or when that fails, `AcquireTokenInteractive` in
+(`Initialize-OPIMAuth.ps1:191-229`); otherwise, or when that fails, `AcquireTokenInteractive` in
 the SYSTEM BROWSER -- `.WithUseEmbeddedWebView($false)`, no WAM, no embedded view -- with a login
-hint for a cached account and `.WithClaims()` for an ACRS step-up (`:203-245`). An interactive
+hint for a cached account and `.WithClaims()` for an ACRS step-up (`:239-281`). An interactive
 failure is the terminating `InteractiveAuthFailed` (a headless system cannot open the browser). The
-Graph token is then handed to `Connect-MgGraph -AccessToken` as a SecureString (`:278-279`).
+Graph token is then handed to `Connect-MgGraph -AccessToken` as a SecureString (`:314-315`).
+
+**Device code (`-DeviceCode`).** A machine without a browser signs in with a device code instead of
+the system browser. `Connect-OPIM`, `Enable-OPIMMyRole` and `Disable-OPIMMyRole` take the switch as
+their last parameter and hand it down to `Initialize-OPIMAuth`; without it nothing changes.
+
+- **The mode is remembered.** `Initialize-OPIMAuth` stores it as `DeviceCode` in
+  `$script:_OPIMAuthState` (`Initialize-OPIMAuth.ps1:318-324`), and every later sign-in reads it
+  from there: the silent refresh, the token-rejected retry and the ACRS step-up in
+  `Invoke-OPIMGraphRequest` pass no `-DeviceCode` and still sign in with a code. `-DeviceCode` on a
+  session whose token is still valid starts no sign-in; it only sets the mode for the next one
+  (`:95-98`). `Disconnect-OPIM` clears the state, and the mode with it.
+- **Graph.** After the silent attempt, `Invoke-OPIMDeviceCodeAuth` runs in place of the interactive
+  branch (`Initialize-OPIMAuth.ps1:231-235`), and that branch is gated on `-not $UseDeviceCode`
+  (`:239`): a session in device code mode NEVER falls back to the system browser, which a machine
+  without one could not open. A `$null` result from the helper is the terminating `NoAccessToken`.
+- **The callback is compiled, not a script block.** `Invoke-OPIMDeviceCodeAuth` calls MSAL's
+  `AcquireTokenWithDeviceCode` by reflection (`Invoke-OPIMDeviceCodeAuth.ps1:61-68`). MSAL hands
+  the `DeviceCodeResult` to its callback on a thread-pool thread, where a script block has no
+  runspace and fails ("There is no Runspace available", measured 2026-10-06). The callback is
+  therefore a delegate built from an expression tree that only queues the result (`:85-98`); the
+  function drains the queue on its own thread, in its polling loop and once more after it
+  (`:137-142`), so a message queued just before the flow completes is still written.
+- **Only the message is written.** The helper writes `DeviceCodeResult.Message` -- the text with the
+  code and the address -- and nothing else of the result, never the `DeviceCode` value that polls
+  for the token, with `Write-Information -Tags 'OPIMDeviceCode' -InformationAction Continue`
+  (`:102-107`). The user sees it whatever the information preference is, and a caller reads it
+  with `6>&1`.
+- **Claims, errors, cancellation.** For an ACRS step-up, `WithClaims` is chained on the same device
+  code builder (`:115-129`), and `MsalWithClaimsNotFound` is thrown when the builder lacks it. A
+  failed or expired flow is the terminating `DeviceCodeAuthFailed` (`:144-159`), the only error id
+  added for this mode, with the cause unwrapped from the reflection call and kept as the inner
+  exception; so is an application without the method (`:70-79`). Stopping the command cancels the
+  flow (`:160-166`).
+- **Azure.** `-IncludeARM` adds `-UseDeviceAuthentication` to `Connect-AzAccount`
+  (`Initialize-OPIMAuth.ps1:350-352`), still with `-Tenant` unless the tenant is `organizations`.
+  The Az module writes its own message with the code to the WARNING stream; the module does not
+  capture or rewrite it.
 
 **The Graph scope list is fixed -- do not change it.** One prompt covers every PIM surface
-(`Initialize-OPIMAuth.ps1:139-146`):
+(`Initialize-OPIMAuth.ps1:167-174`):
 
 ```text
 RoleEligibilitySchedule.ReadWrite.Directory
@@ -555,18 +596,19 @@ not authorised for Azure Resource Manager, so `-IncludeARM` uses the Az module's
 no validated context exists, it disables WAM at PROCESS scope only
 (`Update-AzConfig -EnableLoginByWam $false -Scope Process`; the persisted Az configuration is never
 touched) and calls `Connect-AzAccount`, with `-Tenant` unless the tenant is `organizations`
-(`:295-319`). A failed connection is the non-terminating `AzureConnectFailed`. The `Az.Resources`
+(`:333-362`). A failed connection is the non-terminating `AzureConnectFailed`. The `Az.Resources`
 cmdlets then run in that Az context.
 
-**State.** `$script:_OPIMAuthState` holds `TenantId`, `Account`, `GraphTokenExpiry` and
-`ClaimsSatisfied` (`:282-287`) -- never a token. The tokens themselves live in the MSAL
-application's in-memory cache (`$script:_OPIMMsalApp`) and in the Graph SDK's context; see
+**State.** `$script:_OPIMAuthState` holds `TenantId`, `Account`, `GraphTokenExpiry`,
+`ClaimsSatisfied` and `DeviceCode` (`:318-324`) -- never a token. The tokens themselves live in the
+MSAL application's in-memory cache (`$script:_OPIMMsalApp`) and in the Graph SDK's context; see
 **SECURITY**.
 
 **`Disconnect-OPIM`** sets `$script:_OPIMAuthState`, `$script:_OPIMMsalApp`,
-`$script:_OPIMMsalAppTenantId` and `$script:_MyIDCache` to `$null`, then calls `Disconnect-MgGraph`
+`$script:_OPIMMsalAppTenantId` and `$script:_MyIDCache` to `$null` -- which forgets a device code
+mode with the rest of the state -- then calls `Disconnect-MgGraph`
 and `Disconnect-AzAccount`, each with `-ErrorAction SilentlyContinue` inside a `try` whose `catch`
-discards the error (`Disconnect-OPIM.ps1:23-29`). `Disconnect-AzAccount` acts on the current Az
+discards the error (`Disconnect-OPIM.ps1:26-32`). `Disconnect-AzAccount` acts on the current Az
 context, whether or not the module established it.
 
 **`Invoke-OPIMGraphRequest` owns the Graph transport.** It calls `Invoke-MgGraphRequest` with
@@ -576,7 +618,8 @@ context, whether or not the module established it.
    response body and the exception message, and decodes the value as URL-encoded JSON (the PIM 400
    `RoleAssignmentRequestAcrsValidationFailed` body form), base64url JSON (the 401 step-up header
    form) or raw JSON (`:61-98`). It then calls `Initialize-OPIMAuth -ClaimsChallenge` for one
-   interactive step-up and retries exactly once; a second failure is converted and thrown
+   step-up -- interactive, or with a device code in device code mode, which it does not pass but
+   the auth state remembers -- and retries exactly once; a second failure is converted and thrown
    (`:121-137`).
 2. **Token-rejected retry.** A 401 that is not a claims challenge, or a message matching
    `InvalidAuthenticationToken`, `CompactToken`, `token is expired` or `Lifetime validation failed`,
@@ -596,14 +639,17 @@ over `source/` on 2026-10-06, listed as they are:
 | `Private/Invoke-OPIMGraphRequest.ps1:110, 132, 152` | `Invoke-MgGraphRequest` -- the wrapper itself |
 | `Private/Get-OPIMCurrentTenantInfo.ps1:44` | `Invoke-MgGraphRequest` for `v1.0/organization` (best-effort tenant display name) |
 | `Public/Wait-OPIMDirectoryRole.ps1:101, 117` | `Invoke-MgGraphRequest` inside `ForEach-Object -Parallel`, with absolute `https://graph.microsoft.com/v1.0/...` URIs (`:101` passes `-ErrorAction Stop`, `:117` does not) |
-| `Private/Initialize-OPIMAuth.ps1:279` | `Connect-MgGraph -AccessToken` |
-| `Private/Initialize-OPIMAuth.ps1:120` | `Get-AzAccessToken` (silent validation; the token is discarded) |
-| `Private/Initialize-OPIMAuth.ps1:311` | `Connect-AzAccount` |
-| `Public/Disconnect-OPIM.ps1:28, 29` | `Disconnect-MgGraph`, `Disconnect-AzAccount` |
+| `Private/Initialize-OPIMAuth.ps1:315` | `Connect-MgGraph -AccessToken` |
+| `Private/Initialize-OPIMAuth.ps1:148` | `Get-AzAccessToken` (silent validation; the token is discarded) |
+| `Private/Initialize-OPIMAuth.ps1:354` | `Connect-AzAccount` (with `-UseDeviceAuthentication` in device code mode) |
+| `Public/Disconnect-OPIM.ps1:31, 32` | `Disconnect-MgGraph`, `Disconnect-AzAccount` |
 
-Beside these, the module reads `Get-MgContext` (`Initialize-OPIMAuth.ps1:93`,
+`Invoke-OPIMDeviceCodeAuth` is not in this table: it reaches MSAL through the application object it
+is handed, not through the Graph SDK or an Az cmdlet.
+
+Beside these, the module reads `Get-MgContext` (`Initialize-OPIMAuth.ps1:121`,
 `Get-OPIMMsalApplication.ps1:46`, `Get-MyId.ps1:26`, `Get-OPIMCurrentTenantInfo.ps1:30`), reads
-`Get-AzContext` (`Initialize-OPIMAuth.ps1:105`), calls `Update-AzConfig` (`:303`), and calls the
+`Get-AzContext` (`Initialize-OPIMAuth.ps1:133`), calls `Update-AzConfig` (`:341`), and calls the
 `Az.Resources` cmdlets listed under **API Mapping**.
 
 ---
@@ -998,6 +1044,9 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   testhygiene allows a call to `Get-OPIMMsalApplication` only in
   `tests/Unit/Private/Get-OPIMMsalApplication.Tests.ps1` and the tripwire suite, where every
   `Get-MgContext` mock must throw. Everywhere else, mock `Get-OPIMMsalApplication` itself.
+- **`Invoke-OPIMDeviceCodeAuth` is tested against an `Add-Type` stand-in** with MSAL's device code
+  shape, whose `ExecuteAsync` runs on a thread-pool thread as MSAL does; never against a real MSAL
+  client.
 - **To simulate a Graph error, throw what the wrapper throws** -- an `ErrorRecord` whose
   `FullyQualifiedErrorId` is the Graph error code -- with `$PSCmdlet.ThrowTerminatingError()`; the
   same pattern as for `Az.Resources` below.

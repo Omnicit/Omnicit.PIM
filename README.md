@@ -40,6 +40,21 @@ Connect-OPIM -TenantAlias corp                        # resolve alias from Tenan
 Connect-OPIM -IncludeARM                              # also acquire an Azure ARM token
 ```
 
+On a machine without a browser -- a remote session, a container, a cloud PC -- sign in with a
+device code instead. The command shows a short code and the address
+`https://microsoft.com/devicelogin`; open the address on any device, enter the code and sign in.
+With `-IncludeARM`, Azure shows a second code. The mode is remembered for the session: every later
+sign-in, the automatic refresh included, uses a device code until `Disconnect-OPIM`.
+
+```powershell
+Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -DeviceCode
+Connect-OPIM -TenantAlias corp -DeviceCode -IncludeARM
+pim -TenantAlias corp -DeviceCode                     # Enable-OPIMMyRole and Disable-OPIMMyRole take it too
+```
+
+The message with the code goes to the Information stream with the tag `OPIMDeviceCode`, so a script
+can read it with `6>&1`.
+
 For Azure RBAC cmdlets (`Get-/Enable-/Disable-OPIMAzureRole`) an Azure Resource Manager token
 is also needed. Pass `-IncludeARM` to `Connect-OPIM`, or the cmdlets will acquire it
 automatically on first use.
@@ -494,7 +509,7 @@ are under [Short Aliases](#short-aliases).
 
 ### Sign-in and configuration (8)
 
-- `Connect-OPIM` (alias `Connect-PIM`) -- signs in to Microsoft Graph, and to Azure with `-IncludeARM`; optional, since every cmdlet signs in on first use.
+- `Connect-OPIM` (alias `Connect-PIM`) -- signs in to Microsoft Graph, and to Azure with `-IncludeARM`, in the system browser or with `-DeviceCode`; optional, since every cmdlet signs in on first use.
 - `Disconnect-OPIM` (alias `Disconnect-PIM`) -- clears the cached tokens and disconnects from Microsoft Graph and Azure.
 - `Install-OPIMConfiguration` -- creates a tenant alias in `TenantMap.psd1`.
 - `Get-OPIMConfiguration` -- reads the tenant aliases in `TenantMap.psd1`.
