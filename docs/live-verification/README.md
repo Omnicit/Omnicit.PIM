@@ -241,3 +241,153 @@ gate fails until it is put back or the exception is dropped.
 The gate is a backstop, not a substitute for redacting as you write. It cannot see the one failure
 the register above exists to prevent -- one registered placeholder given to two different objects --
 because every value involved is already a valid, registered placeholder.
+
+## Checklist template
+
+A checklist is one file per branch, named `docs/live-verification/<branch-with-slash-as-dash>-checklist.md`:
+the branch name with its slash written as a dash, so `fix/example-claim` gives
+`docs/live-verification/fix-example-claim-checklist.md`. It is written while the branch is in
+flight, in the shape below, which is the shape Omnicit.EntraRBAC's checklists already use. Write
+every stand-in as code, as the paragraph "A stand-in in angle brackets is written as code" under
+"What enforces this" says -- the headings below that carry one do so inside backticks.
+
+**Raw console output goes to `docs/live-verification/raw/`** (git-ignored) **and is redacted on the
+way into the checklist.** Nothing unredacted is pasted into the tracked `.md`. "Where raw output
+goes" above has the detail, and "Editing rule" at the top has the redaction itself.
+
+The sections, in this order:
+
+1. **The title line**, `# Live verification checklist -- <claim> (<branch>)`: `<claim>` is one
+   clause saying what the branch now does, `<branch>` the branch name, slash included.
+2. **The preamble rule.** Three parts. First, the branch does not merge until every box has a
+   written result, and an unticked box with no result line is an unrun check, never a passed one.
+   Second, a check that is impossible to run says "cannot be verified, and therefore we do not know"
+   on its result line, with the reason, and its box is marked `[~]`, never `[x]`. Third, a check
+   that says **Record:** where the others say **Expect:** is one whose outcome is not known in
+   advance: write down what actually happened, not what looked plausible.
+3. **`## What changed and why this needs a live tenant`.** The changes, named by commit SUBJECT and
+   never by hash, since a rebase onto `main` changes every hash; what a mock cannot show about
+   them; and the objects the run creates, with the name prefix they all carry.
+4. **`## What this file does not check, and why`.** Every claim of the branch that the checklist
+   leaves to the unit tests, with the test file that proves it.
+5. **`## Setup, once`.** Numbered `S.1`, `S.2`, ..., each a check in the same shape as the numbered
+   checks below, so the setup is recorded too: build the module under test and create the test
+   objects. The module itself signs in on first use, as the dedicated test user.
+6. **The numbered sections and their checks.** A section is a heading `### 1. <section title>`;
+   each check under it is `### 1.1. <title>`, `### 1.2. <title>`, and so on. Every check has, in
+   this order:
+   - the box `- [ ] **1.1** <one-line claim>`;
+   - a fenced PowerShell block;
+   - `**Expect:**` with what a pass looks like, or `**Record:**` where that is not known;
+   - `**Failure looks like:**` with what a fail looks like, and whether to stop;
+   - `Result:`, left empty when the file is written and filled in at the run.
+7. **`## Teardown`.** Numbered `T.1`, `T.2`, ..., and removing every object and every eligibility
+   the run created. An Azure resource role eligibility is removed BEFORE the resource group it sits
+   under, so that none is left pointing at a scope that no longer exists. It ends by saying what is
+   left in the tenant on purpose, if anything.
+
+Three rules for the code blocks, because a later step generates a note from each checklist:
+
+- A block starts at column 0, never indented and never inside a list item.
+- A block holds no angle-bracket placeholder. Use a concrete fictional value -- the test objects
+  carry one prefix, here `opim-demo-` -- and keep the redaction stand-ins out of it.
+- Every block that runs the module starts with the same lines, so that it also runs on its own in a
+  fresh window; in a window that already holds the module, the import is skipped and the sign-in is
+  reused. The paths are relative, so every block runs from the repository root.
+
+A checklist as it is written, before any run:
+
+````markdown
+# Live verification checklist -- a WhatIf activation of a group sends no request (fix/example-claim)
+
+**This branch does not merge until every box below has a written result.** A box with no result
+line filled in is not a passed check -- it is an unrun one. If a check turns out to be impossible
+to run, write "cannot be verified, and therefore we do not know" on its result line and say why; do
+not leave it blank and do not tick it. A check that could not run for a stated reason is marked
+`[~]`, never `[x]`.
+
+Where a check says **Record:** instead of **Expect:**, the outcome is genuinely not known in
+advance. Write down what actually happened rather than what looked plausible.
+
+## What changed and why this needs a live tenant
+
+- **A. The WhatIf plan of an activation** ("Show the group in the WhatIf plan"). The plan names the
+  group and its access type, and sends nothing. A mock cannot show that no request reached the
+  tenant, so the check counts the active assignments before and after.
+
+The run creates one group, `opim-demo-grp`, and makes the test user eligible for it as a member.
+
+## What this file does not check, and why
+
+- **A policy that demands a justification** is proven by the mocked tests in
+  `tests/Unit/Public/Enable-OPIMEntraIDGroup.Tests.ps1`; the test tenant's policy asks for none.
+
+## Setup, once
+
+### S.1. Build the module under test
+
+- [ ] **S.1** The build in `output/module/Omnicit.PIM/` is this branch's.
+
+```powershell
+$Manifest = (Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+$Manifest
+(Import-PowerShellDataFile -Path $Manifest).ModuleVersion
+```
+
+**Expect:** a path under `output/module/Omnicit.PIM/` whose folder is the version the branch's
+build printed.
+**Failure looks like:** no path, or an older version -- build again before any check below.
+
+Result:
+
+### 1. The plan
+
+### 1.1. A WhatIf activation changes nothing
+
+- [ ] **1.1** The plan names `opim-demo-grp` and the number of active assignments stays the same.
+
+```powershell
+$Manifest = (Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+if (-not (Get-Module Omnicit.PIM)) { Import-Module $Manifest }
+$Before = @(Get-OPIMEntraIDGroup -Activated).Count
+Get-OPIMEntraIDGroup -AccessType member | Select-Object -First 1 | Enable-OPIMEntraIDGroup -Hours 1 -WhatIf
+$After = @(Get-OPIMEntraIDGroup -Activated).Count
+"Active group assignments before: $Before; after the WhatIf: $After"
+```
+
+**Expect:** one `What if:` line whose target is `opim-demo-grp (member)`, then
+`Active group assignments before: 0; after the WhatIf: 0`.
+**Failure looks like:** a different group in the target, or an `after` count above `before` -- STOP,
+a request was sent.
+
+Result:
+
+## Teardown
+
+### T.1. Remove the test objects
+
+- [ ] **T.1** `opim-demo-grp` and the eligibility for it are gone.
+
+```powershell
+$Manifest = (Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+if (-not (Get-Module Omnicit.PIM)) { Import-Module $Manifest }
+@(Get-OPIMEntraIDGroup -All | Where-Object { $_.group.displayName -like 'opim-demo-*' }).Count
+```
+
+**Expect:** `0`. Nothing is left in the tenant on purpose.
+**Failure looks like:** any other number -- record each remaining object and remove it by hand.
+
+Result:
+````
+
+After a run, the box is ticked and its `Result:` line carries the time and a verdict:
+
+````markdown
+- [x] **1.1** The plan names `opim-demo-grp` and the number of active assignments stays the same.
+
+Result: 2026-10-07 09:15 UTC.
+
+```text
+Verdict: PASS. One What if line for opim-demo-grp (member); active assignments 0 before and 0 after.
+```
+````
