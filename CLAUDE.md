@@ -221,7 +221,7 @@ and `testhygiene`, `sourcehygiene`, `dochygiene` and `docsync` read files static
 
 # Full test suite -- the authoritative gate, and the command every CI leg runs.
 # QA tests + unit tests + per-function PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-06: 838 passed, 0 failed, 1 skipped; coverage 80.28% over 1,699 analysed
+# (measured 2026-10-06: 839 passed, 0 failed, 1 skipped; coverage 80.28% over 1,699 analysed
 #  commands; Pester 6.2.0)
 ./build.ps1 -Tasks test
 

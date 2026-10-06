@@ -303,7 +303,7 @@ The sections, in this order:
    under, so that none is left pointing at a scope that no longer exists. It ends by saying what is
    left in the tenant on purpose, if anything.
 
-Four rules for the code blocks, because a later step generates a note from each checklist:
+Five rules for the code blocks, because a later step generates a note from each checklist:
 
 - A block starts at column 0, never indented and never inside a list item.
 - A block holds no angle-bracket placeholder. Use a concrete fictional value -- the test objects
@@ -315,6 +315,10 @@ Four rules for the code blocks, because a later step generates a note from each 
   the sign-in belongs to the window and its identity is what `0.1` proves. If a sign-in prompt
   appears mid-run, STOP and run `0.1` again: the module signs in again, interactively, when its
   Graph token nears expiry, and the proof of `0.1` holds only for the sign-in it checked.
+- A read whose count or emptiness is the expected outcome carries `-ErrorAction Stop`. The module
+  reports a failed read as a non-terminating error, so without it the failure prints a count of
+  `0` -- the very value a teardown check expects. Its `Failure looks like:` says that a terminating
+  error is a failed read, never a pass.
 
 A checklist as it is written, before any run:
 
