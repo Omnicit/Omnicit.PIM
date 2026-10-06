@@ -18,6 +18,9 @@
 #                  cannot evaluate a dynamicparam block, so the replacement carries the parameters
 #                  GetDynamicParameters() returns as STATIC parameters -- otherwise a call such as
 #                  Update-AzConfig -EnableLoginByWam fails to bind before the record is written.
+#                  The dynamic parameter set depends on the Az.Accounts version: CI's PSResourceGet
+#                  resolved 5.3.3 (2026-10-06), where four of the five cmdlets return none, and the
+#                  replacement materializes whatever the loaded version returns.
 #   ModuleFunction The Az.Resources commands are functions. A global replacement would shadow the
 #                  imported function and its removal brings it back only through module autoloading,
 #                  so this replacement lives in Omnicit.PIM's module scope instead.

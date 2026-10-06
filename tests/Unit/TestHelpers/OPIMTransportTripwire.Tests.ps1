@@ -153,8 +153,12 @@ Describe 'OPIMTransportTripwire' {
             [System.Management.Automation.IDynamicParameters].IsAssignableFrom($Real.ImplementingType) | Should -BeFalse
         } elseif ($Form -eq 'DynamicCmdlet') {
             $Real | Should -BeOfType ([System.Management.Automation.CmdletInfo])
+            # Which dynamic parameters a fresh instance returns depends on the Az.Accounts version:
+            # 5.3.3 (what CI resolved on 2026-10-06) returns none for four of the five cmdlets, 5.5.3
+            # (local, same day) returns AcquirePolicyToken and ChangeReference. So only the union is
+            # asserted per command; the next test pins the one dynamic parameter module code needs.
             $Dynamic = ([System.Management.Automation.IDynamicParameters][Activator]::CreateInstance($Real.ImplementingType)).GetDynamicParameters()
-            @($Dynamic.Keys).Count | Should -BeGreaterThan 0 -Because 'a DynamicCmdlet must return dynamic parameters, or the union below proves nothing'
+            $Dynamic | Should -BeOfType ([System.Management.Automation.RuntimeDefinedParameterDictionary])
             foreach ($Key in $Dynamic.Keys) {
                 if (-not $ExpectedKeys.Contains($Key)) { $ExpectedKeys.Add($Key) }
             }
@@ -175,6 +179,25 @@ Describe 'OPIMTransportTripwire' {
         $Ast.ParamBlock | Should -Not -BeNullOrEmpty
         $Ast.EndBlock | Should -Not -BeNullOrEmpty
         $Ast.DynamicParamBlock | Should -BeNullOrEmpty
+    }
+
+    It 'carries EnableLoginByWam on the Update-AzConfig replacement, a parameter the real cmdlet offers only dynamically' {
+        # Initialize-OPIMAuth.ps1:303 passes -EnableLoginByWam. It is one of the configuration keys
+        # Update-AzConfig returns from GetDynamicParameters on Az.Accounts 5.3.x and 5.5.x alike, so
+        # this holds on every version, unlike the extra dynamic parameters of the other four cmdlets.
+        $Real = @(Get-TripwireKnownAnswerRealCommand -Name 'Update-AzConfig' -Module 'Az.Accounts')
+        $Real.Count | Should -Be 1 -Because 'exactly one real Update-AzConfig must exist in Az.Accounts'
+        $Real[0] | Should -BeOfType ([System.Management.Automation.CmdletInfo])
+        # CmdletInfo.Parameters already merges dynamic parameters in, so "static" is read from the
+        # implementing type: a static parameter would be a public member of it.
+        @($Real[0].ImplementingType.GetMember('EnableLoginByWam')).Count | Should -Be 0 -Because 'a static member would make the materialization below unnecessary and prove nothing'
+        $Dynamic =([System.Management.Automation.IDynamicParameters][Activator]::CreateInstance($Real[0].ImplementingType)).GetDynamicParameters()
+        $Dynamic.ContainsKey('EnableLoginByWam') | Should -BeTrue -Because 'the real cmdlet must offer EnableLoginByWam dynamically on the loaded Az.Accounts'
+
+        $Function = Resolve-TripwireKnownAnswerCommand -Name 'Update-AzConfig' -CommandType Function
+        Test-OPIMTransportTripwireFunction -Command $Function | Should -BeTrue
+        $Function.Parameters.ContainsKey('EnableLoginByWam') | Should -BeTrue -Because 'the replacement must carry the dynamic parameter as a static one, or the call fails to bind before it is recorded'
+        $Function.Parameters['EnableLoginByWam'].ParameterType | Should -Be $Dynamic['EnableLoginByWam'].ParameterType
     }
 
     It 'keeps a Mock -ModuleName on <Name> winning and records no hit' -ForEach $script:Expected {

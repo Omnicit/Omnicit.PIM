@@ -221,7 +221,7 @@ and `testhygiene`, `sourcehygiene`, `dochygiene` and `docsync` read files static
 
 # Full test suite -- the authoritative gate, and the command every CI leg runs.
 # QA tests + unit tests + per-function PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-06: 839 passed, 0 failed, 1 skipped; coverage 80.28% over 1,699 analysed
+# (measured 2026-10-06: 840 passed, 0 failed, 1 skipped; coverage 80.28% over 1,699 analysed
 #  commands; Pester 6.2.0)
 ./build.ps1 -Tasks test
 
@@ -1135,9 +1135,11 @@ read them from that file and refuse a missing or `latest` value. Keep the two fi
 other entry in `RequiredModules.psd1` is build tooling and stays `latest`. `Az.Resources` 9.0.3 is
 the floor -- not the 5.6.0 that older documents cite.
 
-`Az.Accounts` is not declared; it is installed as a dependency of the `Az.Resources` package (the
-build resolved 5.5.3 beside it on 2026-10-05). `Connect-AzAccount`, `Get-AzContext`,
-`Get-AzAccessToken`, `Update-AzConfig` and `Disconnect-AzAccount` come from it.
+`Az.Accounts` is not declared; it is installed as a dependency of the `Az.Resources` package (a local
+ModuleFast resolve gave 5.5.3 beside it on 2026-10-05, while CI's PSResourceGet resolve gave 5.3.3 --
+run 37458342720, 2026-10-06, step "Report resolved dependency versions" -- so the tripwire's
+`DynamicCmdlet` replacements carry version-dependent parameters). `Connect-AzAccount`,
+`Get-AzContext`, `Get-AzAccessToken`, `Update-AzConfig` and `Disconnect-AzAccount` come from it.
 
 Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses raw
 `Invoke-MgGraphRequest` (through `Invoke-OPIMGraphRequest`) to avoid typed SDK coupling and SDK
