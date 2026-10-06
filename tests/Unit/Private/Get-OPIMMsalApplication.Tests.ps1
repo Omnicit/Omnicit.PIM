@@ -1,4 +1,4 @@
-﻿BeforeAll {
+BeforeAll {
     Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
     Import-Module Omnicit.PIM -Force
     . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"

@@ -1,4 +1,4 @@
-﻿BeforeAll {
+BeforeAll {
     Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
     Import-Module Omnicit.PIM -Force
     . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
@@ -229,7 +229,7 @@ Describe 'Initialize-OPIMAuth' {
                     GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
                     ClaimsSatisfied  = $false
                 }
-                # Return value inlined — $FakeAzCtx is a local variable in the BeforeAll
+                # Return value inlined -- $FakeAzCtx is a local variable in the BeforeAll
                 # scriptblock and is not accessible inside a mock body (late-binding scope).
                 Mock Get-AzContext {
                     return [PSCustomObject]@{
@@ -274,7 +274,7 @@ Describe 'Initialize-OPIMAuth' {
                     GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
                     ClaimsSatisfied  = $false
                 }
-                # Return value inlined — BeforeAll locals are not visible inside mock bodies.
+                # Return value inlined -- BeforeAll locals are not visible inside mock bodies.
                 Mock Get-AzContext {
                     return [PSCustomObject]@{
                         Tenant  = [PSCustomObject]@{ Id  = 'contoso.onmicrosoft.com' }
