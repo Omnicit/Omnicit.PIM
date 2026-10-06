@@ -73,7 +73,7 @@ printed. Window B runs from the repository root.
 
 ### S.1. Find the build under test and tie it to the branch head
 
-- [ ] **S.1** Window B. The newest build in `output/module/Omnicit.PIM/` was made after the branch head was committed.
+- [x] **S.1** Window B. The newest build in `output/module/Omnicit.PIM/` was made after the branch head was committed.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -88,11 +88,19 @@ $HeadTime = [datetimeoffset]::Parse((git log -1 --format=%cI))
 `Built after the branch head was committed: True`; `Tracked changes in the working tree: 0`.
 **Failure looks like:** `False`, or a tracked change -- build again before any check below.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Window B, 2026-10-06 14:25 UTC, the round 1 worktree (local branch opim-s1-steg2-r1, pushed as feat/device-code-sign-in).
+Branch head: 23f7662 docs: correct the Connect-OPIM line reference and the device-code-only state
+Built version folder: 0.6.0
+Built after the branch head was committed: True
+Tracked changes in the working tree: 0
+```
 
 ### S.2. P-4 is in place and the harness loads
 
-- [ ] **S.2** Window B. OerLive is 1.0.3, the harness reads the test values through it, and the TOTP implementation reproduces RFC 6238.
+- [x] **S.2** Window B. OerLive is 1.0.3, the harness reads the test values through it, and the TOTP implementation reproduces RFC 6238.
 
 ```powershell
 Import-Module (Join-Path $env:OPIMLIVE_HOME 'OpimLive/OpimLive.psm1') -Force
@@ -106,11 +114,17 @@ $Target = Get-OpimLiveTarget
 **Failure looks like:** `STOP: P-4` from `Get-OpimLiveTarget` (OerLive is older than 1.0.3) -- STOP,
 the step waits for P-4. `False` on the self-test -- STOP: the harness would enter wrong codes.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+OerLive version: 1.0.3
+Test user and tenant read (values hidden): True
+TOTP self-test: True
+```
 
 ### S.3. Playwright is installed, and no browser was downloaded
 
-- [ ] **S.3** Window B. `playwright-core` is installed in the harness's own folder and loads; Edge is the browser.
+- [x] **S.3** Window B. `playwright-core` is installed in the harness's own folder and loads; Edge is the browser.
 
 ```powershell
 & (Join-Path $env:OPIMLIVE_HOME 'OpimLive/Install-OpimLivePlaywright.ps1') -WhatIf
@@ -121,11 +135,19 @@ Result:
 version and `Node can load it: True`.
 **Failure looks like:** an npm error or `False` -- STOP: nothing below can complete a sign-in.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+What if: Performing the operation "npm install playwright-core@^1 (no browser download, no install scripts)" on target "%LOCALAPPDATA%\OpimLive\node".
+Microsoft Edge is installed: True
+added 1 package in 18s
+playwright-core 1.63.0 in %LOCALAPPDATA%\OpimLive\node; Node can load it: True
+No Playwright browser was downloaded: True
+```
 
 ### S.4. The prerequisite plan names only prefixed targets
 
-- [ ] **S.4** Window A, as `oer-live-cc`. The prerequisite script's `-WhatIf` plan writes nothing and every target in the tenant or the vault starts with `opim-s1-`.
+- [x] **S.4** Window A, as `oer-live-cc`. The prerequisite script's `-WhatIf` plan writes nothing and every target in the tenant or the vault starts with `opim-s1-`.
 
 ```powershell
 New-Item -ItemType Directory -Force -Path 'docs/live-verification/raw/opim-s12' | Out-Null
@@ -147,11 +169,28 @@ of `oer-live-cc` are all `True`.
 step's or the fixture's prefix). A STOP line -- STOP and record it: a policy that requires approval or
 an authentication context, or a 401 or 403 on `oer-live-cc`'s path (section 5).
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+What-if targets: 12; in the tenant or the vault: 10
+Targets without the prefix opim-s1-: 0
+Lines with STOP: 0
+opim-s1-live-user (enabled, no licence, password into the vault only)
+opim-s1-grp (security group)
+opim-s1-live-user: eligible for directory role 'Usage Summary Reports Reader' at '/' for 30 days
+opim-s1-live-user: eligible for directory role 'Message Center Privacy Reader' at '/' for 30 days
+opim-s1-grp: opim-s1-live-user eligible as member for 30 days
+opim-s1-grp: opim-s1-live-user eligible as owner for 30 days
+opim-s1-rg (location swedencentral)
+opim-s1-rg: opim-s1-live-user eligible as Reader for 30 days
+opim-s1-rg2 (location swedencentral)
+opim-s1-rg2: opim-s1-live-user eligible as Reader for 30 days
+Every identity check line of oer-live-cc (Graph and ARM): True. Residue: raw\residue.json holds no rows.
+```
 
 ### S.5. The prerequisite script creates the fixture
 
-- [ ] **S.5** Window A, as `oer-live-cc`. The fixture exists and reads back as expected.
+- [x] **S.5** Window A, as `oer-live-cc`. The fixture exists and reads back as expected.
 
 ```powershell
 $Out = @(& pwsh -NoProfile -File (Join-Path $env:OPIMLIVE_HOME 'Initialize-OpimS1Prereq.ps1') -Unattended 2>&1 | ForEach-Object { "$_" })
@@ -167,7 +206,29 @@ the prerequisite shows 1 user, 1 group and 0 other objects with the prefix.
 **Failure looks like:** a STOP line -- STOP and record it in section 5. A count other than 2 -- STOP:
 the fixture is not the one this file assumes.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 1, 14:27 UTC: stopped before the first tenant write. Creating the SecretStore (harness 1.0.0, Set-SecretStoreConfiguration
+-Authentication None) first created a store with the default configuration and waited at the console for a store password.
+Nothing was created in the tenant. Harness 1.0.1 creates a store without data with Reset-SecretStore -Authentication None
+-Interaction None (store: authentication None, interaction None, vault OpimLive, 0 secrets before the run).
+
+Run 2, 14:39-14:40 UTC, as oer-live-cc:
+Every identity check line (Graph and ARM): True. Residue: raw\residue.json holds no rows.
+Stored opim-s1-live-user-password in the vault OpimLive (value not shown).
+Created: opim-s1-live-user.
+Created: opim-s1-grp.
+Created: opim-s1-live-user: eligible for directory role 'Usage Summary Reports Reader' at '/' for 30 days (Provisioned, 2 attempt(s)).
+Created: opim-s1-live-user: eligible for directory role 'Message Center Privacy Reader' at '/' for 30 days (Provisioned, 1 attempt(s)).
+Created: opim-s1-grp: opim-s1-live-user eligible as member for 30 days (Provisioned, 1 attempt(s)).
+Created: opim-s1-grp: opim-s1-live-user eligible as owner for 30 days (Provisioned, 1 attempt(s)).
+Created: opim-s1-rg. Created: opim-s1-rg: opim-s1-live-user eligible as Reader for 30 days (Provisioned, 1 attempt(s)).
+Created: opim-s1-rg2. Created: opim-s1-rg2: opim-s1-live-user eligible as Reader for 30 days (Provisioned, 1 attempt(s)).
+Six policy lines, each "approval required: False; authentication context: False" (see 5.3).
+Read back as oer-live-cc: directory role eligibilities 2 (expected 2), group eligibilities 2 (expected 2), Azure eligibilities 2 (expected 2).
+Sweep after the prereq: 1 user(s), 1 group(s), 0 other object(s) with the prefix.
+```
 
 ### S.6. The test user's first sign-in registers its TOTP
 
@@ -187,13 +248,26 @@ taken after the authenticator setup started (only the folder's earlier files exi
 location, a Temporary Access Pass or a compliant device; check 5.2). `password-change-required` or
 `mfa-already-registered` -- STOP: the fixture is not the one this file assumes.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+FAILED -- STOP. No TOTP method is registered; the key is in the vault: False.
+Runs 1-2 (the interrupt handling of harness 1.0.0): Registration: timeout at password. The interrupt after the password now reads "Let's keep your account
+secure" with a Next button, which the script did not know. Fixed in harness 1.0.1.
+Runs 3-15 (harness 1.0.1; run 3 is the check itself, 4-15 diagnostics): each signs in, passes the interrupt and ends "error at registration interrupt (every
+page of the browser closed)". Microsoft Edge 154.0.4258.48 (channel msedge, playwright-core 1.63.0) exits with code
+3221225477 (0xC0000005, the browser process) about 1.5 s after the document POST to
+https://mysignins.microsoft.com/api/post/registerMfaMethods answers 200 with ordinary headers; no XHR or fetch request follows.
+The same crash: headless; headed; with the Chromium sandbox; without Playwright's 39 default flags; with --disable-gpu; with
+PublicKeyCredential, navigator.credentials, navigator.getInstalledRelatedApps and 14 more navigator APIs hidden from the page.
+Security info showed the registration interrupt (not the page itself). It named no trusted location, pass or device.
+```
 
 ### 0. Preparation
 
 ### 0.1. Identity check
 
-- [ ] **0.1** Window B. `Connect-OpimLiveUser` without `-IncludeARM` signs the module in with one device code, and the account is the test user and the tenant the test tenant.
+- [~] **0.1** Window B. `Connect-OpimLiveUser` without `-IncludeARM` signs the module in with one device code, and the account is the test user and the tenant the test tenant.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -212,13 +286,17 @@ harness's Edge runs headless), and the block prints neither the account nor the 
 **Failure looks like:** `False` on any line, or a `STOP` -- STOP: run `Disconnect-OPIM`, close the
 window and run no other check. A `blocked` status is stop condition 5.1.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 1. The sign-in
 
 ### 1.1. A second cmdlet in the same process does not sign in again
 
-- [ ] **1.1** Window B. `Get-OPIMDirectoryRole` after 0.1 writes no device code message and lists the eligible roles.
+- [~] **1.1** Window B. `Get-OPIMDirectoryRole` after 0.1 writes no device code message and lists the eligible roles.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -233,11 +311,15 @@ $Records = @(Get-OPIMDirectoryRole -ErrorAction Stop 6>&1)
 **Failure looks like:** a device code message -- the cached session was not reused; record it. A
 terminating error is a failed read, never a pass.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 1.2. With `-IncludeARM`, Graph and Azure each sign in with a device code
 
-- [ ] **1.2** Window B. `Connect-OpimLiveUser -IncludeARM` completes two device codes, the Graph one on the Information stream with the tag and the Azure one as a warning.
+- [~] **1.2** Window B. `Connect-OpimLiveUser -IncludeARM` completes two device codes, the Graph one on the Information stream with the tag and the Azure one as a warning.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -255,11 +337,15 @@ must, or the block hangs until the code expires), and how many seconds the block
 Connect-AzAccount waited; stop the block, record it, and STOP the Azure part (a harness change, not a
 module change). `False` -- STOP as in 0.1.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 1.3. A forced refresh stays silent and keeps the device code mode
 
-- [ ] **1.3** Window B. The refresh that the module's token-rejected retry runs completes without a device code and keeps the mode.
+- [~] **1.3** Window B. The refresh that the module's token-rejected retry runs completes without a device code and keeps the mode.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -277,11 +363,15 @@ $Records = @(& $Module { param($TenantId) Initialize-OPIMAuth -TenantId $TenantI
 for a code nobody completes: if it has not returned within 30 seconds, press Ctrl+C, record a
 non-silent refresh, and run 0.1 again before going on.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 1.4. Disconnect-OPIM clears the mode, and the next sign-in is a device code again
 
-- [ ] **1.4** Window B. After `Disconnect-OPIM` the auth state is gone, and `Connect-OpimLiveUser -IncludeARM` signs in with device codes, never a browser.
+- [~] **1.4** Window B. After `Disconnect-OPIM` the auth state is gone, and `Connect-OpimLiveUser -IncludeARM` signs in with device codes, never a browser.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -296,11 +386,15 @@ $Sign.Codes | Format-Table App, Stream, Tagged, Status -AutoSize
 **Expect:** `Auth state cleared: True`; then the two rows of 1.2 and every True/False line `True`.
 **Failure looks like:** a browser window -- STOP: the mode was not passed again. `False` -- STOP as in 0.1.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 1.5. A declined device code ends with one error and keeps the mode
 
-- [ ] **1.5** Window B. A device code declined on the confirmation page ends `Connect-OPIM -DeviceCode` with `DeviceCodeAuthFailed` alone, no browser opens, the mode stays, and the next sign-in is a device code again.
+- [~] **1.5** Window B. A device code declined on the confirmation page ends `Connect-OPIM -DeviceCode` with `DeviceCodeAuthFailed` alone, no browser opens, the mode stays, and the next sign-in is a device code again.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -330,12 +424,17 @@ leaves the window signed in for section 2.
 browser window -- record it; the failure path is not what the module promises. `False` after the new
 sign-in -- STOP as in 0.1.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
+
 ### 2. The listings
 
 ### 2.1. Exactly the two directory roles
 
-- [ ] **2.1** Window B. `Get-OPIMDirectoryRole` lists exactly the fixture's two directory roles at `/`.
+- [~] **2.1** Window B. `Get-OPIMDirectoryRole` lists exactly the fixture's two directory roles at `/`.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -350,11 +449,15 @@ $Rows = @(Get-OPIMDirectoryRole -ErrorAction Stop)
 **Failure looks like:** another count or `False` -- record the role names and STOP. A terminating
 error is a failed read, never a `0` and never a pass.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 2.2. Exactly the two group eligibilities
 
-- [ ] **2.2** Window B. `Get-OPIMEntraIDGroup` lists `opim-s1-grp` as member and as owner, and nothing else.
+- [~] **2.2** Window B. `Get-OPIMEntraIDGroup` lists `opim-s1-grp` as member and as owner, and nothing else.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -370,11 +473,15 @@ $Rows = @(Get-OPIMEntraIDGroup -ErrorAction Stop)
 **Failure looks like:** another count or `False` -- record and STOP. A terminating error is a failed
 read, never a pass.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 2.3. Exactly the two Azure eligibilities
 
-- [ ] **2.3** Window B. `Get-OPIMAzureRole` lists Reader on `opim-s1-rg` and on `opim-s1-rg2`, and nothing else.
+- [~] **2.3** Window B. `Get-OPIMAzureRole` lists Reader on `opim-s1-rg` and on `opim-s1-rg2`, and nothing else.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -390,7 +497,11 @@ $Rows = @(Get-OPIMAzureRole -ErrorAction Stop)
 **Failure looks like:** another count, `False` or another scope -- record and STOP. A terminating
 error is a failed read, never a pass.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 3. The activations, each twice (G8)
 
@@ -399,7 +510,7 @@ schedule id in parentheses. The justification is `opim-s1 live verification`.
 
 ### 3.1. A directory role, activated twice
 
-- [ ] **3.1** Window B. Usage Summary Reports Reader activates once; the second call gives a clear outcome and no second activation.
+- [~] **3.1** Window B. Usage Summary Reports Reader activates once; the second call gives a clear outcome and no second activation.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -422,11 +533,15 @@ second request accepted or a crash is a fail (G8).
 **Failure looks like:** a terminating error on the first call (record its error id), or more than one
 active row -- STOP.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 3.2. Group membership, activated twice
 
-- [ ] **3.2** Window B. `opim-s1-grp` as member activates once; the second call gives a clear outcome.
+- [~] **3.2** Window B. `opim-s1-grp` as member activates once; the second call gives a clear outcome.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -447,11 +562,15 @@ $Second = @(Enable-OPIMEntraIDGroup -GroupName $Old -Justification 'opim-s1 live
 **Record:** the second call's outcome, as in 3.1.
 **Failure looks like:** as in 3.1.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 3.3. Reader on opim-s1-rg, activated twice
 
-- [ ] **3.3** Window B. Reader on `opim-s1-rg` activates once; the second call gives a clear outcome.
+- [~] **3.3** Window B. Reader on `opim-s1-rg` activates once; the second call gives a clear outcome.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -472,11 +591,15 @@ $Second = @(Enable-OPIMAzureRole -RoleName $Old -Justification 'opim-s1 live ver
 **Record:** the second call's outcome, as in 3.1.
 **Failure looks like:** as in 3.1.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 3.4. The five-minute rule
 
-- [ ] **3.4** Window B. Five minutes pass after the last activation of 3.1 to 3.3, so the deactivations below are not refused for being too early.
+- [~] **3.4** Window B. Five minutes pass after the last activation of 3.1 to 3.3, so the deactivations below are not refused for being too early.
 
 ```powershell
 Start-Sleep -Seconds 310
@@ -486,11 +609,15 @@ Start-Sleep -Seconds 310
 **Expect:** the time, at least five minutes after 3.3 finished.
 **Failure looks like:** nothing can fail here; the wait is the check.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 3.5. The directory role, deactivated twice
 
-- [ ] **3.5** Window B. Usage Summary Reports Reader deactivates once; the second call gives a clear outcome.
+- [~] **3.5** Window B. Usage Summary Reports Reader deactivates once; the second call gives a clear outcome.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -511,11 +638,15 @@ $Second = @(Disable-OPIMDirectoryRole -RoleName $Old -ErrorVariable Errors -Erro
 **Record:** the second call's outcome -- an error that says the role is not active is a pass; a crash is a fail (G8).
 **Failure looks like:** `ActiveDurationTooShort` -- 3.4 did not wait long enough; run 3.4 again. Any other error -- record it.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 3.6. Group membership, deactivated twice
 
-- [ ] **3.6** Window B. `opim-s1-grp` as member deactivates once; the second call gives a clear outcome.
+- [~] **3.6** Window B. `opim-s1-grp` as member deactivates once; the second call gives a clear outcome.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -536,11 +667,15 @@ $Second = @(Disable-OPIMEntraIDGroup -GroupName $Old -ErrorVariable Errors -Erro
 **Record:** the second call's outcome, as in 3.5.
 **Failure looks like:** as in 3.5.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 3.7. Reader on opim-s1-rg, deactivated twice (also the OPIM-24 baseline)
 
-- [ ] **3.7** Window B. Reader on `opim-s1-rg` is deactivated with the old string form; the outcome of both calls is recorded.
+- [~] **3.7** Window B. Reader on `opim-s1-rg` is deactivated with the old string form; the outcome of both calls is recorded.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -563,13 +698,17 @@ OPIM-24 baseline (check 4.3), and the activation ends on its own after one hour.
 **Failure looks like:** a crash, or a second deactivation accepted after a first that succeeded --
 record it (G8).
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 4. Baselines for later steps, without a fix
 
 ### 4.1. OPIM-18 -- a start time given as text
 
-- [ ] **4.1** Window B. `-NotBefore` given as text without an offset: the start Graph records, compared with what the text meant in local time.
+- [~] **4.1** Window B. `-NotBefore` given as text without an offset: the start Graph records, compared with what the text meant in local time.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -595,11 +734,15 @@ Graph read the text as UTC (OPIM-18). With a local offset of zero the check cann
 mark it `[~]` and say so.
 **Failure looks like:** a terminating error -- record it; nothing was activated.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 4.2. OPIM-18, cleanup -- the scheduled owner activation does not stay
 
-- [ ] **4.2** Window B. The owner activation of 4.1 is cancelled while it is scheduled, or deactivated after five minutes once it has started.
+- [~] **4.2** Window B. The owner activation of 4.1 is cancelled while it is scheduled, or deactivated after five minutes once it has started.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -623,11 +766,15 @@ if ($Now['status'] -in 'Granted', 'Scheduled', 'ScheduleCreated', 'PendingSchedu
 **Expect:** `Active owner rows: 0`, after a cancel (HTTP 204) or a deactivation.
 **Failure looks like:** a row left -- record it; it ends on its own one hour after its start.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 4.3. OPIM-23 and OPIM-24 -- Azure by its old string form
 
-- [ ] **4.3** Window B. `Get-OPIMAzureRole -RoleName` with the old string form, and the outcome of 3.7's deactivation, are recorded as they are.
+- [~] **4.3** Window B. `Get-OPIMAzureRole -RoleName` with the old string form, and the outcome of 3.7's deactivation, are recorded as they are.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -645,11 +792,15 @@ $Found = @(Get-OPIMAzureRole -RoleName $Old -ErrorVariable Errors -ErrorAction S
 baseline.
 **Failure looks like:** nothing is a failure here; the step fixes neither.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 4.4. OPIM-14 -- a group activation with -Wait
 
-- [ ] **4.4** Window B. `Enable-OPIMEntraIDGroup -Wait` for the member eligibility: how long it waits and what it returns.
+- [~] **4.4** Window B. `Enable-OPIMEntraIDGroup -Wait` for the member eligibility: how long it waits and what it returns.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -668,11 +819,15 @@ five minutes, stop it with Ctrl+C and record a hang.
 **Failure looks like:** nothing is a failure here; the step fixes nothing. Deactivate the member row
 in 4.5.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 4.5. OPIM-14, cleanup
 
-- [ ] **4.5** Window B. Five minutes after 4.4 the member activation is deactivated.
+- [~] **4.5** Window B. Five minutes after 4.4 the member activation is deactivated.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -686,13 +841,17 @@ Get-OPIMEntraIDGroup -Activated -ErrorAction Stop | Where-Object { $_.group.disp
 **Expect:** `Active member rows: 0`.
 **Failure looks like:** a row left -- record it; it ends on its own after one hour.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. S.6 failed -- Microsoft Edge crashes as the security info registration wizard opens -- and every sign-in in this file needs the TOTP method S.6 registers, so no device code sign-in of the test user was possible in this round. STOP; see the round 1 report of step 2.
+```
 
 ### 5. The stop measurements (P-3)
 
 ### 5.1. Device code is not blocked by Conditional Access
 
-- [ ] **5.1** Window B. Every device code sign-in of 0.1, 1.2 and 1.4 completed.
+- [~] **5.1** Window B. Every device code sign-in of 0.1, 1.2 and 1.4 completed.
 
 ```powershell
 Get-ChildItem -Path 'docs/live-verification/raw/opim-s12' -Filter '*blocked*' -ErrorAction SilentlyContinue | Measure-Object | ForEach-Object { "Screenshots of a blocked sign-in: $($_.Count)" }
@@ -702,11 +861,17 @@ Get-ChildItem -Path 'docs/live-verification/raw/opim-s12' -Filter '*blocked*' -E
 **Failure looks like:** a `blocked` status in any of them -- STOP: Philip decides (an exclusion for the
 test user, or the manual device code of P-1).
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Not run: cannot be verified, and therefore we do not know. No device code sign-in ran (0.1, 1.2 and 1.4 never started; see S.6),
+so whether Conditional Access blocks the device code flow is still unmeasured.
+Screenshots of a blocked sign-in: 0.
+```
 
 ### 5.2. Security info registration needs no trusted location, pass or device
 
-- [ ] **5.2** Window B. The registration of S.6 completed.
+- [~] **5.2** Window B. The registration of S.6 completed.
 
 ```powershell
 "Key in the vault: $(Import-Module (Join-Path $env:OPIMLIVE_HOME 'OpimLive/OpimLive.psm1') -Force; [bool](Get-OpimLiveSecret -Name 'opim-s1-live-user-totp'))"
@@ -716,11 +881,17 @@ Result:
 **Failure looks like:** S.6 ended `registration-blocked` -- STOP: Philip decides (an exclusion or a
 Temporary Access Pass).
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Cannot be verified, and therefore we do not know. S.6 ended with Microsoft Edge crashing as the registration wizard opened, not
+with registration-blocked: the wizard's own requirements were never shown. The interrupt before it asked for nothing but Next.
+Key in the vault: False.
+```
 
 ### 5.3. No test role's policy requires approval or an authentication context
 
-- [ ] **5.3** Window A. The prerequisite script's policy lines.
+- [x] **5.3** Window A. The prerequisite script's policy lines.
 
 ```powershell
 Select-String -Path 'docs/live-verification/raw/opim-s12/prereq.txt' -Pattern 'PIM policy of' | ForEach-Object { $_.Line }
@@ -732,11 +903,21 @@ groups -- each with `rules read: True; approval required: False; authentication 
 **Failure looks like:** `True` on approval or authentication context -- STOP: Philip decides (other
 roles, or a policy change restored in the teardown).
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+PIM policy of directory role 'Usage Summary Reports Reader': rules read: True; approval required: False; authentication context: False; on activation: Justification; longest activation: PT8H
+PIM policy of directory role 'Message Center Privacy Reader': rules read: True; approval required: False; authentication context: False; on activation: Justification; longest activation: PT1H
+PIM policy of opim-s1-grp (member): rules read: True; approval required: False; authentication context: False; on activation: Justification; longest activation: PT8H
+PIM policy of opim-s1-grp (owner): rules read: True; approval required: False; authentication context: False; on activation: Justification; longest activation: PT8H
+PIM policy of Reader on opim-s1-rg: rules read: True; approval required: False; authentication context: False; on activation: Justification; longest activation: PT8H
+PIM policy of Reader on opim-s1-rg2: rules read: True; approval required: False; authentication context: False; on activation: Justification; longest activation: PT8H
+Required on activation: a justification only. No policy requires MFA on activation.
+```
 
 ### 5.4. Graph and ARM refuse oer-live-cc no write
 
-- [ ] **5.4** Window A. The prerequisite script ran without a 401 or a 403 on `oer-live-cc`'s path.
+- [x] **5.4** Window A. The prerequisite script ran without a 401 or a 403 on `oer-live-cc`'s path.
 
 ```powershell
 "STOP lines in the prerequisite run: $(@(Select-String -Path 'docs/live-verification/raw/opim-s12/prereq.txt' -Pattern 'STOP').Count)"
@@ -746,7 +927,11 @@ Result:
 **Failure looks like:** a STOP line naming 401 or 403 -- STOP: a missing permission is Philip's
 decision (G6), never worked around.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+STOP lines in the prerequisite run: 0
+```
 
 ## Teardown
 
@@ -757,7 +942,7 @@ prerequisite script's own raw folder stays for the fixture's teardown.
 
 ### T.1. No object of this step is left
 
-- [ ] **T.1** Window A, as `oer-live-cc`. No directory object carries the prefix `opim-s12-`.
+- [x] **T.1** Window A, as `oer-live-cc`. No directory object carries the prefix `opim-s12-`.
 
 ```powershell
 Import-Module (Join-Path $env:OPIMLIVE_HOME '../../Omnicit Entra RBAC/Live-verifiering/OerLive/OerLive.psm1') -Force
@@ -771,11 +956,17 @@ Disconnect-OerLive
 **Failure looks like:** another number -- record each object by name; it was not created by this
 file. A throw on an unread collection is a failed read, never a `0`.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Every identity check line of oer-live-cc: True.
+Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'opim-s12-' is left.
+Objects with the prefix opim-s12-: 0
+```
 
 ### T.2. The fixture's teardown plan
 
-- [ ] **T.2** Window A, as `oer-live-cc`. `Initialize-OpimS1Prereq.ps1 -Teardown -WhatIf` plans the removal of exactly the fixture, Azure eligibilities before their resource groups, and removes nothing.
+- [x] **T.2** Window A, as `oer-live-cc`. `Initialize-OpimS1Prereq.ps1 -Teardown -WhatIf` plans the removal of exactly the fixture, Azure eligibilities before their resource groups, and removes nothing.
 
 ```powershell
 $Out = @(& pwsh -NoProfile -File (Join-Path $env:OPIMLIVE_HOME 'Initialize-OpimS1Prereq.ps1') -Teardown -WhatIf 2>&1 | ForEach-Object { "$_" })
@@ -792,11 +983,28 @@ directory role eligibilities, the two group eligibilities, the group, the user a
 **Failure looks like:** a target without the prefix -- STOP. A planned removal that is not part of
 the fixture -- record it.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Planned removals: 12; without the prefix opim-s1-: 0
+opim-s1-rg: Azure eligibility of opim-s1-live-user
+opim-s1-rg2: Azure eligibility of opim-s1-live-user
+opim-s1-rg
+opim-s1-rg2
+opim-s1-live-user: eligible 'Message Center Privacy Reader' assignment at directory scope '/'
+opim-s1-live-user: eligible 'Usage Summary Reports Reader' assignment at directory scope '/'
+opim-s1-grp: PIM for Groups member eligibility of a principal
+opim-s1-grp: PIM for Groups owner eligibility of a principal
+opim-s1-grp
+opim-s1-live-user
+opim-s1-live-user-password in the SecretStore vault OpimLive
+opim-s1-live-user-totp in the SecretStore vault OpimLive
+Teardown of 'opim-s1-': removed 0, residue 0, unreadable 0 (WhatIf: nothing was removed).
+```
 
 ### T.3. The test user holds no active assignment
 
-- [ ] **T.3** Window B. After sections 3 and 4, the test user has no active directory role, group or Azure assignment.
+- [~] **T.3** Window B. After sections 3 and 4, the test user has no active directory role, group or Azure assignment.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -813,4 +1021,13 @@ Disconnect-OPIM
 on purpose but the fixture.
 **Failure looks like:** another row -- record it. A terminating error is a failed read, never a pass.
 
-Result:
+Result: 2026-10-06 15:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+The block was not run: the module cannot sign in as the test user (see S.6). No module command ran against the tenant in this
+round, so nothing was activated. Read instead as oer-live-cc, 15:03 UTC:
+Active directory role assignments of opim-s1-live-user: 0
+Active PIM for Groups assignments of opim-s1-live-user in opim-s1-grp: 0
+Active Azure role assignments of opim-s1-live-user at opim-s1-rg: 0
+Active Azure role assignments of opim-s1-live-user at opim-s1-rg2: 0
+```
