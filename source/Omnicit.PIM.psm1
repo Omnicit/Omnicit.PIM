@@ -1,5 +1,5 @@
 # ============================================================
-# SOURCE-MODE LOADER — FOR LOCAL DEVELOPMENT ONLY
+# SOURCE-MODE LOADER -- FOR LOCAL DEVELOPMENT ONLY
 # ============================================================
 # This file is used exclusively when importing the module directly from source:
 #
@@ -37,5 +37,5 @@ Export-ModuleMember -Function $PublicFunctions -Alias *
 Update-TypeData -AppendPath "$PSScriptRoot\Formats\Omnicit.PIM.Types.ps1xml" -ErrorAction SilentlyContinue
 
 # Formats are loaded natively via FormatsToProcess in the manifest. All format targets are
-# Omnicit.PIM.* custom types — no Az-native type overrides remain, so the AppendPath precedence
+# Omnicit.PIM.* custom types -- no Az-native type overrides remain, so the AppendPath precedence
 # issue with Az.Resources no longer applies.
