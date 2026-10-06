@@ -101,9 +101,14 @@ source/
                               #   Omnicit.PIM.Types.ps1xml (loaded by suffix.ps1), plus a README.md
   en-US/                      # about_Omnicit.PIM.help.txt
 tests/
-  QA/module.tests.ps1         # The QA gate (below), run by ./build.ps1 -Tasks test
+  QA/                         # The QA gate, six files (below), run by ./build.ps1 -Tasks test
   Unit/Classes/               # ArgumentCompleters.Tests.ps1 -- all six completer classes
   Unit/Private/, Unit/Public/ # One *.Tests.ps1 per source file
+  Unit/TestHelpers/           # OPIMTransportTripwire.ps1 (the transport tripwire every unit
+                              #   test file installs) and its known-answer suite -- see
+                              #   Testing Conventions
+docs/live-verification/       # README.md: the redaction and credential rules, the placeholder
+                              #   register dochygiene reads, and the checklist template
 build.yaml, build.ps1         # Sampler/ModuleBuilder config and bootstrap entry point
 RequiredModules.psd1          # Build-time dependency resolver -- see Dependencies
 GitVersion.yml                # Version computation -- see CHANGELOG and Version
@@ -155,22 +160,43 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
 `README.md` documents the cmdlets for their users. The authoritative export lists are
 `FunctionsToExport` and `AliasesToExport` in `source/Omnicit.PIM.psd1`.
 
-**The QA gate today is ONE file, `tests/QA/module.tests.ps1`**, run with everything else by
-`./build.ps1 -Tasks test`. It holds:
+**The QA gate is six files under `tests/QA/`**, run with everything else by
+`./build.ps1 -Tasks test`:
 
-- the changelog gates and the release version cap, which read `CHANGELOG.md`, the git diff against
-  `origin/main` and the BUILT manifest (see **CHANGELOG and Version**);
-- module import and removal;
-- for every function the module defines -- public and private alike, since the cases are enumerated
-  from inside the module with `Get-Command -CommandType Function` (30 on 2026-10-05) -- a unit test
-  file under `tests/`, a clean `Invoke-ScriptAnalyzer` run on its source file, and help quality:
-  `.SYNOPSIS`, a `.DESCRIPTION` over 40 characters, at least one `.EXAMPLE`, every parameter
-  described.
+- **`module.tests.ps1`** -- the changelog gates and the release version cap, which read
+  `CHANGELOG.md`, the git diff against `origin/main` and the BUILT manifest (see **CHANGELOG and
+  Version**); module import and removal; for every function the module defines -- public and
+  private alike, since the cases are enumerated from inside the module with
+  `Get-Command -CommandType Function` (30 on 2026-10-06) -- a unit test file under `tests/`, a
+  clean `Invoke-ScriptAnalyzer` run on its source file, and help quality: `.SYNOPSIS`, a
+  `.DESCRIPTION` over 40 characters, at least one `.EXAMPLE`, every parameter described; an
+  `[OutputType()]` on every EXPORTED function; and a `README.md` that names every exported cmdlet
+  and no `Verb-OPIM` name that is not an exported function or alias.
+- **`testhygiene.tests.ps1`** -- the transport tripwire, held by presence: every
+  `tests/Unit/**/*.Tests.ps1` carries the root form (see **Testing Conventions**); `source/` holds
+  `ForEach-Object -Parallel` only in a named list (`Wait-OPIMDirectoryRole.ps1` today), each block
+  importing only `Microsoft.Graph.Authentication`; and `Get-OPIMMsalApplication` is invoked only in
+  its own test file and the tripwire suite, where every `Get-MgContext` mock throws.
+- **`sourcehygiene.tests.ps1`** -- every `.ps1`, `.psd1`, `.psm1` and `.ps1xml` under `source/` and
+  `tests/` is ASCII without a BOM; every `Verb-OPIM` name in `source/**/*.ps1` resolves to a
+  function file or an exported alias; the region `suffix.ps1` shares with the dev-mode psm1 is
+  byte-identical; and every `.ps1xml` under `source/` parses as XML.
+- **`dochygiene.tests.ps1`** -- over every tracked file under `docs/`, `specs/`, `source/` and
+  `tests/`, plus `README.md` and `CHANGELOG.md`: object ids (only placeholders under `docs/` and
+  `specs/`; elsewhere no version-4 id outside a pinned register of four public constants), email
+  domains (`example.com`, `contoso.com`, `fabrikam.com`), tenant labels (`contoso`, `fabrikam`),
+  no credentials, every placeholder registered in `docs/live-verification/README.md`, and, in
+  Markdown, no angle bracket that renders as an HTML tag outside code (README's line-1 logo is the
+  one exception). It does not read `CLAUDE.md`.
+- **`about.tests.ps1`** -- the about topic exists, ships byte-identical in the built module, is
+  ASCII without a BOM, names every exported cmdlet and no `Verb-OPIM` name that is not an exported
+  function or alias, and names at least one cmdlet in each of the four cohorts.
+- **`docsync.tests.ps1`** -- README's `## Available Cmdlets` and the about topic's
+  `COMMAND COHORTS` roster the same cmdlets, every exported one, and README's `### <Cohort> (N)`
+  counts match what each cohort lists.
 
-The further gates Omnicit.EntraRBAC runs are **planned, not yet in this repository**: test hygiene
-with a transport tripwire, documentation hygiene, source hygiene (ASCII and BOM among it), an about
-topic check, and a README/about-topic sync. Nothing here enforces those rules yet; where this file
-states one of them, review is what holds it until the gate lands.
+The QA files sit outside the tripwire on purpose: they call help, the analyzer and pure maps only,
+and `testhygiene`, `sourcehygiene`, `dochygiene` and `docsync` read files statically.
 
 ---
 
@@ -189,7 +215,7 @@ states one of them, review is what holds it until the gate lands.
 
 # Full test suite -- the authoritative gate, and the command every CI leg runs.
 # QA tests + unit tests + per-function PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-05: 703 passed, 0 failed, 1 skipped; coverage 83.7% over 1,699 analysed
+# (measured 2026-10-06: 838 passed, 0 failed, 1 skipped; coverage 80.28% over 1,699 analysed
 #  commands; Pester 6.2.0)
 ./build.ps1 -Tasks test
 
@@ -206,7 +232,10 @@ The Sampler test task measures coverage against the **built** module output, not
 `build.yaml`'s `test` workflow does not include `build` (`build.yaml:63-70`; only the default
 workflow, `./build.ps1` with no `-Tasks`, runs both). Always run `-Tasks build` before `-Tasks test`
 after changing source files -- and never build while the tests are running. The coverage threshold
-is 80 % (`build.yaml:152`).
+is 80 % (`build.yaml:152`), and the margin over it is thin: measured on 2026-10-06, 1,364 of
+1,699 commands are covered, four more than 80 % requires. The MSAL reflection lines in
+`Get-OPIMMsalApplication` are no longer run by any unit test, since reaching them builds a real
+MSAL client (see **Testing Conventions**), and that took coverage from 83.7 % to 80.28 %.
 
 **The build stamps the version GitVersion computes, and a local build needs GitVersion to do it.**
 Sampler (`Get-SamplerBuildVersion`, Sampler 0.120.1) takes `$env:ModuleVersion` when it is set,
@@ -454,7 +483,7 @@ and `Disable-` for `DirectoryRole`, `AzureRole` and `EntraIDGroup` -- and `Wait-
 call it as the first statement of their `process` block (of their `begin` block in
 `Enable-OPIMDirectoryRole` and `Wait-OPIMDirectoryRole`), and the three `*-OPIMAzureRole` cmdlets
 pass `-IncludeARM`. `Connect-OPIM` resolves `-TenantAlias` from `TenantMap.psd1` and passes its
-`-TenantId` and `-IncludeARM` on (`Connect-OPIM.ps1:63-91`); it is an optional pre-authentication
+`-TenantId` and `-IncludeARM` on (`Connect-OPIM.ps1:64-92`); it is an optional pre-authentication
 shortcut, since every pillar cmdlet authenticates on first use. `Enable-OPIMMyRole` and
 `Disable-OPIMMyRole` call `Connect-OPIM` and then the pillar cmdlets. The `*-OPIMConfiguration`
 cmdlets do not authenticate.
@@ -531,7 +560,7 @@ application's in-memory cache (`$script:_OPIMMsalApp`) and in the Graph SDK's co
 **`Disconnect-OPIM`** sets `$script:_OPIMAuthState`, `$script:_OPIMMsalApp`,
 `$script:_OPIMMsalAppTenantId` and `$script:_MyIDCache` to `$null`, then calls `Disconnect-MgGraph`
 and `Disconnect-AzAccount`, each with `-ErrorAction SilentlyContinue` inside a `try` whose `catch`
-discards the error (`Disconnect-OPIM.ps1:22-28`). `Disconnect-AzAccount` acts on the current Az
+discards the error (`Disconnect-OPIM.ps1:23-29`). `Disconnect-AzAccount` acts on the current Az
 context, whether or not the module established it.
 
 **`Invoke-OPIMGraphRequest` owns the Graph transport.** It calls `Invoke-MgGraphRequest` with
@@ -554,7 +583,7 @@ Its catches call `$null = $Error.Remove($PSItem)` first; see **Error Handling** 
 and does not do.
 
 **The places that call the raw SDK or Az authentication directly today**, from a `Select-String`
-over `source/` on 2026-10-05, listed as they are:
+over `source/` on 2026-10-06, listed as they are:
 
 | File:line (under `source/`) | Call |
 |---|---|
@@ -564,7 +593,7 @@ over `source/` on 2026-10-05, listed as they are:
 | `Private/Initialize-OPIMAuth.ps1:279` | `Connect-MgGraph -AccessToken` |
 | `Private/Initialize-OPIMAuth.ps1:120` | `Get-AzAccessToken` (silent validation; the token is discarded) |
 | `Private/Initialize-OPIMAuth.ps1:311` | `Connect-AzAccount` |
-| `Public/Disconnect-OPIM.ps1:27, 28` | `Disconnect-MgGraph`, `Disconnect-AzAccount` |
+| `Public/Disconnect-OPIM.ps1:28, 29` | `Disconnect-MgGraph`, `Disconnect-AzAccount` |
 
 Beside these, the module reads `Get-MgContext` (`Initialize-OPIMAuth.ps1:93`,
 `Get-OPIMMsalApplication.ps1:46`, `Get-MyId.ps1:26`, `Get-OPIMCurrentTenantInfo.ps1:30`), reads
@@ -606,7 +635,7 @@ makes no Graph call.
 
 Reads use the filter `asTarget()` at scope `/` unless `-Scope` names another. An Azure schedule's
 id is its `Name`, not `id`; an activation sends `LinkedRoleEligibilityScheduleId = $Role.Name`
-(`Enable-OPIMAzureRole.ps1:96-100`).
+(`Enable-OPIMAzureRole.ps1:97-101`).
 
 **PIM for Groups** (Graph, `identityGovernance/privilegedAccess/group/`):
 
@@ -698,7 +727,9 @@ called by `Install`, `Set` and `Remove`; never inline it.
 - `[CmdletBinding(SupportsShouldProcess)]` on every state-changing function (every Enable- and
   Disable- cmdlet, and the configuration writers). Call `$PSCmdlet.ShouldProcess`, not
   `$PSCmdlet.ShouldContinue`.
-- `[OutputType([PSCustomObject])]` on every function that returns type-tagged objects; do not
+- `[OutputType([PSCustomObject])]` on every function that returns type-tagged objects, and
+  `[OutputType([void])]` on an exported one that emits nothing -- the QA gate requires an
+  `[OutputType()]` on every export, and checks that it is declared, not what it says. Do not
   declare `[OutputType([System.Collections.Hashtable])]` (`Wait-OPIMDirectoryRole` still does).
 - **Output tagging is mandatory** -- never return a raw `Invoke-OPIMGraphRequest` hashtable (the
   default Key/Value formatter applies to it):
@@ -750,33 +781,26 @@ called by `Install`, `Set` and `Remove`; never inline it.
 
 ## CRITICAL: ASCII-Only Source Files
 
-Authored `.ps1` files are UTF-8 **without BOM**. They **must contain only ASCII characters** --
-no em-dashes, no box-drawing characters, no arrows, no smart quotes, no curly apostrophes.
+Every authored `.ps1`, `.psd1`, `.psm1` and `.ps1xml` file under `source/` and `tests/` is UTF-8
+**without BOM** and **contains only ASCII characters** -- no em-dashes, no box-drawing characters,
+no arrows, no smart quotes, no curly apostrophes. `tests/QA/sourcehygiene.tests.ps1` enforces both
+halves on every one of them, with no allow-list: no file in this tree is a verbatim copy that has
+to keep a BOM. The about topic, `source/en-US/about_Omnicit.PIM.help.txt`, is held to the same two
+rules by `tests/QA/about.tests.ps1`.
 
 Without a BOM, PowerShell and PSScriptAnalyzer treat the file as ASCII. A non-ASCII character in
 a BOM-less file fails PSScriptAnalyzer's `PSUseBOMForUnicodeEncodedFile` rule, which the QA gate
-runs on every function's source file.
-
-The only acceptable exception is a helper file that was verbatim-copied from a source that
-already carries a UTF-8 BOM.
+runs on every function's source file -- but a BOM switches that rule off, and the analyzer never
+reads `tests/`, which is why the source-hygiene gate checks the bytes itself.
 
 Use `--` (two hyphens) for em-dash contexts in comments and help text and `->` for an arrow. Use
-straight quotes `'` and `"` only.
-
-**This repository is not there yet.** Measured on 2026-10-05, on the text after any leading BOM:
-18 of the 44 tracked files under `source/` and 3 of the 33 under `tests/` contain non-ASCII
-characters (mostly em-dashes and box-drawing rules in comments), and 19 of those 21 carry a UTF-8
-BOM -- which is why the per-function PSScriptAnalyzer run passes today. The two without a BOM are
-`source/Omnicit.PIM.psm1` and `source/en-US/about_Omnicit.PIM.help.txt`, neither of which that run
-analyses. A further 29 files (21 under `source/`, 8 under `tests/`) carry a BOM over pure ASCII
-text. A source-hygiene gate for ASCII and BOM is planned, not yet in this repository. Until it
-lands:
+straight quotes `'` and `"` only. Inside an XML comment in a `.ps1xml` file `--` is illegal, so a
+rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY, since
+`suffix.ps1` loads it with `-ErrorAction SilentlyContinue`; the same gate therefore parses every
+`.ps1xml` under `source/` as XML.
 
 - **New files** are ASCII and UTF-8 without BOM.
-- **New or edited lines** in an existing file are ASCII, whatever the rest of the file holds.
-- **Never strip the BOM from a file that still contains a non-ASCII character** -- the
-  per-function PSScriptAnalyzer run then fails on `PSUseBOMForUnicodeEncodedFile`. Make the file
-  ASCII first, and drop the BOM in the same change.
+- **New or edited lines** in an existing file are ASCII.
 
 ---
 
@@ -852,31 +876,81 @@ lands:
 - **Tests are written in Pester 5 syntax** under `tests/Unit/{Classes,Private,Public}/`. The build
   resolves the newest Pester (`RequiredModules.psd1` asks for `latest`), and CI resolves it afresh
   on every run, so no version is a standing fact here; 6.2.0 was resolved when measured on
-  2026-10-05. One `*.Tests.ps1` per source file -- the six completer classes share
-  `Unit/Classes/ArgumentCompleters.Tests.ps1`. The QA gate (`tests/QA/module.tests.ps1`) requires
-  a unit test file for every function.
+  2026-10-06. One `*.Tests.ps1` per source file -- the six completer classes share
+  `Unit/Classes/ArgumentCompleters.Tests.ps1` -- plus the tripwire's own known-answer suite,
+  `Unit/TestHelpers/OPIMTransportTripwire.Tests.ps1`. The QA gate (`tests/QA/module.tests.ps1`)
+  requires a unit test file for every function.
 - **Structure:** one `Describe` per file, named exactly after the function under test. Group
   scenarios (happy path, error cases, parameter sets) in `Context` blocks, with a `BeforeAll`
   inside each `Context` for shared arrangement; use `BeforeEach` only for state that must reset
   per `It`. `It` names start with a third-person singular verb: "calls", "returns", "writes",
   "throws". Write the scope prefix in lower case, `$script:_MyIDCache`, never `$SCRIPT:`.
-- **Import by module name, not by path**, in the root `BeforeAll` -- importing by path breaks the
-  Sampler coverage measurement, which targets the built module:
+- **Every unit test file opens with the root form**, at the top of the file and outside every
+  `Describe`. It imports the module BY NAME, never by path -- importing by path breaks the Sampler
+  coverage measurement, which targets the built module -- and installs the transport tripwire
+  AFTER the import:
   ```powershell
+  BeforeAll {
+      Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
+      Import-Module Omnicit.PIM -Force
+      . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
+      Install-OPIMTransportTripwire
+  }
+
+  AfterAll {
+      try { Assert-OPIMTransportTripwire } finally { Uninstall-OPIMTransportTripwire }
+  }
+
   Describe 'Get-OPIMDirectoryRole' {
-      BeforeAll {
-          Remove-Module Omnicit.PIM -Force -ErrorAction SilentlyContinue
-          Import-Module Omnicit.PIM -Force
-      }
-      AfterAll {
-          Remove-Module Omnicit.PIM -ErrorAction SilentlyContinue
-      }
       # Context blocks ...
   }
   ```
+  A new unit test file carries it too: `tests/QA/testhygiene.tests.ps1` fails any
+  `tests/Unit/**/*.Tests.ps1` without it, with no exemption list, and also fails an install placed
+  before the import or a `catch` in the `AfterAll`, which would swallow the assert's throw. The
+  tripwire suite itself dot-sources `"$PSScriptRoot/OPIMTransportTripwire.ps1"`.
+- **The transport tripwire** (`tests/Unit/TestHelpers/OPIMTransportTripwire.ps1`) replaces the
+  fifteen commands through which module code reaches a tenant or the network -- the four
+  `Microsoft.Graph.Authentication` commands, `Connect-AzAccount`, `Disconnect-AzAccount`,
+  `Get-AzContext`, `Get-AzAccessToken`, `Update-AzConfig`, the four `Az.Resources` schedule
+  commands, `Invoke-WebRequest` and `Invoke-RestMethod` -- with functions that record the call
+  (parameter NAMES only, never a value) and throw, and the root `AfterAll` fails the file on any
+  record, so a module `catch` that swallows the throw cannot hide it. A cmdlet is replaced by a
+  global function built from its metadata (`Cmdlet`), and the `Az.Accounts` cmdlets, which
+  implement `IDynamicParameters`, carry their dynamic parameters as static ones so a call such as
+  `Update-AzConfig -EnableLoginByWam` binds before it is recorded (`DynamicCmdlet`); the
+  `Az.Resources` commands are functions, so theirs live in Omnicit.PIM's module scope, where they
+  do not shadow the imported function (`ModuleFunction`). A `Mock -ModuleName Omnicit.PIM`
+  outranks every form, so the mocks below work unchanged, and the replacements refuse whether or
+  not the process holds a Graph or Az context -- run the suite in a fresh `pwsh` process all the
+  same.
+- **A `ForEach-Object -Parallel` block is mocked through the stand-in.** No Pester mock and no
+  global function reaches such a runspace, so the tripwire puts a generated stand-in
+  `Microsoft.Graph.Authentication` first on `PSModulePath`; the block's own
+  `Import-Module 'Microsoft.Graph.Authentication'` loads it, and its four commands refuse and
+  record unless a response is registered for them:
+  ```powershell
+  $Response = @{ value = @(@{ status = 'PendingProvisioning' }) }
+  Register-OPIMParallelTransportStandIn -Name 'Invoke-MgGraphRequest' -Response $Response
+  try {
+      { $Request | Wait-OPIMDirectoryRole -NoSummary -Timeout 0 2>$null } | Should -Throw
+      @(Get-OPIMParallelTransportStandInCall).Count | Should -Be 1
+  } finally {
+      Unregister-OPIMParallelTransportStandIn
+  }
+  ```
+  One registered response answers every call to that name, in every runspace.
+  `Get-OPIMParallelTransportStandInCall` returns the calls (`Command`, `Caller`, `Parameters`);
+  assert on it, which also proves the parallel path was reached.
+- **Never mock around the tripwire with a function of your own.** A global or module-scope
+  function under a transport name displaces the replacement, and the root `AfterAll` then fails the
+  file with "no longer resolves to the tripwire from the module scope". Use
+  `Mock -ModuleName Omnicit.PIM`, which outranks the replacement without removing it, or the
+  stand-in inside a `-Parallel` block.
 - **Always mock `Initialize-OPIMAuth`** -- every pillar cmdlet and `Wait-OPIMDirectoryRole` calls it
-  first (see **Authentication Architecture**), so without the mock the test attempts a real MSAL
-  sign-in and hangs on the browser:
+  first (see **Authentication Architecture**), so without the mock the test would start a real
+  sign-in; the tripwire records and refuses its first transport call and fails the file, but only
+  the mock makes the test test anything:
   ```powershell
   Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
   ```
@@ -895,16 +969,25 @@ lands:
   response. Earlier versions of `.github/instructions/pester-tests.instructions.md` and
   `.github/prompts/generate-pester-tests.prompt.md` said to mock `Invoke-MgGraphRequest`, mostly
   WITHOUT `-ModuleName`. That is wrong for every function that goes through the wrapper. A mock
-  without `-ModuleName` does not intercept a call made from inside the module at all, so the real
-  SDK call runs; a module-scoped mock of the raw call does intercept it, but then drives the real
-  wrapper -- its retries, its `Initialize-OPIMAuth` step-up and refresh calls, its error conversion
-  -- instead of testing the function at the module boundary. Mock the raw SDK only where the test
-  is about that layer itself or the function calls it directly:
-  `Invoke-OPIMGraphRequest.Tests.ps1` (the wrapper, mocked inside `InModuleScope`),
-  `Get-OPIMCurrentTenantInfo.Tests.ps1` (`Invoke-MgGraphRequest` and `Get-MgContext`),
-  `Initialize-OPIMAuth.Tests.ps1` (`Connect-MgGraph`, `Connect-AzAccount`, `Get-AzContext`,
-  `Get-AzAccessToken`, `Get-OPIMMsalApplication`) and `Disconnect-OPIM.Tests.ps1`
-  (`Disconnect-MgGraph`, `Disconnect-AzAccount`).
+  without `-ModuleName` does not intercept a call made from inside the module at all, so the call
+  goes on to the tripwire, which refuses it and fails the file; a module-scoped mock of the raw
+  call does intercept it, but then drives the real wrapper -- its retries, its
+  `Initialize-OPIMAuth` step-up and refresh calls, its error conversion -- instead of testing the
+  function at the module boundary. Mock the raw SDK only where the test is about that layer itself
+  or the function calls it directly: `Invoke-OPIMGraphRequest.Tests.ps1` (the wrapper, mocked
+  inside `InModuleScope`), `Get-OPIMCurrentTenantInfo.Tests.ps1` (`Invoke-MgGraphRequest` and
+  `Get-MgContext`), `Get-MyId.Tests.ps1` and `Get-OPIMMsalApplication.Tests.ps1` (`Get-MgContext`,
+  which must THROW in the latter -- see below), `Initialize-OPIMAuth.Tests.ps1` (`Connect-MgGraph`,
+  `Connect-AzAccount`, `Get-AzContext`, `Get-AzAccessToken`, `Update-AzConfig`,
+  `Get-OPIMMsalApplication`) and `Disconnect-OPIM.Tests.ps1` (`Disconnect-MgGraph`,
+  `Disconnect-AzAccount`).
+- **`Get-OPIMMsalApplication` is stopped at its `Get-MgContext` call in every test.** Past that
+  call (`Get-OPIMMsalApplication.ps1:46`) it builds a real MSAL `PublicClientApplication` by
+  reflection, which no mock intercepts. Its two build-path tests therefore mock `Get-MgContext` to
+  throw a sentinel and assert that the sentinel stopped the call with the cache unchanged, and
+  testhygiene allows a call to `Get-OPIMMsalApplication` only in
+  `tests/Unit/Private/Get-OPIMMsalApplication.Tests.ps1` and the tripwire suite, where every
+  `Get-MgContext` mock must throw. Everywhere else, mock `Get-OPIMMsalApplication` itself.
 - **To simulate a Graph error, throw what the wrapper throws** -- an `ErrorRecord` whose
   `FullyQualifiedErrorId` is the Graph error code -- with `$PSCmdlet.ThrowTerminatingError()`; the
   same pattern as for `Az.Resources` below.
@@ -959,17 +1042,11 @@ lands:
   ```
 - **A `Mock -ModuleName` covers only calls made from inside the module.** A command the test body
   calls itself runs for real unless it has its own test-scope `Mock`. Mocks do not cross
-  `ForEach-Object -Parallel` runspaces either.
-- **Known exception: `Wait-OPIMDirectoryRole`'s tests reach the REAL Graph transport.** Three of
-  them (`tests/Unit/Public/Wait-OPIMDirectoryRole.Tests.ps1:52-55`, `:75-78`, `:111-119`) pipe a
-  request that has not expired with `-Timeout 0`, so the cmdlet starts its
-  `ForEach-Object -Parallel -AsJob` block. The polling loop's first Graph call is the real, unmocked
-  `Invoke-MgGraphRequest` at `source/Public/Wait-OPIMDirectoryRole.ps1:101`, run inside a thread
-  job, where no mock reaches. It fails -- and the tests pass -- only because the test process holds
-  no Graph context. Until the planned transport tripwire lands, that is the rule: **never run the
-  unit tests in a pwsh session that holds a Graph context** (after `Connect-MgGraph` or
-  `Connect-OPIM`) -- start a fresh process. The `-PassThru` test is skipped for the same reason (its
-  skip comment's "integration tests" do not exist in this repository).
+  `ForEach-Object -Parallel` runspaces either -- the stand-in above is what answers there.
+- **`Wait-OPIMDirectoryRole`'s three `-Parallel` tests reached the real `Invoke-MgGraphRequest`
+  in a thread job until the tripwire caught them; they now register the stand-in, which closed
+  that exception.** The `-PassThru` test is still skipped, and its skip comment's "integration
+  tests" do not exist in this repository.
 - **Pin `-ErrorAction` on any call whose non-terminating error the test observes or has to
   survive.** Module code reads the GLOBAL `$ErrorActionPreference`, which the workflow's
   `shell: pwsh` steps and many operator profiles set to Stop, and a test-local
@@ -989,10 +1066,6 @@ lands:
   `Omnicit.PIM.GroupEligibilitySchedule`), PascalCase variables, `contoso`/`fabrikam` for any
   tenant label, and an assertion on the output type tag rather than on a raw hashtable. Durations
   in a request body are ISO 8601 (`PT1H`).
-- **A transport tripwire is planned, not yet in this repository.** In Omnicit.EntraRBAC every unit
-  test file installs one that records and refuses any unmocked call reaching the SDK transport.
-  Here nothing catches a missing mock yet except review -- or a test that hangs on a browser
-  prompt -- and the `Wait-OPIMDirectoryRole` exception above stays open until it lands.
 
 ---
 
@@ -1008,11 +1081,11 @@ memberships** for the signed-in user. These rules are non-negotiable:
 2. **Every unit test mocks authentication and the transport at the module boundary**:
    `Initialize-OPIMAuth` always, `Invoke-OPIMGraphRequest` for Graph, the `Az.Resources` cmdlets
    for Azure, and the raw SDK calls only where a function makes them directly (see **Testing
-   Conventions**). Nothing in CI or tests authenticates. One known exception reaches the
-   transport: `Wait-OPIMDirectoryRole`'s tests run a real `Invoke-MgGraphRequest` in a thread job,
-   which fails only because the test process holds no Graph context -- so never run the unit tests
-   in a pwsh session that holds one; start a fresh process. The planned transport tripwire is what
-   will close this.
+   Conventions**). Nothing in CI or tests authenticates. The transport tripwire, which every unit
+   test file installs and `tests/QA/testhygiene.tests.ps1` holds in place, records and refuses any
+   unmocked call that reaches a transport command -- in a `-Parallel` runspace too, through its
+   stand-in -- and fails the file. It closed the one known exception: `Wait-OPIMDirectoryRole`'s
+   tests used to run a real `Invoke-MgGraphRequest` in a thread job.
 3. **Every state change supports `-WhatIf` and `-Confirm`** via
    `[CmdletBinding(SupportsShouldProcess)]` -- every Enable- and Disable- cmdlet, and
    `Install`/`Set`/`Remove-OPIMConfiguration` (`ConfirmImpact = 'High'`).
@@ -1068,8 +1141,9 @@ version drift.
    `source/Private/<FunctionName>.ps1` for a private helper (several, such as `Get-MyId` and
    `Resolve-RoleByName`, carry no OPIM prefix). Either way the filename must match the function
    name exactly. Declare it with `function`, not `filter` (see **Common Pitfalls**).
-2. **If public:** add it to `FunctionsToExport` in `source/Omnicit.PIM.psd1`, declare any alias
-   with `[Alias()]` on the function, and add the alias to `AliasesToExport` there.
+2. **If public:** add it to `FunctionsToExport` in `source/Omnicit.PIM.psd1`, declare its
+   `[OutputType()]`, declare any alias with `[Alias()]` on the function, and add the alias to
+   `AliasesToExport` there.
 3. **If tab completion is needed:** add an `IArgumentCompleter` class in `source/Classes/` that
    calls the `Get-OPIM*` cmdlet through `& ([scriptblock]::Create('...'))`, and cover it in
    `tests/Unit/Classes/ArgumentCompleters.Tests.ps1`.
@@ -1082,13 +1156,16 @@ version drift.
    `<Type>` in `source/Formats/Omnicit.PIM.Types.ps1xml`.
 7. **Add full comment-based help:** `.SYNOPSIS`, a `.DESCRIPTION` over 40 characters, one
    `.PARAMETER` per parameter, and at least one `.EXAMPLE` -- the QA gate checks all four.
-8. **Add a unit test file:** `tests/Unit/{Public|Private}/<FunctionName>.Tests.ps1`. Import by
-   module name in `BeforeAll`, and mock `Initialize-OPIMAuth` and `Invoke-OPIMGraphRequest` (the
-   shapes are under **Testing Conventions**).
+8. **Add a unit test file:** `tests/Unit/{Public|Private}/<FunctionName>.Tests.ps1`. Open it with
+   the root form, which imports the module by name and installs the transport tripwire, and mock
+   `Initialize-OPIMAuth` and `Invoke-OPIMGraphRequest` (the shapes are under **Testing
+   Conventions**).
 9. **Document a change to the shipped module** in `CHANGELOG.md`'s `[Unreleased]` section, in
-   release-note voice -- replacing the close-out sentence if it still stands -- and the usage in
-   `README.md` for a public cmdlet.
-10. **Keep the file ASCII-only** and UTF-8 without BOM.
+   release-note voice -- replacing the close-out sentence if it still stands. For a public cmdlet,
+   document its usage in `README.md` and roster it under its cohort in both README's
+   `## Available Cmdlets` (raising that cohort's count) and the about topic's `COMMAND COHORTS`.
+10. **Keep the file ASCII-only** and UTF-8 without BOM -- `tests/QA/sourcehygiene.tests.ps1`
+    fails it otherwise.
 11. **Run `./build.ps1 -Tasks build`, then `./build.ps1 -Tasks test`,** before committing -- it is
     the authoritative gate.
 
@@ -1101,7 +1178,8 @@ version drift.
   `[System.Exception]::new('message')`.
 - **The source psm1 is the dev-mode loader only.** ModuleBuilder replaces it during the build with
   a merged psm1. Initialization that must survive in the built module belongs in `suffix.ps1`, and
-  is mirrored in the dev-mode psm1.
+  is mirrored in the dev-mode psm1; `tests/QA/sourcehygiene.tests.ps1` holds the mirrored region
+  byte-identical.
 - **`FormatsToProcess` is active; `TypesToProcess` is intentionally empty.** `Remove-Module` does
   not clean type data, so `TypesToProcess` made a second `Import-Module -Force` fail with "member
   is already present". Types are loaded by a single
@@ -1110,7 +1188,9 @@ version drift.
 - **Parallel runspaces need an explicit Graph import.** `Wait-OPIMDirectoryRole` calls
   `Import-Module 'Microsoft.Graph.Authentication'` inside `ForEach-Object -Parallel` (`:68`); any
   new parallel block must do the same. Module functions, mocks and `$script:` state are not
-  available there.
+  available there. A new block also goes on testhygiene's named list, and it may import nothing
+  else and call no transport command but the four Graph ones -- that is all the tripwire's stand-in
+  covers.
 - **`Invoke-MgGraphRequest` must run with `-Verbose:$false -ErrorAction Stop`** -- it suppresses
   SDK noise and makes the failure catchable. `Invoke-OPIMGraphRequest` does it for every caller; all
   new code calls the wrapper instead.
