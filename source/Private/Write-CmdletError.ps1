@@ -1,4 +1,4 @@
-﻿using namespace System.Management.Automation
+using namespace System.Management.Automation
 function Write-CmdletError {
     <#
     .SYNOPSIS
@@ -11,9 +11,9 @@ function Write-CmdletError {
 
     Two parameter sets are available:
 
-    * Message (default) — builds a new ErrorRecord from a -Message exception. Use -InnerException
+    * Message (default) -- builds a new ErrorRecord from a -Message exception. Use -InnerException
       to chain a caught exception as the InnerException of the new record.
-    * ErrorRecord — emits a pre-built ErrorRecord directly (pass-through). Use this when
+    * ErrorRecord -- emits a pre-built ErrorRecord directly (pass-through). Use this when
       re-emitting a caught ErrorRecord without modification.
 
     .PARAMETER Message

@@ -1,4 +1,4 @@
-﻿function ConvertTo-PolicyValidationError {
+function ConvertTo-PolicyValidationError {
     <#
     .SYNOPSIS
     Handles PIM policy validation failures from activation requests.

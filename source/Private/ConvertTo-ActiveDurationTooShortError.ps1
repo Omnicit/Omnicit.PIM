@@ -1,4 +1,4 @@
-﻿function ConvertTo-ActiveDurationTooShortError {
+function ConvertTo-ActiveDurationTooShortError {
     <#
     .SYNOPSIS
     Handles an ActiveDurationTooShort error from a PIM deactivation request.

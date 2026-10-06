@@ -1,4 +1,4 @@
-﻿function Get-OPIMMsalApplication {
+function Get-OPIMMsalApplication {
     <#
     .SYNOPSIS
     Returns a cached MSAL PublicClientApplication built from the Microsoft.Identity.Client
@@ -41,18 +41,18 @@
 
     # Force-load the Graph.Authentication module assemblies (no-op if already loaded).
     # This is intentionally a throwaway call; Get-MgContext returns $null when not connected
-    # and that is fine — we only need its side-effect of loading Microsoft.Identity.Client into
+    # and that is fine -- we only need its side-effect of loading Microsoft.Identity.Client into
     # the process (in the Graph SDK's custom ALC) before we scan all ALCs below.
     $null = Get-MgContext -ErrorAction SilentlyContinue
 
     # Locate MSAL assembly. The Graph SDK loads it into a private AssemblyLoadContext (ALC)
-    # that is NOT always enumerable — the ALC is only registered after Connect-MgGraph has been
+    # that is NOT always enumerable -- the ALC is only registered after Connect-MgGraph has been
     # called at least once in the session, bootstrapping token acquisition. On the very first
     # call (before any auth), [AssemblyLoadContext]::All won't see it.
     #
     # Two-pass strategy:
-    #   Pass 1 — scan all registered ALCs (fast; works once Graph SDK has loaded MSAL)
-    #   Pass 2 — load from Microsoft.Graph.Authentication's bundled copy via LoadFile
+    #   Pass 1 -- scan all registered ALCs (fast; works once Graph SDK has loaded MSAL)
+    #   Pass 2 -- load from Microsoft.Graph.Authentication's bundled copy via LoadFile
     #            into the default ALC (works on first call before any auth has occurred)
     $MsalAssembly = try {
         [System.Runtime.Loader.AssemblyLoadContext]::All |
@@ -106,7 +106,7 @@
             -Terminating
     }
 
-    # PublicClientApplicationBuilder.Create(string clientId) — static factory.
+    # PublicClientApplicationBuilder.Create(string clientId) -- static factory.
     # Use GetMethods() name-search instead of GetMethod(name,[Type[]]) to avoid cross-ALC type-
     # identity failures where [string] from the default ALC may not satisfy an overload-resolution
     # check on types loaded in a different AssemblyLoadContext.
@@ -116,7 +116,7 @@
         Select-Object -First 1
     $Builder = $CreateMethod.Invoke($null, @($ClientId))
 
-    # .WithAuthority — resolve on the runtime type of $Builder so the full inheritance chain
+    # .WithAuthority -- resolve on the runtime type of $Builder so the full inheritance chain
     # (including generic base AbstractApplicationBuilder<T>) is traversed inside the correct ALC.
     # Prefer the single-string overload (MSAL 4.60+). If only (string, bool) is present, pass $true.
     $WithAuthorityMethod = $Builder.GetType().GetMethods() |
@@ -133,13 +133,13 @@
         $WithAuthorityMethod.Invoke($Builder, @($Authority, $true))
     }
 
-    # .WithRedirectUri(string) — http://localhost activates the system browser (no WAM required)
+    # .WithRedirectUri(string) -- http://localhost activates the system browser (no WAM required)
     $WithRedirectMethod = $Builder.GetType().GetMethods() |
         Where-Object { $_.Name -eq 'WithRedirectUri' -and ($_.GetParameters()).Count -eq 1 } |
         Select-Object -First 1
     $Builder = $WithRedirectMethod.Invoke($Builder, @('http://localhost'))
 
-    # .Build() — construct the final IPublicClientApplication
+    # .Build() -- construct the final IPublicClientApplication
     $MsalApp = $Builder.GetType().GetMethod('Build').Invoke($Builder, @())
 
     if (-not $MsalApp) {
