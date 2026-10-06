@@ -32,7 +32,10 @@ function Initialize-OPIMAuth {
     Connect-AzAccount -UseDeviceAuthentication. The mode is stored as DeviceCode in the auth state,
     so every later sign-in in the session uses it -- the silent refresh, the token-rejected retry and
     the ACRS step-up in Invoke-OPIMGraphRequest pass no -DeviceCode -- until Disconnect-OPIM clears
-    the state. A device code session never falls back to the system browser.
+    the state. A device code session never falls back to the system browser. Before the first
+    sign-in the state holds only DeviceCode, which never counts as signed in, so a first sign-in
+    that fails (a declined or expired code, Ctrl+C) keeps the mode too. A failed device code flow
+    ends this function with the helper's DeviceCodeAuthFailed error and no second error after it.
 
     .PARAMETER TenantId
     The Entra ID tenant GUID or domain. When omitted or empty, 'organizations' is used
@@ -61,8 +64,8 @@ function Initialize-OPIMAuth {
 
     .PARAMETER DeviceCode
     Sign in with the device code flow instead of the system browser, and remember the mode in the
-    auth state for every later sign-in in the session. When a valid token is already cached, no new
-    sign-in happens; only the mode is remembered.
+    auth state for every later sign-in in the session, even when this first sign-in fails. When a
+    valid token is already cached, no new sign-in happens; only the mode is remembered.
 
     .EXAMPLE
     Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com'
@@ -92,8 +95,16 @@ function Initialize-OPIMAuth {
     # -DeviceCode is remembered in the auth state, so every later sign-in in the session uses it:
     # the silent refresh, the token-rejected retry and the ACRS step-up in Invoke-OPIMGraphRequest
     # pass no -DeviceCode. A cached token that is still valid stays in use; only the mode changes.
-    if ($DeviceCode -and $script:_OPIMAuthState) {
-        $script:_OPIMAuthState.DeviceCode = $true
+    # Before the first sign-in the state holds only DeviceCode. That never counts as signed in (the
+    # cache checks below need TenantId and GraphTokenExpiry), so a failed first sign-in keeps the
+    # mode, and the next call asks for a device code again instead of opening the browser, until
+    # Disconnect-OPIM clears it.
+    if ($DeviceCode) {
+        if ($script:_OPIMAuthState) {
+            $script:_OPIMAuthState.DeviceCode = $true
+        } else {
+            $script:_OPIMAuthState = @{ DeviceCode = $true }
+        }
     }
     [bool]$UseDeviceCode = $DeviceCode -or ($script:_OPIMAuthState -and $script:_OPIMAuthState.DeviceCode)
 
@@ -231,7 +242,13 @@ function Initialize-OPIMAuth {
         # -- Device code acquisition (initial auth or ACRS step-up) -----------
         if (-not $AuthResult -and $UseDeviceCode) {
             Write-Verbose '[Initialize-OPIMAuth] Starting device code authentication...'
-            $AuthResult = Invoke-OPIMDeviceCodeAuth -MsalApp $MsalApp -Scopes $GraphScopes -ClaimsChallenge $ClaimsChallenge
+            try {
+                $AuthResult = Invoke-OPIMDeviceCodeAuth -MsalApp $MsalApp -Scopes $GraphScopes -ClaimsChallenge $ClaimsChallenge
+            } catch {
+                # The helper's error is only statement-terminating here; end this function with it,
+                # so a failure never runs on into a second NoAccessToken error.
+                $PSCmdlet.ThrowTerminatingError($PSItem)
+            }
         }
 
         # -- Interactive acquisition (initial auth or ACRS step-up) -----------

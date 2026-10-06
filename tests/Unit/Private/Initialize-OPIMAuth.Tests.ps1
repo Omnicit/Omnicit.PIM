@@ -518,6 +518,61 @@ Describe 'Initialize-OPIMAuth' {
         }
     }
 
+    Context 'When the device code flow fails on the first sign-in' {
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
+                # The helper's own terminating error, as Write-CmdletError -Terminating raises it.
+                # Pester's mock wrapper has [CmdletBinding()], so $PSCmdlet is available.
+                Mock Invoke-OPIMDeviceCodeAuth {
+                    $PSCmdlet.ThrowTerminatingError(
+                        [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('code_expired'),
+                            'DeviceCodeAuthFailed',
+                            [System.Management.Automation.ErrorCategory]::AuthenticationError,
+                            $null
+                        )
+                    )
+                }
+                Mock Connect-MgGraph {}
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+
+        It 'keeps the device code mode, so the next call asks for a code again and never opens the browser' {
+            InModuleScope Omnicit.PIM {
+                try { Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -DeviceCode } catch { $null = $PSItem }
+                try { Initialize-OPIMAuth } catch { $null = $PSItem }
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 2 -Exactly -Scope It
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+                $script:_OPIMAuthState.DeviceCode | Should -BeTrue
+            }
+        }
+
+        It 'ends with the helper DeviceCodeAuthFailed error and signs nothing in' {
+            InModuleScope Omnicit.PIM {
+                $Caught = $null
+                try { Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -DeviceCode } catch { $Caught = $PSItem }
+                $Caught | Should -Not -BeNullOrEmpty
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'DeviceCodeAuthFailed*'
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+            }
+        }
+
+        It 'never counts the state that holds only the mode as a signed-in session' {
+            InModuleScope Omnicit.PIM {
+                try { Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -DeviceCode } catch { $null = $PSItem }
+                $script:_OPIMAuthState.ContainsKey('TenantId') | Should -BeFalse
+                $script:_OPIMAuthState.ContainsKey('GraphTokenExpiry') | Should -BeFalse
+            }
+        }
+    }
+
     Context 'When -IncludeARM in device code mode and Azure is not connected' {
         BeforeAll {
             InModuleScope Omnicit.PIM {

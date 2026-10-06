@@ -43,10 +43,17 @@ LONG DESCRIPTION
     On a machine without a browser, sign in with a device code. The command shows a code and
     the address https://microsoft.com/devicelogin; enter the code there on any device. The
     message is written to the Information stream with the tag OPIMDeviceCode. With -IncludeARM,
-    Azure shows a second code. Every later sign-in in the session uses a device code until
-    Disconnect-OPIM. Enable-OPIMMyRole and Disable-OPIMMyRole take -DeviceCode too.
+    Azure shows a second code, on the Warning stream. The mode is remembered for the session: the
+    refresh stays silent while it can, and any later sign-in that needs a prompt uses a device
+    code until Disconnect-OPIM. Enable-OPIMMyRole and Disable-OPIMMyRole take -DeviceCode too.
 
       Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -DeviceCode
+
+    A script reads both messages as they arrive by merging the two streams into a pipeline.
+    Capturing the output in a variable (for example, $x = Connect-OPIM -DeviceCode 6>&1) shows
+    nothing until the flow ends, which can take 15 minutes.
+
+      Connect-OPIM -DeviceCode -IncludeARM 6>&1 3>&1 | ForEach-Object { $PSItem.ToString() }
 
     The following Microsoft Graph scopes are requested automatically. These are listed for
     reference (least-privilege review, custom app registration scenarios):

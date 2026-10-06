@@ -56,9 +56,12 @@ function Connect-OPIM {
     Sign in with a device code instead of the system browser, for a machine without one, such as a
     remote session or a cloud PC. The sign-in message with the code and the address is written to
     the Information stream with the tag OPIMDeviceCode and shown whatever the information preference
-    is. With -IncludeARM, Connect-AzAccount shows its own code for Azure on the warning stream. The
-    mode is remembered: every later sign-in in this PowerShell session, the automatic refresh and
-    step-up included, uses a device code until Disconnect-OPIM.
+    is. With -IncludeARM, Connect-AzAccount shows its own code for Azure on the warning stream. A
+    script reads both as they arrive by merging the streams into a pipeline, for example
+    6>&1 3>&1 | ForEach-Object { $PSItem.ToString() }; capturing the output in a variable shows
+    nothing until the flow ends, which can take 15 minutes. The mode is remembered for this
+    PowerShell session: the refresh stays silent while it can, and any later sign-in that needs a
+    prompt, a step-up included, uses a device code until Disconnect-OPIM.
     #>
     [Alias('Connect-PIM')]
     [CmdletBinding(DefaultParameterSetName = 'ByTenantId')]
