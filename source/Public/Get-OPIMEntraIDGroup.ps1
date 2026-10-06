@@ -1,4 +1,4 @@
-﻿function Get-OPIMEntraIDGroup {
+function Get-OPIMEntraIDGroup {
     <#
     .SYNOPSIS
     Get eligible or activated PIM group assignments for the current user.
@@ -31,8 +31,8 @@
     Get-OPIMEntraIDGroup -Filter "groupId eq '00000000-0000-0000-0000-000000000000'"
     Return both eligible and active group assignments matching an OData filter (dual-search).
     Common filter properties:
-      groupId eq '<guid>'       — filter by a specific group
-      principalId eq '<guid>'   — filter by a specific principal
+      groupId eq '<guid>'       -- filter by a specific group
+      principalId eq '<guid>'   -- filter by a specific principal
     .EXAMPLE
     Get-OPIMEntraIDGroup 'Finance Team - member (elig-001)'
     Tab-complete and retrieve details for a group assignment by name (dual-search).

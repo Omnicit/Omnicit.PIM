@@ -1,4 +1,4 @@
-﻿function Get-OPIMDirectoryRole {
+function Get-OPIMDirectoryRole {
     <#
     .SYNOPSIS
     Get eligible or activated Azure AD PIM directory roles for the current user.
@@ -28,8 +28,8 @@
     Get-OPIMDirectoryRole -Filter "roleDefinitionId eq '62e90394-69f5-4237-9190-012177145e10'"
     Return both eligible and active roles matching an OData filter (dual-search).
     Common filter properties:
-      roleDefinitionId eq '<guid>'  — filter by role definition
-      principalId eq '<guid>'       — filter by a specific principal (requires elevated permissions)
+      roleDefinitionId eq '<guid>'  -- filter by role definition
+      principalId eq '<guid>'       -- filter by a specific principal (requires elevated permissions)
     .EXAMPLE
     Get-OPIMDirectoryRole 'Global Administrator -> Directory (elig-001)'
     Tab-complete and retrieve details for a role by name (dual-search: returns eligible and/or active).
@@ -158,7 +158,7 @@
         }
 
         foreach ($Item in $Items) {
-            # Rehydrate directoryScope — v1.0 API does not support $expand for directoryScopeId
+            # Rehydrate directoryScope -- v1.0 API does not support $expand for directoryScopeId
             # Ref: https://github.com/microsoftgraph/microsoft-graph-docs/issues/16936
             if ($Item.directoryScopeId -eq '/') {
                 $Item['directoryScope'] = @{ id = '/' }

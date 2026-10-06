@@ -1,4 +1,4 @@
-﻿function Get-OPIMConfiguration {
+function Get-OPIMConfiguration {
     <#
     .SYNOPSIS
     Retrieve the TenantMap configuration file and its contents.

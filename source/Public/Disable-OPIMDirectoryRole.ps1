@@ -1,4 +1,4 @@
-﻿function Disable-OPIMDirectoryRole {
+function Disable-OPIMDirectoryRole {
     <#
     .SYNOPSIS
     Deactivate an active Azure AD PIM directory role.

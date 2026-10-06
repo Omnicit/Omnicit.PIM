@@ -1,4 +1,4 @@
-﻿#requires -module Az.Resources
+#requires -module Az.Resources
 function Get-OPIMAzureRole {
     <#
     .SYNOPSIS

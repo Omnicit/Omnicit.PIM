@@ -1,4 +1,4 @@
-﻿function Remove-OPIMConfiguration {
+function Remove-OPIMConfiguration {
     <#
     .SYNOPSIS
     Remove a tenant alias entry from the TenantMap configuration file.

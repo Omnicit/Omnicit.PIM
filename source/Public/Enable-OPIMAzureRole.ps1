@@ -1,4 +1,4 @@
-﻿using namespace System.Xml
+using namespace System.Xml
 
 #requires -module Az.Resources
 function Enable-OPIMAzureRole {

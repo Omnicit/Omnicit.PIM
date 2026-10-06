@@ -1,4 +1,4 @@
-﻿function Disable-OPIMEntraIDGroup {
+function Disable-OPIMEntraIDGroup {
     <#
     .SYNOPSIS
     Deactivate an active PIM group membership or ownership.

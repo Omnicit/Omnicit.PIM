@@ -1,4 +1,4 @@
-﻿function Connect-OPIM {
+function Connect-OPIM {
     <#
     .SYNOPSIS
     Authenticate to Microsoft Graph (and optionally Azure) for Omnicit.PIM.
@@ -6,13 +6,13 @@
     .DESCRIPTION
     Pre-authenticates the session before running Get-/Enable-/Disable-OPIM* cmdlets.
     All PIM cmdlets call this automatically on first use, so running Connect-OPIM explicitly
-    is optional — use it when you want to control when the browser prompt appears.
+    is optional -- use it when you want to control when the browser prompt appears.
 
     A single browser window covers all PIM surfaces (directory roles, Entra ID groups, and
     Azure RBAC). WAM is never used; authentication always goes through the system browser,
     which works identically on Windows, macOS, and Linux.
 
-    The session state is cached in memory. Subsequent calls are idempotent — if a valid token
+    The session state is cached in memory. Subsequent calls are idempotent -- if a valid token
     already exists for the same tenant no browser prompt is shown.
 
     To disconnect and clear all cached tokens, call Disconnect-OPIM.
@@ -59,7 +59,7 @@
         [string]$TenantMapPath = "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1"
     )
 
-    # ── Resolve TenantAlias → TenantId ────────────────────────────────────────
+    # -- Resolve TenantAlias -> TenantId ----------------------------------------
     if ($TenantAlias) {
         if (-not (Test-Path $TenantMapPath)) {
             Write-CmdletError `
