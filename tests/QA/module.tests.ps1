@@ -520,6 +520,28 @@ Describe 'Quality for module' -Tags 'TestQuality' {
             "some rule triggered.`r`n`r`n $report"
     }
 
+    It 'Should discover every exported function for the [OutputType] gate' -ForEach @(@{ DiscoveredNames = @($exportedTestCases | ForEach-Object { $_.Name }) }) {
+        <#
+            The [OutputType] gate below runs one It per discovered case, and an empty -ForEach
+            generates NO It. Whether that is an error depends on the Pester version and its
+            Run.FailOnNullOrEmptyForEach setting (Pester 6.2.0, measured, fails the whole container
+            with an unnamed error; a setting that allows it passes on nothing). This check holds the
+            discovered set against the SOURCE manifest's explicit FunctionsToExport -- a read that
+            does not go through the module under test -- so an empty or short set is a named red
+            gate here whichever way that setting falls.
+        #>
+        $manifest = Import-PowerShellDataFile -Path (
+            Join-Path -Path $sourcePath -ChildPath "$($script:moduleName).psd1")
+        $expectedNames = @($manifest.FunctionsToExport)
+
+        $expectedNames.Count | Should -BeGreaterThan 0 -Because 'the source manifest must list the exported functions; zero would make the comparison below vacuous'
+
+        $missingNames = @($expectedNames | Where-Object { $DiscoveredNames -notcontains $_ })
+        @($DiscoveredNames).Count | Should -Be $expectedNames.Count -Because (
+            'the [OutputType] gate must run for every exported function; it discovered {0} of {1}. Not discovered: {2}' -f
+            @($DiscoveredNames).Count, $expectedNames.Count, ($missingNames -join ', '))
+    }
+
     It 'Should declare an [OutputType(...)] for <Name>' -ForEach $exportedTestCases {
         <#
             Every exported function must declare [OutputType(...)]: [PSCustomObject] for a cmdlet

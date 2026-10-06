@@ -312,7 +312,9 @@ Four rules for the code blocks, because a later step generates a note from each 
   branch's build, stops when a different build of the module is already loaded in the window, and
   imports the build otherwise. The paths are relative, so every block runs from the repository root.
 - A block is run in the window that `0.1` signed in. A fresh window runs `0.1` again first, since
-  the sign-in belongs to the window and its identity is what `0.1` proves.
+  the sign-in belongs to the window and its identity is what `0.1` proves. If a sign-in prompt
+  appears mid-run, STOP and run `0.1` again: the module signs in again, interactively, when its
+  Graph token nears expiry, and the proof of `0.1` holds only for the sign-in it checked.
 
 A checklist as it is written, before any run:
 
@@ -332,7 +334,10 @@ advance. Write down what actually happened rather than what looked plausible.
 only when the operator has asked for the run. The module runs there as the dedicated delegated test
 user, and setup and teardown run as a dedicated app identity whose only credential is a
 certificate; neither is ever the operator's own account. The run writes to nothing outside the
-prefix `opim-demo-`. Check 0.1 proves the identity before any other check calls the module.
+prefix `opim-demo-`. Check 0.1 proves the identity before any other check calls the module. If a
+sign-in prompt appears mid-run, STOP and run check 0.1 again: the module signs in again,
+interactively, when its Graph token nears expiry, and the proof of 0.1 holds only for the sign-in
+it checked.
 
 ## What changed and why this needs a live tenant
 
@@ -412,13 +417,14 @@ Result:
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built.DirectoryName) { throw 'A different build of Omnicit.PIM is loaded; use a fresh window.' }
 if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
-$Rows = @(Get-OPIMEntraIDGroup -AccessType member | Where-Object { $_.group.displayName -eq 'opim-demo-grp' })
+$Rows = @(Get-OPIMEntraIDGroup -AccessType member -ErrorAction Stop | Where-Object { $_.group.displayName -eq 'opim-demo-grp' })
 "Eligible member rows for opim-demo-grp: $($Rows.Count)"
 ```
 
 **Expect:** `Eligible member rows for opim-demo-grp: 1`.
 **Failure looks like:** any other number -- STOP: `0` means the prerequisite script did not leave the
-setup this file assumes, and `2` means a second group shares the name.
+setup this file assumes, and `2` means a second group shares the name. A terminating error from the
+read is a failed read, never a `0` and never a pass -- STOP: nothing was counted.
 
 Result:
 
@@ -432,11 +438,11 @@ Result:
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built.DirectoryName) { throw 'A different build of Omnicit.PIM is loaded; use a fresh window.' }
 if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
-$Target = @(Get-OPIMEntraIDGroup -AccessType member | Where-Object { $_.group.displayName -eq 'opim-demo-grp' })
+$Target = @(Get-OPIMEntraIDGroup -AccessType member -ErrorAction Stop | Where-Object { $_.group.displayName -eq 'opim-demo-grp' })
 if ($Target.Count -ne 1) { throw "Expected exactly one eligible member row for opim-demo-grp, found $($Target.Count)." }
-$Before = @(Get-OPIMEntraIDGroup -Activated).Count
+$Before = @(Get-OPIMEntraIDGroup -Activated -ErrorAction Stop).Count
 $Target | Enable-OPIMEntraIDGroup -Hours 1 -WhatIf
-$After = @(Get-OPIMEntraIDGroup -Activated).Count
+$After = @(Get-OPIMEntraIDGroup -Activated -ErrorAction Stop).Count
 "Active group assignments before: $Before; after the WhatIf: $After"
 ```
 
@@ -445,7 +451,9 @@ $After = @(Get-OPIMEntraIDGroup -Activated).Count
 **Failure looks like:** the `throw` -- the selection did not find exactly one row, nothing was
 sent, and the setup has to be put right first. A `What if:` target other than
 `opim-demo-grp (member)` is a wrong selection, and with `-WhatIf` nothing was sent either. Only an
-`after` count above `before` means a request went out -- STOP.
+`after` count above `before` means a request went out -- STOP. A terminating error from either count
+read is a failed read, never a `0` and never a pass -- STOP: no count exists, so the check proved
+nothing.
 
 Result:
 
@@ -464,12 +472,13 @@ script's own report is the record of that removal.
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built.DirectoryName) { throw 'A different build of Omnicit.PIM is loaded; use a fresh window.' }
 if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
-"Assignments left for opim-demo- groups: $(@(Get-OPIMEntraIDGroup -All | Where-Object { $_.group.displayName -like 'opim-demo-*' }).Count)"
+"Assignments left for opim-demo- groups: $(@(Get-OPIMEntraIDGroup -All -ErrorAction Stop | Where-Object { $_.group.displayName -like 'opim-demo-*' }).Count)"
 ```
 
 **Expect:** `Assignments left for opim-demo- groups: 0`. Nothing is left in the tenant on purpose.
 **Failure looks like:** any other number -- record each remaining assignment by group name and run
-the prerequisite script's teardown again.
+the prerequisite script's teardown again. A terminating error from the read is a failed read, never
+a `0` and never a pass: the teardown is then unverified, so say so on the result line.
 
 Result:
 ````

@@ -23,7 +23,7 @@ BeforeDiscovery {
         @{ Name = 'Get-AzRoleEligibilitySchedule'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{ Scope = '/' } }
         @{ Name = 'Get-AzRoleAssignmentScheduleInstance'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{ Scope = '/' } }
         @{ Name = 'Get-AzRoleAssignmentScheduleRequest'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{ Scope = '/' } }
-        # The parameter shape source/Public/Enable-OPIMAzureRole.ps1:122 sends.
+        # The parameter shape source/Public/Enable-OPIMAzureRole.ps1:123 sends.
         @{ Name = 'New-AzRoleAssignmentScheduleRequest'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{
                 Name                            = 'opim-tripwire-request'
                 Scope                           = '/'

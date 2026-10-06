@@ -395,7 +395,7 @@ Describe 'Unit test hygiene' -Tags 'TestHygiene' {
         }
 
         $Checked | Should -Be $Files.Count -Because 'every unit test file must be checked; there is no exemption list'
-        @($Hits).Count | Should -Be 0 -Because ('every unit test file must dot-source tests/Unit/TestHelpers/OPIMTransportTripwire.ps1 and call Install-OPIMTransportTripwire in its root BeforeAll after Import-Module, and end with a root AfterAll {{ try {{ Assert-OPIMTransportTripwire }} finally {{ Uninstall-OPIMTransportTripwire }} }}; zero means every file does. Files that do not: {0}' -f ($Hits -join '; '))
+        @($Hits).Count | Should -Be 0 -Because ('every unit test file must call Install-OPIMTransportTripwire as a direct statement of its root BeforeAll, after an Import-Module in that block, and end with a root AfterAll {{ try {{ Assert-OPIMTransportTripwire }} finally {{ Uninstall-OPIMTransportTripwire }} }} whose try has no catch; zero findings means every file does. Files that do not: {0}' -f ($Hits -join '; '))
     }
 
     It 'Should tell a file that wires the tripwire from one that does not (known answer)' {
