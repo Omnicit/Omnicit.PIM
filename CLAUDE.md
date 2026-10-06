@@ -172,11 +172,14 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   `.DESCRIPTION` over 40 characters, at least one `.EXAMPLE`, every parameter described; an
   `[OutputType()]` on every EXPORTED function; and a `README.md` that names every exported cmdlet
   and no `Verb-OPIM` name that is not an exported function or alias.
-- **`testhygiene.tests.ps1`** -- the transport tripwire, held by presence: every
-  `tests/Unit/**/*.Tests.ps1` carries the root form (see **Testing Conventions**); `source/` holds
-  `ForEach-Object -Parallel` only in a named list (`Wait-OPIMDirectoryRole.ps1` today), each block
-  importing only `Microsoft.Graph.Authentication`; and `Get-OPIMMsalApplication` is invoked only in
-  its own test file and the tripwire suite, where every `Get-MgContext` mock throws.
+- **`testhygiene.tests.ps1`** -- the transport tripwire, held by presence: in every
+  `tests/Unit/**/*.Tests.ps1` the root `BeforeAll` calls `Install-OPIMTransportTripwire` after
+  `Import-Module`, and the root `AfterAll` calls `Assert-OPIMTransportTripwire` in a `try` with no
+  `catch` whose `finally` calls `Uninstall-OPIMTransportTripwire` -- it checks that wiring, not the
+  exact root form (see **Testing Conventions**); `source/` holds `ForEach-Object -Parallel` only in
+  a named list (`Wait-OPIMDirectoryRole.ps1` today), each block importing only
+  `Microsoft.Graph.Authentication`; and `Get-OPIMMsalApplication` is invoked only in its own test
+  file and the tripwire suite, where every `Get-MgContext` mock throws.
 - **`sourcehygiene.tests.ps1`** -- every `.ps1`, `.psd1`, `.psm1` and `.ps1xml` under `source/` and
   `tests/` is ASCII without a BOM; every `Verb-OPIM` name in `source/**/*.ps1` resolves to a
   function file or an exported alias; the region `suffix.ps1` shares with the dev-mode psm1 is
@@ -185,9 +188,12 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   `tests/`, plus `README.md` and `CHANGELOG.md`: object ids (only placeholders under `docs/` and
   `specs/`; elsewhere no version-4 id outside a pinned register of four public constants), email
   domains (`example.com`, `contoso.com`, `fabrikam.com`), tenant labels (`contoso`, `fabrikam`),
-  no credentials, every placeholder registered in `docs/live-verification/README.md`, and, in
-  Markdown, no angle bracket that renders as an HTML tag outside code (README's line-1 logo is the
-  one exception). It does not read `CLAUDE.md`.
+  and no credentials. The placeholder register in `docs/live-verification/README.md` must agree
+  with itself, and every placeholder used in `source/`, `tests/`, `README.md` or `CHANGELOG.md` --
+  not in a checklist, which numbers its own -- must be registered there. In the tracked Markdown
+  under `docs/` and `specs/`, and in `README.md` and `CHANGELOG.md`, no angle bracket may render as
+  an HTML tag outside code (README's line-1 logo is the one exception). It does not read
+  `CLAUDE.md`.
 - **`about.tests.ps1`** -- the about topic exists, ships byte-identical in the built module, is
   ASCII without a BOM, names every exported cmdlet and no `Verb-OPIM` name that is not an exported
   function or alias, and names at least one cmdlet in each of the four cohorts.
@@ -905,10 +911,11 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
       # Context blocks ...
   }
   ```
-  A new unit test file carries it too: `tests/QA/testhygiene.tests.ps1` fails any
-  `tests/Unit/**/*.Tests.ps1` without it, with no exemption list, and also fails an install placed
-  before the import or a `catch` in the `AfterAll`, which would swallow the assert's throw. The
-  tripwire suite itself dot-sources `"$PSScriptRoot/OPIMTransportTripwire.ps1"`.
+  A new unit test file carries it too. `tests/QA/testhygiene.tests.ps1` checks the wiring in every
+  `tests/Unit/**/*.Tests.ps1`, with no exemption list -- the install in the root `BeforeAll` after
+  `Import-Module`, and the assert in a `try` with no `catch` (a catch would swallow the assert's
+  throw) whose `finally` uninstalls -- but not the exact block, so copy the block rather than write
+  your own. The tripwire suite itself dot-sources `"$PSScriptRoot/OPIMTransportTripwire.ps1"`.
 - **The transport tripwire** (`tests/Unit/TestHelpers/OPIMTransportTripwire.ps1`) replaces the
   fifteen commands through which module code reaches a tenant or the network -- the four
   `Microsoft.Graph.Authentication` commands, `Connect-AzAccount`, `Disconnect-AzAccount`,
@@ -942,9 +949,12 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   One registered response answers every call to that name, in every runspace.
   `Get-OPIMParallelTransportStandInCall` returns the calls (`Command`, `Caller`, `Parameters`);
   assert on it, which also proves the parallel path was reached.
-- **Never mock around the tripwire with a function of your own.** A global or module-scope
-  function under a transport name displaces the replacement, and the root `AfterAll` then fails the
-  file with "no longer resolves to the tripwire from the module scope". Use
+- **Never mock around the tripwire with a function of your own.** It never works as a mock.
+  Defined in the module scope, or globally under one of the eleven names the tripwire replaces
+  with a global function, it displaces the replacement, and the root `AfterAll` fails the file
+  with "no longer resolves to the tripwire from the module scope". Defined globally under one of
+  the four `Az.Resources` names, whose replacements live in the module scope, it is never reached
+  by module code, which still hits the replacement, and the file fails on the record. Use
   `Mock -ModuleName Omnicit.PIM`, which outranks the replacement without removing it, or the
   stand-in inside a `-Parallel` block.
 - **Always mock `Initialize-OPIMAuth`** -- every pillar cmdlet and `Wait-OPIMDirectoryRole` calls it
