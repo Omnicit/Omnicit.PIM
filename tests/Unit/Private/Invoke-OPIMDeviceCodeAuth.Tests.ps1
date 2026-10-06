@@ -13,7 +13,8 @@ Describe 'Invoke-OPIMDeviceCodeAuth' {
     BeforeAll {
         # A stand-in with the shape of MSAL's device code API. ExecuteAsync runs the flow on a
         # thread-pool thread, as MSAL does, so the callback is invoked off the pipeline thread.
-        if (-not ('OPIMTestFakes.DeviceCode.FakeDeviceCodeApp' -as [type])) {
+        # All the fakes come from this one Add-Type; the guard names the type added last.
+        if (-not ('OPIMTestFakes.DeviceCode.FakeLateCallbackApp' -as [type])) {
             Add-Type -TypeDefinition @'
 namespace OPIMTestFakes.DeviceCode {
     using System;
@@ -83,6 +84,35 @@ namespace OPIMTestFakes.DeviceCode {
         public FakeNoClaimsBuilder AcquireTokenWithDeviceCode(IEnumerable<string> scopes, Func<FakeDeviceCodeResult, Task> callback) {
             Called = true;
             return new FakeNoClaimsBuilder();
+        }
+    }
+
+    // The callback fires LATE: the flow waits before it calls the callback and completes at once
+    // afterwards, so the message is queued after the last look at the queue inside the loop.
+    public sealed class FakeLateCallbackBuilder {
+        private readonly FakeLateCallbackApp _app;
+        private readonly Func<FakeDeviceCodeResult, Task> _callback;
+        public FakeLateCallbackBuilder(FakeLateCallbackApp app, Func<FakeDeviceCodeResult, Task> callback) { _app = app; _callback = callback; }
+        public Task<FakeAuthenticationResult> ExecuteAsync(CancellationToken cancellationToken) {
+            FakeLateCallbackApp app = _app;
+            Func<FakeDeviceCodeResult, Task> callback = _callback;
+            return Task.Run(async () => {
+                await Task.Delay(app.CallbackDelayMilliseconds);
+                await callback(new FakeDeviceCodeResult { Message = app.Message, UserCode = "FAKECODE2", DeviceCode = "FAKE-DEVICE-CODE" });
+                return new FakeAuthenticationResult {
+                    AccessToken = "fake-graph-token",
+                    ExpiresOn = DateTimeOffset.UtcNow.AddHours(1),
+                    Account = new FakeAccount { Username = "user@contoso.com" }
+                };
+            });
+        }
+    }
+
+    public sealed class FakeLateCallbackApp {
+        public string Message = "To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code FAKECODE2 to authenticate.";
+        public int CallbackDelayMilliseconds = 100;
+        public FakeLateCallbackBuilder AcquireTokenWithDeviceCode(IEnumerable<string> scopes, Func<FakeDeviceCodeResult, Task> callback) {
+            return new FakeLateCallbackBuilder(this, callback);
         }
     }
 
@@ -220,6 +250,52 @@ namespace OPIMTestFakes.DeviceCode {
         It 'throws DeviceCodeAuthFailed' {
             $Caught.FullyQualifiedErrorId | Should -BeLike 'DeviceCodeAuthFailed*'
             $Caught.Exception.Message | Should -Match 'AcquireTokenWithDeviceCode'
+        }
+    }
+
+    Context 'When the callback fires just before the flow completes' {
+        BeforeAll {
+            # The fake waits before it calls the callback and completes at once afterwards, so the
+            # loop's last look at the queue finds it empty and only the drain after the loop can
+            # write the message.
+            $App = [OPIMTestFakes.DeviceCode.FakeLateCallbackApp]::new()
+            $Records = @(InModuleScope Omnicit.PIM -Parameters @{ App = $App } {
+                    param($App)
+                    Invoke-OPIMDeviceCodeAuth -MsalApp $App -Scopes @('User.Read') 6>&1
+                })
+            $Info = @($Records | Where-Object { $_ -is [System.Management.Automation.InformationRecord] })
+            $Output = @($Records | Where-Object { $_ -isnot [System.Management.Automation.InformationRecord] })
+        }
+
+        It 'writes the message the callback queued after the last look at the queue' {
+            $Info.Count | Should -Be 1
+            $Info[0].Tags | Should -Contain 'OPIMDeviceCode'
+            $Info[0].MessageData | Should -BeExactly $App.Message
+        }
+
+        It 'returns the authentication result of the flow' {
+            $Output.Count | Should -Be 1
+            $Output[0].AccessToken | Should -Be 'fake-graph-token'
+        }
+    }
+
+    Context 'When the caller ignores the Information stream' {
+        BeforeAll {
+            # The sign-in message is the one thing the user needs to finish the sign-in, so it is
+            # shown whatever the information preference is: the function writes it with an explicit
+            # -InformationAction Continue.
+            $App = [OPIMTestFakes.DeviceCode.FakeDeviceCodeApp]::new()
+            $Records = @(InModuleScope Omnicit.PIM -Parameters @{ App = $App } {
+                    param($App)
+                    Invoke-OPIMDeviceCodeAuth -MsalApp $App -Scopes @('User.Read') -InformationAction Ignore 6>&1
+                })
+            $Info = @($Records | Where-Object { $_ -is [System.Management.Automation.InformationRecord] })
+        }
+
+        It 'still writes the tagged sign-in message to the Information stream' {
+            $Info.Count | Should -Be 1
+            $Info[0].Tags | Should -Contain 'OPIMDeviceCode'
+            $Info[0].MessageData | Should -BeExactly $App.Message
         }
     }
 }
