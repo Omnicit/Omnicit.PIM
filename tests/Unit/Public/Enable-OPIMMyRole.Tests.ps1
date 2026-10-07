@@ -350,15 +350,19 @@ Describe 'Enable-OPIMMyRole' {
             } -ParameterFilter { -not $IncludeARM }
         }
 
-        It 'writes the sign-in error (<ErrorId>)' -ForEach @(
+        It 'writes the sign-in error to its own error stream (<ErrorId>)' -ForEach @(
             @{ ErrorId = 'TenantMismatch' }
             @{ ErrorId = 'InteractiveAuthFailed' }
             @{ ErrorId = 'DeviceCodeAuthFailed' }
         ) {
+            # Read the command's own error stream, not -ErrorVariable: -ErrorVariable also collects the
+            # record the Connect-OPIM mock threw and the command caught, so it holds one even when the
+            # command writes nothing. The caught record never reaches the stream (one record, not two).
             $script:SignInErrorId = $ErrorId
-            $Errs = @()
-            Enable-OPIMMyRole -AllEligible -Confirm:$false -ErrorVariable Errs -ErrorAction SilentlyContinue
-            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like "$ErrorId*" }).Count | Should -BeGreaterThan 0
+            $Out = Enable-OPIMMyRole -AllEligible -Confirm:$false -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeLike "$ErrorId*"
         }
 
         It 'lists and activates nothing (<ErrorId>)' -ForEach @(
@@ -412,10 +416,12 @@ Describe 'Enable-OPIMMyRole' {
             } -ParameterFilter { $IncludeARM }
         }
 
-        It 'writes the Azure sign-in error' {
-            $Errs = @()
-            Enable-OPIMMyRole -AllEligible -Confirm:$false -ErrorVariable Errs -ErrorAction SilentlyContinue
-            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'AzureConnectFailed*' }).Count | Should -BeGreaterThan 0
+        It 'writes the Azure sign-in error to its own error stream' {
+            # The command's own error stream, as for the Graph sign-in: the caught record is not in it.
+            $Out = Enable-OPIMMyRole -AllEligible -Confirm:$false -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeLike 'AzureConnectFailed*'
         }
 
         It 'still activates directory roles and groups' {
