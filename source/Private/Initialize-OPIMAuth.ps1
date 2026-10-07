@@ -353,10 +353,17 @@ function Initialize-OPIMAuth {
                 -Terminating
         }
 
+        # The plaintext token reaches .NET only. Every command below receives this SecureString:
+        # module logging (LogPipelineExecutionDetails) records every value bound to a command
+        # parameter, so a bound string would put the bearer token in the event log. NetworkCredential
+        # converts it without ConvertTo-SecureString -AsPlainText (PSSA rule
+        # PSAvoidUsingConvertToSecureStringWithPlainText).
+        $SecureToken = [System.Net.NetworkCredential]::new('', $AuthResult.AccessToken).SecurePassword
+
         # -- Tenant check (OPIM-07) ---------------------------------------------
         # After EVERY token, compare its tid with the tenant asked for. A difference is
         # TenantMismatch, raised before the token reaches Connect-MgGraph or the auth state.
-        [string]$TokenTenant = Get-OPIMTokenTenantId -AccessToken $AuthResult.AccessToken
+        [string]$TokenTenant = Get-OPIMTokenTenantId -AccessToken $SecureToken
         if (-not $TokenTenant) {
             Write-CmdletError -ErrorRecord (New-OPIMTenantMismatchError -RequestedTenant $EffectiveTenant -Unreadable) -Cmdlet $PSCmdlet -Terminating
             return
@@ -370,10 +377,8 @@ function Initialize-OPIMAuth {
         Write-Verbose "[Initialize-OPIMAuth] Graph token acquired. Account: $($AuthResult.Account.Username). Expiry (UTC): $GraphTokenExpiry. FromCache: $($AuthResult.AuthenticationResultMetadata.TokenSource -eq 'Cache')"
 
         # -- Wire Graph token into Connect-MgGraph -----------------------------
-        # Use NetworkCredential to convert plaintext to SecureString -- avoids
-        # PSAvoidUsingConvertToSecureStringWithPlainText PSSA rule. A failure is scrubbed first, as
-        # on every transport path, and still ends this function, before the auth state is written.
-        $SecureToken = [System.Net.NetworkCredential]::new('', $AuthResult.AccessToken).SecurePassword
+        # The same SecureString as the tenant check. A failure is scrubbed first, as on every
+        # transport path, and still ends this function, before the auth state is written.
         try {
             Connect-MgGraph -AccessToken $SecureToken -NoWelcome -ErrorAction Stop
         } catch {

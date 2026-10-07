@@ -893,6 +893,30 @@ Describe 'Initialize-OPIMAuth' {
         }
     }
 
+    Context 'When the Graph token is handed on' {
+        It 'binds the plaintext token to no command' {
+            # SECURITY rule 5: PowerShell module logging (LogPipelineExecutionDetails, event 4103)
+            # records every value bound to a command parameter. Static check on the function as the
+            # module loaded it: no argument of any command call reaches an .AccessToken member, so
+            # the plaintext only ever reaches .NET (the SecureString is what commands receive).
+            $Ast = InModuleScope Omnicit.PIM { (Get-Command Initialize-OPIMAuth).ScriptBlock.Ast }
+            $Commands = @($Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true))
+            @($Commands | Where-Object { $_.GetCommandName() -eq 'Connect-MgGraph' }).Count |
+                Should -Be 1 -Because 'the walk must reach the Connect-MgGraph hand-off; a walk that reads nothing would pass vacuously'
+            $Hits = foreach ($Command in $Commands) {
+                foreach ($Element in @($Command.CommandElements | Select-Object -Skip 1)) {
+                    $Member = $Element.Find({
+                            param($Node)
+                            $Node -is [System.Management.Automation.Language.MemberExpressionAst] -and
+                            $Node.Member.Extent.Text -eq 'AccessToken'
+                        }, $true)
+                    if ($Member) { 'line {0}: {1}' -f $Command.Extent.StartLineNumber, $Command.GetCommandName() }
+                }
+            }
+            $Hits | Should -BeNullOrEmpty
+        }
+    }
+
     Context 'When Connect-MgGraph fails to take the token' {
         BeforeAll {
             InModuleScope Omnicit.PIM -Parameters @{ Token = (New-OPIMTestAccessToken -TenantId $TenantA) } {

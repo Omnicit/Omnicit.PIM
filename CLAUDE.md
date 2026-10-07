@@ -548,15 +548,19 @@ hint for a cached account and `.WithClaims()` for an ACRS step-up (`:256-298`). 
 failure is the terminating `InteractiveAuthFailed` (a headless system cannot open the browser).
 
 **Every token's tenant is checked, in either mode.** `Get-OPIMTokenTenantId` reads the `tid` claim
-from the token's payload segment only -- it never validates, logs or writes the token -- and
-`Initialize-OPIMAuth` compares it with the tenant asked for: the GUID requested, else the session's
-recorded `TokenTenantId`. A token for another tenant, or one whose `tid` cannot be read, ends the
-function with the terminating `TenantMismatch` (built by `New-OPIMTenantMismatchError`, whose
-message names only the requested tenant) before the token reaches `Connect-MgGraph` or the auth
-state. A first sign-in under `organizations` or a new domain has nothing to compare with yet; its
-token's `tid` is recorded instead. The Graph token is then handed to `Connect-MgGraph -AccessToken`
-as a SecureString, inside a `try` whose `catch` scrubs the record first and rethrows it as
-terminating, so a failed hand-off still writes no auth state.
+from the token's payload segment only -- it never validates, logs or writes the token. It takes the
+token as a SecureString and handles the plaintext and the payload through .NET calls alone
+(`System.Text.Json`, never `ConvertFrom-Json`), since PowerShell module logging records every value
+bound to a command parameter; in `Initialize-OPIMAuth` the plaintext likewise reaches only the
+`NetworkCredential` constructor, and every command receives the SecureString. Both rules are held
+by static tests. `Initialize-OPIMAuth` compares the `tid` with the tenant asked for: the GUID
+requested, else the session's recorded `TokenTenantId`. A token for another tenant, or one whose
+`tid` cannot be read, ends the function with the terminating `TenantMismatch` (built by
+`New-OPIMTenantMismatchError`, whose message names only the requested tenant) before the token
+reaches `Connect-MgGraph` or the auth state. A first sign-in under `organizations` or a new domain
+has nothing to compare with yet; its token's `tid` is recorded instead. The same SecureString is
+then handed to `Connect-MgGraph -AccessToken`, inside a `try` whose `catch` scrubs the record first
+and rethrows it as terminating, so a failed hand-off still writes no auth state.
 
 **Device code (`-DeviceCode`).** A machine without a browser signs in with a device code instead of
 the system browser. `Connect-OPIM`, `Enable-OPIMMyRole` and `Disable-OPIMMyRole` take the switch as
