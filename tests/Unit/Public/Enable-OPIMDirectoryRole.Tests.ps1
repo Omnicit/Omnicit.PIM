@@ -940,4 +940,29 @@ Describe 'Enable-OPIMDirectoryRole' {
                 Should -Throw -ErrorId 'ParameterArgumentValidationError*'
         }
     }
+    Context 'When the resolver writes an error instead of throwing it' {
+        # The cmdlet calls the resolver with -ErrorAction Stop, so an error the resolver only writes
+        # ends that name inside the cmdlet's own try and is written as the cmdlet's own error. The
+        # mock takes its preference from an explicit -ErrorAction and is Continue otherwise, as the
+        # resolver is under the default preference.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {}
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule {
+                $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            }
+        }
+
+        It 'writes the error as its own for each name and activates nothing' {
+            $Out = Enable-OPIMDirectoryRole -RoleName 'Role A', 'Role B' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 2
+            @($Written | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Enable-OPIMDirectoryRole' }).Count | Should -Be 2
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 2 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+    }
 }

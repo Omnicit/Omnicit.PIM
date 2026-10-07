@@ -484,6 +484,13 @@ Describe 'Disable-OPIMAzureRole' {
             $Errs[-1].FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Disable-OPIMAzureRole'
         }
 
+        It 'accepts the root scope / at binding and finds no role there' {
+            $Errs = @()
+            Disable-OPIMAzureRole -RoleName 'Reader' -Scope '/' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
+            $Errs[-1].FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Disable-OPIMAzureRole'
+        }
+
         It 'deactivates nothing when the old form names a role that -Scope excludes' {
             $Errs = @()
             Disable-OPIMAzureRole -RoleName 'Reader -> rg-one (active-001)' -Scope '/subscriptions/sub-001/resourceGroups/rg-two' -ErrorVariable Errs -ErrorAction SilentlyContinue
@@ -549,6 +556,38 @@ Describe 'Disable-OPIMAzureRole' {
             { Disable-OPIMAzureRole -RoleName 'Reader' -Scope '/subscriptions/sub-001/' } |
                 Should -Throw -ErrorId 'ParameterArgumentValidationError*'
             Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
+        }
+
+        It 'refuses an empty -Scope' {
+            { Disable-OPIMAzureRole -RoleName 'Reader' -Scope '' } |
+                Should -Throw -ErrorId 'ParameterArgumentValidationError*'
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
+        }
+    }
+    Context 'When the resolver writes an error instead of throwing it' {
+        # The cmdlet calls the resolver with -ErrorAction Stop, so an error the resolver only writes
+        # ends that name inside the cmdlet's own try and is written as the cmdlet's own error. The
+        # mock takes its preference from an explicit -ErrorAction and is Continue otherwise, as the
+        # resolver is under the default preference.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {}
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule {
+                $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            }
+        }
+
+        It 'writes the error as its own and deactivates nothing' {
+            $Out = Disable-OPIMAzureRole -RoleName 'Role A' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            @($Written | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Disable-OPIMAzureRole' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
         }
     }
 }
