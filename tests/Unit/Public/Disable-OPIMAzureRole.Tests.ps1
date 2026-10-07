@@ -564,6 +564,47 @@ Describe 'Disable-OPIMAzureRole' {
             Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
         }
     }
+
+    Context 'When the role is already deactivated (OPIM-40, G8)' {
+        # The real resolver runs; only the listing, the ARM gate and the ARM call are mocked. The
+        # first call finds the role active and deactivates it, and that request ends the activation
+        # in the mock, so the second call finds the role eligible and no longer active.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
+            $Held = @{ IsActive = $true }
+            $ActivePost = New-AzurePost -Name 'active-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one' -Active
+            $EligiblePost = New-AzurePost -Name 'azure-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one'
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { if ($Held.IsActive) { $ActivePost } } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $EligiblePost }
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
+                $Held.IsActive = $false
+                [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfDeactivate' }
+            }
+        }
+
+        It 'deactivates once and writes one non-terminating ActiveRoleNotFound that says it is already deactivated' {
+            $Held.IsActive = $true
+            $Out = & {
+                Disable-OPIMAzureRole -RoleName 'Reader' -ErrorAction Continue
+                Disable-OPIMAzureRole -RoleName 'Reader' -ErrorAction Continue
+                'reached'
+            } 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Results = @($Out | Where-Object { $_ -is [PSCustomObject] -and $_.PSObject.TypeNames -contains 'Omnicit.PIM.AzureAssignmentScheduleRequest' })
+            # The statement after the second call ran, so the error did not end the script block.
+            ($Out -contains 'reached') | Should -BeTrue
+            $Results.Count | Should -Be 1
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Disable-OPIMAzureRole'
+            $Written[0].Exception.Message | Should -BeLike '*already deactivated*'
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
+            # Both lists were read on the second call: the active list, then the eligible one for the hint.
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 2 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter { -not $Activated }
+        }
+    }
+
     Context 'When the resolver writes an error instead of throwing it' {
         # The cmdlet calls the resolver with -ErrorAction Stop, so an error the resolver only writes
         # ends that name inside the cmdlet's own try and is written as the cmdlet's own error. The

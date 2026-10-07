@@ -13,7 +13,10 @@ function Resolve-OPIMSchedule {
     Outcomes:
     - one match: the post is returned. With -Status Both one eligible and one active post may both
       be returned, since they are different states of the same thing.
-    - no match: the terminating EligibleRoleNotFound (ActiveRoleNotFound for -Status Active).
+    - no match: the terminating EligibleRoleNotFound (ActiveRoleNotFound for -Status Active). For
+      -Status Active the eligible list is read once more, and a name that still matches an eligible
+      post (under the same -Scope and -AccessType) is reported as already deactivated. That read is
+      best effort: if it fails, the hint is left out and the error is still ActiveRoleNotFound.
     - several: the terminating AmbiguousName, listing the candidates. The first match is never taken.
 
     A listing that fails is thrown as its own record, never reported as not found (OPIM-12).
@@ -104,6 +107,37 @@ function Resolve-OPIMSchedule {
     } elseif ($Filters.ContainsKey('Scope')) {
         $Elsewhere = @(Find-OPIMScheduleMatch -Pillar $Pillar -Name $Name -InputObject $Items)
         if ($Elsewhere.Count -gt 0) { $Hint.OtherScope = $Elsewhere }
+    }
+    if ($Status -eq 'Active') {
+        # OPIM-40: an active name that is not active may still be eligible -- then it is already
+        # deactivated. The hint is best effort: the active list WAS read, and a failed read of the
+        # eligible list only leaves the hint out.
+        $EligibleParams = @{ ErrorAction = 'Stop' }
+        try {
+            $Eligible = @(switch ($Pillar) {
+                'Directory' { Get-OPIMDirectoryRole @EligibleParams }
+                'Group'     { Get-OPIMEntraIDGroup @EligibleParams }
+                'Azure'     { Get-OPIMAzureRole @EligibleParams }
+            })
+        } catch {
+            Remove-OPIMErrorRecord -Record $PSItem
+            Write-Verbose "The eligible list could not be read for the hint: $($PSItem.FullyQualifiedErrorId)"
+            $Eligible = @()
+        }
+        $StillEligible = @(Find-OPIMScheduleMatch -Pillar $Pillar -Name $Name -InputObject $Eligible @Filters)
+        if ($StillEligible.Count -eq 0 -and $Name -match '^(.*\S)\s*\(([^()]+)\)\s*$') {
+            # The old form of an active post ends in the instance key, which no eligible post carries;
+            # its label in front of the key is the same. The explicit filters hold for it as for a key
+            # that is listed: a post they exclude is not the one the user named.
+            $Label = $Matches[1]
+            $StillEligible = @($Eligible | Where-Object {
+                $Post = $PSItem
+                $Known = Get-OPIMScheduleName -Pillar $Pillar -InputObject $Post
+                [string]::Equals($Known.Label, $Label, [System.StringComparison]::OrdinalIgnoreCase) -and
+                    @(Find-OPIMScheduleMatch -Pillar $Pillar -Name $Known.OldForm -InputObject $Eligible @Filters) -contains $Post
+            })
+        }
+        if ($StillEligible.Count -gt 0) { $Hint.AlreadyInactive = $true }
     }
     $NotFoundId = if ($Status -eq 'Active') { 'ActiveRoleNotFound' } else { 'EligibleRoleNotFound' }
     $PSCmdlet.ThrowTerminatingError((New-OPIMScheduleNameError -ErrorId $NotFoundId -Pillar $Pillar `

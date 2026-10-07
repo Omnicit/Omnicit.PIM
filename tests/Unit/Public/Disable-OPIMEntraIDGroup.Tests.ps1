@@ -558,6 +558,46 @@ Describe 'Disable-OPIMEntraIDGroup' {
             Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
         }
     }
+
+    Context 'When the group is already deactivated (OPIM-40, G8)' {
+        # The real resolver runs; only the listing and the transport are mocked. The first call finds
+        # the membership active and deactivates it, and that request ends the activation in the mock,
+        # so the second call finds the group eligible and no longer active.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $Held = @{ IsActive = $true }
+            $ActivePost = New-GroupPost -Id 'grp-act-001' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'member' -Active
+            $EligiblePost = New-GroupPost -Id 'grp-elig-001' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'member'
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { if ($Held.IsActive) { $ActivePost } } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $EligiblePost }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                $Held.IsActive = $false
+                @{ id = 'deact-req-001'; action = 'selfDeactivate'; status = 'Provisioned' }
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'deactivates once and writes one non-terminating ActiveRoleNotFound that says it is already deactivated' {
+            $Held.IsActive = $true
+            $Out = & {
+                Disable-OPIMEntraIDGroup -GroupName 'opim-grp' -ErrorAction Continue
+                Disable-OPIMEntraIDGroup -GroupName 'opim-grp' -ErrorAction Continue
+                'reached'
+            } 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Results = @($Out | Where-Object { $_ -is [PSCustomObject] -and $_.PSObject.TypeNames -contains 'Omnicit.PIM.GroupAssignmentScheduleRequest' })
+            # The statement after the second call ran, so the error did not end the script block.
+            ($Out -contains 'reached') | Should -BeTrue
+            $Results.Count | Should -Be 1
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Disable-OPIMEntraIDGroup'
+            $Written[0].Exception.Message | Should -BeLike '*already deactivated*'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            # Both lists were read on the second call: the active list, then the eligible one for the hint.
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 2 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Exactly -Scope It -ParameterFilter { -not $Activated }
+        }
+    }
+
     Context 'When the resolver writes an error instead of throwing it' {
         # The cmdlet calls the resolver with -ErrorAction Stop, so an error the resolver only writes
         # ends that name inside the cmdlet's own try and is written as the cmdlet's own error. The

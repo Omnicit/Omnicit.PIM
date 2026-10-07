@@ -502,4 +502,142 @@ Describe 'Resolve-OPIMSchedule' {
             $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Resolve-OPIMSchedule'
         }
     }
+
+    Context 'When the name is eligible but not active (OPIM-40)' -ForEach @(
+        @{
+            # The old form of an ACTIVE post ends in the instance key, which the eligible list does not
+            # hold; only the label in front of the key matches.
+            Pillar = 'Directory'; Lister = 'Get-OPIMDirectoryRole'
+            DisplayName = 'Message Center Privacy Reader'
+            OldForms = @('Usage Summary Reports Reader (inst-001)', 'Usage Summary Reports Reader -> Sales AU (inst-002)', 'Ops (Tier 1) (inst-011)', 'usage summary reports reader (inst-001)')
+            Missing = 'Nobody Carries This'; MissingOldForm = 'Nobody Carries This (inst-404)'
+            Excluded = @{ Scope = '/administrativeUnits/au-001' }; ExcludedOldForm = 'Message Center Privacy Reader (inst-003)'
+            Admitted = @{ Scope = '/' }
+        }
+        @{
+            Pillar = 'Group'; Lister = 'Get-OPIMEntraIDGroup'
+            DisplayName = 'unique-grp'
+            OldForms = @('unique-grp - member (grp-inst-005)', 'opim-grp - owner (grp-inst-002)', 'Ops (Tier 1) - member (grp-inst-011)', 'UNIQUE-GRP - MEMBER (grp-inst-005)')
+            Missing = 'Nobody Carries This'; MissingOldForm = 'Nobody Carries This - member (grp-inst-404)'
+            Excluded = @{ AccessType = 'owner' }; ExcludedOldForm = 'unique-grp - member (grp-inst-005)'
+            Admitted = @{ AccessType = 'member' }
+        }
+        @{
+            Pillar = 'Azure'; Lister = 'Get-OPIMAzureRole'
+            DisplayName = 'Contributor'
+            OldForms = @('Reader -> rg-one (azure-inst-001)', 'Ops (Tier 1) -> sub-001 (azure-inst-011)', 'reader -> RG-ONE (azure-inst-001)')
+            Missing = 'Nobody Carries This'; MissingOldForm = 'Nobody Carries This -> sub-001 (azure-inst-404)'
+            Excluded = @{ Scope = '/subscriptions/sub-001/resourceGroups/rg-two' }; ExcludedOldForm = 'Reader -> rg-one (azure-inst-001)'
+            Admitted = @{ Scope = '/subscriptions/sub-001' }
+        }
+    ) {
+        # Nothing is active, and the eligible list holds the post: the listing answers on -Activated.
+        BeforeAll {
+            $Eligible = $Sets[$Pillar].Eligible
+        }
+
+        It 'says a display name is already deactivated when it is still eligible (<Pillar>)' {
+            Mock -ModuleName Omnicit.PIM $Lister { $Eligible }
+            Mock -ModuleName Omnicit.PIM $Lister { } -ParameterFilter { $Activated }
+            $Record = & $Capture @{ Pillar = $Pillar; Name = $DisplayName; Status = 'Active' }
+            $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Resolve-OPIMSchedule'
+            $Record.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+            $Record.Exception.Message | Should -BeLike '*It is eligible but not active, so it is already deactivated.*'
+            $Record.TargetObject | Should -Be $DisplayName
+            Should -Invoke -CommandName $Lister -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It -ParameterFilter { $Activated -eq $true }
+            Should -Invoke -CommandName $Lister -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It -ParameterFilter { -not $Activated -and -not $All -and $ErrorAction -eq 'Stop' }
+        }
+
+        It 'says a display name that itself ends in parentheses is already deactivated (<Pillar>)' {
+            # 'Ops (Tier 1)' is a display name; its parentheses hold no key. The label reading of the old
+            # form must not replace what the display name already matched.
+            Mock -ModuleName Omnicit.PIM $Lister { $Eligible }
+            Mock -ModuleName Omnicit.PIM $Lister { } -ParameterFilter { $Activated }
+            $Record = & $Capture @{ Pillar = $Pillar; Name = 'Ops (Tier 1)'; Status = 'Active' }
+            $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Resolve-OPIMSchedule'
+            $Record.Exception.Message | Should -BeLike '*already deactivated*'
+        }
+
+        It 'says the old form of an active post is already deactivated when its label is still eligible (<Pillar>)' {
+            Mock -ModuleName Omnicit.PIM $Lister { $Eligible }
+            Mock -ModuleName Omnicit.PIM $Lister { } -ParameterFilter { $Activated }
+            foreach ($OldForm in $OldForms) {
+                $Record = & $Capture @{ Pillar = $Pillar; Name = $OldForm; Status = 'Active' }
+                $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Resolve-OPIMSchedule' -Because "the old form '$OldForm' names an active post"
+                $Record.Exception.Message | Should -BeLike '*already deactivated*' -Because "the label of '$OldForm' is still eligible"
+            }
+        }
+
+        It 'does not say it for a name that is in neither list (<Pillar>)' {
+            Mock -ModuleName Omnicit.PIM $Lister { $Eligible }
+            Mock -ModuleName Omnicit.PIM $Lister { } -ParameterFilter { $Activated }
+            foreach ($Name in $Missing, $MissingOldForm) {
+                $Record = & $Capture @{ Pillar = $Pillar; Name = $Name; Status = 'Active' }
+                $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Resolve-OPIMSchedule'
+                $Record.Exception.Message | Should -Not -BeLike '*already deactivated*'
+                $Record.Exception.Message | Should -BeLike '*use tab completion*'
+            }
+            Should -Invoke -CommandName $Lister -ModuleName Omnicit.PIM -Times 2 -Exactly -Scope It -ParameterFilter { -not $Activated }
+        }
+
+        It 'leaves the hint out and still throws ActiveRoleNotFound when the eligible list cannot be read (<Pillar>)' {
+            # The mock writes the record a failed listing writes, for the eligible list only. It takes
+            # its preference from an explicit -ErrorAction, as a listing does.
+            Mock -ModuleName Omnicit.PIM $Lister {
+                $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            }
+            Mock -ModuleName Omnicit.PIM $Lister { } -ParameterFilter { $Activated }
+            $Record = & $Capture @{ Pillar = $Pillar; Name = $DisplayName; Status = 'Active' }
+            $Record | Should -BeOfType [System.Management.Automation.ErrorRecord]
+            $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Resolve-OPIMSchedule'
+            $Record.Exception.Message | Should -Not -BeLike '*already deactivated*'
+            $Record.Exception.Message | Should -Not -BeLike '*Forbidden*'
+            # The eligible list was asked for, so the catch that drops the failure was reached.
+            Should -Invoke -CommandName $Lister -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It -ParameterFilter { -not $Activated -and $ErrorAction -eq 'Stop' }
+        }
+
+        It 'still throws the active listing own error as itself (<Pillar>)' {
+            # The hint is best effort; the active list is not. A failed active read is never ActiveRoleNotFound.
+            Mock -ModuleName Omnicit.PIM $Lister { $Eligible }
+            Mock -ModuleName Omnicit.PIM $Lister {
+                $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            } -ParameterFilter { $Activated }
+            $Record = & $Capture @{ Pillar = $Pillar; Name = $DisplayName; Status = 'Active' }
+            $Record.FullyQualifiedErrorId | Should -BeLike 'Forbidden*'
+            Should -Invoke -CommandName $Lister -ModuleName Omnicit.PIM -Times 0 -Scope It -ParameterFilter { -not $Activated }
+        }
+
+        It 'reads the eligible list for the hint only with -Status Active (<Status>, <Pillar>)' -ForEach @(
+            @{ Status = 'Eligible' }
+            @{ Status = 'Both' }
+        ) {
+            Mock -ModuleName Omnicit.PIM $Lister { }
+            $Record = & $Capture @{ Pillar = $Pillar; Name = $DisplayName; Status = $Status }
+            $Record.FullyQualifiedErrorId | Should -Be 'EligibleRoleNotFound,Resolve-OPIMSchedule'
+            $Record.Exception.Message | Should -Not -BeLike '*already deactivated*'
+            Should -Invoke -CommandName $Lister -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
+        }
+
+        It 'keeps the explicit filters when it looks for the eligible post (<Pillar>)' {
+            Mock -ModuleName Omnicit.PIM $Lister { $Eligible }
+            Mock -ModuleName Omnicit.PIM $Lister { } -ParameterFilter { $Activated }
+            # A filter that excludes the eligible post: it is not what the user named.
+            $Record = & $Capture (@{ Pillar = $Pillar; Name = $DisplayName; Status = 'Active' } + $Excluded)
+            $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Resolve-OPIMSchedule'
+            $Record.Exception.Message | Should -Not -BeLike '*already deactivated*'
+            # The old form of that post is excluded by the same filter.
+            $Record = & $Capture (@{ Pillar = $Pillar; Name = $ExcludedOldForm; Status = 'Active' } + $Excluded)
+            $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Resolve-OPIMSchedule'
+            $Record.Exception.Message | Should -Not -BeLike '*already deactivated*'
+            # A filter that admits it keeps the hint.
+            $Record = & $Capture (@{ Pillar = $Pillar; Name = $DisplayName; Status = 'Active' } + $Admitted)
+            $Record.Exception.Message | Should -BeLike '*already deactivated*'
+        }
+    }
 }
