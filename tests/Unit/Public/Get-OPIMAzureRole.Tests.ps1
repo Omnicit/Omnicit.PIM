@@ -181,33 +181,302 @@ Describe 'Get-OPIMAzureRole' {
     }
 
     Context 'When -RoleName is specified' {
+        # A name resolves through Resolve-OPIMSchedule, as on Enable and Disable. The resolver lists by
+        # calling this cmdlet without a name, so the Az.Resources mocks below answer the nested listing
+        # and the whole path runs for real. The fakes are built inside the mocks, so each call gets
+        # fresh objects that no earlier call has decorated.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            $FakeEligible = [PSCustomObject]@{
-                Name                      = 'elig-001'
-                RoleDefinitionDisplayName = 'Contributor'
-                ScopeId                   = '/subscriptions/sub-001'
-                PrincipalId               = 'principal-001'
-            }
-            # Name and Filter are mutually exclusive parameter sets in Az.Resources cmdlets.
-            # When -Name is specified, -Filter is NOT passed.
+            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
             Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
-                return $FakeEligible
-            } -ParameterFilter { $Name -eq 'elig-001' }
+                [PSCustomObject]@{
+                    Name = 'azure-001'; RoleDefinitionDisplayName = 'Reader'
+                    ScopeId = '/subscriptions/sub-001/resourceGroups/rg-one'; ScopeDisplayName = 'rg-one'; PrincipalId = 'principal-001'
+                }
+                [PSCustomObject]@{
+                    Name = 'azure-002'; RoleDefinitionDisplayName = 'Reader'
+                    ScopeId = '/subscriptions/sub-001/resourceGroups/rg-two'; ScopeDisplayName = 'rg-two'; PrincipalId = 'principal-001'
+                }
+                [PSCustomObject]@{
+                    Name = 'azure-003'; RoleDefinitionDisplayName = 'Contributor'
+                    ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'Subscription One'; PrincipalId = 'principal-001'
+                }
+            }
             Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance {
-                return @()
-            } -ParameterFilter { $Name -eq 'elig-001' }
+                [PSCustomObject]@{
+                    Name = 'azure-act-003'; AssignmentType = 'Activated'; RoleDefinitionDisplayName = 'Contributor'
+                    ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'Subscription One'; PrincipalId = 'principal-001'
+                }
+            }
         }
 
-        It 'extracts the schedule Name from trailing parentheses and performs dual-search' {
-            Get-OPIMAzureRole -RoleName 'Contributor -> My Subscription (elig-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Scope It -ParameterFilter { $Name -eq 'elig-001' }
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 1 -Scope It -ParameterFilter { $Name -eq 'elig-001' }
+        Context 'a display name that names one role' {
+            It 'returns the post in each state it is in' {
+                $Result = @(Get-OPIMAzureRole -RoleName 'Contributor')
+                $Result | Should -HaveCount 2
+                ($Result | Sort-Object Status | ForEach-Object { "$($_.Status):$($_.Name)" }) -join ',' |
+                    Should -BeExactly 'Active:azure-act-003,Eligible:azure-003'
+                foreach ($Post in $Result) {
+                    $Post.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureCombinedSchedule'
+                }
+            }
+
+            It 'takes the name as the first positional argument and ignores its case' {
+                $Result = @(Get-OPIMAzureRole 'contributor')
+                $Result | Should -HaveCount 2
+            }
+
+            It 'reads the listing at the root scope with the asTarget() filter and passes no Name' {
+                $null = Get-OPIMAzureRole -RoleName 'Contributor'
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Scope -eq '/' -and $Filter -eq 'asTarget()' -and -not $Name
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Scope -eq '/' -and $Filter -eq 'asTarget()' -and -not $Name
+                }
+            }
         }
 
-        It 'returns an object tagged with Omnicit.PIM.AzureCombinedSchedule' {
-            $Result = Get-OPIMAzureRole -RoleName 'Contributor -> My Subscription (elig-001)'
-            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureCombinedSchedule'
+        Context 'with -Activated' {
+            It 'returns only the active instance' {
+                $Result = @(Get-OPIMAzureRole -Activated -RoleName 'Contributor')
+                $Result | Should -HaveCount 1
+                $Result[0].Name | Should -BeExactly 'azure-act-003'
+                $Result[0].PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureAssignmentScheduleInstance'
+            }
+
+            It 'does not read the eligible list when the active instance is found' {
+                $null = Get-OPIMAzureRole -Activated -RoleName 'Contributor'
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
+            }
+
+            It 'keeps the instance when -Scope names its scope' {
+                $Result = @(Get-OPIMAzureRole -Activated -RoleName 'Contributor' -Scope '/subscriptions/sub-001')
+                $Result | Should -HaveCount 1
+                $Result[0].Name | Should -BeExactly 'azure-act-003'
+            }
+
+            It 'writes ActiveRoleNotFound for a role that is not active' {
+                $Output = @(Get-OPIMAzureRole -Activated -RoleName 'Reader' -ErrorAction Continue 2>&1)
+                $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Written | Should -HaveCount 1
+                $Written[0].FullyQualifiedErrorId | Should -BeExactly 'ActiveRoleNotFound,Get-OPIMAzureRole'
+                @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
+            }
+        }
+
+        Context 'a display name that two scopes carry' {
+            It 'writes AmbiguousName with the candidates and offers -Scope' {
+                $Output = @(Get-OPIMAzureRole -RoleName 'Reader' -ErrorAction Continue 2>&1)
+                $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Written | Should -HaveCount 1
+                $Written[0].FullyQualifiedErrorId | Should -BeExactly 'AmbiguousName,Get-OPIMAzureRole'
+                $Written[0].Exception.Message | Should -Match 'azure-001'
+                $Written[0].Exception.Message | Should -Match 'azure-002'
+                $Written[0].Exception.Message | Should -Match 'add -Scope'
+                @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
+            }
+
+            It 'returns only the post at the scope that -Scope names' {
+                $Result = @(Get-OPIMAzureRole -RoleName 'Reader' -Scope '/subscriptions/sub-001/resourceGroups/rg-one')
+                $Result | Should -HaveCount 1
+                $Result[0].Name | Should -BeExactly 'azure-001'
+                $Result[0].Status | Should -BeExactly 'Eligible'
+            }
+
+            It 'reads -Scope ''/'' as every scope, like the default, and so stays ambiguous' {
+                $Output = @(Get-OPIMAzureRole -RoleName 'Reader' -Scope '/' -ErrorAction Continue 2>&1)
+                $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Written | Should -HaveCount 1
+                $Written[0].FullyQualifiedErrorId | Should -BeExactly 'AmbiguousName,Get-OPIMAzureRole'
+                @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
+            }
+
+            It 'stays ambiguous when -Scope is left out' {
+                $Output = @(Get-OPIMAzureRole -RoleName 'Reader' -ErrorAction Continue 2>&1)
+                $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Written | Should -HaveCount 1
+                $Written[0].FullyQualifiedErrorId | Should -BeExactly 'AmbiguousName,Get-OPIMAzureRole'
+            }
+
+            It 'writes EligibleRoleNotFound when -Scope names a scope the role is not at' {
+                $Output = @(Get-OPIMAzureRole -RoleName 'Reader' -Scope '/subscriptions/sub-001' -ErrorAction Continue 2>&1)
+                $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Written | Should -HaveCount 1
+                $Written[0].FullyQualifiedErrorId | Should -BeExactly 'EligibleRoleNotFound,Get-OPIMAzureRole'
+                @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
+            }
+
+            It 'refuses a -Scope that ends in a slash, and returns nothing' {
+                $Output = @(Get-OPIMAzureRole -RoleName 'Reader' -Scope '/subscriptions/sub-001/resourceGroups/rg-one/' -ErrorAction Continue 2>&1)
+                $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Written | Should -HaveCount 1
+                $Written[0].FullyQualifiedErrorId | Should -BeLike 'ParameterArgumentValidationError*'
+                $Written[0].Exception.Message | Should -Match 'ends with'
+                @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
+            }
+        }
+
+        Context 'a name that no role carries' {
+            It 'writes EligibleRoleNotFound and returns nothing' {
+                $Output = @(Get-OPIMAzureRole -RoleName 'No Such Role' -ErrorAction Continue 2>&1)
+                $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Written | Should -HaveCount 1
+                $Written[0].FullyQualifiedErrorId | Should -BeExactly 'EligibleRoleNotFound,Get-OPIMAzureRole'
+                @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
+            }
+
+            It 'writes it as a non-terminating error' {
+                { Get-OPIMAzureRole -RoleName 'No Such Role' -ErrorAction SilentlyContinue } | Should -Not -Throw
+            }
+        }
+
+        Context 'the old tab-completed form' {
+            It 'returns the post whose Name ends the string' {
+                $Result = @(Get-OPIMAzureRole -RoleName 'Reader -> rg-two (azure-002)')
+                $Result | Should -HaveCount 1
+                $Result[0].Name | Should -BeExactly 'azure-002'
+                $Result[0].PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureCombinedSchedule'
+            }
+
+            It 'finds nothing when -Scope excludes the post the Name names' {
+                $Output = @(Get-OPIMAzureRole -RoleName 'Reader -> rg-two (azure-002)' -Scope '/subscriptions/sub-001/resourceGroups/rg-one' -ErrorAction Continue 2>&1)
+                $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Written | Should -HaveCount 1
+                $Written[0].FullyQualifiedErrorId | Should -BeExactly 'EligibleRoleNotFound,Get-OPIMAzureRole'
+                @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
+            }
+        }
+
+        Context 'a scope that arrives from the pipeline' {
+            It 'resolves the name at that scope' {
+                $Result = @('/subscriptions/sub-001/resourceGroups/rg-two' | Get-OPIMAzureRole -RoleName 'Reader')
+                $Result | Should -HaveCount 1
+                $Result[0].Name | Should -BeExactly 'azure-002'
+            }
+        }
+    }
+
+    Context 'When -RoleName is specified and the listing fails' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
+            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance { }
+            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
+                Write-Error -Message 'Service unavailable' `
+                    -ErrorId 'ServiceUnavailable' `
+                    -Category ResourceUnavailable `
+                    -ErrorAction Stop
+            }
+        }
+
+        It 'writes the listing''s own error and never EligibleRoleNotFound' {
+            $Output = @(Get-OPIMAzureRole -RoleName 'Contributor' -ErrorAction Continue 2>&1)
+            $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written | Should -HaveCount 1
+            $Written[0].FullyQualifiedErrorId | Should -BeExactly 'ServiceUnavailable,Get-OPIMAzureRole'
+            @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
+        }
+
+        It 'writes the listing''s own error under -ErrorAction SilentlyContinue too' {
+            $Errs = $null
+            $Output = @(Get-OPIMAzureRole -RoleName 'Contributor' -ErrorVariable Errs -ErrorAction SilentlyContinue)
+            $Output | Should -HaveCount 0
+            # -ErrorVariable collects every nested frame's copy as well; the cmdlet's own record is the last.
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ServiceUnavailable,Get-OPIMAzureRole'
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'EligibleRoleNotFound*' }) | Should -HaveCount 0
+        }
+    }
+
+    Context 'When -RoleName is specified and the resolver is mocked' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
+            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {}
+            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance {}
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule {
+                [PSCustomObject]@{ Name = 'resolved-001'; Status = 'Eligible' }
+            }
+        }
+
+        It 'hands the resolver the Azure pillar, both states and the name, offers -Scope and gives no scope' {
+            $Result = @(Get-OPIMAzureRole -RoleName 'Contributor')
+            $Result | Should -HaveCount 1
+            $Result[0].Name | Should -BeExactly 'resolved-001'
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Pillar -eq 'Azure' -and $Status -eq 'Both' -and $Name -ceq 'Contributor' -and
+                @($FilterParameter) -ceq 'Scope' -and -not $Scope
+            }
+        }
+
+        It 'gives the resolver no scope for -Scope ''/'', which has always meant every scope' {
+            $null = Get-OPIMAzureRole -RoleName 'Contributor' -Scope '/'
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It -ParameterFilter {
+                -not $Scope
+            }
+        }
+
+        It 'hands the resolver the scope it was given, as given' {
+            $null = Get-OPIMAzureRole -RoleName 'Contributor' -Scope '/subscriptions/sub-001'
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Scope -ceq '/subscriptions/sub-001'
+            }
+        }
+
+        It 'hands the resolver the scope that arrives from the pipeline' {
+            $null = '/subscriptions/sub-002' | Get-OPIMAzureRole -RoleName 'Contributor'
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Scope -ceq '/subscriptions/sub-002'
+            }
+        }
+
+        It 'hands the resolver both states with -All' {
+            $null = Get-OPIMAzureRole -All -RoleName 'Contributor'
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Status -eq 'Both'
+            }
+        }
+
+        It 'hands the resolver the active state with -Activated' {
+            $null = Get-OPIMAzureRole -Activated -RoleName 'Contributor'
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Pillar -eq 'Azure' -and $Status -eq 'Active'
+            }
+        }
+
+        It 'lists nothing itself, since the resolver lists' {
+            $null = Get-OPIMAzureRole -RoleName 'Contributor'
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 0 -Scope It
+        }
+
+        It 'does not call the resolver without a name' {
+            $null = Get-OPIMAzureRole
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 0 -Scope It
+        }
+    }
+
+    Context 'When the resolver writes an error instead of throwing' {
+        # The cmdlet calls the resolver with -ErrorAction Stop, so an error the resolver only writes
+        # ends that name inside the cmdlet's own try and is written as the cmdlet's own error. The
+        # mock takes its preference from an explicit -ErrorAction and is Continue otherwise, as the
+        # resolver is under the default preference.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule {
+                $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            }
+        }
+
+        It 'writes the error as its own, once' {
+            $Out = Get-OPIMAzureRole -RoleName 'Contributor' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            @($Written | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Get-OPIMAzureRole' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It
         }
     }
 

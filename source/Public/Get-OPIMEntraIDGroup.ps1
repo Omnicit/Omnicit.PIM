@@ -49,9 +49,11 @@ function Get-OPIMEntraIDGroup {
     (inactive) group eligibility schedules.
     Mutually exclusive with -All.
     .PARAMETER GroupName
-    Tab-completable name of the PIM group assignment in the format produced by the argument completer.
-    Extracts the schedule ID from the trailing (id) and performs a dual-search across eligible
-    and active schedules. Mutually exclusive intent with -Identity (both set the same filter).
+    The display name of the group, or the tab-completed form the argument completer offers. A display
+    name means the membership; add -AccessType owner for the ownership. Returns the eligible and the
+    active post (only the active instance with -Activated); several matches are refused with
+    AmbiguousName, and none with EligibleRoleNotFound (ActiveRoleNotFound with -Activated).
+    -Identity and -Filter are ignored when -GroupName is given.
     .PARAMETER Identity
     The schedule item ID used to retrieve a single specific group assignment record by its unique identifier.
     The ID corresponds to the id property on objects returned by this cmdlet.
@@ -83,15 +85,22 @@ function Get-OPIMEntraIDGroup {
     )
     process {
         Initialize-OPIMAuth
-        # Resolve GroupName to a schedule Identity if provided (extract ID from trailing '(id)' suffix)
-        [string]$ResolvedId = $Identity
         if ($GroupName) {
-            if ($GroupName -match '\(([^)]+)\)$') {
-                $ResolvedId = $Matches[1]
-            } else {
-                $ResolvedId = $GroupName
+            # A name -- display name or the old tab-completed form -- resolves like on Enable and
+            # Disable: one post per state, AmbiguousName for several, EligibleRoleNotFound for none.
+            # A display name means the membership unless -AccessType says otherwise.
+            $ResolveParams = @{ Pillar = 'Group'; FilterParameter = 'AccessType'; ErrorAction = 'Stop' }
+            $ResolveParams.Status = if ($Activated) { 'Active' } else { 'Both' }
+            if ($AccessType) { $ResolveParams.AccessType = $AccessType.ToLowerInvariant() }
+            try {
+                Resolve-OPIMSchedule -Name $GroupName @ResolveParams
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
             }
+            return
         }
+        [string]$ResolvedId = $Identity
 
         $Base = 'v1.0/identityGovernance/privilegedAccess/group'
         [string]$UserFilter = "/filterByCurrentUser(on='principal')"

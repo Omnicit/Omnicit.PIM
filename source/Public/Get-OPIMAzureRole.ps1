@@ -46,9 +46,11 @@ function Get-OPIMAzureRole {
     Mutually exclusive with -All.
     When combined with -Scope, only instances at that exact scope are returned.
     .PARAMETER RoleName
-    Tab-completable name of the eligible Azure role in the format produced by the argument completer.
-    Extracts the schedule Name from the trailing (name) and performs a dual-search across eligible
-    and active schedules. Mutually exclusive intent with -Identity.
+    The display name of the Azure role, or the tab-completed form the argument completer offers.
+    Returns the eligible and the active post (only the active instance with -Activated); add -Scope
+    to pick one scope when the role is at several. Several matches are refused with AmbiguousName,
+    and none with EligibleRoleNotFound (ActiveRoleNotFound with -Activated). -Identity is ignored
+    when -RoleName is given.
     .PARAMETER Identity
     The schedule Name (the Name property from Get-OPIMAzureRole output) used to retrieve a specific
     role schedule. When supplied, both eligible and active schedules are searched (dual-search)
@@ -68,15 +70,22 @@ function Get-OPIMAzureRole {
     )
     process {
         Initialize-OPIMAuth -IncludeARM
-        # Resolve RoleName to a schedule Name if provided (extract Name from trailing '(name)' suffix)
-        [string]$ResolvedName = $Identity
         if ($RoleName) {
-            if ($RoleName -match '\(([^)]+)\)$') {
-                $ResolvedName = $Matches[1]
-            } else {
-                $ResolvedName = $RoleName
+            # A name -- display name or the old tab-completed form -- resolves like on Enable and
+            # Disable: one post per state, AmbiguousName for several, EligibleRoleNotFound for none.
+            $ResolveParams = @{ Pillar = 'Azure'; FilterParameter = 'Scope'; ErrorAction = 'Stop' }
+            $ResolveParams.Status = if ($Activated) { 'Active' } else { 'Both' }
+            # This cmdlet has always read the default '/' as every scope, so '/' is no filter here.
+            if ($Scope -ne '/') { $ResolveParams.Scope = $Scope }
+            try {
+                Resolve-OPIMSchedule -Name $RoleName @ResolveParams
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
             }
+            return
         }
+        [string]$ResolvedName = $Identity
 
         $OdataFilter = 'asTarget()'
 

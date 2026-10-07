@@ -46,9 +46,10 @@ function Get-OPIMDirectoryRole {
     (inactive) role eligibility schedules.
     Mutually exclusive with -All.
     .PARAMETER RoleName
-    Tab-completable name of the directory role in the format produced by the argument completer.
-    Extracts the schedule ID from the trailing (id) and performs a dual-search across eligible
-    and active schedules. Mutually exclusive intent with -Identity (both set the same filter).
+    The display name of the directory role, or the tab-completed form the argument completer offers.
+    Returns the eligible and the active post of that role (only the active instance with -Activated);
+    several matches are refused with AmbiguousName, and none with EligibleRoleNotFound
+    (ActiveRoleNotFound with -Activated). -Identity and -Filter are ignored when -RoleName is given.
     .PARAMETER Identity
     The schedule item ID used to retrieve a single specific role record by its unique identifier.
     The ID corresponds to the id property on objects returned by this cmdlet.
@@ -75,13 +76,18 @@ function Get-OPIMDirectoryRole {
     )
     process {
         Initialize-OPIMAuth
-        # Resolve RoleName to a schedule Identity if provided (extract ID from trailing '(id)' suffix)
         if ($RoleName) {
-            if ($RoleName -match '\(([^)]+)\)$') {
-                $Identity = $Matches[1]
-            } else {
-                $Identity = $RoleName
+            # A name -- display name or the old tab-completed form -- resolves like on Enable and
+            # Disable: one post per state, AmbiguousName for several, EligibleRoleNotFound for none.
+            $ResolveParams = @{ Pillar = 'Directory'; ErrorAction = 'Stop' }
+            $ResolveParams.Status = if ($Activated) { 'Active' } else { 'Both' }
+            try {
+                Resolve-OPIMSchedule -Name $RoleName @ResolveParams
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
             }
+            return
         }
 
         [string]$UserFilter = "/filterByCurrentUser(on='principal')"
