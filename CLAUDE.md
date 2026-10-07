@@ -498,8 +498,12 @@ call it as the first statement of their `process` block (of their `begin` block 
 pass `-IncludeARM`. `Connect-OPIM` resolves `-TenantAlias` from `TenantMap.psd1` and passes its
 `-TenantId`, `-IncludeARM` and `-DeviceCode` on (`Connect-OPIM.ps1:85-113`); it is an optional
 pre-authentication shortcut, since every pillar cmdlet authenticates on first use.
-`Enable-OPIMMyRole` and `Disable-OPIMMyRole` call `Connect-OPIM`, handing on their own
-`-DeviceCode`, and then the pillar cmdlets. The `*-OPIMConfiguration` cmdlets do not authenticate.
+`Enable-OPIMMyRole` and `Disable-OPIMMyRole` call `Connect-OPIM` twice, handing on their own
+`-DeviceCode`: first for Microsoft Graph, then -- only when an Azure pillar runs (an `-All*` Azure
+switch, a hashtable alias that lists `AzureRoles`, or the plain string form of an alias) -- with
+`-IncludeARM` for the same tenant, and then the pillar cmdlets. A failed Graph sign-in stops the
+command before anything is listed or changed; a failed Azure sign-in skips the Azure pillar only.
+The `*-OPIMConfiguration` cmdlets do not authenticate.
 
 **It is idempotent, and the session is pinned to one tenant.** It returns without a network call
 or a prompt when the request matches the module's own session, the Graph SDK session in the process
@@ -519,8 +523,10 @@ and `Get-OPIMGraphSessionState` compares the process's session with it at every 
 both refuse with the terminating `GraphSessionChanged` (built by `New-OPIMGraphSessionChangedError`)
 before any cached return, token or `Connect-MgGraph`, and nothing takes the session back: the user
 runs `Disconnect-OPIM` and signs in again. When the process holds no session at all, the cached token
-does not count and the function signs in and connects again. With `-IncludeARM`, Azure counts as
-connected only when a cached Az context for the tenant can mint an ARM token silently through
+does not count and the function signs in and connects again. With `-IncludeARM`, Azure is checked
+after Graph, cached or not, and counts as connected only when the cached Az context is for the
+tenant of the session's Graph token (`TokenTenantId`, always the GUID, also for a session pinned by
+domain) and for the account that session signed in with, and can mint an ARM token silently through
 `Get-AzAccessToken` (`:144-164`): the Az module autosaves its context, so a bare context can
 resurface in a new session with an expired token.
 
@@ -535,8 +541,10 @@ cached return and as its last statement. Every refusal and terminating error, an
 connection, leave it latched. `Invoke-OPIMGraphRequest` reads the latch before each of its requests,
 straight after the session gate (a changed session is still `GraphSessionChanged`) and outside the
 `try`; the ARM gate `Get-OPIMArmRefusal` stands inside the `try` before every `Az.Resources` call,
-and calls nothing while the latch table does not exist (unit tests that mock `Initialize-OPIMAuth`).
-Both refuse a latched command's request with `SignInRefused`. The latch, `$script:_OPIMSignInLatch`,
+and reads the latch only while the latch table exists. Both refuse a latched command's request with
+`SignInRefused`. After the latch, the ARM gate also refuses with `TenantMismatch` when the Az context
+is for another tenant than the session's Graph token, or there is none (OPIM-08), and it reads no
+Az context while the module holds no sign-in (unit tests that mock `Initialize-OPIMAuth`). The latch, `$script:_OPIMSignInLatch`,
 is a `ConditionalWeakTable` keyed on the calling command's invocation and holding only `$true`, so a
 nested command's or a pipeline neighbour's success releases only its own entry, and a finished
 command is on no call stack. A wrapper retry's own sign-in latches `Invoke-OPIMGraphRequest` itself.
@@ -640,7 +648,8 @@ their last parameter and hand it down to `Initialize-OPIMAuth`; without it nothi
   exception; so is an application without the method (`:70-79`). Stopping the command cancels the
   flow (`:160-166`).
 - **Azure.** `-IncludeARM` adds `-UseDeviceAuthentication` to `Connect-AzAccount`
-  (`Initialize-OPIMAuth.ps1:367-369`), still with `-Tenant` unless the tenant is `organizations`.
+  (`Initialize-OPIMAuth.ps1:367-369`), still with `-Tenant` set to the tenant of the session's Graph
+  token.
   The Az module writes its own message with the code -- Az.Accounts 5.5.3 as an information record
   (`[Login to Azure] ...`), an older Az.Accounts as a warning -- and the module does not capture or
   rewrite it. Measured live 2026-10-06: code a harness runs in the module's process while
@@ -663,10 +672,14 @@ User.Read
 not authorised for Azure Resource Manager, so `-IncludeARM` uses the Az module's own sign-in. When
 no validated context exists, it disables WAM at PROCESS scope only
 (`Update-AzConfig -EnableLoginByWam $false -Scope Process`; the persisted Az configuration is never
-touched) and calls `Connect-AzAccount`, with `-Tenant` unless the tenant is `organizations`
-(`:350-379`). A failed connection is the non-terminating `AzureConnectFailed`, which leaves the
-calling command latched, so its `Az.Resources` calls are refused with `SignInRefused`. After a
-connection the `Az.Resources` cmdlets run in that Az context, each behind the ARM gate.
+touched) and calls `Connect-AzAccount -Tenant` with the tenant of the session's Graph token --
+always, also after a first sign-in under `organizations` (`:350-379`). A failed connection is the
+terminating `AzureConnectFailed`, which keeps the Az message but neither the Az exception nor its
+record (its target object is the session tenant), and leaves the calling command latched, so its
+`Az.Resources` calls are refused with `SignInRefused`. An Az context for another tenant after the
+connection, or none, is the terminating `TenantMismatch` (`New-OPIMTenantMismatchError -Source
+Azure`). After a connection the `Az.Resources` cmdlets run in that Az context, each behind the ARM
+gate.
 
 **State.** `$script:_OPIMAuthState` holds `TenantId`, `TokenTenantId`, `AuthorityTenant`,
 `Account`, `GraphTokenExpiry`, `ClaimsSatisfied`, `DeviceCode` and `GraphSessionFingerprint` --
@@ -730,7 +743,8 @@ is handed, not through the Graph SDK or an Az cmdlet.
 
 Beside these, the module reads `Get-MgContext` (`Get-OPIMMsalApplication.ps1:46`,
 `Get-MyId.ps1:26`, `Get-OPIMCurrentTenantInfo.ps1:30`, `Get-OPIMGraphSessionFingerprint.ps1:47`), reads
-`Get-AzContext` (`Initialize-OPIMAuth.ps1:144`), calls `Update-AzConfig` (`:362`), and calls the
+`Get-AzContext` (`Initialize-OPIMAuth.ps1:144`, and the ARM gate `Get-OPIMArmRefusal` before every
+`Az.Resources` call), calls `Update-AzConfig` (`:362`), and calls the
 `Az.Resources` cmdlets listed under **API Mapping**.
 
 ---

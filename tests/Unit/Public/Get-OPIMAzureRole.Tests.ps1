@@ -387,4 +387,38 @@ Describe 'Get-OPIMAzureRole' {
             Should -Invoke -ModuleName Omnicit.PIM Get-OPIMArmRefusal -Times $Expected -Exactly -Scope It
         }
     }
+
+    Context 'When Azure is signed in to another tenant than the Graph session' {
+        # Acceptance (OPIM-08): the real ARM gate, an auth state a Graph sign-in for one tenant wrote,
+        # and an Az context for another tenant: TenantMismatch before any ARM call.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-AzContext {
+                [PSCustomObject]@{ Tenant = [PSCustomObject]@{ Id = 'bbbbbbbb-0000-0000-0000-00000000000b' } }
+            }
+            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {}
+            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance {}
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMSignInLatch = $null
+                $script:_OPIMAuthState = @{
+                    TenantId      = 'aaaaaaaa-0000-0000-0000-00000000000a'
+                    TokenTenantId = 'aaaaaaaa-0000-0000-0000-00000000000a'
+                }
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+
+        It 'sends no ARM request and writes TenantMismatch (<Name>)' -ForEach @(
+            @{ Name = 'eligible'; Parameters = @{} }
+            @{ Name = '-Activated'; Parameters = @{ Activated = $true } }
+        ) {
+            $Errs = @()
+            Get-OPIMAzureRole @Parameters -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 0 -Scope It
+            @($Errs | Where-Object FullyQualifiedErrorId -Like 'TenantMismatch*').Count | Should -BeGreaterThan 0
+        }
+    }
 }

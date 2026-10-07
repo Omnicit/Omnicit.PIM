@@ -10,11 +10,22 @@ AfterAll {
 }
 
 Describe 'Get-OPIMArmRefusal' {
+    BeforeAll {
+        # Two tenants. Letter-repeat placeholders: neither is a version-4 id.
+        $TenantA = 'aaaaaaaa-0000-0000-0000-00000000000a'
+        $TenantB = 'bbbbbbbb-0000-0000-0000-00000000000b'
+    }
     BeforeEach {
-        InModuleScope Omnicit.PIM { $script:_OPIMSignInLatch = $null }
+        InModuleScope Omnicit.PIM {
+            $script:_OPIMSignInLatch = $null
+            $script:_OPIMAuthState = $null
+        }
     }
     AfterAll {
-        InModuleScope Omnicit.PIM { $script:_OPIMSignInLatch = $null }
+        InModuleScope Omnicit.PIM {
+            $script:_OPIMSignInLatch = $null
+            $script:_OPIMAuthState = $null
+        }
     }
 
     Context 'When the module holds no sign-in latch' {
@@ -22,9 +33,112 @@ Describe 'Get-OPIMArmRefusal' {
             InModuleScope Omnicit.PIM {
                 Mock Get-OPIMSignInRefusal { 'Get-OPIMAzureRole' }
                 Mock New-OPIMSignInRefusedError {}
+                Mock Get-AzContext {}
                 @(Get-OPIMArmRefusal).Count | Should -Be 0
                 Should -Invoke Get-OPIMSignInRefusal -Times 0 -Scope It
                 Should -Invoke New-OPIMSignInRefusedError -Times 0 -Scope It
+                Should -Invoke Get-AzContext -Times 0 -Scope It
+            }
+        }
+    }
+
+    Context 'When the module holds a sign-in (OPIM-08)' {
+        # Azure must be signed in to the tenant of the Graph session's token. The check runs whenever
+        # the auth state records that tenant, whether or not a latch table exists yet.
+        It 'returns nothing and reads no Az context without a module sign-in (<Name>)' -ForEach @(
+            @{ Name = 'no auth state'; State = $null }
+            @{ Name = 'a state that holds only the device code mode'; State = @{ DeviceCode = $true } }
+            @{ Name = 'a state without the token tenant'; State = @{ TenantId = 'contoso.onmicrosoft.com' } }
+        ) {
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMAuthState = $State
+                Mock Get-AzContext {}
+                @(Get-OPIMArmRefusal).Count | Should -Be 0
+                Should -Invoke Get-AzContext -Times 0 -Scope It
+            }
+        }
+
+        It 'returns nothing when the Az context is for the session tenant' {
+            InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA } {
+                param($TenantA)
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com'; TokenTenantId = $TenantA }
+                Mock Get-AzContext { [pscustomobject]@{ Tenant = [pscustomobject]@{ Id = 'aaaaaaaa-0000-0000-0000-00000000000a' } } }
+                @(Get-OPIMArmRefusal).Count | Should -Be 0
+                Should -Invoke Get-AzContext -Times 1 -Exactly -Scope It
+            }
+        }
+
+        It 'compares the tenant without regard to case' {
+            InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA } {
+                param($TenantA)
+                $script:_OPIMAuthState = @{ TenantId = $TenantA; TokenTenantId = $TenantA }
+                Mock Get-AzContext { [pscustomobject]@{ Tenant = [pscustomobject]@{ Id = 'AAAAAAAA-0000-0000-0000-00000000000A' } } }
+                @(Get-OPIMArmRefusal).Count | Should -Be 0
+            }
+        }
+
+        It 'returns TenantMismatch when the Az context is for another tenant' {
+            # Acceptance (OPIM-08): an Az context for another tenant is refused before any ARM call.
+            # No latch table exists here, so the tenant check does not hang on the latch check.
+            InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA; TenantB = $TenantB } {
+                param($TenantA, $TenantB)
+                $script:_OPIMAuthState = @{ TenantId = $TenantA; TokenTenantId = $TenantA }
+                Mock Get-AzContext { [pscustomobject]@{ Tenant = [pscustomobject]@{ Id = 'bbbbbbbb-0000-0000-0000-00000000000b' } } }
+                $Record = Get-OPIMArmRefusal
+                $Record | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+                $Record.FullyQualifiedErrorId | Should -BeExactly 'TenantMismatch'
+                $Record.TargetObject | Should -BeExactly $TenantA
+                $Record.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+                $Record.Exception.Message | Should -BeLike "Azure is signed in to another tenant than '$TenantA'*"
+                $Record.Exception.Message | Should -Not -BeLike "*$TenantB*"
+            }
+        }
+
+        It 'returns TenantMismatch naming the token tenant for a session pinned by domain' {
+            InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA } {
+                param($TenantA)
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com'; TokenTenantId = $TenantA }
+                Mock Get-AzContext { [pscustomobject]@{ Tenant = [pscustomobject]@{ Id = 'contoso.onmicrosoft.com' } } }
+                $Record = Get-OPIMArmRefusal
+                $Record.FullyQualifiedErrorId | Should -BeExactly 'TenantMismatch'
+                $Record.TargetObject | Should -BeExactly $TenantA
+            }
+        }
+
+        It 'returns TenantMismatch when there is no Az context' {
+            InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA } {
+                param($TenantA)
+                $script:_OPIMAuthState = @{ TenantId = $TenantA; TokenTenantId = $TenantA }
+                Mock Get-AzContext {}
+                $Record = Get-OPIMArmRefusal
+                $Record.FullyQualifiedErrorId | Should -BeExactly 'TenantMismatch'
+                $Record.TargetObject | Should -BeExactly $TenantA
+            }
+        }
+
+        It 'checks the latch first' {
+            InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA } {
+                param($TenantA)
+                $script:_OPIMSignInLatch = [System.Runtime.CompilerServices.ConditionalWeakTable[object, object]]::new()
+                $script:_OPIMAuthState = @{ TenantId = $TenantA; TokenTenantId = $TenantA }
+                Mock Get-OPIMSignInRefusal { 'Get-OPIMAzureRole' }
+                Mock Get-AzContext { [pscustomobject]@{ Tenant = [pscustomobject]@{ Id = 'bbbbbbbb-0000-0000-0000-00000000000b' } } }
+                $Record = Get-OPIMArmRefusal
+                $Record.FullyQualifiedErrorId | Should -BeExactly 'SignInRefused'
+                Should -Invoke Get-AzContext -Times 0 -Scope It
+            }
+        }
+
+        It 'checks the tenant when a latch table exists and no command is latched' {
+            InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA } {
+                param($TenantA)
+                $script:_OPIMSignInLatch = [System.Runtime.CompilerServices.ConditionalWeakTable[object, object]]::new()
+                $script:_OPIMAuthState = @{ TenantId = $TenantA; TokenTenantId = $TenantA }
+                Mock Get-OPIMSignInRefusal {}
+                Mock Get-AzContext { [pscustomobject]@{ Tenant = [pscustomobject]@{ Id = 'bbbbbbbb-0000-0000-0000-00000000000b' } } }
+                (Get-OPIMArmRefusal).FullyQualifiedErrorId | Should -BeExactly 'TenantMismatch'
+                Should -Invoke Get-OPIMSignInRefusal -Times 1 -Exactly -Scope It
             }
         }
     }

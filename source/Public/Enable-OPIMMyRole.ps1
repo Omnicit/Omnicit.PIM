@@ -15,6 +15,10 @@ function Enable-OPIMMyRole {
     selected categories are activated. Confirmation is required -- use -WhatIf to preview or
     -Confirm:$false to suppress the prompt.
 
+    The command signs in to Microsoft Graph first and then, when Azure RBAC roles are to be
+    activated, to Azure for the same tenant. A failed Graph sign-in stops the command before any
+    role or group is listed or activated. A failed Azure sign-in skips the Azure RBAC roles only.
+
     Use the 'pim' alias for daily quick activation:
 
         pim -TenantAlias contoso
@@ -138,8 +142,11 @@ function Enable-OPIMMyRole {
         $ResolvedTenantId = if ($Config -is [hashtable]) { $Config.TenantId } else { [string]$Config }
     }
 
+    # The Azure pillar runs for -AllEligible, -AllEligibleAzureRoles, a hashtable alias that lists
+    # AzureRoles, and the plain string form of an alias, whose Azure pillar activates every eligible
+    # Azure role.
     [bool]$NeedsArm = $AllEligible -or $AllEligibleAzureRoles -or
-                      ($Config -is [hashtable] -and $Config.AzureRoles)
+                      ($TenantAlias -and ($Config -isnot [hashtable] -or $Config.AzureRoles))
 
     # -- Progress --------------------------------------------------------------
     [int]$ProgressPillarCount = ([int][bool]($TenantAlias -or $AllEligible -or $AllEligibleDirectoryRoles)) +
@@ -149,7 +156,28 @@ function Enable-OPIMMyRole {
     [int]$ProgressPillarIndex = 0
     Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status 'Connecting...' -PercentComplete 3
 
-    Connect-OPIM -TenantId $ResolvedTenantId -IncludeARM:$NeedsArm -DeviceCode:$DeviceCode
+    # OPIM-08: Graph first. A failed Graph sign-in stops the command: nothing is listed or activated,
+    # not even in the tenant an earlier sign-in pinned.
+    try {
+        Connect-OPIM -TenantId $ResolvedTenantId -DeviceCode:$DeviceCode -ErrorAction Stop
+    } catch {
+        Remove-OPIMErrorRecord -Record $PSItem
+        $PSCmdlet.WriteError($PSItem)
+        Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Completed
+        return
+    }
+    # Then Azure, for the same tenant, only when an Azure pillar runs. A failed Azure sign-in skips
+    # the Azure pillar only.
+    [bool]$ArmConnected = $false
+    if ($NeedsArm) {
+        try {
+            Connect-OPIM -TenantId $ResolvedTenantId -IncludeARM -DeviceCode:$DeviceCode -ErrorAction Stop
+            $ArmConnected = $true
+        } catch {
+            Remove-OPIMErrorRecord -Record $PSItem
+            $PSCmdlet.WriteError($PSItem)
+        }
+    }
 
     $ActivateParams = @{ Hours = $Hours }
     if ($Justification) { $ActivateParams.Justification = $Justification }
@@ -219,7 +247,9 @@ function Enable-OPIMMyRole {
     }
 
     # -- Azure RBAC Roles ------------------------------------------------------
-    if ($TenantAlias -or $AllEligible -or $AllEligibleAzureRoles) {
+    # Only when Azure is signed in. Without $NeedsArm this is the verbose skip of a hashtable alias
+    # that lists no AzureRoles.
+    if (($TenantAlias -or $AllEligible -or $AllEligibleAzureRoles) -and (-not $NeedsArm -or $ArmConnected)) {
         if ($TenantAlias) {
             if ($Config -is [hashtable] -and -not $Config.AzureRoles) {
                 Write-Verbose "No AzureRoles configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add roles, or run with -AllEligibleAzureRoles."

@@ -50,11 +50,16 @@ function Initialize-OPIMAuth {
     Get-OPIMArmRefusal then refuse every request that command makes with SignInRefused, since outside
     any try a command carries on past a terminating error raised here.
 
-    For Azure RBAC commands, pass -IncludeARM. Connect-AzAccount is called to establish an
-    Azure context using the Az module's own authentication. This is separate from Graph auth
-    and may open its own browser window, or in device code mode show its own code, on first use.
-    Subsequent calls reuse the Az module's cached context (checked via Get-AzContext) without any
-    sign-in prompt.
+    For Azure RBAC commands, pass -IncludeARM. Azure is checked after Graph, since it needs the
+    session's tenant: the tenant the Graph token was issued for (TokenTenantId), always a GUID, also
+    for a session pinned by domain or first signed in under 'organizations'. The Az module's cached
+    context is reused, without a sign-in prompt, only when it is for that tenant and for the account
+    the Graph session signed in with, and can mint an ARM token silently. Otherwise
+    Connect-AzAccount -Tenant <that tenant> establishes a new context with the Az module's own
+    authentication, which is separate from Graph auth and may open its own browser window, or in
+    device code mode show its own code. A failed Connect-AzAccount ends this function with the
+    terminating AzureConnectFailed, which keeps the Az message but neither the Az exception nor its
+    record; an Az context for another tenant after the sign-in, or none, ends it with TenantMismatch.
 
     Graph auth and Azure auth are intentionally independent -- the Microsoft Graph Command Line
     Tools app registration (used by MSAL here) is not authorised for Azure Resource Manager.
@@ -77,10 +82,11 @@ function Initialize-OPIMAuth {
     refused with TenantMismatch.
 
     .PARAMETER IncludeARM
-    When set, ensures an Azure context is available. A cached Az context is trusted only after it
-    is validated with a silent Get-AzAccessToken (not merely detected via Get-AzContext); the Az
-    module autosaves its context to disk, so a stale context can resurface in a fresh session with
-    an expired token. When no usable context exists, Connect-AzAccount is called to establish one.
+    When set, ensures an Azure context for the tenant of the Graph session's token and its account.
+    A cached Az context is trusted only when its tenant and account match and it is validated with a
+    silent Get-AzAccessToken (not merely detected via Get-AzContext); the Az module autosaves its
+    context to disk, so a stale context can resurface in a fresh session with an expired token. When
+    no usable context exists, Connect-AzAccount is called with -Tenant set to the session's tenant.
     The Az module handles its own token caching independently of the MSAL/Graph cache.
 
     .PARAMETER ClaimsChallenge
@@ -208,31 +214,9 @@ function Initialize-OPIMAuth {
         return
     }
 
-    # Evaluate Azure connectivity once here and reuse below to avoid a second Get-AzContext call.
-    $AzCtxAtStart = if ($IncludeARM) { Get-AzContext -ErrorAction SilentlyContinue } else { $null }
-
-    # A cached Az context object alone is NOT proof of a usable connection. The Az module
-    # autosaves its context to disk (Enable-AzContextAutosave, on by default), so a brand-new
-    # PowerShell session resurfaces a context for the right tenant whose underlying token may have
-    # expired or now needs an interactive Conditional Access / MFA step-up. Trusting the bare
-    # context skips the required Connect-AzAccount, leaving only the Graph sign-in prompt while the
-    # later ARM call fails with "User interaction is required". Verify we can actually mint an ARM
-    # access token silently (no browser) before treating Azure as already connected.
-    [bool]$AzAlreadyConnected = -not $IncludeARM
-    if ($IncludeARM -and $AzCtxAtStart -and (
-            $EffectiveTenant -eq 'organizations' -or
-            $AzCtxAtStart.Tenant.Id -eq $EffectiveTenant
-        )) {
-        try {
-            $null = Get-AzAccessToken -TenantId $AzCtxAtStart.Tenant.Id -AsSecureString -WarningAction SilentlyContinue -ErrorAction Stop
-            $AzAlreadyConnected = $true
-        } catch {
-            Remove-OPIMErrorRecord -Record $PSItem
-            Write-Verbose "[Initialize-OPIMAuth] Cached Azure context for tenant '$($AzCtxAtStart.Tenant.Id)' cannot acquire an ARM token silently ($($PSItem.Exception.GetType().Name)); reconnecting via Connect-AzAccount."
-        }
-    }
-
-    if ($GraphCached -and $AzAlreadyConnected) {
+    # Graph only: a cached token is the whole answer. With -IncludeARM the Azure check below needs the
+    # session's tenant, so it runs after the Graph block, cached or not.
+    if ($GraphCached -and -not $IncludeARM) {
         Write-Verbose "[Initialize-OPIMAuth] Returning cached auth state for tenant '$EffectiveTenant'."
         # SEC (EntraRBAC A19): a cache hit is a success; release the calling command's latch.
         Unlock-OPIMSignIn -Invocation $SignInCaller
@@ -475,43 +459,82 @@ function Initialize-OPIMAuth {
     # for Azure Resource Manager -- Connect-AzAccount handles Azure auth with its own sign-in
     # (a browser prompt, or a device code in device code mode) the first time, then caches the
     # context in the Az module.
-    if ($IncludeARM -and -not $AzAlreadyConnected) {
-        Write-Verbose "[Initialize-OPIMAuth] Connecting to Azure via Connect-AzAccount..."
-
-        # Force browser-based sign-in for parity with the Graph side. Since Az.Accounts 12.0.0
-        # the Windows default is the WAM broker (the "Please select the account" picker), which
-        # hangs in some terminals. Disable it at PROCESS scope only -- the user's persisted Az
-        # config is never touched. No-op on Linux/macOS, where browser login is already default.
-        try {
-            Update-AzConfig -EnableLoginByWam $false -Scope Process -ErrorAction SilentlyContinue | Out-Null
-        } catch { Remove-OPIMErrorRecord -Record $PSItem }
-
-        $AzParams = @{ ErrorAction = 'Stop' }
-        if ($EffectiveTenant -ne 'organizations') {
-            $AzParams.Tenant = $EffectiveTenant
-        }
-        # Device code mode signs in to Azure with a device code too. Connect-AzAccount writes its
-        # own message with the code (Az.Accounts 5.5.3: an information record; older: a warning).
-        if ($UseDeviceCode) {
-            $AzParams.UseDeviceAuthentication = $true
-        }
-        try {
-            Connect-AzAccount @AzParams | Out-Null
-        } catch {
-            Remove-OPIMErrorRecord -Record $PSItem
-            Write-CmdletError `
-                -Message ([System.Exception]::new("Azure connection failed: $($PSItem.Exception.Message)")) `
-                -InnerException $PSItem.Exception `
-                -ErrorId 'AzureConnectFailed' `
-                -Category AuthenticationError `
-                -Cmdlet $PSCmdlet
-            # SEC (EntraRBAC A19): a failed Azure connection is no success, so the calling command
-            # stays latched and its Azure calls are refused (SignInRefused). Returns before the
-            # release below.
+    if ($IncludeARM) {
+        # OPIM-08: Azure must be signed in to the Graph session's tenant -- always the GUID its token
+        # was issued for, also for a session pinned by domain or first signed in under
+        # 'organizations' -- and as the same account; anything else is a new sign-in, never a reuse.
+        [string]$ArmTenant = [string]$script:_OPIMAuthState.TokenTenantId
+        if (-not $ArmTenant) {
+            # Cannot happen for a state this module built. Refused rather than signed in to Azure
+            # without a tenant.
+            Write-CmdletError -ErrorRecord (New-OPIMTenantMismatchError -RequestedTenant $EffectiveTenant -Unreadable) -Cmdlet $PSCmdlet -Terminating
             return
         }
-    } elseif ($IncludeARM -and $AzAlreadyConnected) {
-        Write-Verbose "[Initialize-OPIMAuth] Azure already connected: $($AzCtxAtStart.Account.Id)"
+
+        # A cached Az context object alone is NOT proof of a usable connection. The Az module
+        # autosaves its context to disk (Enable-AzContextAutosave, on by default), so a brand-new
+        # PowerShell session resurfaces a context whose underlying token may have expired or now
+        # needs an interactive Conditional Access / MFA step-up. Verify that it can mint an ARM
+        # access token silently (no browser) before reusing it. String -eq is case-insensitive, as
+        # wanted for a GUID and a user principal name.
+        $AzContext = Get-AzContext -ErrorAction SilentlyContinue
+        [bool]$AzReusable = $false
+        if ($AzContext -and [string]$AzContext.Tenant.Id -eq $ArmTenant -and
+            $script:_OPIMAuthState.Account -and
+            [string]$AzContext.Account.Id -eq [string]$script:_OPIMAuthState.Account.Username) {
+            try {
+                $null = Get-AzAccessToken -TenantId $ArmTenant -AsSecureString -WarningAction SilentlyContinue -ErrorAction Stop
+                $AzReusable = $true
+                Write-Verbose "[Initialize-OPIMAuth] Reusing the Azure context for tenant '$ArmTenant'."
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                Write-Verbose "[Initialize-OPIMAuth] Cached Azure context cannot acquire an ARM token silently ($($PSItem.Exception.GetType().Name)); signing in to Azure again."
+            }
+        }
+
+        if (-not $AzReusable) {
+            Write-Verbose "[Initialize-OPIMAuth] Connecting to Azure via Connect-AzAccount for tenant '$ArmTenant'..."
+
+            # Force browser-based sign-in for parity with the Graph side. Since Az.Accounts 12.0.0
+            # the Windows default is the WAM broker (the "Please select the account" picker), which
+            # hangs in some terminals. Disable it at PROCESS scope only -- the user's persisted Az
+            # config is never touched. No-op on Linux/macOS, where browser login is already default.
+            try {
+                Update-AzConfig -EnableLoginByWam $false -Scope Process -ErrorAction SilentlyContinue | Out-Null
+            } catch { Remove-OPIMErrorRecord -Record $PSItem }
+
+            $AzParams = @{ Tenant = $ArmTenant; ErrorAction = 'Stop' }
+            # Device code mode signs in to Azure with a device code too. Connect-AzAccount writes its
+            # own message with the code (Az.Accounts 5.5.3: an information record; older: a warning).
+            if ($UseDeviceCode) {
+                $AzParams.UseDeviceAuthentication = $true
+            }
+            try {
+                Connect-AzAccount @AzParams | Out-Null
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                # Terminating (OPIM-08): a failed Azure sign-in stops the command. The record keeps
+                # the Az message only -- no inner exception and the session tenant as its target
+                # object -- since the Az exception and record can reference the request (OPIM-11).
+                # SEC (EntraRBAC A19): no success, so the calling command stays latched.
+                Write-CmdletError `
+                    -Message ([System.Exception]::new("Azure connection failed: $($PSItem.Exception.Message)")) `
+                    -ErrorId 'AzureConnectFailed' `
+                    -Category AuthenticationError `
+                    -TargetObject $ArmTenant `
+                    -Cmdlet $PSCmdlet `
+                    -Terminating
+                return
+            }
+
+            # The context the sign-in left is the one every Az.Resources call runs under. One for
+            # another tenant than the Graph session, or none, is refused.
+            $AzContext = Get-AzContext -ErrorAction SilentlyContinue
+            if (-not $AzContext -or [string]$AzContext.Tenant.Id -ne $ArmTenant) {
+                Write-CmdletError -ErrorRecord (New-OPIMTenantMismatchError -RequestedTenant $ArmTenant -Source Azure) -Cmdlet $PSCmdlet -Terminating
+                return
+            }
+        }
     }
 
     # SEC (EntraRBAC A19): the new sign-in went the whole way -- Graph connected or cached, and Azure

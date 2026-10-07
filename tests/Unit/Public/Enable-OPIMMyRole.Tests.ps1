@@ -123,11 +123,12 @@ Describe 'Enable-OPIMMyRole' {
             }
         }
 
-        It 'calls Connect-OPIM without -IncludeARM when config has no AzureRoles' {
+        It 'calls Connect-OPIM with -IncludeARM for the string form, whose Azure pillar activates every eligible Azure role' {
             Enable-OPIMMyRole -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
-                $IncludeARM -eq $false
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It -ParameterFilter {
+                $IncludeARM
             }
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It
         }
     }
 
@@ -301,6 +302,133 @@ Describe 'Enable-OPIMMyRole' {
                 $IncludeARM -eq $true
             }
         }
+
+        It 'signs in to Microsoft Graph first, then to Azure as a second sign-in' {
+            # OPIM-08: two Connect-OPIM calls for the same tenant, the Graph one without -IncludeARM.
+            # The mock body runs in this test file's scope, so the record lives there.
+            $script:ConnectCalls = [System.Collections.Generic.List[bool]]::new()
+            Mock -ModuleName Omnicit.PIM Connect-OPIM { $script:ConnectCalls.Add([bool]$IncludeARM) }
+            Enable-OPIMMyRole -AllEligible -Confirm:$false
+            $script:ConnectCalls | Should -Be @($false, $true)
+        }
+
+        It 'passes -DeviceCode to both sign-ins when Azure is needed' {
+            Enable-OPIMMyRole -AllEligible -DeviceCode -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 2 -Exactly -Scope It -ParameterFilter {
+                $DeviceCode
+            }
+        }
+    }
+
+    Context 'When the Graph sign-in fails' {
+        # OPIM-08: a failed Graph sign-in stops the command. Nothing is listed or activated -- not
+        # even in the tenant an earlier sign-in pinned -- and Azure is not signed in to. The mock
+        # raises the error Connect-OPIM would carry out of Initialize-OPIMAuth; its id is set per It.
+        BeforeAll {
+            $FakeDirectoryRole = [PSCustomObject]@{ id = 'elig-gf-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/' }
+            $FakeDirectoryRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
+            $FakeGroup = [PSCustomObject]@{ id = 'grp-gf-001'; groupId = 'group-id-001'; accessId = 'member' }
+            $FakeGroup.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupEligibilitySchedule')
+            $FakeAzureRole = [PSCustomObject]@{ Name = 'az-gf-001'; Scope = '/subscriptions/sub-001' }
+            $FakeAzureRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @($FakeDirectoryRole) }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @($FakeGroup) }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($FakeAzureRole) }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{ contoso = '00000000-0000-0000-0000-000000000001' }
+            }
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {
+                $PSCmdlet.ThrowTerminatingError(
+                    [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('The sign-in failed.'),
+                        $script:SignInErrorId,
+                        [System.Management.Automation.ErrorCategory]::AuthenticationError,
+                        $null
+                    )
+                )
+            } -ParameterFilter { -not $IncludeARM }
+        }
+
+        It 'writes the sign-in error (<ErrorId>)' -ForEach @(
+            @{ ErrorId = 'TenantMismatch' }
+            @{ ErrorId = 'InteractiveAuthFailed' }
+            @{ ErrorId = 'DeviceCodeAuthFailed' }
+        ) {
+            $script:SignInErrorId = $ErrorId
+            $Errs = @()
+            Enable-OPIMMyRole -AllEligible -Confirm:$false -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like "$ErrorId*" }).Count | Should -BeGreaterThan 0
+        }
+
+        It 'lists and activates nothing (<ErrorId>)' -ForEach @(
+            @{ ErrorId = 'TenantMismatch' }
+            @{ ErrorId = 'InteractiveAuthFailed' }
+            @{ ErrorId = 'DeviceCodeAuthFailed' }
+        ) {
+            $script:SignInErrorId = $ErrorId
+            Enable-OPIMMyRole -AllEligible -Confirm:$false -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 0 -Scope It
+            # The Azure sign-in is never attempted.
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It
+        }
+
+        It 'lists and activates nothing for a tenant alias' {
+            $script:SignInErrorId = 'TenantMismatch'
+            Enable-OPIMMyRole -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It
+        }
+    }
+
+    Context 'When only the Azure sign-in fails' {
+        # A failed Azure sign-in skips the Azure pillar only; Graph is signed in.
+        BeforeAll {
+            $FakeDirectoryRole = [PSCustomObject]@{ id = 'elig-af-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/' }
+            $FakeDirectoryRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
+            $FakeGroup = [PSCustomObject]@{ id = 'grp-af-001'; groupId = 'group-id-001'; accessId = 'member' }
+            $FakeGroup.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupEligibilitySchedule')
+            $FakeAzureRole = [PSCustomObject]@{ Name = 'az-af-001'; Scope = '/subscriptions/sub-001' }
+            $FakeAzureRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @($FakeDirectoryRole) }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @($FakeGroup) }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($FakeAzureRole) }
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {
+                $PSCmdlet.ThrowTerminatingError(
+                    [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Azure connection failed: no account.'),
+                        'AzureConnectFailed',
+                        [System.Management.Automation.ErrorCategory]::AuthenticationError,
+                        $null
+                    )
+                )
+            } -ParameterFilter { $IncludeARM }
+        }
+
+        It 'writes the Azure sign-in error' {
+            $Errs = @()
+            Enable-OPIMMyRole -AllEligible -Confirm:$false -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'AzureConnectFailed*' }).Count | Should -BeGreaterThan 0
+        }
+
+        It 'still activates directory roles and groups' {
+            Enable-OPIMMyRole -AllEligible -Confirm:$false -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 1 -Exactly -Scope It
+        }
+
+        It 'skips the Azure pillar' {
+            Enable-OPIMMyRole -AllEligible -Confirm:$false -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 0 -Scope It
+        }
     }
 
     Context 'When -AllEligibleDirectoryRoles is specified' {
@@ -325,10 +453,12 @@ Describe 'Enable-OPIMMyRole' {
         }
 
         It 'calls Connect-OPIM without -IncludeARM' {
+            # Graph only: one sign-in, and none with -IncludeARM.
             Enable-OPIMMyRole -AllEligibleDirectoryRoles -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
-                $IncludeARM -eq $false
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It -ParameterFilter {
+                -not $IncludeARM
             }
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 0 -Scope It -ParameterFilter { $IncludeARM }
         }
 
         It 'passes -DeviceCode to Connect-OPIM when specified' {
@@ -362,10 +492,11 @@ Describe 'Enable-OPIMMyRole' {
         }
 
         It 'calls Connect-OPIM without -IncludeARM' {
-            Enable-OPIMMyRole -AllEligibleDirectoryRoles -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
-                $IncludeARM -eq $false
+            Enable-OPIMMyRole -AllEligibleEntraIDGroups -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It -ParameterFilter {
+                -not $IncludeARM
             }
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 0 -Scope It -ParameterFilter { $IncludeARM }
         }
     }
 
@@ -415,6 +546,12 @@ Describe 'Enable-OPIMMyRole' {
         It 'does not call Get-OPIMAzureRole when no AzureRoles are configured' {
             Enable-OPIMMyRole -TenantAlias 'noconfig' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WarningAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 0 -Scope It
+        }
+
+        It 'signs in to Graph only when the config lists no AzureRoles' {
+            Enable-OPIMMyRole -TenantAlias 'noconfig' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WarningAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 0 -Scope It -ParameterFilter { $IncludeARM }
         }
     }
 }
