@@ -28,6 +28,20 @@ Describe 'Connect-OPIM' {
                 $IncludeARM -eq $true
             }
         }
+
+        It 'passes -DeviceCode to Initialize-OPIMAuth when specified' {
+            Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -DeviceCode
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                $DeviceCode -eq $true -and $TenantId -eq 'contoso.onmicrosoft.com'
+            }
+        }
+
+        It 'does not ask for device code mode without -DeviceCode' {
+            Connect-OPIM -TenantId 'contoso.onmicrosoft.com'
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                -not $DeviceCode
+            }
+        }
     }
 
     Context 'When called with -TenantAlias (simple string config)' {
@@ -60,6 +74,13 @@ Describe 'Connect-OPIM' {
             Connect-OPIM -TenantAlias 'fabrikam' -TenantMapPath 'TestDrive:\TenantMap.psd1'
             Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
                 $TenantId -eq '00000000-0000-0000-0000-000000000002'
+            }
+        }
+
+        It 'passes -DeviceCode with the resolved TenantId' {
+            Connect-OPIM -TenantAlias 'fabrikam' -TenantMapPath 'TestDrive:\TenantMap.psd1' -DeviceCode
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                $DeviceCode -eq $true -and $TenantId -eq '00000000-0000-0000-0000-000000000002'
             }
         }
     }

@@ -40,6 +40,9 @@ function Enable-OPIMMyRole {
     .EXAMPLE
     Enable-OPIMMyRole -AllEligibleDirectoryRoles -AllEligibleAzureRoles
     Activate all eligible directory roles and Azure RBAC roles, prompting per category.
+    .EXAMPLE
+    pim -TenantAlias contoso -DeviceCode
+    Sign in with a device code instead of the system browser, then activate the configured roles.
     .PARAMETER TenantAlias
     Short alias for the target tenant matched against TenantMap.psd1. Run Install-OPIMConfiguration
     to create or update tenant aliases. Only categories explicitly listed in the configuration are
@@ -70,6 +73,9 @@ function Enable-OPIMMyRole {
     Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
     .PARAMETER Wait
     Wait until all directory role activations are fully provisioned before returning.
+    .PARAMETER DeviceCode
+    Sign in with a device code instead of the system browser. Passed to Connect-OPIM, which
+    remembers the mode for the session; see Get-Help Connect-OPIM -Parameter DeviceCode.
     #>
     [Alias('pim', 'Enable-OPIMMyRoles')]
     [CmdletBinding(SupportsShouldProcess)]
@@ -85,7 +91,8 @@ function Enable-OPIMMyRole {
         [string]$TicketNumber,
         [string]$TicketSystem,
         [string]$TenantMapPath = "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1",
-        [Switch]$Wait
+        [Switch]$Wait,
+        [Switch]$DeviceCode
     )
 
     # -- Guard: require explicit activation target ------------------------------
@@ -142,7 +149,7 @@ function Enable-OPIMMyRole {
     [int]$ProgressPillarIndex = 0
     Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status 'Connecting...' -PercentComplete 3
 
-    Connect-OPIM -TenantId $ResolvedTenantId -IncludeARM:$NeedsArm
+    Connect-OPIM -TenantId $ResolvedTenantId -IncludeARM:$NeedsArm -DeviceCode:$DeviceCode
 
     $ActivateParams = @{ Hours = $Hours }
     if ($Justification) { $ActivateParams.Justification = $Justification }

@@ -9,7 +9,7 @@ function Initialize-OPIMAuth {
     It is idempotent: when a valid Graph token is already cached for the requested tenant and
     (when -IncludeARM is given) the cached Azure context is validated by silently minting an ARM
     access token via Get-AzAccessToken, it returns immediately without making any network calls
-    or showing any browser prompt.
+    or showing any sign-in prompt.
 
     Graph token acquisition order:
       1. AcquireTokenSilent -- uses the MSAL in-memory cache (refresh token).
@@ -20,11 +20,22 @@ function Initialize-OPIMAuth {
 
     For Azure RBAC commands, pass -IncludeARM. Connect-AzAccount is called to establish an
     Azure context using the Az module's own authentication. This is separate from Graph auth
-    and may open its own browser window on first use. Subsequent calls reuse the Az module's
-    cached context (checked via Get-AzContext) without any browser prompt.
+    and may open its own browser window, or in device code mode show its own code, on first use.
+    Subsequent calls reuse the Az module's cached context (checked via Get-AzContext) without any
+    sign-in prompt.
 
     Graph auth and Azure auth are intentionally independent -- the Microsoft Graph Command Line
     Tools app registration (used by MSAL here) is not authorised for Azure Resource Manager.
+
+    With -DeviceCode, or once a session has used it, the Graph token comes from the device code flow
+    (Invoke-OPIMDeviceCodeAuth) instead of the system browser, and Azure signs in with
+    Connect-AzAccount -UseDeviceAuthentication. The mode is stored as DeviceCode in the auth state,
+    so every later sign-in in the session uses it -- the silent refresh, the token-rejected retry and
+    the ACRS step-up in Invoke-OPIMGraphRequest pass no -DeviceCode -- until Disconnect-OPIM clears
+    the state. A device code session never falls back to the system browser. Before the first
+    sign-in the state holds only DeviceCode, which never counts as signed in, so a first sign-in
+    that fails (a declined or expired code, Ctrl+C) keeps the mode too. A failed device code flow
+    ends this function with the helper's DeviceCodeAuthFailed error and no second error after it.
 
     .PARAMETER TenantId
     The Entra ID tenant GUID or domain. When omitted or empty, 'organizations' is used
@@ -40,14 +51,21 @@ function Initialize-OPIMAuth {
 
     .PARAMETER ClaimsChallenge
     The decoded JSON claims challenge string extracted from a 401 WWW-Authenticate header.
-    When supplied the function bypasses AcquireTokenSilent and calls
-    AcquireTokenInteractive(...).WithClaims($ClaimsChallenge) to perform an ACRS step-up.
+    When supplied the function bypasses AcquireTokenSilent and performs an ACRS step-up with the
+    claims chained on the sign-in request: AcquireTokenInteractive(...).WithClaims($ClaimsChallenge)
+    in the system browser or, in device code mode,
+    AcquireTokenWithDeviceCode(...).WithClaims($ClaimsChallenge).
 
     .PARAMETER ForceRefresh
     Bypass the cached-token idempotency check and force MSAL to mint a fresh access token via
     the refresh token (AcquireTokenSilent(...).WithForceRefresh($true)). Used by
     Invoke-OPIMGraphRequest to recover transparently when Graph rejects a bearer token as
-    invalid or expired. Usually completes without a browser prompt.
+    invalid or expired. Usually completes without a sign-in prompt.
+
+    .PARAMETER DeviceCode
+    Sign in with the device code flow instead of the system browser, and remember the mode in the
+    auth state for every later sign-in in the session, even when this first sign-in fails. When a
+    valid token is already cached, no new sign-in happens; only the mode is remembered.
 
     .EXAMPLE
     Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com'
@@ -57,23 +75,44 @@ function Initialize-OPIMAuth {
 
     .EXAMPLE
     Initialize-OPIMAuth -TenantId $TenantId -ClaimsChallenge $DecodedClaimsJson
+
+    .EXAMPLE
+    Initialize-OPIMAuth -TenantId $TenantId -DeviceCode
     #>
     [CmdletBinding()]
     param(
         [string]$TenantId,
         [switch]$IncludeARM,
         [string]$ClaimsChallenge,
-        [switch]$ForceRefresh
+        [switch]$ForceRefresh,
+        [switch]$DeviceCode
     )
 
     # Resolve effective tenant; fall back to 'organizations' when caller supplies nothing.
     [string]$EffectiveTenant = if ($TenantId) { $TenantId } else { 'organizations' }
 
+    # -- Sign-in mode ------------------------------------------------------------
+    # -DeviceCode is remembered in the auth state, so every later sign-in in the session uses it:
+    # the silent refresh, the token-rejected retry and the ACRS step-up in Invoke-OPIMGraphRequest
+    # pass no -DeviceCode. A cached token that is still valid stays in use; only the mode changes.
+    # Before the first sign-in the state holds only DeviceCode. That never counts as signed in (the
+    # cache checks below need TenantId and GraphTokenExpiry), so a failed first sign-in keeps the
+    # mode, and the next call asks for a device code again instead of opening the browser, until
+    # Disconnect-OPIM clears it.
+    if ($DeviceCode) {
+        if ($script:_OPIMAuthState) {
+            $script:_OPIMAuthState.DeviceCode = $true
+        } else {
+            $script:_OPIMAuthState = @{ DeviceCode = $true }
+        }
+    }
+    [bool]$UseDeviceCode = $DeviceCode -or ($script:_OPIMAuthState -and $script:_OPIMAuthState.DeviceCode)
+
     # -- Idempotency check -----------------------------------------------------
     # Graph: cached token is valid for at least 5 more minutes, same tenant, no new claims
     # challenge.
     # Azure: only checked when -IncludeARM is specified. Get-AzContext returning a context
-    # for the right tenant means the Az module already has an active connection -- no browser
+    # for the right tenant means the Az module already has an active connection -- no sign-in
     # prompt will be needed.
     $FiveMinutesFromNow = [DateTime]::UtcNow.AddMinutes(5)
     [bool]$GraphCached = $script:_OPIMAuthState -and
@@ -108,7 +147,7 @@ function Initialize-OPIMAuth {
     # autosaves its context to disk (Enable-AzContextAutosave, on by default), so a brand-new
     # PowerShell session resurfaces a context for the right tenant whose underlying token may have
     # expired or now needs an interactive Conditional Access / MFA step-up. Trusting the bare
-    # context skips the required Connect-AzAccount, leaving only the Graph browser prompt while the
+    # context skips the required Connect-AzAccount, leaving only the Graph sign-in prompt while the
     # later ARM call fails with "User interaction is required". Verify we can actually mint an ARM
     # access token silently (no browser) before treating Azure as already connected.
     [bool]$AzAlreadyConnected = -not $IncludeARM
@@ -193,14 +232,28 @@ function Initialize-OPIMAuth {
                 $AuthResult    = $SilentBuilder.ExecuteAsync().GetAwaiter().GetResult()
                 Write-Verbose "[Initialize-OPIMAuth] Silent acquisition succeeded. Token expiry: $($AuthResult.ExpiresOn.UtcDateTime)"
             } catch {
-                # MsalUiRequiredException or any reflection error -> fall through to interactive
-                Write-Verbose "[Initialize-OPIMAuth] Silent acquisition failed ($($_.Exception.GetType().Name)). Falling through to interactive."
+                # MsalUiRequiredException or any reflection error -> fall through to a new sign-in
+                # (the device code flow in device code mode, the system browser otherwise)
+                Write-Verbose "[Initialize-OPIMAuth] Silent acquisition failed ($($_.Exception.GetType().Name)). Falling through to a new sign-in."
                 $AuthResult = $null
             }
         }
 
+        # -- Device code acquisition (initial auth or ACRS step-up) -----------
+        if (-not $AuthResult -and $UseDeviceCode) {
+            Write-Verbose '[Initialize-OPIMAuth] Starting device code authentication...'
+            try {
+                $AuthResult = Invoke-OPIMDeviceCodeAuth -MsalApp $MsalApp -Scopes $GraphScopes -ClaimsChallenge $ClaimsChallenge
+            } catch {
+                # The helper's error is only statement-terminating here; end this function with it,
+                # so a failure never runs on into a second NoAccessToken error.
+                $PSCmdlet.ThrowTerminatingError($PSItem)
+            }
+        }
+
         # -- Interactive acquisition (initial auth or ACRS step-up) -----------
-        if (-not $AuthResult) {
+        # Never in device code mode: a session that asked for a device code has no browser to open.
+        if (-not $AuthResult -and -not $UseDeviceCode) {
             Write-Verbose "[Initialize-OPIMAuth] Starting interactive authentication (system browser)..."
             $InteractiveMethod = $AppType.GetMethods() |
                 Where-Object {
@@ -284,14 +337,16 @@ function Initialize-OPIMAuth {
             Account          = $AuthResult.Account
             GraphTokenExpiry = $GraphTokenExpiry
             ClaimsSatisfied  = [bool]$ClaimsChallenge
+            DeviceCode       = $UseDeviceCode
         }
     }
 
     # -- Azure connection (when requested) -------------------------------------
     # The Az module manages its own authentication independently from MSAL/Graph.
     # The Microsoft Graph Command Line Tools app registration used above is NOT authorised
-    # for Azure Resource Manager -- Connect-AzAccount handles Azure auth with its own browser
-    # prompt the first time, then caches the context in the Az module.
+    # for Azure Resource Manager -- Connect-AzAccount handles Azure auth with its own sign-in
+    # (a browser prompt, or a device code in device code mode) the first time, then caches the
+    # context in the Az module.
     if ($IncludeARM -and -not $AzAlreadyConnected) {
         Write-Verbose "[Initialize-OPIMAuth] Connecting to Azure via Connect-AzAccount..."
 
@@ -306,6 +361,11 @@ function Initialize-OPIMAuth {
         $AzParams = @{ ErrorAction = 'Stop' }
         if ($EffectiveTenant -ne 'organizations') {
             $AzParams.Tenant = $EffectiveTenant
+        }
+        # Device code mode signs in to Azure with a device code too. Connect-AzAccount writes its
+        # own message with the code (Az.Accounts 5.5.3: an information record; older: a warning).
+        if ($UseDeviceCode) {
+            $AzParams.UseDeviceAuthentication = $true
         }
         try {
             Connect-AzAccount @AzParams | Out-Null

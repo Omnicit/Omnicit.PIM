@@ -102,6 +102,7 @@ Describe 'Initialize-OPIMAuth' {
                     throw [System.Exception]::new('MsalUiRequiredException: UI required')
                 }
                 Mock Get-OPIMMsalApplication { return $FakeMsalApp }
+                Mock Invoke-OPIMDeviceCodeAuth {}
                 Mock Connect-MgGraph {}
                 Mock Connect-AzAccount {}
             }
@@ -114,6 +115,14 @@ Describe 'Initialize-OPIMAuth' {
             InModuleScope Omnicit.PIM {
                 try { Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' } catch {}
                 Should -Invoke Get-OPIMMsalApplication -Times 1 -Scope It
+            }
+        }
+
+        It 'does not use the device code flow without -DeviceCode' {
+            InModuleScope Omnicit.PIM {
+                try { Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' } catch {}
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 0 -Scope It
             }
         }
 
@@ -211,6 +220,15 @@ Describe 'Initialize-OPIMAuth' {
                 $script:_OPIMAuthState.TenantId = 'contoso.onmicrosoft.com'
                 Should -Invoke Connect-AzAccount -Times 1 -Scope It -ParameterFilter {
                     -not $Tenant
+                }
+            }
+        }
+
+        It 'does not pass -UseDeviceAuthentication without device code mode' {
+            InModuleScope Omnicit.PIM {
+                Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -IncludeARM
+                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It -ParameterFilter {
+                    -not $UseDeviceAuthentication
                 }
             }
         }
@@ -341,6 +359,247 @@ Describe 'Initialize-OPIMAuth' {
                 # the WriteError record with 'AzureConnectFailed'. Search all collected errors.
                 ($Errors | Where-Object { $_.FullyQualifiedErrorId -match 'AzureConnectFailed' }) |
                     Should -Not -BeNullOrEmpty
+            }
+        }
+    }
+
+    Context 'When -DeviceCode is set and no auth state exists' {
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
+                Mock Invoke-OPIMDeviceCodeAuth {
+                    [PSCustomObject]@{
+                        AccessToken = 'fake-graph-token'
+                        ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
+                        Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    }
+                }
+                Mock Connect-MgGraph {}
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+
+        It 'acquires the Graph token with the device code flow and hands it to Connect-MgGraph' {
+            InModuleScope Omnicit.PIM {
+                Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -DeviceCode
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It
+                Should -Invoke Connect-MgGraph -Times 1 -Exactly -Scope It
+            }
+        }
+
+        It 'requests the fixed Graph scope list' {
+            InModuleScope Omnicit.PIM {
+                Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -DeviceCode
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Scopes.Count -eq 6 -and $Scopes -contains 'User.Read' -and
+                    $Scopes -contains 'RoleAssignmentSchedule.ReadWrite.Directory'
+                }
+            }
+        }
+
+        It 'remembers the device code mode in the auth state' {
+            InModuleScope Omnicit.PIM {
+                Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -DeviceCode
+                $script:_OPIMAuthState.DeviceCode | Should -BeTrue
+            }
+        }
+    }
+
+    Context 'When the auth state remembers device code mode and a retry signs in again' {
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                # An empty object: the silent path finds no AcquireTokenSilent and falls through.
+                Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
+                Mock Invoke-OPIMDeviceCodeAuth {
+                    [PSCustomObject]@{
+                        AccessToken = 'fake-graph-token'
+                        ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
+                        Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    }
+                }
+                Mock Connect-MgGraph {}
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{
+                    TenantId         = 'contoso.onmicrosoft.com'
+                    Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    ClaimsSatisfied  = $false
+                    DeviceCode       = $true
+                }
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+
+        It 'uses the device code flow on -ForceRefresh, not the browser' {
+            InModuleScope Omnicit.PIM {
+                Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -ForceRefresh
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It
+            }
+        }
+
+        It 'passes the claims to the device code flow on a claims challenge' {
+            InModuleScope Omnicit.PIM {
+                $Json = '{"access_token":{"acrs":{"essential":true,"value":"c1"}}}'
+                Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -ClaimsChallenge $Json
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $ClaimsChallenge -eq '{"access_token":{"acrs":{"essential":true,"value":"c1"}}}'
+                }
+            }
+        }
+
+        It 'keeps the device code mode after the new sign-in' {
+            InModuleScope Omnicit.PIM {
+                Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -ForceRefresh
+                $script:_OPIMAuthState.DeviceCode | Should -BeTrue
+            }
+        }
+    }
+
+    Context 'When -DeviceCode is passed while a valid token is cached' {
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{
+                    TenantId         = 'contoso.onmicrosoft.com'
+                    Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    ClaimsSatisfied  = $false
+                }
+                Mock Get-OPIMMsalApplication {}
+                Mock Invoke-OPIMDeviceCodeAuth {}
+                Mock Connect-MgGraph {}
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+
+        It 'keeps the cached token and remembers the device code mode for the next sign-in' {
+            InModuleScope Omnicit.PIM {
+                Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -DeviceCode
+                Should -Invoke Get-OPIMMsalApplication -Times 0 -Scope It
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 0 -Scope It
+                $script:_OPIMAuthState.DeviceCode | Should -BeTrue
+            }
+        }
+    }
+
+    Context 'When the device code flow returns no token' {
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
+                Mock Invoke-OPIMDeviceCodeAuth { $null }
+                Mock Connect-MgGraph {}
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+
+        It 'throws NoAccessToken and never falls back to the browser' {
+            InModuleScope Omnicit.PIM {
+                $Caught = $null
+                try { Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -DeviceCode } catch { $Caught = $PSItem }
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'NoAccessToken*'
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+            }
+        }
+    }
+
+    Context 'When the device code flow fails on the first sign-in' {
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
+                # The helper's own terminating error, as Write-CmdletError -Terminating raises it.
+                # Pester's mock wrapper has [CmdletBinding()], so $PSCmdlet is available.
+                Mock Invoke-OPIMDeviceCodeAuth {
+                    $PSCmdlet.ThrowTerminatingError(
+                        [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('code_expired'),
+                            'DeviceCodeAuthFailed',
+                            [System.Management.Automation.ErrorCategory]::AuthenticationError,
+                            $null
+                        )
+                    )
+                }
+                Mock Connect-MgGraph {}
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+
+        It 'keeps the device code mode, so the next call asks for a code again and never opens the browser' {
+            InModuleScope Omnicit.PIM {
+                try { Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -DeviceCode } catch { $null = $PSItem }
+                try { Initialize-OPIMAuth } catch { $null = $PSItem }
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 2 -Exactly -Scope It
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+                $script:_OPIMAuthState.DeviceCode | Should -BeTrue
+            }
+        }
+
+        It 'ends with the helper DeviceCodeAuthFailed error and signs nothing in' {
+            InModuleScope Omnicit.PIM {
+                $Caught = $null
+                try { Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -DeviceCode } catch { $Caught = $PSItem }
+                $Caught | Should -Not -BeNullOrEmpty
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'DeviceCodeAuthFailed*'
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+            }
+        }
+
+        It 'never counts the state that holds only the mode as a signed-in session' {
+            InModuleScope Omnicit.PIM {
+                try { Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -DeviceCode } catch { $null = $PSItem }
+                $script:_OPIMAuthState.ContainsKey('TenantId') | Should -BeFalse
+                $script:_OPIMAuthState.ContainsKey('GraphTokenExpiry') | Should -BeFalse
+            }
+        }
+    }
+
+    Context 'When -IncludeARM in device code mode and Azure is not connected' {
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{
+                    TenantId         = 'contoso.onmicrosoft.com'
+                    Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    ClaimsSatisfied  = $false
+                    DeviceCode       = $true
+                }
+                Mock Get-AzContext { return $null }
+                Mock Update-AzConfig {}
+                Mock Connect-AzAccount {}
+                Mock Get-OPIMMsalApplication {}
+                Mock Connect-MgGraph {}
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+
+        It 'signs in to Azure with -UseDeviceAuthentication and the same tenant' {
+            InModuleScope Omnicit.PIM {
+                Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -IncludeARM
+                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $UseDeviceAuthentication -and $Tenant -eq 'contoso.onmicrosoft.com'
+                }
             }
         }
     }

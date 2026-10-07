@@ -6,14 +6,15 @@ function Connect-OPIM {
     .DESCRIPTION
     Pre-authenticates the session before running Get-/Enable-/Disable-OPIM* cmdlets.
     All PIM cmdlets call this automatically on first use, so running Connect-OPIM explicitly
-    is optional -- use it when you want to control when the browser prompt appears.
+    is optional -- use it when you want to control when the sign-in prompt appears.
 
     A single browser window covers all PIM surfaces (directory roles, Entra ID groups, and
-    Azure RBAC). WAM is never used; authentication always goes through the system browser,
-    which works identically on Windows, macOS, and Linux.
+    Azure RBAC). WAM is never used: authentication goes through the system browser, which works
+    identically on Windows, macOS, and Linux, or, with -DeviceCode, through a device code for a
+    machine without a browser.
 
     The session state is cached in memory. Subsequent calls are idempotent -- if a valid token
-    already exists for the same tenant no browser prompt is shown.
+    already exists for the same tenant no sign-in prompt is shown.
 
     To disconnect and clear all cached tokens, call Disconnect-OPIM.
 
@@ -28,6 +29,12 @@ function Connect-OPIM {
     .EXAMPLE
     Connect-OPIM -TenantAlias corp -IncludeARM
     Authenticate and also acquire an Azure Resource Manager token (for Enable-OPIMAzureRole).
+
+    .EXAMPLE
+    Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -DeviceCode -IncludeARM
+    Sign in with device codes instead of the system browser, for example in a remote session. The
+    command shows a code and the address to open; open the address on any device and enter the
+    code. With -IncludeARM, Azure shows a second code.
 
     .PARAMETER TenantAlias
     Short alias for the target tenant, resolved from the TenantMap.psd1 managed by
@@ -44,6 +51,18 @@ function Connect-OPIM {
 
     .PARAMETER TenantMapPath
     Path to TenantMap.psd1. Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
+
+    .PARAMETER DeviceCode
+    Sign in with a device code instead of the system browser, for a machine without one, such as a
+    remote session or a cloud PC. The sign-in message with the code and the address is written to
+    the Information stream with the tag OPIMDeviceCode and shown whatever the information preference
+    is. With -IncludeARM, Connect-AzAccount shows its own code for Azure (Az.Accounts 5.5.3 writes
+    it as an information record, an older Az.Accounts as a warning). A script reads both as they
+    arrive by merging the streams into a pipeline, for example
+    6>&1 3>&1 | ForEach-Object { $PSItem.ToString() }; capturing the output in a variable shows
+    nothing until the flow ends, which can take 15 minutes. The mode is remembered for this
+    PowerShell session: the refresh stays silent while it can, and any later sign-in that needs a
+    prompt, a step-up included, uses a device code until Disconnect-OPIM.
     #>
     [Alias('Connect-PIM')]
     [CmdletBinding(DefaultParameterSetName = 'ByTenantId')]
@@ -57,7 +76,9 @@ function Connect-OPIM {
 
         [switch]$IncludeARM,
 
-        [string]$TenantMapPath = "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1"
+        [string]$TenantMapPath = "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1",
+
+        [switch]$DeviceCode
     )
 
     # -- Resolve TenantAlias -> TenantId ----------------------------------------
@@ -89,5 +110,5 @@ function Connect-OPIM {
         $TenantId = if ($Config -is [hashtable]) { $Config.TenantId } else { [string]$Config }
     }
 
-    Initialize-OPIMAuth -TenantId $TenantId -IncludeARM:$IncludeARM
+    Initialize-OPIMAuth -TenantId $TenantId -IncludeARM:$IncludeARM -DeviceCode:$DeviceCode
 }

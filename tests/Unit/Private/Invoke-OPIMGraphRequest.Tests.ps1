@@ -192,4 +192,104 @@ Describe 'Invoke-OPIMGraphRequest' {
             }
         }
     }
+
+    Context 'When a device code session has its token rejected' {
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Invoke-MgGraphRequest {
+                    $script:_CallCount++
+                    if ($script:_CallCount -eq 1) {
+                        throw [System.Net.Http.HttpRequestException]::new(
+                            '{"error":{"code":"InvalidAuthenticationToken","message":"Access token has expired."}}'
+                        )
+                    }
+                    return @{ value = @(@{ id = 'after-refresh' }) }
+                }
+                # Initialize-OPIMAuth runs for real here, so the retry is seen choosing its flow.
+                Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
+                Mock Invoke-OPIMDeviceCodeAuth {
+                    [PSCustomObject]@{
+                        AccessToken = 'fake-graph-token'
+                        ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
+                        Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    }
+                }
+                Mock Connect-MgGraph {}
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_CallCount = 0
+                $script:_OPIMAuthState = @{
+                    TenantId         = 'contoso.onmicrosoft.com'
+                    Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    ClaimsSatisfied  = $false
+                    DeviceCode       = $true
+                }
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+
+        It 'signs in again with the device code flow before it retries' {
+            InModuleScope Omnicit.PIM {
+                $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/some/resource'
+                $Result.value[0].id | Should -Be 'after-refresh'
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It
+            }
+        }
+    }
+
+    Context 'When a device code session receives an ACRS claims challenge' {
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Invoke-MgGraphRequest {
+                    $script:_CallCount++
+                    if ($script:_CallCount -eq 1) {
+                        throw [System.Net.Http.HttpRequestException]::new(
+                            '{"error":{"code":"RoleAssignmentRequestAcrsValidationFailed",' +
+                            '"message":"...&claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%20%22value%22%3A%22c1%22%7D%7D%7D"}}'
+                        )
+                    }
+                    return @{ id = 'req-001'; status = 'Provisioned' }
+                }
+                Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
+                Mock Invoke-OPIMDeviceCodeAuth {
+                    [PSCustomObject]@{
+                        AccessToken = 'fake-graph-token'
+                        ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
+                        Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    }
+                }
+                Mock Connect-MgGraph {}
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_CallCount = 0
+                $script:_OPIMAuthState = @{
+                    TenantId         = 'contoso.onmicrosoft.com'
+                    Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    ClaimsSatisfied  = $false
+                    DeviceCode       = $true
+                }
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+
+        It 'steps up with the device code flow and the decoded claims' {
+            InModuleScope Omnicit.PIM {
+                $Result = Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{}
+                $Result.id | Should -Be 'req-001'
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $ClaimsChallenge -match 'acrs' -and $ClaimsChallenge -match 'c1'
+                }
+            }
+        }
+    }
 }
