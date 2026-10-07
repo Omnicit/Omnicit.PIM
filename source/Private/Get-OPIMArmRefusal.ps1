@@ -4,10 +4,13 @@ function Get-OPIMArmRefusal {
     The ARM gate: returns the record that refuses an Az.Resources call, or nothing.
 
     .DESCRIPTION
-    Called inside the try that holds every Az.Resources call in the module, directly before it --
-    Get-OPIMAzureRole, Enable-OPIMAzureRole (the activation request and every round of its -Wait
-    poll) and Disable-OPIMAzureRole. The caller throws the record it returns, so the cmdlet's own
-    catch reports it as itself, and the Az.Resources call is never made.
+    Called directly before every Az.Resources call in the module, and the Az.Resources call is
+    never made when it returns a record. In Get-OPIMAzureRole, Disable-OPIMAzureRole and the
+    activation request of Enable-OPIMAzureRole it stands inside the try that holds the call: the
+    caller throws the record it returns, so the cmdlet's own catch reports it as itself. Before
+    every round of Enable-OPIMAzureRole's -Wait poll it stands outside the poll's try on purpose,
+    since that catch ends the command: the caller writes the record as a non-terminating error and
+    stops waiting. The activation request was already sent, and the cmdlet still returns it.
 
     It refuses a call made on behalf of a command whose sign-in was refused: when
     Get-OPIMSignInRefusal finds a latched command on the call stack, it returns the SignInRefused

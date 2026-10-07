@@ -417,8 +417,8 @@ Describe 'Initialize-OPIMAuth' {
             }
         }
 
-        # OPIM-43 (A15). Az.Accounts 12.0 and later ask for a subscription at sign-in when the account
-        # reaches more than one. The module never uses the default subscription -- every ARM call
+        # OPIM-43 (A15). Az 12.0.0 (Az.Accounts 3.0.0) and later ask for a subscription at sign-in
+        # when the account reaches more than one. The module never uses the default subscription -- every ARM call
         # names its scope -- so the prompt is turned off for this PROCESS only and the sign-in skips
         # the subscription lookup. The user's own Az configuration (CurrentUser) is never touched.
         It 'turns the subscription prompt off for this process only before Azure signs in' {
@@ -641,7 +641,7 @@ Describe 'Initialize-OPIMAuth' {
             }
         }
 
-        It 'never connects Azure without a tenant when the state records none' {
+        It 'refuses Azure with TenantMismatch when the state records no tenant' {
             # A state the module built always records the token's tenant; one without it is refused
             # rather than signed in to Azure with no -Tenant.
             InModuleScope Omnicit.PIM {

@@ -18,9 +18,12 @@ function Disable-OPIMMyRole {
 
     The command signs in to Microsoft Graph first and then, when Azure RBAC roles are to be
     deactivated, to Azure for the same tenant. A failed Graph sign-in stops the command before any
-    role or group is listed or deactivated. A failed Azure sign-in skips the Azure RBAC roles only.
-    A list of roles or groups that cannot be read is written as its own error, and nothing of that
-    category is deactivated; the other categories still run.
+    role or group is listed or deactivated. A failed Azure sign-in is written as an error and skips
+    the Azure RBAC roles only -- except under the error preference Stop ($ErrorActionPreference or
+    -ErrorAction), where that error ends the command before any category runs. A list of roles or
+    groups that cannot be read is written as its own error, and nothing of that category is
+    deactivated; the other categories still run, except under the error preference Stop, where the
+    first such error ends the command.
 
     Use the 'unpim' alias for quick deactivation:
 

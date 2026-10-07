@@ -483,7 +483,7 @@ Describe 'Invoke-OPIMGraphRequest' {
             }
         }
 
-        It 'sends nothing under -ErrorAction SilentlyContinue' {
+        It 'throws GraphSessionChanged to a try under -ErrorAction SilentlyContinue and sends nothing' {
             # Inside Pester a terminating error always propagates (Pester runs every It in its own try,
             # measured 2026-10-07), so the child script block sits in a try as well; the static It below
             # holds the return that stops a caller outside any try.
@@ -1029,7 +1029,7 @@ Describe 'Invoke-OPIMGraphRequest' {
             }
         }
 
-        It 'never returns a short list under -ErrorAction SilentlyContinue' {
+        It 'returns nothing when a later page fails under -ErrorAction SilentlyContinue' {
             # Outside any try a throw inside a catch resumes after that try under SilentlyContinue; the
             # loop must then return nothing, never page 1 as if it were the whole list.
             $Run = Invoke-OutsideAnyTry -Script '$ErrorActionPreference = ''SilentlyContinue''; $R = Invoke-OPIMGraphRequest -Uri ''v1.0/x'' -All; $R'
@@ -1076,8 +1076,9 @@ Describe 'Invoke-OPIMGraphRequest' {
     }
 
     Context 'When a page comes back with no body' {
-        # Fix round 1. Page 1 answers with a next link and page 2 with nothing at all; a list whose
-        # first page has no body answers nothing on its only page.
+        # A later page with no body is a failed read, never the end of the list. Page 1 answers with
+        # a next link and page 2 with nothing at all; a list whose first page has no body answers
+        # nothing on its only page.
         BeforeAll {
             InModuleScope Omnicit.PIM {
                 Mock Initialize-OPIMAuth {}

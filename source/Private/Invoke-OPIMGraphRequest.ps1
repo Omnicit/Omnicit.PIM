@@ -6,7 +6,7 @@ function Invoke-OPIMGraphRequest {
 
     .DESCRIPTION
     Drop-in replacement for Invoke-MgGraphRequest used by every public and private function in
-    Omnicit.PIM. Adds five layers on top of the raw Graph SDK call:
+    Omnicit.PIM. Adds six layers on top of the raw Graph SDK call:
 
     1. Bearer token security: every catch block starts with Remove-OPIMErrorRecord, which clears
        the Authorization header off the raw HttpRequestMessage the SDK record points at (the
@@ -45,7 +45,7 @@ function Invoke-OPIMGraphRequest {
 
     6. Paging (OPIM-13): with -All it follows @odata.nextLink until a page carries none and returns
        one response, @{ value = <the items of every page> }. Every page is one request through the
-       four layers above. A page that fails throws its own error -- never a shorter list -- with
+       five layers above. A page that fails throws its own error -- never a shorter list -- with
        three note properties on the record's Exception: PartialValue (the items of the pages read
        before it), NextLink (the URI of the failed page) and PageNumber (its number, from 1). A
        later page that comes back with no body is a failed read as well: it throws an error with no

@@ -632,8 +632,8 @@ Describe 'Get-OPIMDirectoryRole' {
     }
 
     Context 'When a later page comes back with no body in the transport' {
-        # Fix round 1 end to end: page 2 answers nothing. The wrapper raises a failed read with no
-        # error id; this context measures what a caller receives from the listing.
+        # A later page with no body, end to end: page 2 answers nothing. The wrapper raises a failed
+        # read with no error id; this context measures what a caller receives from the listing.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {

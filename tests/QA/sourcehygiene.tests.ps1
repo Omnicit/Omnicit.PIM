@@ -105,7 +105,7 @@ BeforeAll {
             $script:CmdletRefTokenCount++
             if (-not $script:KnownCommandNames.Contains($TokenMatch.Value)) {
                 $Line = $File.Text.Substring(0, $TokenMatch.Index).Split("`n").Count
-                $script:CmdletRefViolations.Add(('{0}:{1} -- references {2}, which is neither a function file under source/Public or source/Private nor an alias in AliasesToExport' -f
+                $script:CmdletRefViolations.Add(('{0}:{1} -- references {2}, which is neither a function file under source/Public or source/Private, a function nested in one, nor an alias in AliasesToExport' -f
                         $File.RelativePath, $Line, $TokenMatch.Value))
             }
         }
@@ -431,14 +431,14 @@ Describe 'Cmdlet reference hygiene' -Tags 'SourceHygiene' {
             'a top-level function is known by its file, never as a nested one')
     }
 
-    It 'resolves every Verb-OPIM token in source/**/*.ps1 to a function file or an exported alias' {
+    It 'resolves every Verb-OPIM token in source/**/*.ps1 to a function file, a nested function or an exported alias' {
         $script:CmdletRefTokenCount | Should -BeGreaterThan $script:CmdletRefTokenFloor -Because 'the scan must have found the references it checks; zero tokens would pass vacuously'
         $script:CmdletRefViolations -join "`n" | Should -BeNullOrEmpty -Because @'
 a comment, a help block or a message naming a command that is neither a function file under
-source/Public or source/Private nor an alias in AliasesToExport points a reader at a command that
-fails when they run it. This is a TEXT scan over the whole file, not an AST walk, since a stale
-reference lives in prose -- a comment token the parser never turns into a CommandAst. Fix the
-reference; do not exempt a file from this scan
+source/Public or source/Private, a function nested in one of those files, nor an alias in
+AliasesToExport points a reader at a command that fails when they run it. This is a TEXT scan
+over the whole file, not an AST walk, since a stale reference lives in prose -- a comment token the
+parser never turns into a CommandAst. Fix the reference; do not exempt a file from this scan
 '@
     }
 }

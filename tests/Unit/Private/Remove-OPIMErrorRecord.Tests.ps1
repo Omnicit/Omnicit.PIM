@@ -153,7 +153,7 @@ Describe 'Remove-OPIMErrorRecord' {
             }
         }
 
-        It 'still clears the header the walk reaches after the throw' {
+        It 'clears the header the walk reaches after the throw' {
             $F.Request.Headers.Contains('Authorization') | Should -BeTrue
             InModuleScope Omnicit.PIM -ArgumentList $Record {
                 param($Record)

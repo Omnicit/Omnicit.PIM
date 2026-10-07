@@ -25,8 +25,8 @@ BeforeAll {
     # =====================================================================================
 
     # The files allowed to hold ForEach-Object -Parallel blocks (R15). source/ holds no -Parallel
-    # block since step 3 of Sprint 1, when Wait-OPIMDirectoryRole began polling in sequence through
-    # the module's own transport. A future block goes on this list, and must then satisfy the
+    # block: Wait-OPIMDirectoryRole, the one file that held one, polls in sequence through the
+    # module's own transport. A future block goes on this list, and must then satisfy the
     # runspace-form rules below.
     $script:ParallelAllowed = @()
 

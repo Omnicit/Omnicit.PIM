@@ -501,20 +501,20 @@ function Initialize-OPIMAuth {
         if (-not $AzReusable) {
             Write-Verbose "[Initialize-OPIMAuth] Connecting to Azure via Connect-AzAccount for tenant '$ArmTenant'..."
 
-            # Force browser-based sign-in for parity with the Graph side. Since Az.Accounts 12.0.0
-            # the Windows default is the WAM broker (the "Please select the account" picker), which
-            # hangs in some terminals. Disable it at PROCESS scope only -- the user's persisted Az
-            # config is never touched. No-op on Linux/macOS, where browser login is already default.
+            # Force browser-based sign-in for parity with the Graph side. Since Az 12.0.0 (Az.Accounts
+            # 3.0.0) WAM is the Windows default (the "Please select the account" picker), which hangs
+            # in some terminals. Disable it at PROCESS scope only -- the user's persisted Az config is
+            # never touched. No-op on Linux/macOS, where browser login is already the default.
             try {
                 Update-AzConfig -EnableLoginByWam $false -Scope Process -ErrorAction SilentlyContinue | Out-Null
             } catch { Remove-OPIMErrorRecord -Record $PSItem }
 
-            # A15 (OPIM-43): Az.Accounts 12.0 and later ask for a subscription at sign-in when the
-            # account reaches more than one. The module never uses the default subscription -- every
-            # ARM call names its scope (asTarget() at '/', or the role's own scope) -- so the prompt is
-            # turned off for this PROCESS only, and Connect-AzAccount skips the subscription lookup.
-            # The user's own Az configuration (CurrentUser) is never touched. A call of its own, so an
-            # Az.Accounts without this key still gets the WAM setting above, and the sign-in goes on.
+            # A15 (OPIM-43): Az 12.0.0 (Az.Accounts 3.0.0) and later ask for a subscription at sign-in
+            # when the account reaches more than one. The module never uses the default subscription
+            # -- every ARM call names its scope (asTarget() at '/', or the role's own scope) -- so the
+            # prompt is turned off for this PROCESS only, and Connect-AzAccount skips the subscription
+            # lookup. The user's own Az configuration (CurrentUser) is never touched. A call of its
+            # own, so an Az.Accounts without this key still gets the WAM setting and signs in.
             try {
                 Update-AzConfig -LoginExperienceV2 Off -Scope Process -ErrorAction SilentlyContinue | Out-Null
             } catch { Remove-OPIMErrorRecord -Record $PSItem }
