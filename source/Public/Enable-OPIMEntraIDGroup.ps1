@@ -123,6 +123,7 @@ function Enable-OPIMEntraIDGroup {
                 $Response = try {
                     Invoke-OPIMGraphRequest -Method POST -Uri $GraphUri -Body $Request
                 } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
                     $Err = $PSItem
                     if (-not (ConvertTo-PolicyValidationError -CaughtError $Err -ResourceType 'group' -Cmdlet $PSCmdlet)) {
                         $PSCmdlet.WriteError($Err)

@@ -73,6 +73,7 @@ function Disable-OPIMDirectoryRole {
             $Response = try {
                 Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/roleManagement/directory/roleAssignmentScheduleRequests' -Body $Request
             } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
                 $Err = $PSItem
                 if (-not (ConvertTo-ActiveDurationTooShortError -CaughtError $Err -ResourceType 'role' -Cmdlet $PSCmdlet)) {
                     $PSCmdlet.WriteError($Err)

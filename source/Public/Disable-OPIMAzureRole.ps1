@@ -72,6 +72,7 @@ function Disable-OPIMAzureRole {
                 $Response.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleRequest')
                 $Response
             } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
                 if (-not (ConvertTo-ActiveDurationTooShortError -CaughtError $PSItem -ResourceType 'role' -Cmdlet $PSCmdlet)) {
                     $PSCmdlet.WriteError($PSItem)
                 }

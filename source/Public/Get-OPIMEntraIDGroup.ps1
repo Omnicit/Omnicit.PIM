@@ -124,6 +124,7 @@ function Get-OPIMEntraIDGroup {
                     $Items = Invoke-OPIMGraphRequest -Uri $RequestUri |
                         Select-Object -ExpandProperty Value
                 } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
                     $PSCmdlet.WriteError($PSItem)
                     continue
                 }
@@ -150,6 +151,7 @@ function Get-OPIMEntraIDGroup {
             $Items = Invoke-OPIMGraphRequest -Uri $RequestUri |
                 Select-Object -ExpandProperty Value
         } catch {
+            Remove-OPIMErrorRecord -Record $PSItem
             $PSCmdlet.WriteError($PSItem)
             return
         }

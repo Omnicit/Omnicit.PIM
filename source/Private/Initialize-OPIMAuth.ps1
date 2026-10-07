@@ -159,6 +159,7 @@ function Initialize-OPIMAuth {
             $null = Get-AzAccessToken -TenantId $AzCtxAtStart.Tenant.Id -AsSecureString -WarningAction SilentlyContinue -ErrorAction Stop
             $AzAlreadyConnected = $true
         } catch {
+            Remove-OPIMErrorRecord -Record $PSItem
             Write-Verbose "[Initialize-OPIMAuth] Cached Azure context for tenant '$($AzCtxAtStart.Tenant.Id)' cannot acquire an ARM token silently ($($PSItem.Exception.GetType().Name)); reconnecting via Connect-AzAccount."
         }
     }
@@ -232,6 +233,7 @@ function Initialize-OPIMAuth {
                 $AuthResult    = $SilentBuilder.ExecuteAsync().GetAwaiter().GetResult()
                 Write-Verbose "[Initialize-OPIMAuth] Silent acquisition succeeded. Token expiry: $($AuthResult.ExpiresOn.UtcDateTime)"
             } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
                 # MsalUiRequiredException or any reflection error -> fall through to a new sign-in
                 # (the device code flow in device code mode, the system browser otherwise)
                 Write-Verbose "[Initialize-OPIMAuth] Silent acquisition failed ($($_.Exception.GetType().Name)). Falling through to a new sign-in."
@@ -245,6 +247,7 @@ function Initialize-OPIMAuth {
             try {
                 $AuthResult = Invoke-OPIMDeviceCodeAuth -MsalApp $MsalApp -Scopes $GraphScopes -ClaimsChallenge $ClaimsChallenge
             } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
                 # The helper's error is only statement-terminating here; end this function with it,
                 # so a failure never runs on into a second NoAccessToken error.
                 $PSCmdlet.ThrowTerminatingError($PSItem)
@@ -300,6 +303,7 @@ function Initialize-OPIMAuth {
             try {
                 $AuthResult = $InteractiveBuilder.ExecuteAsync().GetAwaiter().GetResult()
             } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
                 Write-CmdletError `
                     -Message ([System.Exception]::new(
                         "Interactive authentication failed: $($PSItem.Exception.Message). " +
@@ -356,7 +360,7 @@ function Initialize-OPIMAuth {
         # config is never touched. No-op on Linux/macOS, where browser login is already default.
         try {
             Update-AzConfig -EnableLoginByWam $false -Scope Process -ErrorAction SilentlyContinue | Out-Null
-        } catch { $null = $PSItem }
+        } catch { Remove-OPIMErrorRecord -Record $PSItem }
 
         $AzParams = @{ ErrorAction = 'Stop' }
         if ($EffectiveTenant -ne 'organizations') {
@@ -370,6 +374,7 @@ function Initialize-OPIMAuth {
         try {
             Connect-AzAccount @AzParams | Out-Null
         } catch {
+            Remove-OPIMErrorRecord -Record $PSItem
             Write-CmdletError `
                 -Message ([System.Exception]::new("Azure connection failed: $($PSItem.Exception.Message)")) `
                 -InnerException $PSItem.Exception `

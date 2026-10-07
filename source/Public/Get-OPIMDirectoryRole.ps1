@@ -116,6 +116,7 @@ function Get-OPIMDirectoryRole {
                     $Items = Invoke-OPIMGraphRequest -Uri $RequestUri |
                         Select-Object -ExpandProperty Value
                 } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
                     $PSCmdlet.WriteError($PSItem)
                     continue
                 }
@@ -147,6 +148,7 @@ function Get-OPIMDirectoryRole {
             $Items = Invoke-OPIMGraphRequest -Uri $RequestUri |
                 Select-Object -ExpandProperty Value
         } catch {
+            Remove-OPIMErrorRecord -Record $PSItem
             $PSCmdlet.WriteError($PSItem)
             return
         }

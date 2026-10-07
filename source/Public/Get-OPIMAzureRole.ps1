@@ -103,6 +103,7 @@ function Get-OPIMAzureRole {
                         $_
                     }
             } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
                 if ($PSItem.FullyQualifiedErrorId.Split(',')[0] -eq 'InsufficientPermissions') {
                     $Message = "You do not have sufficient rights to view eligible roles at scope (/). This typically requires Owner or UserAccessAdministrator rights."
                     Write-CmdletError -Message ([System.Exception]::new($Message, $PSItem.Exception)) `
@@ -124,6 +125,7 @@ function Get-OPIMAzureRole {
                         $_
                     }
             } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
                 if ($PSItem.FullyQualifiedErrorId.Split(',')[0] -eq 'InsufficientPermissions') {
                     $Message = "You do not have sufficient rights to view active roles at scope (/). This typically requires Owner or UserAccessAdministrator rights."
                     Write-CmdletError -Message ([System.Exception]::new($Message, $PSItem.Exception)) `
@@ -157,6 +159,7 @@ function Get-OPIMAzureRole {
                     }
             }
         } catch {
+            Remove-OPIMErrorRecord -Record $PSItem
             if (-not ($PSItem.FullyQualifiedErrorId.Split(',')[0] -eq 'InsufficientPermissions')) {
                 $PSCmdlet.WriteError($PSItem)
                 return

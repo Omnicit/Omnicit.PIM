@@ -3,6 +3,27 @@ BeforeAll {
     Import-Module Omnicit.PIM -Force
     . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
     Install-OPIMTransportTripwire
+
+    # A failed Graph call as the SDK leaves it: a request message carrying an Authorization header,
+    # the response pointing back at it, and an HttpResponseException holding the response. The
+    # token is built at runtime and says what it is, so no token-shaped literal sits in this file.
+    function New-ScrubFixture {
+        param(
+            [int]$Status = 403,
+            [string]$Content = '{"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges."}}'
+        )
+        $Token = 'Bearer ' + ('x' * 40) + 'NOT-A-REAL-TOKEN'
+        $Request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://graph.microsoft.com/v1.0/me')
+        $null = $Request.Headers.TryAddWithoutValidation('Authorization', $Token)
+        $Response = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]$Status)
+        $Response.RequestMessage = $Request
+        $Response.Content = [System.Net.Http.StringContent]::new($Content)
+        $Exception = [Microsoft.PowerShell.Commands.HttpResponseException]::new('Response status code does not indicate success.', $Response)
+        [pscustomobject]@{
+            Request = $Request
+            Record  = [System.Management.Automation.ErrorRecord]::new($Exception, 'HttpFail', 'InvalidOperation', $Request)
+        }
+    }
 }
 
 AfterAll {
@@ -89,6 +110,82 @@ Describe 'Invoke-OPIMGraphRequest' {
                 try { Invoke-OPIMGraphRequest -Uri 'v1.0/some/resource' } catch {}
                 Should -Invoke Invoke-MgGraphRequest -Times 1 -Scope It
             }
+        }
+    }
+
+    Context 'When a failed call points at a request message that carries a token' {
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                # Each call throws the next queued record, exactly as the SDK throws its own.
+                Mock Invoke-MgGraphRequest {
+                    $Next = $script:_ScrubRecords[$script:_ScrubCalls]
+                    $script:_ScrubCalls++
+                    $PSCmdlet.ThrowTerminatingError($Next)
+                }
+                Mock Initialize-OPIMAuth {}
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_ScrubRecords = $null
+                $script:_ScrubCalls = $null
+            }
+        }
+
+        It 'scrubs the request of a failure it converts' {
+            $F = New-ScrubFixture -Status 403
+            InModuleScope Omnicit.PIM -ArgumentList $F.Record {
+                param($Record)
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com' }
+                $script:_ScrubRecords = @($Record)
+                $script:_ScrubCalls = 0
+                $Thrown = $null
+                try { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } catch { $Thrown = $PSItem }
+                $Thrown.FullyQualifiedErrorId | Should -Be 'Authorization_RequestDenied'
+                $Thrown.TargetObject | Should -BeNullOrEmpty
+                $Thrown.Exception.InnerException | Should -BeNullOrEmpty
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+            }
+            $F.Request.Headers.Contains('Authorization') | Should -BeFalse
+        }
+
+        It 'scrubs the request of a retry that fails after a claims step-up' {
+            $Challenge = New-ScrubFixture -Status 400 -Content (
+                '{"error":{"code":"RoleAssignmentRequestAcrsValidationFailed",' +
+                '"message":"...&claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%20%22value%22%3A%22c1%22%7D%7D%7D"}}')
+            $Retry = New-ScrubFixture -Status 403
+            InModuleScope Omnicit.PIM -ArgumentList $Challenge.Record, $Retry.Record {
+                param($First, $Second)
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com' }
+                $script:_ScrubRecords = @($First, $Second)
+                $script:_ScrubCalls = 0
+                $Thrown = $null
+                try { Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{} } catch { $Thrown = $PSItem }
+                $Thrown.FullyQualifiedErrorId | Should -Be 'Authorization_RequestDenied'
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter { $ClaimsChallenge -match 'acrs' }
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+            }
+            $Challenge.Request.Headers.Contains('Authorization') | Should -BeFalse
+            $Retry.Request.Headers.Contains('Authorization') | Should -BeFalse -Because 'the claims retry has its own catch, which must scrub as well'
+        }
+
+        It 'scrubs the request of a retry that fails after a token refresh' {
+            $Rejected = New-ScrubFixture -Status 401 -Content '{"error":{"code":"InvalidAuthenticationToken","message":"Access token has expired."}}'
+            $Retry = New-ScrubFixture -Status 403
+            InModuleScope Omnicit.PIM -ArgumentList $Rejected.Record, $Retry.Record {
+                param($First, $Second)
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com' }
+                $script:_ScrubRecords = @($First, $Second)
+                $script:_ScrubCalls = 0
+                $Thrown = $null
+                try { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } catch { $Thrown = $PSItem }
+                $Thrown.FullyQualifiedErrorId | Should -Be 'Authorization_RequestDenied'
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter { $ForceRefresh }
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+            }
+            $Rejected.Request.Headers.Contains('Authorization') | Should -BeFalse
+            $Retry.Request.Headers.Contains('Authorization') | Should -BeFalse -Because 'the refresh retry has its own catch, which must scrub as well'
         }
     }
 

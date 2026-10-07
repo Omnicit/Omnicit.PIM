@@ -292,6 +292,108 @@ Describe 'Get-OPIMDirectoryRole' {
         }
     }
 
+    Context 'When Graph answers 403 and 500 to the listing' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            # The raw SDK call is mocked here, below the wrapper, so the wrapper's own catch and
+            # Convert-GraphHttpException run for real on a record that points at a request message
+            # carrying an Authorization header.
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                param($Method, $Uri, $Body, $OutputType)
+                $PSCmdlet.ThrowTerminatingError($script:ScrubFixture.Record)
+            }
+
+            # A failed Graph read as the SDK leaves it. The token is built at runtime in the shape a
+            # real one has, and says it is not one, so no token-shaped literal sits in this file.
+            function New-ScrubFixture {
+                param([int]$Status)
+                $Token = 'Bearer ' + 'eyJ' + ('A' * 20) + '.' + 'NOT-A-REAL-TOKEN'
+                $Request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://graph.microsoft.com/v1.0/roleManagement/directory/roleEligibilitySchedules')
+                $null = $Request.Headers.TryAddWithoutValidation('Authorization', $Token)
+                $Response = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]$Status)
+                $Response.RequestMessage = $Request
+                $Response.Content = [System.Net.Http.StringContent]::new('{"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges."}}')
+                $Exception = [Microsoft.PowerShell.Commands.HttpResponseException]::new('Response status code does not indicate success.', $Response)
+                [pscustomobject]@{
+                    Request = $Request
+                    Record  = [System.Management.Automation.ErrorRecord]::new($Exception, 'HttpFail', 'InvalidOperation', $Request)
+                }
+            }
+
+            # Walks every record, exception, target and request reachable from the given roots and
+            # returns what each renders as, plus every HttpRequestMessage it passed through.
+            function Get-RenderedErrorText {
+                param($Records)
+                $Seen = [System.Collections.Generic.HashSet[object]]::new([System.Collections.Generic.ReferenceEqualityComparer]::Instance)
+                $Text = [System.Text.StringBuilder]::new()
+                $Requests = [System.Collections.Generic.List[object]]::new()
+                $Queue = [System.Collections.Generic.Queue[object]]::new()
+                foreach ($R in @($Records)) { $Queue.Enqueue($R) }
+                while ($Queue.Count -gt 0) {
+                    $Item = $Queue.Dequeue()
+                    if ($null -eq $Item -or -not $Seen.Add($Item)) { continue }
+                    $null = $Text.AppendLine(($Item | Out-String))
+                    if ($Item -is [System.Net.Http.HttpRequestMessage]) {
+                        $Requests.Add($Item)
+                        $null = $Text.AppendLine($Item.Headers.ToString())
+                    }
+                    foreach ($Name in 'Exception', 'InnerException', 'TargetObject', 'Response', 'RequestMessage', 'ErrorRecord') {
+                        try { $P = $Item.PSObject.Properties[$Name]; if ($P) { $Queue.Enqueue($P.Value) } } catch { $null = $PSItem }
+                    }
+                    try { if ($Item.PSObject.Properties['InnerExceptions']) { foreach ($I in $Item.InnerExceptions) { $Queue.Enqueue($I) } } } catch { $null = $PSItem }
+                }
+                [pscustomobject]@{ Text = $Text.ToString(); Requests = $Requests }
+            }
+
+            # Runs the listing against a fixture and returns the error variable plus every entry the
+            # run added to $global:Error. Earlier tests in the same process can leave unrelated
+            # strings in $global:Error (an ACRS challenge quotes 'Bearer realm=' and a base64 claim),
+            # so only what this run added is read.
+            function Invoke-ScrubbedListing {
+                param([int]$Status)
+                $script:ScrubFixture = New-ScrubFixture -Status $Status
+                $HadHeader = $script:ScrubFixture.Request.Headers.Contains('Authorization')
+                $Before = [System.Collections.Generic.HashSet[object]]::new([System.Collections.Generic.ReferenceEqualityComparer]::Instance)
+                foreach ($Entry in @($global:Error)) { $null = $Before.Add($Entry) }
+                Get-OPIMDirectoryRole -ErrorVariable Errs -ErrorAction SilentlyContinue
+                $Added = @($global:Error | Where-Object { -not $Before.Contains($_) })
+                [pscustomobject]@{ Fixture = $script:ScrubFixture; HadHeader = $HadHeader; Errs = @($Errs); Added = $Added }
+            }
+        }
+
+        It 'leaves no Authorization header and no token in the error variable, the global error list or any inner exception after a 403' {
+            $Run = Invoke-ScrubbedListing -Status 403
+            $Run.Errs.Count | Should -BeGreaterThan 0 -Because 'the listing must have failed into its catch, or nothing was scrubbed'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+
+            $Walk = Get-RenderedErrorText (@($Run.Errs) + @($Run.Added))
+            # The raw record is caught inside the wrapper and never reaches the caller, so the walk
+            # may find no request at all; the fixture's own request is what proves the scrub ran.
+            $Run.HadHeader | Should -BeTrue -Because 'the request must carry the header before the call, or its absence after proves nothing'
+            foreach ($Request in $Walk.Requests) { $Request.Headers.Contains('Authorization') | Should -BeFalse }
+            $Run.Fixture.Request.Headers.Contains('Authorization') | Should -BeFalse
+            $Walk.Text | Should -Not -Match 'Bearer\s+\S'
+            $Walk.Text | Should -Not -Match 'eyJ'
+            @($Run.Errs | Where-Object { $_.FullyQualifiedErrorId -like 'Authorization_RequestDenied*' }).Count |
+                Should -BeGreaterThan 0 -Because 'the converted Graph error is what the caller receives'
+        }
+
+        It 'leaves no Authorization header and no token in the error variable, the global error list or any inner exception after a 500' {
+            $Run = Invoke-ScrubbedListing -Status 500
+            $Run.Errs.Count | Should -BeGreaterThan 0 -Because 'the listing must have failed into its catch, or nothing was scrubbed'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+
+            $Walk = Get-RenderedErrorText (@($Run.Errs) + @($Run.Added))
+            # The raw record is caught inside the wrapper and never reaches the caller, so the walk
+            # may find no request at all; the fixture's own request is what proves the scrub ran.
+            $Run.HadHeader | Should -BeTrue -Because 'the request must carry the header before the call, or its absence after proves nothing'
+            foreach ($Request in $Walk.Requests) { $Request.Headers.Contains('Authorization') | Should -BeFalse }
+            $Run.Fixture.Request.Headers.Contains('Authorization') | Should -BeFalse
+            $Walk.Text | Should -Not -Match 'Bearer\s+\S'
+            $Walk.Text | Should -Not -Match 'eyJ'
+        }
+    }
+
     Context 'When -All returns both eligible and active results' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

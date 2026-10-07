@@ -8,9 +8,13 @@ function Invoke-OPIMGraphRequest {
     Drop-in replacement for Invoke-MgGraphRequest used by every public and private function in
     Omnicit.PIM. Adds three layers on top of the raw Graph SDK call:
 
-    1. Bearer token security: the $Error record that contains the raw HttpRequestMessage
-       (which carries the Authorization: Bearer header in plain text) is removed from $Error
-       immediately in every catch block.
+    1. Bearer token security: every catch block starts with Remove-OPIMErrorRecord, which clears
+       the Authorization header off the raw HttpRequestMessage the SDK record points at (the
+       header carries the bearer token in plain text) and removes the record from the caller's
+       $global:Error. Clearing the header on the shared request object also disarms every copy of
+       the record that already escaped, such as the caller's -ErrorVariable. The idiom this
+       replaced, $Error.Remove($PSItem), removed nothing: a module's $Error is its own private
+       list, and the record bound to $PSItem is not the instance PowerShell stored.
 
     2. ACRS claims-challenge retry: when Microsoft Graph returns a 401 response whose
        WWW-Authenticate header contains a claims="<base64url>" challenge, this function:
@@ -61,12 +65,12 @@ function Invoke-OPIMGraphRequest {
     function Get-ClaimsFromException ([System.Management.Automation.ErrorRecord]$ErrorRecord) {
         # Gather every place the challenge might live, most-reliable first.
         $Candidates = [System.Collections.Generic.List[string]]::new()
-        try { $Candidates.Add($ErrorRecord.Exception.Response.Headers.WwwAuthenticate.ToString()) } catch { $null = $PSItem }
+        try { $Candidates.Add($ErrorRecord.Exception.Response.Headers.WwwAuthenticate.ToString()) } catch { Remove-OPIMErrorRecord -Record $PSItem }
         try {
             if ($ErrorRecord.Exception.Response -and $ErrorRecord.Exception.Response.Content) {
                 $Candidates.Add($ErrorRecord.Exception.Response.Content.ReadAsStringAsync().GetAwaiter().GetResult())
             }
-        } catch { $null = $PSItem }
+        } catch { Remove-OPIMErrorRecord -Record $PSItem }
         $Candidates.Add($ErrorRecord.Exception.Message)
 
         foreach ($Text in $Candidates) {
@@ -89,7 +93,7 @@ function Invoke-OPIMGraphRequest {
             try {
                 $Decoded = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Padded))
                 if ($Decoded -match '^\s*\{') { return $Decoded }
-            } catch { $null = $PSItem }
+            } catch { Remove-OPIMErrorRecord -Record $PSItem }
 
             # 3. Already raw JSON.
             if ($Encoded -match '^\s*\{') { return $Encoded }
@@ -109,9 +113,10 @@ function Invoke-OPIMGraphRequest {
     try {
         return Invoke-MgGraphRequest @InvokeParams
     } catch {
-        # Security: remove the raw error record before anything else.
-        # The TargetObject (HttpRequestMessage) contains "Authorization: Bearer <token>".
-        $null = $Error.Remove($PSItem)
+        # Security: scrub the raw error record before anything else.
+        # Its request message (TargetObject, and the exception's response) carries the
+        # Authorization header with the bearer token in plain text.
+        Remove-OPIMErrorRecord -Record $PSItem
         $FirstError = $PSItem
     }
 
@@ -131,7 +136,7 @@ function Invoke-OPIMGraphRequest {
         try {
             return Invoke-MgGraphRequest @InvokeParams
         } catch {
-            $null = $Error.Remove($PSItem)
+            Remove-OPIMErrorRecord -Record $PSItem
             throw Convert-GraphHttpException $PSItem
         }
     }
@@ -141,7 +146,7 @@ function Invoke-OPIMGraphRequest {
     # handled above). Force a token refresh (MSAL refresh-token path, usually no prompt) and
     # retry once instead of surfacing the failure.
     $StatusCode = $null
-    try { $StatusCode = [int]$FirstError.Exception.Response.StatusCode } catch { $null = $PSItem }
+    try { $StatusCode = [int]$FirstError.Exception.Response.StatusCode } catch { Remove-OPIMErrorRecord -Record $PSItem }
     [bool]$TokenInvalid = $StatusCode -eq 401 -or
         $FirstError.Exception.Message -match 'InvalidAuthenticationToken|CompactToken|token is expired|Lifetime validation failed'
 
@@ -151,7 +156,7 @@ function Invoke-OPIMGraphRequest {
         try {
             return Invoke-MgGraphRequest @InvokeParams
         } catch {
-            $null = $Error.Remove($PSItem)
+            Remove-OPIMErrorRecord -Record $PSItem
             throw Convert-GraphHttpException $PSItem
         }
     }

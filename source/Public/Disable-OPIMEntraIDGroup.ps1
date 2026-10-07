@@ -70,6 +70,7 @@ function Disable-OPIMEntraIDGroup {
             $Response = try {
                 Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests' -Body $Request
             } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
                 $Err = $PSItem
                 if (-not (ConvertTo-ActiveDurationTooShortError -CaughtError $Err -ResourceType 'group' -Cmdlet $PSCmdlet)) {
                     $PSCmdlet.WriteError($Err)

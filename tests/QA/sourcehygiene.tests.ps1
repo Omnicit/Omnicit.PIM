@@ -88,6 +88,228 @@ BeforeAll {
             }
         }
     }
+
+    # =====================================================================================
+    # BEARER SCRUB -- one AST pass over source/, reusing the files already read above.
+    #
+    # The raw record of a failed request points, through its TargetObject and its exception chain,
+    # at the HttpRequestMessage whose Authorization header carries the bearer token in plain text.
+    # Remove-OPIMErrorRecord clears that header on the shared request object and drops the record
+    # from the caller's $global:Error, so it must be the FIRST statement of every catch in a file
+    # that can receive such a record.
+    #
+    # 'Transport' is anything that can put a credential on the wire or fail with a record of a
+    # request that carried one: the module's Graph wrapper and the raw Graph call, the two web
+    # cmdlets, the two sign-ins and the silent ARM token check, and the four Az.Resources schedule
+    # cmdlets, which are ARM requests whose failure records can carry the request.
+    # =====================================================================================
+    $script:TransportCommands = @(
+        'Invoke-OPIMGraphRequest', 'Invoke-MgGraphRequest', 'Invoke-WebRequest', 'Invoke-RestMethod',
+        'Connect-MgGraph', 'Connect-AzAccount', 'Get-AzAccessToken',
+        'Get-AzRoleEligibilitySchedule', 'Get-AzRoleAssignmentScheduleInstance',
+        'New-AzRoleAssignmentScheduleRequest', 'Get-AzRoleAssignmentScheduleRequest'
+    )
+
+    # The one first statement the scan accepts.
+    $script:ScrubFirstStatementPattern = '^Remove-OPIMErrorRecord\s+-Record\s+\$PSItem\b'
+
+    <#
+        Catch clauses that legitimately do NOT scrub: none today. The table is keyed by file, and
+        each value is a predicate over the CatchClauseAst that the catch must ALSO satisfy, so an
+        entry never unguards a whole file -- a file key alone would silently unguard every OTHER
+        catch in it. The predicate is the written justification: a structural property of the try
+        body (for example a single call to a pure local helper) that proves no record of a request
+        can reach the catch. Line numbers are never the anchor: they drift on every unrelated edit.
+    #>
+    $script:ScrubExemptions = @{}
+
+    <#
+        The floors sit just under the counts measured on 2026-10-07, after every catch in a
+        transport-reaching file was made to scrub first: 20 transport-reaching files under source/
+        holding 28 of the 49 catch clauses in source/. The named control, source/Private/Invoke-OPIMGraphRequest.ps1,
+        is asserted with its EXACT count instead (7: the three in its nested
+        Get-ClaimsFromException, the first attempt, the claims retry, the status read and the
+        refresh retry), so a catch that stops being seen fails there with a clear cause instead of
+        quietly shrinking a total.
+    #>
+    $script:ScrubTransportFileFloor = 18
+    $script:ScrubCatchFloor = 26
+    $script:ScrubControlPath = 'source/Private/Invoke-OPIMGraphRequest.ps1'
+    $script:ScrubControlCatchCount = 7
+
+    # --- Pass 1: parse every PowerShell-syntax source file exactly once. ---
+    #
+    # .ps1xml is excluded since it is XML, which the PowerShell parser would report as errors.
+    # .psd1 parses cleanly as a hashtable literal.
+    $script:SourceUnits = [System.Collections.Generic.List[object]]::new()
+    $script:ParseFailures = [System.Collections.Generic.List[string]]::new()
+
+    foreach ($File in $script:HygieneFiles) {
+        if ($File.RelativePath -notlike 'source/*') { continue }
+        if ($File.Extension -notin '.ps1', '.psm1', '.psd1') { continue }
+
+        $Tokens = $null
+        $Errors = $null
+        $FileAst = [System.Management.Automation.Language.Parser]::ParseInput(
+            $File.Text, $File.Path, [ref]$Tokens, [ref]$Errors)
+
+        <#
+            A file that fails to parse yields no CommandAst and no CatchClauseAst, so it would drop
+            silently out of BOTH counters -- an unterminated here-string at the top of a file would
+            remove it from this gate without failing anything. Record the failure instead.
+        #>
+        if ($Errors.Count -gt 0) {
+            $script:ParseFailures.Add(('{0} -- {1} parse error(s), first: {2}' -f
+                    $File.RelativePath, $Errors.Count, $Errors[0].Message))
+            continue
+        }
+
+        <#
+            Transport is detected through CommandAst.GetCommandName(), never a text grep:
+            source/Private/Remove-OPIMErrorRecord.ps1 carries the literal 'Invoke-MgGraphRequest
+            @InvokeParams' inside its .EXAMPLE help block, and a grep would score it as a transport
+            file. The AST never sees comment tokens. ONE FindAll walk collects the three node kinds
+            the passes below need; the walk count is what costs time, not the bucketing.
+        #>
+        $Nodes = $FileAst.FindAll({
+                $args[0] -is [System.Management.Automation.Language.CommandAst] -or
+                $args[0] -is [System.Management.Automation.Language.CatchClauseAst] -or
+                $args[0] -is [System.Management.Automation.Language.StringConstantExpressionAst]
+            }, $true)
+
+        $CommandNames = [System.Collections.Generic.List[string]]::new()
+        $StringValues = [System.Collections.Generic.List[string]]::new()
+        $Catches = [System.Collections.Generic.List[object]]::new()
+        $CallsTransport = $false
+
+        foreach ($Node in $Nodes) {
+            if ($Node -is [System.Management.Automation.Language.CommandAst]) {
+                $CommandName = $Node.GetCommandName()
+                if ($CommandName) {
+                    $CommandNames.Add($CommandName)
+                    if (-not $CallsTransport -and $script:TransportCommands -contains $CommandName) {
+                        $CallsTransport = $true
+                    }
+                }
+            } elseif ($Node -is [System.Management.Automation.Language.CatchClauseAst]) {
+                $Catches.Add($Node)
+            } else {
+                $StringValues.Add($Node.Value)
+            }
+        }
+
+        # Top-level definition only: a nested helper is part of its parent's body, not its own node.
+        $Definition = $FileAst.FindAll({
+                $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst]
+            }, $false) | Select-Object -First 1
+
+        $script:SourceUnits.Add([PSCustomObject]@{
+                RelativePath   = $File.RelativePath
+                FunctionName   = if ($Definition) { $Definition.Name } else { $null }
+                IsPrivate      = [bool]($File.RelativePath -like 'source/Private/*')
+                CommandNames   = $CommandNames
+                StringValues   = $StringValues
+                Catches        = $Catches
+                CallsTransport = $CallsTransport
+                Edges          = $null
+            })
+    }
+
+    <#
+        --- Pass 2: whole-module call-edge closure. ---
+
+        A file counts as transport-reaching when it calls a transport command DIRECTLY or calls,
+        transitively, any module function that does: a public cmdlet that reaches Graph only through
+        Initialize-OPIMAuth or Get-OPIMCurrentTenantInfo receives the same records. A string
+        constant naming a PRIVATE module function also counts as an edge, so a helper called through
+        a name held in a variable is not missed; a public name does not, since the completer classes
+        and the manifest name public cmdlets without being their callers. Comment-based help is a
+        comment token and never an AST expression, so a name that appears only in help creates no
+        edge.
+
+        Reachability is a FIXED-POINT iteration over a boolean, not a memoized depth-first walk: a
+        DFS that caches results its own re-entry guard truncated can silently under-reach across a
+        call cycle. Seed each function with its own direct CallsTransport, then propagate along the
+        edges until a full pass changes nothing. The lattice is monotone (false -> true only), so it
+        terminates and reaches the same answer in any visit order.
+    #>
+    $script:AllFunctions = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $script:PrivateFunctions = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($Unit in $script:SourceUnits) {
+        if (-not $Unit.FunctionName) { continue }
+        $null = $script:AllFunctions.Add($Unit.FunctionName)
+        if ($Unit.IsPrivate) { $null = $script:PrivateFunctions.Add($Unit.FunctionName) }
+    }
+
+    foreach ($Unit in $script:SourceUnits) {
+        $Edges = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($CommandName in $Unit.CommandNames) {
+            if ($script:AllFunctions.Contains($CommandName)) { $null = $Edges.Add($CommandName) }
+        }
+        foreach ($Value in $Unit.StringValues) {
+            if ($script:PrivateFunctions.Contains($Value)) { $null = $Edges.Add($Value) }
+        }
+        $Unit.Edges = $Edges
+    }
+
+    $script:TransportReach = @{}
+    foreach ($Unit in $script:SourceUnits) {
+        if ($Unit.FunctionName) { $script:TransportReach[$Unit.FunctionName] = $Unit.CallsTransport }
+    }
+    $Changed = $true
+    while ($Changed) {
+        $Changed = $false
+        foreach ($Unit in $script:SourceUnits) {
+            if (-not $Unit.FunctionName) { continue }
+            if ($script:TransportReach[$Unit.FunctionName]) { continue }
+            foreach ($Edge in $Unit.Edges) {
+                # A miss returns $null, which is falsy: an edge to a name with no unit of its own
+                # contributes no reachability.
+                if ($script:TransportReach[$Edge]) {
+                    $script:TransportReach[$Unit.FunctionName] = $true
+                    $Changed = $true
+                    break
+                }
+            }
+        }
+    }
+
+    # --- Pass 3: the scrub scan itself, over every transport-reaching file. ---
+    $script:ScrubViolations = [System.Collections.Generic.List[string]]::new()
+    $script:ScrubCatchCount = 0
+    $script:ScrubTransportFiles = [System.Collections.Generic.List[string]]::new()
+    $script:ScrubCatchByFile = @{}
+
+    foreach ($Unit in $script:SourceUnits) {
+        # Edges are consulted even for a unit with no function of its own (the manifest, the
+        # dev-mode loader, suffix.ps1, a class file), which is why this is not just a lookup by name.
+        $ReachesTransport = $Unit.CallsTransport
+        if (-not $ReachesTransport) {
+            foreach ($Edge in $Unit.Edges) {
+                if ($script:TransportReach[$Edge]) { $ReachesTransport = $true; break }
+            }
+        }
+        if (-not $ReachesTransport) { continue }
+
+        $script:ScrubTransportFiles.Add($Unit.RelativePath)
+        $script:ScrubCatchByFile[$Unit.RelativePath] = $Unit.Catches.Count
+        $Exemption = $script:ScrubExemptions[$Unit.RelativePath]
+
+        foreach ($Catch in $Unit.Catches) {
+            $script:ScrubCatchCount++
+
+            # The @() wrap is load-bearing: an empty catch body returns $null here instead of
+            # throwing on an empty ReadOnlyCollection.
+            $FirstStatement = @($Catch.Body.Statements)[0]
+            $FirstText = if ($FirstStatement) { $FirstStatement.Extent.Text.Trim() } else { '' }
+            if ($FirstText -match $script:ScrubFirstStatementPattern) { continue }
+            if ($Exemption -and (& $Exemption $Catch)) { continue }
+
+            $Diagnostic = if ($FirstText) { ($FirstText -split "`n")[0] } else { '<empty catch body>' }
+            $script:ScrubViolations.Add(('{0}:{1} -- first statement is: {2}' -f
+                    $Unit.RelativePath, $Catch.Extent.StartLineNumber, $Diagnostic))
+        }
+    }
 }
 
 Describe 'Source encoding' -Tags 'SourceHygiene' {
@@ -189,6 +411,56 @@ source/Public or source/Private nor an alias in AliasesToExport points a reader 
 fails when they run it. This is a TEXT scan over the whole file, not an AST walk, since a stale
 reference lives in prose -- a comment token the parser never turns into a CommandAst. Fix the
 reference; do not exempt a file from this scan
+'@
+    }
+}
+
+Describe 'Bearer-token hygiene' -Tags 'SourceHygiene' {
+
+    It 'parses every scanned source file' {
+        $script:ParseFailures -join "`n" | Should -BeNullOrEmpty -Because @'
+a source file that fails to parse produces no CommandAst and no CatchClauseAst, so it silently drops
+out of BOTH the transport-file counter and the catch counter below -- an unterminated here-string at
+the top of a file removes it from this gate without failing anything. Fix the syntax error; do not
+exclude the file
+'@
+    }
+
+    It 'scans a meaningful number of catch clauses' {
+        <#
+            Without this, a detection bug that matched no files would make the gate below pass
+            vacuously -- prove a guard can FAIL, not just that it can pass. The floors and the counts
+            they sit under are in the BeforeAll.
+        #>
+        $script:ScrubTransportFiles.Count | Should -BeGreaterThan $script:ScrubTransportFileFloor -Because (
+            'source/ held 20 transport-reaching files on 2026-10-07; a scan at the floor or below has broken transport detection, not found fewer files. Found: {0}' -f ($script:ScrubTransportFiles -join ', '))
+        $script:ScrubCatchCount | Should -BeGreaterThan $script:ScrubCatchFloor -Because (
+            'those files held 28 of the 49 catch clauses in source/ on 2026-10-07; a count at the floor or below has broken the catch enumeration, not found fewer catches')
+    }
+
+    It 'counts every catch of the named control file' {
+        <#
+            The named positive control. source/Private/Invoke-OPIMGraphRequest.ps1 is the module's
+            Graph transport wrapper and the one file that can never legitimately leave this scan. If
+            a catch is genuinely added to or removed from that file, update the count deliberately.
+        #>
+        $script:ScrubCatchByFile.ContainsKey($script:ScrubControlPath) |
+            Should -BeTrue -Because 'the Graph wrapper must be detected as a transport file; if it is not, transport detection is broken'
+        $script:ScrubCatchByFile[$script:ScrubControlPath] | Should -Be $script:ScrubControlCatchCount -Because (
+            'source/Private/Invoke-OPIMGraphRequest.ps1 holds {0} catch clauses, every one of them scrubbing first' -f $script:ScrubControlCatchCount)
+    }
+
+    It 'calls Remove-OPIMErrorRecord as the first statement of every catch on a transport path' {
+        $script:ScrubViolations -join "`n" | Should -BeNullOrEmpty -Because @'
+CLAUDE.md (Error Handling, SECURITY rule 5): the raw record of a failed request points at the
+HttpRequestMessage whose Authorization header carries the bearer token in plain text, so
+Remove-OPIMErrorRecord -Record $PSItem must be the FIRST statement of every catch in a file that
+reaches Graph, ARM or a sign-in -- directly or through any module function it calls. The older
+$Error.Remove($PSItem) idiom never worked: a module has its own private $Error list, and the record
+bound to $PSItem is a different instance than the one PowerShell appended to the caller's
+$global:Error. If a catch is genuinely exempt (no record of a request can reach it), add it to
+$script:ScrubExemptions with a structural predicate rather than deleting this assertion. Catches that
+do not scrub first
 '@
     }
 }

@@ -135,6 +135,7 @@ function Enable-OPIMDirectoryRole {
                 $Response = try {
                     Invoke-OPIMGraphRequest -Method POST -Uri $GraphUri -Body $Request
                 } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
                     $Err = $PSItem
                     if (-not (ConvertTo-PolicyValidationError -CaughtError $Err -ResourceType 'role' -Cmdlet $PSCmdlet)) {
                         $PSCmdlet.WriteError($Err)

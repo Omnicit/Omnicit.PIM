@@ -122,6 +122,7 @@ function Enable-OPIMAzureRole {
                 try {
                     $Response = New-AzRoleAssignmentScheduleRequest @RoleActivateParams -ErrorAction Stop
                 } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
                     if (-not (ConvertTo-PolicyValidationError -CaughtError $PSItem -ResourceType 'role' -Cmdlet $PSCmdlet)) {
                         $PSCmdlet.WriteError($PSItem)
                     }

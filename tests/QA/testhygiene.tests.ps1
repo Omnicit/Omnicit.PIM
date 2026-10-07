@@ -24,10 +24,11 @@ BeforeAll {
     # files are outside the tripwire on purpose: they call help, the analyzer and pure maps only.
     # =====================================================================================
 
-    # The files allowed to hold ForEach-Object -Parallel blocks (R15).
-    $script:ParallelAllowed = @(
-        'source/Public/Wait-OPIMDirectoryRole.ps1'
-    )
+    # The files allowed to hold ForEach-Object -Parallel blocks (R15). source/ holds no -Parallel
+    # block since step 3 of Sprint 1, when Wait-OPIMDirectoryRole began polling in sequence through
+    # the module's own transport. A future block goes on this list, and must then satisfy the
+    # runspace-form rules below.
+    $script:ParallelAllowed = @()
 
     # The four commands the -Parallel runspace form stands in for (Register-OPIMParallelTransportStandIn).
     $script:RunspaceFormNames = @('Invoke-MgGraphRequest', 'Connect-MgGraph', 'Disconnect-MgGraph', 'Get-MgContext')
@@ -491,7 +492,9 @@ Describe 'x' { It 'y' { 1 | Should -Be 1 } }
             $TransportNames | Should -Contain $Name -Because 'the runspace form stands in for tripwire names only'
         }
 
-        @($script:ParallelAllowed).Count | Should -BeGreaterThan 0 -Because 'the named list is the inventory of -Parallel blocks; an empty list means this check measures nothing'
+        # An empty list means no -Parallel block is allowed anywhere in source/, which the scan below
+        # enforces: every block it finds is then outside the named list. The known-answer It below
+        # proves the scan can fail, so an empty list does not make this check measure nothing.
         foreach ($Relative in $script:ParallelAllowed) {
             $Path = Join-Path -Path $script:ProjectPath -ChildPath $Relative
             Test-Path -LiteralPath $Path | Should -BeTrue -Because ('a named file must exist, or it silently allows nothing: {0}' -f $Relative)
