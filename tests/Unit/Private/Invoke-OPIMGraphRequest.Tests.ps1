@@ -211,6 +211,77 @@ Describe 'Invoke-OPIMGraphRequest' {
         }
     }
 
+    Context 'When a retry fails and no try stands up the call stack' {
+        # Under -ErrorAction SilentlyContinue with no try up the call stack a throw inside a catch
+        # resumes after the whole try statement (Invoke-OutsideAnyTry). A failed claims retry must
+        # still end the request -- never fall on into the token-rejected retry, a refresh and a third
+        # send -- and a failed refresh retry must end it with its own error only. Each send throws the
+        # next queued record; a send past the queue answers, as a third attempt that got through would.
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Invoke-MgGraphRequest {
+                    $Next = if ($script:_ScrubCalls -lt @($script:_ScrubRecords).Count) { $script:_ScrubRecords[$script:_ScrubCalls] } else { $null }
+                    $script:_ScrubCalls++
+                    if ($null -eq $Next) { return @{ id = 'third-send' } }
+                    $PSCmdlet.ThrowTerminatingError($Next)
+                }
+                Mock Initialize-OPIMAuth {}
+                Mock Convert-GraphHttpException {
+                    [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('converted'), 'Converted', 'InvalidOperation', $null)
+                }
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_ScrubRecords = $null
+                $script:_ScrubCalls = $null
+            }
+        }
+
+        It 'ends a request whose claims retry fails, with no refresh and no third send' {
+            # A 401 that carries a claims challenge: the token-rejected test matches it too, so a
+            # failed claims retry that fell on would refresh and send a third time.
+            $Challenge = New-ScrubFixture -Status 401 -Content (
+                '{"error":{"code":"InvalidAuthenticationToken",' +
+                '"message":"...&claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%20%22value%22%3A%22c1%22%7D%7D%7D"}}')
+            $Retry = New-ScrubFixture -Status 403
+            InModuleScope Omnicit.PIM -ArgumentList $Challenge.Record, $Retry.Record {
+                param($First, $Second)
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com' }
+                $script:_ScrubRecords = @($First, $Second)
+                $script:_ScrubCalls = 0
+            }
+            $Run = Invoke-OutsideAnyTry -Script '$ErrorActionPreference = ''SilentlyContinue''; $R = Invoke-OPIMGraphRequest -Method POST -Uri ''v1.0/some/requests'' -Body @{}; $R'
+            $Run.Output.Count | Should -Be 0 -Because 'a third send that got through would answer'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter { $ClaimsChallenge -match 'acrs' }
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It -ParameterFilter { $ForceRefresh }
+            Should -Invoke -ModuleName Omnicit.PIM Convert-GraphHttpException -Times 1 -Exactly -Scope It
+            $Retry.Request.Headers.Contains('Authorization') | Should -BeFalse
+        }
+
+        It 'ends a request whose refresh retry fails with that retry''s error only' {
+            # Falling on past the failed refresh retry would convert and throw the first failure as a
+            # second error.
+            $Rejected = New-ScrubFixture -Status 401 -Content '{"error":{"code":"InvalidAuthenticationToken","message":"Access token has expired."}}'
+            $Retry = New-ScrubFixture -Status 403
+            InModuleScope Omnicit.PIM -ArgumentList $Rejected.Record, $Retry.Record {
+                param($First, $Second)
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com' }
+                $script:_ScrubRecords = @($First, $Second)
+                $script:_ScrubCalls = 0
+            }
+            $Run = Invoke-OutsideAnyTry -Script '$ErrorActionPreference = ''SilentlyContinue''; $R = Invoke-OPIMGraphRequest -Uri ''v1.0/me''; $R'
+            $Run.Output.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter { $ForceRefresh }
+            Should -Invoke -ModuleName Omnicit.PIM Convert-GraphHttpException -Times 1 -Exactly -Scope It
+            $Retry.Request.Headers.Contains('Authorization') | Should -BeFalse
+        }
+    }
+
     Context 'When an ACRS claims challenge is received and retry succeeds' {
         BeforeAll {
             InModuleScope Omnicit.PIM {

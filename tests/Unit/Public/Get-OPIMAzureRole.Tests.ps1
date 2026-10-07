@@ -320,6 +320,54 @@ Describe 'Get-OPIMAzureRole' {
         }
     }
 
+    Context 'When the InsufficientPermissions rewrap is written' {
+        # OPIM-11: the rewrapped record keeps no reference to the raw Az record, which can carry the
+        # request it failed on -- no inner exception, and the scope as its target object. Each read
+        # throws a record whose target object is a request message, as a failed ARM call's can be.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $RawFailure = {
+                $PSCmdlet.ThrowTerminatingError(
+                    [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient permissions'),
+                        'InsufficientPermissions',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied,
+                        [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://management.azure.com/providers/Microsoft.Authorization/roleEligibilitySchedules')))
+            }
+            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule $RawFailure
+            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance $RawFailure
+        }
+
+        It 'writes the rewrap for the <Name> read with the scope as its target and no inner exception' -ForEach @(
+            @{ Name = 'eligible'; Activated = $false }
+            @{ Name = 'activated'; Activated = $true }
+        ) {
+            $Errs = $null
+            Get-OPIMAzureRole -Scope '/subscriptions/sub-001' -Activated:$Activated -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Rewrap = @($Errs | Where-Object { $_.Exception.Message -like 'Insufficient permissions to list roles at scope*' })
+            $Rewrap.Count | Should -Be 1
+            $Rewrap[0].FullyQualifiedErrorId.Split(',')[0] | Should -BeExactly 'InsufficientPermissions'
+            $Rewrap[0].Exception.InnerException | Should -BeNullOrEmpty
+            $Rewrap[0].TargetObject | Should -Not -BeOfType ([System.Management.Automation.ErrorRecord])
+            $Rewrap[0].TargetObject | Should -BeOfType ([string])
+            $Rewrap[0].TargetObject | Should -BeExactly '/subscriptions/sub-001'
+        }
+
+        It 'writes both -All rewraps with the root scope as their target and no inner exception' {
+            $Errs = $null
+            Get-OPIMAzureRole -All -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Rewrap = @($Errs | Where-Object { $_.Exception.Message -like 'You do not have sufficient rights to view*' })
+            $Rewrap.Count | Should -Be 2
+            foreach ($Record in $Rewrap) {
+                $Record.FullyQualifiedErrorId.Split(',')[0] | Should -BeExactly 'InsufficientPermissions'
+                $Record.Exception.InnerException | Should -BeNullOrEmpty
+                $Record.TargetObject | Should -Not -BeOfType ([System.Management.Automation.ErrorRecord])
+                $Record.TargetObject | Should -BeOfType ([string])
+                $Record.TargetObject | Should -BeExactly '/'
+            }
+        }
+    }
+
     Context 'When the API returns a non-permissions error' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

@@ -418,9 +418,11 @@ Describe 'Initialize-OPIMAuth' {
         }
 
         # OPIM-43 (A15). Az 12.0.0 (Az.Accounts 3.0.0) and later ask for a subscription at sign-in
-        # when the account reaches more than one. The module never uses the default subscription -- every ARM call
-        # names its scope -- so the prompt is turned off for this PROCESS only and the sign-in skips
-        # the subscription lookup. The user's own Az configuration (CurrentUser) is never touched.
+        # when the account reaches more than one. The module never uses the default subscription --
+        # every ARM call names its scope -- so LoginExperienceV2 Off turns the prompt off for this
+        # PROCESS only; that setting is what keeps it away. -SkipContextPopulation only skips filling
+        # the Az context list when the user has no context yet. The user's own Az configuration
+        # (CurrentUser) is never touched.
         It 'turns the subscription prompt off for this process only before Azure signs in' {
             $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
             $After = New-AzTestContext -TenantId $TenantA
@@ -462,7 +464,7 @@ Describe 'Initialize-OPIMAuth' {
             }
         }
 
-        It 'skips the subscription lookup at the Azure sign-in in <Mode>' -ForEach @(
+        It 'skips filling the Az context list at the Azure sign-in in <Mode>' -ForEach @(
             @{ Mode = 'device code mode'; DeviceCode = $true }
             @{ Mode = 'the system browser'; DeviceCode = $false }
         ) {
@@ -490,6 +492,63 @@ Describe 'Initialize-OPIMAuth' {
                 Should -Invoke Update-AzConfig -Times 1 -Exactly -Scope It -ParameterFilter {
                     $EnableLoginByWam -eq $false -and $Scope -eq 'Process'
                 }
+            }
+        }
+
+        # A sign-in is not the change -WhatIf previews. Enable-/Disable-OPIMMyRole -WhatIf and -Confirm
+        # set $WhatIfPreference and $ConfirmPreference, which the module's own commands inherit and the
+        # Az cmdlets honour, so the two settings and the Azure sign-in turn both switches off
+        # themselves. The preference is set in a child scope, so the assertions run without it.
+        It 'turns -WhatIf and -Confirm off for both Az settings and the Azure sign-in under <Name>' -ForEach @(
+            @{ Name = 'a -WhatIf preference'; Preference = 'WhatIf' }
+            @{ Name = 'a -Confirm preference'; Preference = 'Confirm' }
+        ) {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            $After = New-AzTestContext -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After; Preference = $Preference } {
+                param($State, $After, $Preference)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestAzAfter = $After
+                & {
+                    if ($Preference -eq 'WhatIf') { $WhatIfPreference = $true } else { $ConfirmPreference = 'Low' }
+                    Initialize-OPIMAuth -IncludeARM
+                }
+                Should -Invoke Update-AzConfig -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $PesterBoundParameters.ContainsKey('EnableLoginByWam') -and
+                    $PesterBoundParameters.ContainsKey('WhatIf') -and -not $WhatIf -and
+                    $PesterBoundParameters.ContainsKey('Confirm') -and -not $Confirm
+                }
+                Should -Invoke Update-AzConfig -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $PesterBoundParameters.ContainsKey('LoginExperienceV2') -and
+                    $PesterBoundParameters.ContainsKey('WhatIf') -and -not $WhatIf -and
+                    $PesterBoundParameters.ContainsKey('Confirm') -and -not $Confirm
+                }
+                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $PesterBoundParameters.ContainsKey('WhatIf') -and -not $WhatIf -and
+                    $PesterBoundParameters.ContainsKey('Confirm') -and -not $Confirm
+                }
+            }
+        }
+
+        It 'signs in to Azure under a -WhatIf preference instead of ending in TenantMismatch' {
+            # The Connect-AzAccount mock honours ShouldProcess as the real cmdlet does: under -WhatIf
+            # it would connect nothing, and the tenant check after the sign-in would then refuse.
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            $After = New-AzTestContext -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After } {
+                param($State, $After)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestAzAfter = $After
+                Mock Connect-AzAccount {
+                    if ($PSCmdlet.ShouldProcess('Azure', 'Connect-AzAccount')) {
+                        $script:_OPIMTestAz = $script:_OPIMTestAzAfter
+                    }
+                }
+                Mock Unlock-OPIMSignIn {}
+                { & { $WhatIfPreference = $true; Initialize-OPIMAuth -IncludeARM } } | Should -Not -Throw
+                $script:_OPIMTestAz | Should -Be $After -Because 'the Azure sign-in must have connected'
+                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It
+                Should -Invoke Unlock-OPIMSignIn -Times 1 -Exactly -Scope It
             }
         }
 

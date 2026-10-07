@@ -157,6 +157,13 @@ function Invoke-OPIMGraphRequest {
             ErrorAction = 'Stop'
         }
         if ($SingleBody) { $InvokeParams.Body = $SingleBody }
+        # Set by the catch of a failed retry and read straight after its try. Under -ErrorAction
+        # SilentlyContinue with no try up the call stack a throw inside a catch resumes after the
+        # whole try statement, so without the flag a failed claims retry would fall on into the
+        # token-rejected retry (a refresh and a third send), and a failed refresh retry into a second
+        # error for the first failure.
+        [bool]$ClaimsRetryFailed = $false
+        [bool]$RefreshRetryFailed = $false
 
         # SEC (OPIM-09, EntraRBAC A18): never a Graph call under a Graph SDK session this module did
         # not connect. Initialize-OPIMAuth refuses one at a cmdlet's entry, but that refusal does not
@@ -220,8 +227,11 @@ function Invoke-OPIMGraphRequest {
                 return Invoke-MgGraphRequest @InvokeParams
             } catch {
                 Remove-OPIMErrorRecord -Record $PSItem
+                $ClaimsRetryFailed = $true
                 throw Convert-GraphHttpException $PSItem
             }
+            # A failed claims retry ends the request here, never in the token-rejected retry below.
+            if ($ClaimsRetryFailed) { return }
         }
 
         # -- Token rejected/expired (not a claims challenge) -- re-auth and retry
@@ -254,8 +264,12 @@ function Invoke-OPIMGraphRequest {
                 return Invoke-MgGraphRequest @InvokeParams
             } catch {
                 Remove-OPIMErrorRecord -Record $PSItem
+                $RefreshRetryFailed = $true
                 throw Convert-GraphHttpException $PSItem
             }
+            # A failed refresh retry ends the request with its own error, never a second one for the
+            # first failure below.
+            if ($RefreshRetryFailed) { return }
         }
 
         # -- Not recoverable -- convert and re-throw ----------------------------

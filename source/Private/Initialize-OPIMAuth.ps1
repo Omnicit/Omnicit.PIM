@@ -60,11 +60,17 @@ function Initialize-OPIMAuth {
     device code mode show its own code. A failed Connect-AzAccount ends this function with the
     terminating AzureConnectFailed, which keeps the Az message but neither the Az exception nor its
     record; an Az context for another tenant after the sign-in, or none, ends it with TenantMismatch.
-    The Azure sign-in never asks for a subscription: the module names the scope of every ARM call and
-    never uses the default subscription, so before Connect-AzAccount the function sets the Az
-    configuration for this process only (Update-AzConfig -Scope Process) to WAM off and
-    LoginExperienceV2 off, each in a call of its own, and Connect-AzAccount gets
-    -SkipContextPopulation. The user's own Az configuration is never touched.
+    Before Connect-AzAccount the function sets the Az configuration for this process only
+    (Update-AzConfig -Scope Process), each key in a call of its own: WAM off, and LoginExperienceV2
+    off. LoginExperienceV2 off is what keeps the Azure sign-in from asking for a subscription, and it
+    is safe because the module names the scope of every ARM call and never uses the default
+    subscription. Connect-AzAccount also gets -SkipContextPopulation, which only skips filling the Az
+    context list with a context for each of the first 25 subscriptions when the user has no context
+    yet; it has no part in the subscription prompt. The two Update-AzConfig calls and
+    Connect-AzAccount run with -WhatIf:$false and -Confirm:$false: a sign-in is not the change that
+    -WhatIf previews (the Graph sign-in runs under -WhatIf too), and a -WhatIf handed down from
+    Enable-OPIMMyRole or Disable-OPIMMyRole would otherwise connect nothing and end in a misleading
+    TenantMismatch. The user's own Az configuration is never touched.
 
     Graph auth and Azure auth are intentionally independent -- the Microsoft Graph Command Line
     Tools app registration (used by MSAL here) is not authorised for Azure Resource Manager.
@@ -501,25 +507,43 @@ function Initialize-OPIMAuth {
         if (-not $AzReusable) {
             Write-Verbose "[Initialize-OPIMAuth] Connecting to Azure via Connect-AzAccount for tenant '$ArmTenant'..."
 
+            # -WhatIf:$false -Confirm:$false on both Update-AzConfig calls and on Connect-AzAccount: a
+            # sign-in is not the change -WhatIf previews (the Graph sign-in above runs under it too).
+            # Enable-/Disable-OPIMMyRole -WhatIf or -Confirm hand $WhatIfPreference or
+            # $ConfirmPreference down to here, and the Az cmdlets honour them: under -WhatIf
+            # Connect-AzAccount would connect nothing, so the tenant check after it would report a
+            # misleading TenantMismatch, and under -Confirm the settings would ask to be confirmed.
+
             # Force browser-based sign-in for parity with the Graph side. Since Az 12.0.0 (Az.Accounts
             # 3.0.0) WAM is the Windows default (the "Please select the account" picker), which hangs
             # in some terminals. Disable it at PROCESS scope only -- the user's persisted Az config is
             # never touched. No-op on Linux/macOS, where browser login is already the default.
             try {
-                Update-AzConfig -EnableLoginByWam $false -Scope Process -ErrorAction SilentlyContinue | Out-Null
+                Update-AzConfig -EnableLoginByWam $false -Scope Process -WhatIf:$false -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
             } catch { Remove-OPIMErrorRecord -Record $PSItem }
 
             # A15 (OPIM-43): Az 12.0.0 (Az.Accounts 3.0.0) and later ask for a subscription at sign-in
             # when the account reaches more than one. The module never uses the default subscription
-            # -- every ARM call names its scope (asTarget() at '/', or the role's own scope) -- so the
-            # prompt is turned off for this PROCESS only, and Connect-AzAccount skips the subscription
-            # lookup. The user's own Az configuration (CurrentUser) is never touched. A call of its
-            # own, so an Az.Accounts without this key still gets the WAM setting and signs in.
+            # -- every ARM call names its scope (asTarget() at '/', or the role's own scope) -- so
+            # LoginExperienceV2 Off turns that prompt off, for this PROCESS only. This setting is what
+            # keeps the prompt away. The user's own Az configuration (CurrentUser) is never touched. A
+            # call of its own, so an Az.Accounts without this key still gets the WAM setting and signs
+            # in.
             try {
-                Update-AzConfig -LoginExperienceV2 Off -Scope Process -ErrorAction SilentlyContinue | Out-Null
+                Update-AzConfig -LoginExperienceV2 Off -Scope Process -WhatIf:$false -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
             } catch { Remove-OPIMErrorRecord -Record $PSItem }
 
-            $AzParams = @{ Tenant = $ArmTenant; SkipContextPopulation = $true; ErrorAction = 'Stop' }
+            # -SkipContextPopulation only skips filling the Az context list with a context for each of
+            # the first 25 subscriptions when the user has no context yet (Microsoft Learn,
+            # Connect-AzAccount); the module reads none of them. It has no part in the subscription
+            # prompt, which LoginExperienceV2 Off above keeps away.
+            $AzParams = @{
+                Tenant                = $ArmTenant
+                SkipContextPopulation = $true
+                WhatIf                = $false
+                Confirm               = $false
+                ErrorAction           = 'Stop'
+            }
             # Device code mode signs in to Azure with a device code too. Connect-AzAccount writes its
             # own message with the code (Az.Accounts 5.5.3: an information record; older: a warning).
             if ($UseDeviceCode) {
@@ -529,10 +553,12 @@ function Initialize-OPIMAuth {
                 Connect-AzAccount @AzParams | Out-Null
             } catch {
                 Remove-OPIMErrorRecord -Record $PSItem
-                # Terminating (OPIM-08): a failed Azure sign-in stops the command. The record keeps
-                # the Az message only -- no inner exception and the session tenant as its target
-                # object -- since the Az exception and record can reference the request (OPIM-11).
-                # SEC (EntraRBAC A19): no success, so the calling command stays latched.
+                # Terminating (OPIM-08): a failed Azure sign-in ends this function, not the command.
+                # A caller outside any try carries on past it, still latched (SEC, EntraRBAC A19: no
+                # success, so the latch stays), and the ARM gate then refuses every Az.Resources call
+                # it makes with SignInRefused. The record keeps the Az message only -- no inner
+                # exception and the session tenant as its target object -- since the Az exception and
+                # record can reference the request (OPIM-11).
                 Write-CmdletError `
                     -Message ([System.Exception]::new("Azure connection failed: $($PSItem.Exception.Message)")) `
                     -ErrorId 'AzureConnectFailed' `
