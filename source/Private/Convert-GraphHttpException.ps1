@@ -16,10 +16,12 @@ function Convert-GraphHttpException {
     InputRecord: the raw record's .Exception is the original Graph SDK exception, which for a
     transport failure (no HTTP response at all, or a non-JSON body such as an HTML gateway page)
     still references that same bearer-carrying HttpRequestMessage, so letting it escape unconverted
-    would defeat the whole point of this function. When no error code or message can be extracted
-    from the body, a status-derived (or generic) code is used and the exception's Message STRING
-    (safe to reuse -- only the exception OBJECT is dangerous) becomes the detail text. Does not
-    require typed Graph SDK classes.
+    would defeat the whole point of this function. When no Graph error code can be extracted, no
+    error id is invented: the new record keeps the id the input record carried -- its
+    FullyQualifiedErrorId STRING, never the record or its exception -- or, when that string is empty,
+    the input exception's type name. The HTTP status, when the response has one, goes into the
+    detail text instead ("HTTP 403: <message>"), and the exception's Message STRING (safe to reuse --
+    only the exception OBJECT is dangerous) is the message. Does not require typed Graph SDK classes.
 
     .PARAMETER InputRecord
     The ErrorRecord wrapping the raw HTTP exception thrown by Invoke-MgGraphRequest. The function
@@ -84,19 +86,19 @@ function Convert-GraphHttpException {
 
     # Some Graph errors return an empty or unextractable code (for example a 403 "Attempted to
     # perform an unauthorized operation.", a transport failure with no response body at all, or an
-    # HTML gateway page). Derive a code from the HTTP status (or fall back to a generic label) so
-    # SOMETHING diagnosable is always surfaced, and -- critically -- so this function never has a
-    # reason to fall through to returning the raw InputRecord below.
-    if (-not $ErrorCode) {
-        $StatusCode = $null
+    # HTML gateway page). No error id is invented for them: the new record keeps the id the caller
+    # saw before -- the input record's FullyQualifiedErrorId STRING; the record and its exception
+    # are never reused -- or, when that string is empty, the input exception's type name. The HTTP
+    # status goes into the detail text instead, so the failure stays diagnosable and this function
+    # never has a reason to fall through to returning the raw InputRecord below.
+    $HasGraphCode = [bool]$ErrorCode
+    $StatusCode = $null
+    if (-not $HasGraphCode) {
         try { $StatusCode = [int]$Exception.Response.StatusCode } catch { Remove-OPIMErrorRecord -Record $PSItem }
-        $StatusLabels = @{
-            400 = 'BadRequest'; 401 = 'Unauthorized'; 403 = 'Forbidden'; 404 = 'NotFound'
-            409 = 'Conflict'; 429 = 'TooManyRequests'; 500 = 'InternalServerError'; 503 = 'ServiceUnavailable'
+        $ErrorCode = [string]$InputRecord.FullyQualifiedErrorId
+        if ([string]::IsNullOrWhiteSpace($ErrorCode)) {
+            $ErrorCode = if ($null -ne $Exception) { $Exception.GetType().FullName } else { [System.Exception].FullName }
         }
-        $ErrorCode = if ($StatusCode -and $StatusLabels.ContainsKey($StatusCode)) { $StatusLabels[$StatusCode] }
-        elseif ($StatusCode) { "HTTP$StatusCode" }
-        else { 'GraphError' }
     }
 
     # SECURITY: never fall through to the raw InputRecord. Its .Exception is the original Graph SDK
@@ -104,7 +106,15 @@ function Convert-GraphHttpException {
     # header carries the bearer token in plain text. The exception's Message STRING is safe to reuse
     # here (it is just text); the exception OBJECT is not, so it is never chained as -InnerException.
     if (-not $ErrorMessage) { $ErrorMessage = $Exception.Message }
-    $Detail = if ($ErrorMessage) { "$ErrorCode`: $ErrorMessage" } else { [string]$ErrorCode }
+    $Detail = if ($HasGraphCode) {
+        if ($ErrorMessage) { "$ErrorCode`: $ErrorMessage" } else { [string]$ErrorCode }
+    } else {
+        $StatusText = if ($StatusCode) { "HTTP $StatusCode" } else { $null }
+        if ($StatusText -and $ErrorMessage) { "$StatusText`: $ErrorMessage" }
+        elseif ($StatusText) { $StatusText }
+        elseif ($ErrorMessage) { [string]$ErrorMessage }
+        else { [string]$ErrorCode }
+    }
 
     $NewException = [System.Exception]::new($Detail)
     $ErrorRecord  = [ErrorRecord]::new(

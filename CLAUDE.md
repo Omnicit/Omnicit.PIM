@@ -650,10 +650,11 @@ context, whether or not the module established it.
    `InvalidAuthenticationToken`, `CompactToken`, `token is expired` or `Lifetime validation failed`,
    calls `Initialize-OPIMAuth -ForceRefresh` and retries once (`:148-162`).
 3. **Error conversion.** Anything else is thrown as `Convert-GraphHttpException`'s record, whose
-   `FullyQualifiedErrorId` is the Graph `error.code` -- or, when the body carries none, a status
-   label (`Forbidden`, `TooManyRequests`, `HTTP<n>`, ...) and else `GraphError` (`:165`). It is
-   always a NEW record that never chains the raw exception. A caller receives a response or a
-   thrown `ErrorRecord` -- there is no side-channel protocol.
+   `FullyQualifiedErrorId` is the Graph `error.code` -- or, when the body carries none, the input
+   record's own `FullyQualifiedErrorId` string (its exception's type name when that is empty), with
+   the HTTP status in the message, `HTTP 403: ...` (`:165`). No error id is invented. It is always a
+   NEW record that never chains the raw exception. A caller receives a response or a thrown
+   `ErrorRecord` -- there is no side-channel protocol.
 
 Every one of its catches calls `Remove-OPIMErrorRecord -Record $PSItem` first; see **Error
 Handling** for what that does.
@@ -909,10 +910,12 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   $Err.ErrorDetails = [System.Management.Automation.ErrorDetails]::new('Your message here.')
   ```
 - **Graph errors and Az.Resources errors differ by design.** A Graph failure reaches the caller as
-  the record `Convert-GraphHttpException` built inside the wrapper: the Graph `error.code` (else a
-  status label such as `Forbidden`, else `GraphError`) as `FullyQualifiedErrorId` and
-  `"<code>: <message>"` as `ErrorDetails`. It never chains the original exception -- that
-  exception reaches the request message and its token -- and it is never the raw record itself.
+  the record `Convert-GraphHttpException` built inside the wrapper: the Graph `error.code` as
+  `FullyQualifiedErrorId` and `"<code>: <message>"` as `ErrorDetails`. Without a Graph code it keeps
+  the input record's id string (else its exception's type name) and reads `"HTTP <n>: <message>"`
+  when there is a status -- a status is never turned into an id of its own (no new ErrorId). It
+  never chains the original exception -- that exception reaches the request message and its
+  token -- and it is never the raw record itself.
   An `Az.Resources` error arrives in `$PSItem` as the cmdlet threw it; inspect
   `$PSItem.FullyQualifiedErrorId` (`.Split(',')[0]` where the id carries a suffix, as
   `Get-OPIMAzureRole.ps1:106` does) and pass it to `$PSCmdlet.WriteError()` or rewrap it with
@@ -937,7 +940,9 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `$Error` is a private list distinct from the caller's, and the `ErrorRecord` bound to `$PSItem`
   is not the instance PowerShell stored in `$global:Error`. A new catch on a transport path starts
   with the scrub. The gate's exemption table is empty, and an entry there needs a structural
-  predicate on the catch's try body, never a file name alone.
+  predicate on the catch's try body, never a file name alone. The gate checks catches, not that a
+  raw call HAS one: a raw transport call outside any `try` is not scrubbed. Today that is only the
+  `Connect-MgGraph -AccessToken` hand-off in `Initialize-OPIMAuth.ps1:336`; wrap any new raw call.
 - **Error flow patterns:**
   ```powershell
   # In process blocks (single-item cmdlets: Disable-*, Get-*): use return

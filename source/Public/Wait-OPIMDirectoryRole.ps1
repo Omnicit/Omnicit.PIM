@@ -48,7 +48,8 @@ function Wait-OPIMDirectoryRole {
     begin {
         Initialize-OPIMAuth
         [List[PSObject]]$RoleRequests = [List[PSObject]]::new()
-        $parentId = Get-Random
+        # Bounded, so the per-request child id ($parentId + 1 + index) can never overflow Int32.
+        $parentId = Get-Random -Maximum 1000000
         $effectiveTimeout = $Timeout
     }
     process {

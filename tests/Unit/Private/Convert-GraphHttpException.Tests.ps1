@@ -115,17 +115,18 @@ Describe 'Convert-GraphHttpException' {
                 $Result | Should -BeOfType ([System.Management.Automation.ErrorRecord])
                 [object]::ReferenceEquals($Result, $InputRecord) | Should -BeFalse
                 [object]::ReferenceEquals($Result.Exception, $Ex) | Should -BeFalse
+                $Result.Exception.InnerException | Should -BeNullOrEmpty
             }
         }
 
-        It 'uses GraphError when neither code nor status exists' {
+        It "keeps the input record's id when the body has no error code" {
             InModuleScope Omnicit.PIM {
                 $Ex          = [System.Exception]::new('A generic non-JSON error')
                 $InputRecord = [System.Management.Automation.ErrorRecord]::new($Ex, 'GenericError', [System.Management.Automation.ErrorCategory]::NotSpecified, $null)
 
                 $Result = Convert-GraphHttpException -InputRecord $InputRecord
 
-                $Result.FullyQualifiedErrorId | Should -Be 'GraphError'
+                $Result.FullyQualifiedErrorId | Should -Be 'GenericError'
             }
         }
 
@@ -136,8 +137,20 @@ Describe 'Convert-GraphHttpException' {
 
                 $Result = Convert-GraphHttpException -InputRecord $InputRecord
 
-                $Result.Exception.Message | Should -Be 'GraphError: A generic non-JSON error'
-                $Result.ErrorDetails.Message | Should -Be 'GraphError: A generic non-JSON error'
+                $Result.Exception.Message | Should -Be 'A generic non-JSON error'
+                $Result.ErrorDetails.Message | Should -Be 'A generic non-JSON error'
+            }
+        }
+
+        It 'uses the exception type name when the input record has no id' {
+            InModuleScope Omnicit.PIM {
+                $Ex          = [System.Net.Http.HttpRequestException]::new('A generic non-JSON error')
+                $InputRecord = [System.Management.Automation.ErrorRecord]::new($Ex, '', [System.Management.Automation.ErrorCategory]::NotSpecified, $null)
+                $InputRecord.FullyQualifiedErrorId | Should -BeNullOrEmpty -Because 'the fixture must carry no id, or the fallback is never reached'
+
+                $Result = Convert-GraphHttpException -InputRecord $InputRecord
+
+                $Result.FullyQualifiedErrorId | Should -Be 'System.Net.Http.HttpRequestException'
             }
         }
     }
@@ -151,7 +164,7 @@ Describe 'Convert-GraphHttpException' {
                 $Result = Convert-GraphHttpException -InputRecord $InputRecord
 
                 [object]::ReferenceEquals($Result, $InputRecord) | Should -BeFalse
-                $Result.FullyQualifiedErrorId | Should -Be 'GraphError'
+                $Result.FullyQualifiedErrorId | Should -Be 'HttpError'
                 $Result.Exception.InnerException | Should -BeNullOrEmpty
             }
         }
@@ -166,8 +179,8 @@ Describe 'Convert-GraphHttpException' {
                 $Result = Convert-GraphHttpException -InputRecord $InputRecord
 
                 [object]::ReferenceEquals($Result, $InputRecord) | Should -BeFalse
-                $Result.FullyQualifiedErrorId | Should -Be 'GraphError'
-                $Result.Exception.Message | Should -Be 'GraphError: not valid json but contains "error" keyword'
+                $Result.FullyQualifiedErrorId | Should -Be 'HttpError'
+                $Result.Exception.Message | Should -Be 'not valid json but contains "error" keyword'
             }
         }
     }
@@ -187,14 +200,14 @@ Describe 'Convert-GraphHttpException' {
                 $Result = Convert-GraphHttpException -InputRecord $InputRecord
 
                 [object]::ReferenceEquals($Result, $InputRecord) | Should -BeFalse
-                $Result.FullyQualifiedErrorId | Should -Be 'GraphError'
-                $Result.Exception.Message | Should -Be 'GraphError: HTTP connection error'
+                $Result.FullyQualifiedErrorId | Should -Be 'HttpError'
+                $Result.Exception.Message | Should -Be 'HTTP connection error'
             }
         }
     }
 
     Context 'When the body has no error code but the response has a status' {
-        It 'uses the status label as the id when the body has no error code' {
+        It "keeps the input record's id when the body has no error code" {
             InModuleScope Omnicit.PIM {
                 $Ex = [System.Exception]::new('Attempted to perform an unauthorized operation.')
                 $Ex | Add-Member -MemberType NoteProperty -Name Response -Value ([PSCustomObject]@{ StatusCode = 403 })
@@ -202,20 +215,27 @@ Describe 'Convert-GraphHttpException' {
 
                 $Result = Convert-GraphHttpException -InputRecord $InputRecord
 
-                $Result.FullyQualifiedErrorId | Should -Be 'Forbidden'
-                $Result.Exception.Message | Should -Be 'Forbidden: Attempted to perform an unauthorized operation.'
+                $Result.FullyQualifiedErrorId | Should -Be 'HttpError' -Because 'a status code must never become an error id of its own'
+                [object]::ReferenceEquals($Result, $InputRecord) | Should -BeFalse
             }
         }
 
-        It 'uses HTTP and the number for a status without a label' {
+        It 'names the HTTP status in the detail' {
             InModuleScope Omnicit.PIM {
-                $Ex = [System.Exception]::new('I am a teapot')
-                $Ex | Add-Member -MemberType NoteProperty -Name Response -Value ([PSCustomObject]@{ StatusCode = 418 })
-                $InputRecord = [System.Management.Automation.ErrorRecord]::new($Ex, 'HttpError', [System.Management.Automation.ErrorCategory]::ConnectionError, $null)
+                foreach ($Case in @(
+                        @{ Status = 403; Message = 'Attempted to perform an unauthorized operation.' }
+                        @{ Status = 418; Message = 'I am a teapot' }
+                    )) {
+                    $Ex = [System.Exception]::new($Case.Message)
+                    $Ex | Add-Member -MemberType NoteProperty -Name Response -Value ([PSCustomObject]@{ StatusCode = $Case.Status })
+                    $InputRecord = [System.Management.Automation.ErrorRecord]::new($Ex, 'HttpError', [System.Management.Automation.ErrorCategory]::ConnectionError, $null)
 
-                $Result = Convert-GraphHttpException -InputRecord $InputRecord
+                    $Result = Convert-GraphHttpException -InputRecord $InputRecord
 
-                $Result.FullyQualifiedErrorId | Should -Be 'HTTP418'
+                    $Result.Exception.Message | Should -Be ('HTTP {0}: {1}' -f $Case.Status, $Case.Message)
+                    $Result.ErrorDetails.Message | Should -Be ('HTTP {0}: {1}' -f $Case.Status, $Case.Message)
+                    $Result.FullyQualifiedErrorId | Should -Be 'HttpError'
+                }
             }
         }
     }

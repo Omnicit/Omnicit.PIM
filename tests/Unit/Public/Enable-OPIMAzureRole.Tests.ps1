@@ -437,6 +437,60 @@ Describe 'Enable-OPIMAzureRole' {
         }
     }
 
+    Context 'When the -Wait poll fails with a record that points at a request carrying a token' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $fakeRole = [PSCustomObject]@{
+                Name                      = 'elig-001'
+                ScopeId                   = '/subscriptions/sub-001'
+                ScopeDisplayName          = 'My Subscription'
+                PrincipalId               = 'principal-001'
+                RoleDefinitionId          = '/providers/Microsoft.Authorization/roleDefinitions/role-def-001'
+                RoleDefinitionDisplayName = 'Contributor'
+            }
+            $fakeResponse = [PSCustomObject]@{
+                Name        = [System.Guid]::NewGuid().ToString()
+                Scope       = '/subscriptions/sub-001'
+                RequestType = 'SelfActivate'
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $fakeRole }
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest { return $fakeResponse }
+            # The poll fails as an ARM call does: its record points at the request message, whose
+            # Authorization header carries the token. The token is built at runtime and says what it is.
+            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleRequest {
+                $PSCmdlet.ThrowTerminatingError($script:PollFixture.Record)
+            }
+
+            function New-PollFixture {
+                $Token = 'Bearer ' + ('x' * 40) + 'NOT-A-REAL-TOKEN'
+                $Request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://management.azure.com/subscriptions/sub-001/providers/Microsoft.Authorization/roleAssignmentScheduleRequests/x')
+                $null = $Request.Headers.TryAddWithoutValidation('Authorization', $Token)
+                $Response = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]::Forbidden)
+                $Response.RequestMessage = $Request
+                $Exception = [Microsoft.PowerShell.Commands.HttpResponseException]::new('Operation returned an invalid status code ''Forbidden''', $Response)
+                [pscustomobject]@{
+                    Request = $Request
+                    Record  = [System.Management.Automation.ErrorRecord]::new($Exception, 'AuthorizationFailed', 'PermissionDenied', $Request)
+                }
+            }
+        }
+
+        It 'scrubs the request of the failed poll and still ends the command' {
+            $script:PollFixture = New-PollFixture
+            $script:PollFixture.Request.Headers.Contains('Authorization') | Should -BeTrue -Because 'the request must carry the header before the call, or its absence after proves nothing'
+            $Thrown = $null
+            try {
+                Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)' -Wait
+            } catch {
+                $Thrown = $PSItem
+            }
+            $Thrown | Should -Not -BeNullOrEmpty -Because 'a failed poll ends the command, as it did before the scrub'
+            $Thrown.FullyQualifiedErrorId | Should -BeLike 'AuthorizationFailed*'
+            $script:PollFixture.Request.Headers.Contains('Authorization') | Should -BeFalse
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
+        }
+    }
+
     Context 'When the API throws an exception that has an InnerException' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

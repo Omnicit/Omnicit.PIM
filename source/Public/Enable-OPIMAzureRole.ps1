@@ -131,7 +131,14 @@ function Enable-OPIMAzureRole {
 
                 if ($Wait) {
                     do {
-                        $RoleActivation = Get-AzRoleAssignmentScheduleRequest -Name $Response.Name -Scope $Response.Scope -ErrorAction Stop
+                        try {
+                            $RoleActivation = Get-AzRoleAssignmentScheduleRequest -Name $Response.Name -Scope $Response.Scope -ErrorAction Stop
+                        } catch {
+                            # An ARM failure record can point at the request and its bearer token:
+                            # scrub it, then end the command with it as before.
+                            Remove-OPIMErrorRecord -Record $PSItem
+                            $PSCmdlet.ThrowTerminatingError($PSItem)
+                        }
                     } while (-not $RoleActivation)
                 }
 

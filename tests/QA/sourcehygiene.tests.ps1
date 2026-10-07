@@ -126,14 +126,14 @@ BeforeAll {
     <#
         The floors sit just under the counts measured on 2026-10-07, after every catch in a
         transport-reaching file was made to scrub first: 20 transport-reaching files under source/
-        holding 28 of the 49 catch clauses in source/. The named control,
+        holding 29 of the 50 catch clauses in source/. The named control,
         source/Private/Invoke-OPIMGraphRequest.ps1, is asserted with its EXACT count instead (7: the three in its nested
         Get-ClaimsFromException, the first attempt, the claims retry, the status read and the
         refresh retry), so a catch that stops being seen fails there with a clear cause instead of
         quietly shrinking a total.
     #>
     $script:ScrubTransportFileFloor = 18
-    $script:ScrubCatchFloor = 26
+    $script:ScrubCatchFloor = 27
     $script:ScrubControlPath = 'source/Private/Invoke-OPIMGraphRequest.ps1'
     $script:ScrubControlCatchCount = 7
 
@@ -435,7 +435,7 @@ exclude the file
         $script:ScrubTransportFiles.Count | Should -BeGreaterThan $script:ScrubTransportFileFloor -Because (
             'source/ held 20 transport-reaching files on 2026-10-07; a scan at the floor or below has broken transport detection, not found fewer files. Found: {0}' -f ($script:ScrubTransportFiles -join ', '))
         $script:ScrubCatchCount | Should -BeGreaterThan $script:ScrubCatchFloor -Because (
-            'those files held 28 of the 49 catch clauses in source/ on 2026-10-07; a count at the floor or below has broken the catch enumeration, not found fewer catches')
+            'those files held 29 of the 50 catch clauses in source/ on 2026-10-07; a count at the floor or below has broken the catch enumeration, not found fewer catches')
     }
 
     It 'counts every catch of the named control file' {
