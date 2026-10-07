@@ -89,7 +89,7 @@ worktree, and its console output also goes to the file named in `OPIMLIVE_HOSTLO
 
 ### S.1. Find the build under test and tie it to the branch head
 
-- [ ] **S.1** Window B. The newest build in `output/module/Omnicit.PIM/` was made after the branch head was committed.
+- [x] **S.1** Window B. The newest build in `output/module/Omnicit.PIM/` was made after the branch head was committed.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -104,11 +104,18 @@ $HeadTime = [datetimeoffset]::Parse((git log -1 --format=%cI))
 `Built after the branch head was committed: True`; `Tracked changes in the working tree: 0`.
 **Failure looks like:** `False`, or a tracked change -- build again before any check below.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Three windows B, each tied to its head before its first module check:
+- 17:22 UTC, first window B, head 7ff75df: Built version folder: 0.6.0; Built after the branch head was committed: False -- the build predated the head. Built again; 17:23 UTC: True; Tracked changes in the working tree: 0.
+- 17:46 UTC, second window B, head 6a0d56a (the three corrected blocks): 0.6.0; True; 0.
+- 18:16 UTC, third window B, head f4886a6 (check 4.2 added): 0.6.0; True; 0.
+```
 
 ### S.2. The harness loads
 
-- [ ] **S.2** Window B. OerLive is 1.0.3, the harness reads the test values through it, and the TOTP implementation reproduces RFC 6238.
+- [x] **S.2** Window B. OerLive is 1.0.3, the harness reads the test values through it, and the TOTP implementation reproduces RFC 6238.
 
 ```powershell
 Import-Module (Join-Path $env:OPIMLIVE_HOME 'OpimLive/OpimLive.psm1') -Force
@@ -123,11 +130,15 @@ $Target = Get-OpimLiveTarget
 **Failure looks like:** `False` on the self-test -- STOP: the harness would enter wrong codes. `False`
 on the host log -- the Azure checks cannot complete their code; set it before section 2.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+17:23 UTC: OerLive version: 1.0.3; Test user and tenant read (values hidden): True; TOTP self-test: True; Host log set and present: True.
+```
 
 ### S.3. The fixture is in place, and this step has no object of its own
 
-- [ ] **S.3** Window A, as `oer-live-cc`. The fixture's user and group exist, and no object carries the prefix `opim-s13-`.
+- [x] **S.3** Window A, as `oer-live-cc`. The fixture's user and group exist, and no object carries the prefix `opim-s13-`.
 
 ```powershell
 Import-Module (Join-Path $env:OPIMLIVE_HOME '../../Omnicit Entra RBAC/Live-verifiering/OerLive/OerLive.psm1') -Force
@@ -144,13 +155,17 @@ and the group; the resource groups are not directory objects).
 STOP: the fixture is not the one this file assumes. A throw on an unread collection is a failed read,
 never a `0`.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+17:24 UTC, window A as oer-live-cc: every identity check line True (app-only certificate session with the identity's app id, app name, tenant, service principal name, organization name, verified user domain, organization id); Objects with the prefix opim-s13-: 0; Objects with the prefix opim-s1- (the fixture): 2.
+```
 
 ### 0. Preparation
 
 ### 0.1. Identity check
 
-- [ ] **0.1** Window B. `Connect-OpimLiveUser` without `-IncludeARM` signs the module in with one device code; the account is the test user, the tenant the test tenant, and the session is pinned to the test tenant's id.
+- [x] **0.1** Window B. `Connect-OpimLiveUser` without `-IncludeARM` signs the module in with one device code; the account is the test user, the tenant the test tenant, and the session is pinned to the test tenant's id.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -172,13 +187,18 @@ the tenant id.
 **Failure looks like:** `False` on any line, or a `STOP` -- STOP: run `Disconnect-OPIM`, end window B
 and run no other check.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+17:24 UTC: Disconnect-OPIM, Disconnect-MgGraph and Disconnect-AzAccount ran first; one device code, row Graph Information True ok; signed in to Graph as the test user: True; to the test tenant: True; device code mode remembered: True; Session tenant is the test tenant: True; Token tenant is the test tenant: True; The module recorded its Graph session: True.
+Run again with the same lines in the second window B (17:47 UTC). In the third window B, check 4.2 signed in through the same harness call and its harness lines were all True again (18:17 UTC). No block printed the account or the tenant id.
+```
 
 ### 1. The tenant is pinned
 
 ### 1.1. A cmdlet without a tenant, then a forced refresh, keeps the tenant and the MSAL app
 
-- [ ] **1.1** Window B. `Get-OPIMDirectoryRole` and then `Initialize-OPIMAuth -ForceRefresh` without a tenant (the module's token-rejected retry) leave the session on the test tenant, reuse the same MSAL app and ask for no code.
+- [x] **1.1** Window B. `Get-OPIMDirectoryRole` and then `Initialize-OPIMAuth -ForceRefresh` without a tenant (the module's token-rejected retry) leave the session on the test tenant, reuse the same MSAL app and ask for no code.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -204,11 +224,15 @@ within seconds.
 returned within 30 seconds, stop it, record a non-silent refresh and run 0.1 again. `False` on a
 tenant line -- STOP: the tenant is not pinned (OPIM-07 is not fixed).
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+17:25 UTC: Eligible directory roles: 2; Device code messages: 0; Session tenant is still the test tenant: True; Token tenant is the test tenant: True; The same MSAL app (not rebuilt): True; Never relabelled to organizations: True; block time 1 s.
+```
 
 ### 1.2. The real token carries its tenant where the module reads it (the recorded claims, class B)
 
-- [ ] **1.2** Window B. The test user's real Graph token has a top-level `tid` equal to the test tenant, the module's own parser reads it, and its claim names are recorded -- never a value.
+- [x] **1.2** Window B. The test user's real Graph token has a top-level `tid` equal to the test tenant, the module's own parser reads it, and its claim names are recorded -- never a value.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -260,13 +284,19 @@ lines `True`; `Token segments: 3`. Only names are printed: no claim value, and n
 **Failure looks like:** `False` on a tenant line -- STOP: the module reads the tenant from somewhere
 the real token does not carry it.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+17:25 UTC: Claim names: acct, acr, acrs, aio, amr, app_displayname, appid, appidacr, aud, exp, iat, idtyp, ipaddr, iss, name, nbf, oid, platf, puid, rh, scp, sid, sub, tenant_region_scope, tid, unique_name, upn, uti, ver, wids, xms_acd, xms_act_fct, xms_aud_guid, xms_ftd, xms_idrel, xms_pftexp, xms_st, xms_sub_fct, xms_tcdt, xms_tdbr, xms_tnt_fct.
+tid equals the test tenant: True; Get-OPIMTokenTenantId on the real token equals the test tenant: True; The issuer names the same tenant: True; Token segments: 3.
+Record: the unit tests' fixture New-OPIMTestAccessToken carries aud, iss, tid, oid, upn, scp and ver, all among these names. Only names were printed.
+```
 
 ### 2. Azure on the session's tenant
 
 ### 2.1. Get-OPIMAzureRole after a Graph-only sign-in connects Azure to the same tenant, with a device code
 
-- [ ] **2.1** Window B. With no Az context in the process, `Get-OPIMAzureRole` signs Azure in with a device code (never a silent reuse), to the test tenant and as the test user, asks for no subscription, and lists the fixture's two Azure roles.
+- [x] **2.1** Window B. With no Az context in the process, `Get-OPIMAzureRole` signs Azure in with a device code (never a silent reuse), to the test tenant and as the test user, asks for no subscription, and lists the fixture's two Azure roles.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -320,11 +350,17 @@ set; the unit tests pin both settings.
 for another tenant or user -- STOP. A hang -- the subscription prompt or a lost code; stop the block
 after 5 minutes and record it.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+First attempt, 17:26 UTC: Az context before: False; one Azure device code completed by the helper; Az context is the test tenant: True; Az context is the test user: True; Eligible Azure roles: 2; scopes: opim-s1-rg, opim-s1-rg2 -- then the block stopped at its read of the host log with an IOException, since window B holds that file open for writing. The read now opens the file with shared access (6a0d56a).
+Second attempt, 17:27 UTC, after Disconnect-AzAccount in the block: Az context before: False; Azure device codes completed by the helper: 1; Az context is the test tenant: True; Az context is the test user: True; Eligible Azure roles: 2; scopes: opim-s1-rg, opim-s1-rg2; Subscription prompts in the host log so far: 0; Process scope LoginExperienceV2: Off; CurrentUser LoginExperienceV2 unchanged: True; Subscriptions the test user reaches: 0.
+Record: the test user reaches no subscription, so Az had nothing to ask about either way. Live shows that the sign-in completes with a device code, on the test tenant and as the test user, and that the process-scope setting is Off; the unit tests pin both settings.
+```
 
 ### 2.2. Connect-OPIM -DeviceCode -IncludeARM asks for no subscription (A15)
 
-- [ ] **2.2** Window B. After `Disconnect-AzAccount`, `Connect-OpimLiveUser -IncludeARM -NoDisconnect` (which runs `Connect-OPIM -DeviceCode -IncludeARM`) completes the Azure code and nothing asks for a subscription.
+- [x] **2.2** Window B. After `Disconnect-AzAccount`, `Connect-OpimLiveUser -IncludeARM -NoDisconnect` (which runs `Connect-OPIM -DeviceCode -IncludeARM`) completes the Azure code and nothing asks for a subscription.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -344,13 +380,17 @@ $HostText = $Reader.ReadToEnd(); $Reader.Dispose()
 **Record:** whether the Az context carries a subscription.
 **Failure looks like:** a hang or a prompt -- STOP the block after 5 minutes and record it.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+17:28 UTC: row Azure Host False ok; every harness line True (Graph as the test user, the test tenant, device code mode remembered, Azure context the test user and the test tenant); Subscription prompts in the host log so far: 0; Az context has no default subscription (SkipContextPopulation): True. Az wrote its own line "Retrieving subscriptions for the selection..." and asked nothing; block time 18 s.
+```
 
 ### 3. A foreign Graph SDK session
 
 ### 3.1. Another Connect-MgGraph in the module's process is refused, and nothing is sent
 
-- [ ] **3.1** Window B. After `oer-live-cc` connects the process's Graph SDK session with its certificate, `Get-OPIMDirectoryRole` and `Get-OPIMAzureRole` are refused and no Graph request is sent.
+- [x] **3.1** Window B. After `oer-live-cc` connects the process's Graph SDK session with its certificate, `Get-OPIMDirectoryRole` and `Get-OPIMAzureRole` are refused and no Graph request is sent.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -391,11 +431,17 @@ app identity is printed.
 session it did not connect (OPIM-09 is not fixed). The last line `False` -- the module switched the
 session back by itself, STOP.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+First attempt, 17:28 UTC: Connect-MgGraph with the certificate failed inside the SDK on top of the module's -AccessToken session ("MSAL deserialization failed to parse the cache contents"); no module command ran. The block now runs Disconnect-MgGraph first (6a0d56a).
+Second attempt, 17:29 UTC: The process's Graph session is now app-only: True; then the terminating GraphSessionChanged of Get-OPIMDirectoryRole propagated out of the runner's try and ended the block before its counts. A cleanup block measured: Graph requests the module sent before the block stopped: 0; the proxy removed: True; the process's Graph session is still oer-live-cc's app-only session: True; the module still holds its own state: True. The block now gives each call its own try (6a0d56a).
+Third attempt, 17:30 UTC: The process's Graph session is now app-only: True; Get-OPIMDirectoryRole: rows 0; errors: GraphSessionChanged,Initialize-OPIMAuth; Get-OPIMAzureRole: rows 0; errors: GraphSessionChanged,Initialize-OPIMAuth (the expectation's "or only GraphSessionChanged"); Graph requests sent by the module: 0; The session is still oer-live-cc's (never switched back by the module): True.
+```
 
 ### 3.2. Disconnect-MgGraph, Disconnect-OPIM and a new sign-in as the test user
 
-- [ ] **3.2** Window B. The foreign session is closed, the module's state is cleared, and a new device code sign-in brings the module back as the test user.
+- [x] **3.2** Window B. The foreign session is closed, the module's state is cleared, and a new device code sign-in brings the module back as the test user.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -413,13 +459,17 @@ $Sign.Codes | Format-Table App, Stream, Tagged, Status -AutoSize
 `Azure Host False ok`; every True/False line `True`; `Eligible directory roles: 2`.
 **Failure looks like:** `False` -- STOP as in 0.1.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+17:30 UTC: Auth state cleared: True; rows Graph Information True ok and Azure Host False ok; every harness line True; Eligible directory roles: 2; block time 39 s.
+```
 
 ### 4. The bearer scrub
 
 ### 4.1. A 404 and a 400 leave no token in any error record
 
-- [ ] **4.1** Window B. A request for a schedule id that does not exist answers 404, an invalid filter answers 400, and a walk of `$Error`, the `-ErrorVariable` and every inner exception finds no `Authorization` header and no token.
+- [x] **4.1** Window B. A request for a schedule id that does not exist answers 404, an invalid filter answers 400, and a walk of `$Error`, the `-ErrorVariable` and every inner exception finds no `Authorization` header and no token.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -479,7 +529,13 @@ reached (each one is a raw SDK record whose header the scrub cleared).
 **Failure looks like:** any count above `0` -- STOP and rotate nothing yet: the token did not leave the
 process, but the scrub failed (OPIM-11 is not fixed). Never paste the rendered text anywhere.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+First attempt, 17:31 UTC, first window B: a fault in my runner, not in the module. The runner dot-sourced each block, the block's own $Queue replaced the runner's queue-folder variable, and the runner then looped on this block, each pass ending at once with CommandNotFoundException; the loop overwrote the first pass's transcript, so that pass's output is lost. Window B was stopped (its sign-in ended with the process), the runner now runs each block in a child scope, and a second window B ran S.1 and 0.1 again.
+Second attempt, 17:47 UTC: schedule id that does not exist: records 6, Graph code UnknownError (a 404 with an empty message), the raw SDK record among the six. Administrative unit that does not exist: records 6, Request_ResourceNotFound (a 404), the raw SDK record among the six. 400 request through Get-OPIMDirectoryRole: rows 0; errors BadRequest and BadRequest,Get-OPIMDirectoryRole, twice (with -Filter both the eligible and the active list are read).
+Records and objects walked: 32; request messages reached: 2; with an Authorization header: 0; Token-shaped strings (eyJ) in the rendered records: 0; Bearer values in the rendered records: 0.
+```
 
 ### 4.2. A failed Azure read leaves no token in any error record
 
@@ -487,7 +543,7 @@ Added after the first run: check 6.3 showed that the caller's `-ErrorVariable` k
 `Az.Resources` records of a failed Azure command, and 4.1 walks Graph records only. The block reads at
 a subscription that does not exist, so ARM refuses the read and nothing is written.
 
-- [ ] **4.2** Window B. `Get-OPIMAzureRole` and `Get-OPIMAzureRole -Activated` at a subscription that does not exist fail, and a walk of `$Error`, the `-ErrorVariable` and every inner exception, request and request wrapper finds no `Authorization` header and no token.
+- [x] **4.2** Window B. `Get-OPIMAzureRole` and `Get-OPIMAzureRole -Activated` at a subscription that does not exist fail, and a walk of `$Error`, the `-ErrorVariable` and every inner exception, request and request wrapper finds no `Authorization` header and no token.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -545,13 +601,20 @@ $Rendered = $null; $Text = $null
 **Failure looks like:** any count above `0` -- STOP as in 4.1. No error on a read -- record it and mark
 the box `[~]`: no failed Azure record was produced to walk.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:17 UTC, third window B on f4886a6: rows Graph Information True ok and Azure Host False ok; every harness line True.
+Azure eligible read at a subscription that does not exist: rows 0; records 3: SubscriptionNotFound from Get-AzRoleEligibilitySchedule twice, and SubscriptionNotFound,Get-OPIMAzureRole. Azure active read: rows 0; records 3: the same from Get-AzRoleAssignmentScheduleInstance, and SubscriptionNotFound,Get-OPIMAzureRole.
+Records and objects walked: 14; requests and request wrappers reached: 0; with an Authorization header: 0; Token-shaped strings (eyJ): 0; Bearer values: 0.
+Record: these Az.Resources records carry no request and no request wrapper at all, so nothing in them can hold the header. The scrub of an Azure record that does carry a request is class B: Enable-OPIMAzureRole.Tests.ps1 ("scrubs the request of the failed poll and still ends the command") and Remove-OPIMErrorRecord.Tests.ps1.
+```
 
 ### 5. The listings
 
 ### 5.1. The listings give step 2's counts
 
-- [ ] **5.1** Window B. The three listings, now read through every page, give the fixture's counts.
+- [x] **5.1** Window B. The three listings, now read through every page, give the fixture's counts.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -569,7 +632,12 @@ if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
 **Failure looks like:** another count -- record and STOP. A terminating error is a failed read, never
 a pass.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+17:48 UTC, second window B: Eligible directory roles: 2; Eligible group assignments: 2; Eligible Azure roles: 2; Combined directory rows (-All): 2; Combined group rows (-All): 2 -- step 2's counts.
+The second window B had no Az context (0.1 disconnects Azure first), so Get-OPIMAzureRole started an Azure device code that this block does not complete itself; the harness's helper completed it from the host log (status ok), and the block returned after 630 s, past the 540 s my runner waited.
+```
 
 ### 6. The activations, each twice (G8)
 
@@ -578,7 +646,7 @@ id in parentheses. The justification is `opim-s13 live verification`.
 
 ### 6.1. A directory role, activated twice
 
-- [ ] **6.1** Window B. Usage Summary Reports Reader activates once; the second call gives a clear outcome and no second activation.
+- [x] **6.1** Window B. Usage Summary Reports Reader activates once; the second call gives a clear outcome and no second activation.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -601,11 +669,15 @@ second request accepted or a crash is a fail (G8).
 **Failure looks like:** a terminating error on the first call (record its error id), or more than one
 active row -- STOP.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+17:59 UTC: First: status Provisioned. Second (G8): output 0; errors 8, the last RoleAssignmentExists,Enable-OPIMDirectoryRole (non-terminating; Graph 400 "The Role assignment already exists."), the raw SDK record among the others -- the shape whose header 4.1 measured cleared. Active rows of the role: 1.
+```
 
 ### 6.2. Group membership, activated twice
 
-- [ ] **6.2** Window B. `opim-s1-grp` as member activates once; the second call gives a clear outcome.
+- [x] **6.2** Window B. `opim-s1-grp` as member activates once; the second call gives a clear outcome.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -627,11 +699,16 @@ try { $Second = @(Enable-OPIMEntraIDGroup -GroupName $Old -Justification 'opim-s
 (OPIM-39, measured once in step 2: a repeated activation removed it within seven minutes).
 **Failure looks like:** as in 6.1.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+17:59 UTC: First: status Provisioned at 17:59:37 UTC. Second (G8): output 0; errors 8, the last RoleAssignmentExists,Enable-OPIMEntraIDGroup (non-terminating; Graph 400, whose message carries the directory's Request_BadRequest "One or more added object references already exist for the following modified properties: 'members'."). Active member rows: 1.
+Record (OPIM-39): the membership was still active at 18:06:00 UTC, 6 min 23 s after it was provisioned, when 6.5 deactivated it; whether it would have gone by itself later is not known from this run.
+```
 
 ### 6.3. Reader on opim-s1-rg, activated twice
 
-- [ ] **6.3** Window B. Reader on `opim-s1-rg` activates once through the ARM gate; the second call gives a clear outcome.
+- [x] **6.3** Window B. Reader on `opim-s1-rg` activates once through the ARM gate; the second call gives a clear outcome.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -654,11 +731,15 @@ since ARM's listing at the resource group scope lags, OPIM-41).
 **Failure looks like:** as in 6.1. `SignInRefused` or `TenantMismatch` on the first call -- STOP: the
 ARM gate refused a session it should accept.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:00 UTC: First: status Provisioned. Second (G8): output 0; errors 6, the last RoleAssignmentExists,Enable-OPIMAzureRole (non-terminating), four raw Az.Resources records RoleAssignmentExists from New-AzRoleAssignmentScheduleRequest among the others -- the reason check 4.2 was added. Active Reader rows (scope '/'): 1.
+```
 
 ### 6.4. The five-minute rule
 
-- [ ] **6.4** Window B. Five minutes pass after the last activation of 6.1 to 6.3.
+- [x] **6.4** Window B. Five minutes pass after the last activation of 6.1 to 6.3.
 
 ```powershell
 Start-Sleep -Seconds 310
@@ -668,11 +749,15 @@ Start-Sleep -Seconds 310
 **Expect:** the time, at least five minutes after 6.3 finished.
 **Failure looks like:** nothing can fail here; the wait is the check.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Waited: 18:05:39 UTC, about 5 min 24 s after 6.3 finished.
+```
 
 ### 6.5. Each activation, deactivated twice
 
-- [ ] **6.5** Window B. The directory role, the group membership and Reader on `opim-s1-rg` each deactivate once; each second call gives a clear outcome.
+- [x] **6.5** Window B. The directory role, the group membership and Reader on `opim-s1-rg` each deactivate once; each second call gives a clear outcome.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -706,7 +791,15 @@ the group membership was still active before (OPIM-39).
 **Failure looks like:** `ActiveDurationTooShort` -- 6.4 did not wait long enough; run 6.4 and this
 block again. A row left active -- record it.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:05 UTC: Active before: directory 1, group member 1, Reader 1 at 18:06:00 UTC.
+- directory: call 1 output 1, status Revoked, errors 0; call 2 output 0, 5 records of the terminating "Schedule ID ... was not found as an eligible role for this user. If you used tab completion and this is unexpected, please report it as a bug." (the block caught it; OPIM-40 as in step 4).
+- group: call 1 output 1, status Revoked, errors 0; call 2 output 0, errors 8, the last RoleAssignmentDoesNotExist,Disable-OPIMEntraIDGroup (non-terminating; Graph 404 "The Role assignment does not exist.").
+- Reader: call 1 output 1, status Revoked, errors 0; call 2 output 0, 5 records of the same terminating "not found as an eligible role" (OPIM-40).
+Active after: directory 0, group 0, Azure 0. No ActiveDurationTooShort.
+```
 
 ## Teardown
 
@@ -716,7 +809,7 @@ results are written up.
 
 ### T.1. No object of this step is left
 
-- [ ] **T.1** Window A, as `oer-live-cc`. No directory object carries the prefix `opim-s13-`, and the fixture's two directory objects are still there.
+- [x] **T.1** Window A, as `oer-live-cc`. No directory object carries the prefix `opim-s13-`, and the fixture's two directory objects are still there.
 
 ```powershell
 Import-Module (Join-Path $env:OPIMLIVE_HOME '../../Omnicit Entra RBAC/Live-verifiering/OerLive/OerLive.psm1') -Force
@@ -731,11 +824,16 @@ Disconnect-OerLive
 **Failure looks like:** another number -- record each object by name. A throw on an unread collection
 is a failed read, never a `0`.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:11 UTC, window A as oer-live-cc: every identity check line True; the sweep: no user, group, administrative unit, catalog, access package or app registration starting with opim-s13- is left; Objects with the prefix opim-s13-: 0; Objects with the prefix opim-s1- (the fixture): 2. The fixture stays (decision A9).
+Beside the tenant: no Az context is left on this machine (Az context autosave CurrentUser; 0 contexts load in a fresh process, 0 of them the test user's), and this run left no harness Edge process.
+```
 
 ### T.2. The test user holds no active assignment, and window B signs out
 
-- [ ] **T.2** Window B. After section 6, the test user has no active directory role, group or Azure assignment, and the window signs out.
+- [x] **T.2** Window B. After section 6, the test user has no active directory role, group or Azure assignment, and the window signs out.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -754,4 +852,9 @@ but the fixture.
 **Failure looks like:** another row -- record it and when it ends. A terminating error is a failed
 read, never a pass.
 
-Result:
+Result: 2026-10-07 18:26 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:11 UTC, second window B: Active directory roles: 0; Active group assignments: 0; Active Azure roles: 0; Window B signed out: True.
+18:18 UTC, third window B after check 4.2: 0; 0; 0; True. Every window B has exited.
+```
