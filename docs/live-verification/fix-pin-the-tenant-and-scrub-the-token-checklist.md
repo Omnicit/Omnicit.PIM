@@ -481,6 +481,72 @@ process, but the scrub failed (OPIM-11 is not fixed). Never paste the rendered t
 
 Result:
 
+### 4.2. A failed Azure read leaves no token in any error record
+
+Added after the first run: check 6.3 showed that the caller's `-ErrorVariable` keeps the raw
+`Az.Resources` records of a failed Azure command, and 4.1 walks Graph records only. The block reads at
+a subscription that does not exist, so ARM refuses the read and nothing is written.
+
+- [ ] **4.2** Window B. `Get-OPIMAzureRole` and `Get-OPIMAzureRole -Activated` at a subscription that does not exist fail, and a walk of `$Error`, the `-ErrorVariable` and every inner exception, request and request wrapper finds no `Authorization` header and no token.
+
+```powershell
+$Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built.DirectoryName) { throw 'A different build of Omnicit.PIM is loaded; use a fresh window.' }
+if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
+Import-Module (Join-Path $env:OPIMLIVE_HOME 'OpimLive/OpimLive.psm1') -Force
+$Sign = Connect-OpimLiveUser -IncludeARM -RawFolder 'docs/live-verification/raw/opim-s13'
+$Sign.Codes | Format-Table App, Stream, Tagged, Status -AutoSize
+$Collected = [System.Collections.Generic.List[object]]::new()
+$Scope = '/subscriptions/{0}' -f [guid]::NewGuid()
+foreach ($Probe in @(@{ Name = 'eligible'; Activated = $false }, @{ Name = 'active'; Activated = $true })) {
+    $AzErrors = @()
+    $Switch = @{ Activated = $Probe.Activated }
+    try { $Rows = @(Get-OPIMAzureRole -Scope $Scope @Switch -ErrorVariable AzErrors -ErrorAction SilentlyContinue) } catch { $AzErrors += $PSItem; $Rows = @() }
+    "Azure $($Probe.Name) read at a subscription that does not exist: rows $($Rows.Count); records $($AzErrors.Count); ids: $(@($AzErrors | ForEach-Object { $_.FullyQualifiedErrorId }) -join ', ')"
+    foreach ($E in $AzErrors) { $Collected.Add($E) }
+}
+foreach ($E in $global:Error) { $Collected.Add($E) }
+$Seen = [System.Collections.Generic.HashSet[int]]::new()
+$Queue = [System.Collections.Generic.Queue[object]]::new()
+foreach ($C in $Collected) { $Queue.Enqueue($C) }
+$Text = [System.Text.StringBuilder]::new()
+$Requests = 0; $WithHeader = 0; $Walked = 0
+while ($Queue.Count -gt 0 -and $Walked -lt 5000) {
+    $Item = $Queue.Dequeue()
+    if ($null -eq $Item -or $Item -is [string] -or $Item.GetType().IsValueType -or -not $Seen.Add([System.Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($Item))) { continue }
+    $Walked++
+    $null = $Text.AppendLine(($Item | Out-String))
+    # A request message, or a wrapper that copied its headers (Microsoft.Rest's HttpRequestMessageWrapper).
+    try {
+        $H = $Item.PSObject.Properties['Headers']
+        if ($H -and ($Item -is [System.Net.Http.HttpRequestMessage] -or $Item.GetType().Name -match 'Request')) {
+            $Requests++
+            $Has = if ($H.Value -is [System.Net.Http.Headers.HttpHeaders]) { $H.Value.Contains('Authorization') } elseif ($H.Value -is [System.Collections.IDictionary]) { $H.Value.Contains('Authorization') } else { $false }
+            if ($Has) { $WithHeader++ }
+            if ($H.Value -is [System.Collections.IDictionary]) { foreach ($K in $H.Value.Keys) { $null = $Text.AppendLine("${K}: $(@($H.Value[$K]) -join ',')") } } else { $null = $Text.AppendLine([string]$H.Value) }
+        }
+    } catch { $null = $PSItem }
+    foreach ($Name in 'Exception', 'InnerException', 'TargetObject', 'Response', 'RequestMessage', 'Request', 'ErrorRecord') {
+        try { $P = $Item.PSObject.Properties[$Name]; if ($P) { $Queue.Enqueue($P.Value) } } catch { $null = $PSItem }
+    }
+    try { if ($Item.PSObject.Properties['InnerExceptions']) { foreach ($I in $Item.InnerExceptions) { $Queue.Enqueue($I) } } } catch { $null = $PSItem }
+}
+$Rendered = $Text.ToString()
+"Records and objects walked: $Walked; requests and request wrappers reached: $Requests; with an Authorization header: $WithHeader"
+"Token-shaped strings (eyJ) in the rendered records: $(([regex]::Matches($Rendered, 'eyJ')).Count)"
+"Bearer values in the rendered records: $(([regex]::Matches($Rendered, '(?i)Bearer\s+[A-Za-z0-9._~+/=-]{16,}')).Count)"
+$Rendered = $null; $Text = $null
+```
+
+**Expect:** the two harness rows `Graph Information True ok` and `Azure Host False ok`; both reads
+`rows 0` with an error; `with an Authorization header: 0`; both counts `0`.
+**Record:** the error ids, and how many requests or request wrappers the walk reached (`0` means the
+`Az.Resources` record carries no request at all).
+**Failure looks like:** any count above `0` -- STOP as in 4.1. No error on a read -- record it and mark
+the box `[~]`: no failed Azure record was produced to walk.
+
+Result:
+
 ### 5. The listings
 
 ### 5.1. The listings give step 2's counts
