@@ -35,11 +35,16 @@ BeforeAll {
     # resumes after that try there, and propagates under an outer try (measured 2026-10-07,
     # PowerShell 7.6). So it shows what a caller outside any try receives. The mocks stay in force,
     # since the nested pipeline shares this runspace and the module's session state.
+    # The nested script starts from $ErrorActionPreference = 'Continue', a console's default, and a
+    # script that needs another preference sets its own after it. Without the pin it inherits the
+    # GLOBAL preference, which the workflow's shell: pwsh steps set to Stop: there a terminating error
+    # that a Continue caller would see end only its statement ends the whole nested pipeline instead,
+    # and Invoke throws (CI run 37657935494, green locally under Continue).
     function Invoke-OutsideAnyTry {
         param([Parameter(Mandatory)][string]$Script)
         $Shell = [powershell]::Create([System.Management.Automation.RunspaceMode]::CurrentRunspace)
         try {
-            $null = $Shell.AddScript('param($Module) & $Module {' + $Script + '}').AddArgument((Get-Module Omnicit.PIM))
+            $null = $Shell.AddScript('param($Module) & $Module { $ErrorActionPreference = ''Continue''; ' + $Script + '}').AddArgument((Get-Module Omnicit.PIM))
             $Output = $Shell.Invoke()
             [pscustomobject]@{ Output = @($Output | Where-Object { $null -ne $_ }) }
         } finally {
