@@ -47,9 +47,11 @@ function Invoke-OPIMGraphRequest {
        one response, @{ value = <the items of every page> }. Every page is one request through the
        four layers above. A page that fails throws its own error -- never a shorter list -- with
        three note properties on the record's Exception: PartialValue (the items of the pages read
-       before it), NextLink (the URI of the failed page) and PageNumber (its number, from 1). The
-       verbose stream names a page by its number and item count, never by its link, which can
-       carry a skip token.
+       before it), NextLink (the URI of the failed page) and PageNumber (its number, from 1). A
+       later page that comes back with no body is a failed read as well: it throws an error with no
+       error id (category InvalidResult) and the same three facts, since the list is incomplete. A
+       first page with no body is an empty list. The verbose stream names a page by its number and
+       item count, never by its link, which can carry a skip token.
 
     .PARAMETER Method
     HTTP method for the Graph request. Defaults to GET.
@@ -63,7 +65,8 @@ function Invoke-OPIMGraphRequest {
     .PARAMETER All
     Reads every page of a Graph list: follows @odata.nextLink until a page carries none and returns
     @{ value = <the items of every page> }. A failed page throws its own error, with PartialValue,
-    NextLink and PageNumber on its Exception, and nothing is returned.
+    NextLink and PageNumber on its Exception, and nothing is returned; so does a later page that
+    comes back with no body, with an error that carries no error id.
 
     .OUTPUTS
     The Graph API response hashtable on success; with -All, a hashtable whose value holds the items
@@ -289,7 +292,26 @@ function Invoke-OPIMGraphRequest {
         # A throw inside a catch resumes after the try under -ErrorAction SilentlyContinue with no try
         # up the call stack. return, never break: break would hand back a short list as complete.
         if ($PageFailed) { return }
-        if ($null -eq $Page) { break }
+        if ($null -eq $Page) {
+            # Page 1 with no body is an empty list, as it was before OPIM-13.
+            if ($PageNumber -eq 1) { break }
+            # A later page with no body is a failed read: Graph promised it through the previous
+            # page's next link, so ending here would hand back a short list as complete. It is raised
+            # as the failed-page catch raises its error, with the same three facts on the Exception,
+            # and carries no error id (no new ErrorId; the form Write-CmdletError gives without one).
+            # The message names the page by its number, never by its link (ruling R-T7a).
+            $NoBody = [System.Exception]::new(
+                "Page $PageNumber`: Microsoft Graph returned no body for this page of the list, so the list is incomplete.")
+            $NoBody | Add-Member -NotePropertyName PartialValue -NotePropertyValue $AllValues.ToArray() -Force
+            $NoBody | Add-Member -NotePropertyName NextLink -NotePropertyValue $NextUri -Force
+            $NoBody | Add-Member -NotePropertyName PageNumber -NotePropertyValue $PageNumber -Force
+            Write-CmdletError -Message $NoBody -Category InvalidResult -TargetObject $null -Cmdlet $PSCmdlet -Terminating
+            # ThrowTerminatingError ends this function even under SilentlyContinue with no try up
+            # the call stack, unlike a throw statement (measured 2026-10-07), so this line is not
+            # reached. It stays so the loop can never fall through to a short list: return, never
+            # break.
+            return
+        }
         [int]$PageItemCount = 0
         foreach ($Item in @($Page.value)) {
             if ($null -ne $Item) {

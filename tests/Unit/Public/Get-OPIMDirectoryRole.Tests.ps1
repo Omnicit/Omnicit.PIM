@@ -630,4 +630,44 @@ Describe 'Get-OPIMDirectoryRole' {
             $script:PageFailure.Request.Headers.Contains('Authorization') | Should -BeFalse
         }
     }
+
+    Context 'When a later page comes back with no body in the transport' {
+        # Fix round 1 end to end: page 2 answers nothing. The wrapper raises a failed read with no
+        # error id; this context measures what a caller receives from the listing.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-MgGraphRequest {
+                param($Method, $Uri, $Body, $OutputType)
+                if ($Uri -notlike '*skiptoken*') {
+                    return @{
+                        value             = @(
+                            @{ id = 'elig-001'; directoryScopeId = '/' }
+                            @{ id = 'elig-002'; directoryScopeId = '/' }
+                        )
+                        '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/roleManagement/directory/roleEligibilitySchedules?$skiptoken=2'
+                    }
+                }
+                return $null
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+
+        It 'writes the incomplete list as a failed read with the partial result' {
+            $Output = @(Get-OPIMDirectoryRole -ErrorVariable Errs -ErrorAction Continue 2>&1)
+            $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }).Count |
+                Should -Be 0 -Because 'page 1 alone is never written as the list'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+            $Written.Count | Should -Be 1
+            # No error id: once the listing writes the record its id is only the listing's name
+            # (measured 2026-10-07; inside the wrapper it is 'Invoke-OPIMGraphRequest').
+            $Written[0].FullyQualifiedErrorId | Should -BeExactly 'Get-OPIMDirectoryRole'
+            $Written[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+            $Written[0].Exception.Message | Should -Match 'no body for this page of the list, so the list is incomplete'
+            ($Written[0].Exception.PartialValue | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'elig-001,elig-002'
+            $Written[0].Exception.PageNumber | Should -Be 2
+        }
+    }
 }

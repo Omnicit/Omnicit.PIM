@@ -1075,6 +1075,64 @@ Describe 'Invoke-OPIMGraphRequest' {
         }
     }
 
+    Context 'When a page comes back with no body' {
+        # Fix round 1. Page 1 answers with a next link and page 2 with nothing at all; a list whose
+        # first page has no body answers nothing on its only page.
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Initialize-OPIMAuth {}
+                Mock Invoke-MgGraphRequest {
+                    param($Method, $Uri)
+                    if ($Uri -ceq 'v1.0/x') {
+                        return @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                    }
+                    return $null
+                }
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+
+        It 'throws a failed read with the items read before it when a later page has no body' {
+            InModuleScope Omnicit.PIM {
+                $Caught = $null
+                try { $null = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All } catch { $Caught = $PSItem }
+                $Caught | Should -Not -BeNullOrEmpty -Because 'a later page with no body leaves the list incomplete'
+                $Caught.Exception.Message | Should -BeExactly 'Page 2: Microsoft Graph returned no body for this page of the list, so the list is incomplete.'
+                $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+                # No error id: the record's id is only the name of the command that raised it
+                # (measured 2026-10-07).
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'Invoke-OPIMGraphRequest'
+                $Caught.TargetObject | Should -BeNullOrEmpty
+                (@($Caught.Exception.PartialValue) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1'
+                , $Caught.Exception.PartialValue | Should -BeOfType ([object[]])
+                $Caught.Exception.NextLink | Should -BeExactly 'https://graph.microsoft.com/v1.0/x?$skiptoken=2'
+                $Caught.Exception.PageNumber | Should -Be 2
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+            }
+        }
+
+        It 'returns nothing outside any try when a later page has no body' {
+            $Run = Invoke-OutsideAnyTry -Script '$ErrorActionPreference = ''SilentlyContinue''; $R = Invoke-OPIMGraphRequest -Uri ''v1.0/x'' -All; $R'
+            $Run.Output.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+            $Run = Invoke-OutsideAnyTry -Script '$R = Invoke-OPIMGraphRequest -Uri ''v1.0/x'' -All -ErrorAction SilentlyContinue; $R'
+            $Run.Output.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 4 -Exactly -Scope It
+        }
+
+        It 'returns an empty value when the first page has no body' {
+            InModuleScope Omnicit.PIM {
+                $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/blank' -All
+                $Result | Should -BeOfType ([hashtable])
+                $Result.ContainsKey('value') | Should -BeTrue
+                @($Result.value).Count | Should -Be 0
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+            }
+        }
+    }
+
     Context 'When a gate refuses a later page' {
         # Every page passes the session gate and the latch gate, as a single request does. The gate
         # mocks answer 'Own' and nothing for page 1 and refuse from their second call on.

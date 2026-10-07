@@ -734,7 +734,9 @@ Handling** for what that does.
 every gate and retry above, and returns `@{ value = <every page's items> }`; the four listings in
 `Get-OPIMDirectoryRole` and `Get-OPIMEntraIDGroup` pass it. A failed page throws its own error, never
 a shorter list, with `PartialValue`, `NextLink` and `PageNumber` as note properties on its
-`Exception`, which survives the throw where the record does not. There is no page cap, since a cap
+`Exception`, which survives the throw where the record does not. A later page that comes back with
+no body is a failed read too, raised with the same three facts and no error id (category
+`InvalidResult`); a first page with no body is an empty list. There is no page cap, since a cap
 would cut a list short silently, and verbose output never prints a next link.
 
 **The places that call the raw SDK or Az authentication directly today**, from a `Select-String`
