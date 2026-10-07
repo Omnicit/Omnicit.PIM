@@ -35,7 +35,14 @@ function Disable-OPIMAzureRole {
     process {
         Initialize-OPIMAuth -IncludeARM
         if ($Identity) {
-            $Role = Get-OPIMAzureRole -Activated | Where-Object Name -EQ $Identity | Select-Object -First 1
+            try {
+                $Role = Get-OPIMAzureRole -Activated -ErrorAction Stop | Where-Object Name -EQ $Identity | Select-Object -First 1
+            } catch {
+                # OPIM-12: the listing failed; report it as itself and stop for this identity.
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+                return
+            }
             if (-not $Role) {
                 Write-CmdletError `
                     -Message ([System.Exception]::new("No active Azure role found with identity '$Identity'.")) `

@@ -253,6 +253,126 @@ Describe 'Disable-OPIMMyRole' {
         }
     }
 
+    Context "When a pillar's listing fails (<Failing>, <Mode>)" -ForEach @(
+        @{ Mode = 'AllActivated'; Failing = 'Directory'; Deactivator = 'Disable-OPIMDirectoryRole'; Others = @('Disable-OPIMEntraIDGroup', 'Disable-OPIMAzureRole') }
+        @{ Mode = 'AllActivated'; Failing = 'Group'; Deactivator = 'Disable-OPIMEntraIDGroup'; Others = @('Disable-OPIMDirectoryRole', 'Disable-OPIMAzureRole') }
+        @{ Mode = 'AllActivated'; Failing = 'AzureActive'; Deactivator = 'Disable-OPIMAzureRole'; Others = @('Disable-OPIMDirectoryRole', 'Disable-OPIMEntraIDGroup') }
+        @{ Mode = 'StringAlias'; Failing = 'Directory'; Deactivator = 'Disable-OPIMDirectoryRole'; Others = @('Disable-OPIMEntraIDGroup', 'Disable-OPIMAzureRole') }
+        @{ Mode = 'StringAlias'; Failing = 'Group'; Deactivator = 'Disable-OPIMEntraIDGroup'; Others = @('Disable-OPIMDirectoryRole', 'Disable-OPIMAzureRole') }
+        @{ Mode = 'StringAlias'; Failing = 'AzureActive'; Deactivator = 'Disable-OPIMAzureRole'; Others = @('Disable-OPIMDirectoryRole', 'Disable-OPIMEntraIDGroup') }
+        @{ Mode = 'ConfiguredAlias'; Failing = 'Directory'; Deactivator = 'Disable-OPIMDirectoryRole'; Others = @('Disable-OPIMEntraIDGroup', 'Disable-OPIMAzureRole') }
+        @{ Mode = 'ConfiguredAlias'; Failing = 'Group'; Deactivator = 'Disable-OPIMEntraIDGroup'; Others = @('Disable-OPIMDirectoryRole', 'Disable-OPIMAzureRole') }
+        @{ Mode = 'ConfiguredAlias'; Failing = 'AzureActive'; Deactivator = 'Disable-OPIMAzureRole'; Others = @('Disable-OPIMDirectoryRole', 'Disable-OPIMEntraIDGroup') }
+        @{ Mode = 'ConfiguredAlias'; Failing = 'AzureEligible'; Deactivator = 'Disable-OPIMAzureRole'; Others = @('Disable-OPIMDirectoryRole', 'Disable-OPIMEntraIDGroup') }
+    ) {
+        # OPIM-12: a pillar whose listing cannot be read is reported as that error and ends there:
+        # nothing it read is deactivated, and it is never reported as "no active ..." or "not
+        # currently activated". The other pillars still run. Every listing returns one item; the
+        # failing one writes the record a listing writes for a failed read -- after its item when
+        # $script:PartialRead is set, as a read that fails after its first item does. The string form
+        # and a configured alias (with the configured-eligible Azure lookup) reach all seven listings.
+        # The mock takes its preference from an explicit -ErrorAction and is Continue otherwise, as a
+        # listing is under the default preference: a module-scoped mock body reads the test scope's
+        # preference (Stop under the build), never the caller's.
+        BeforeAll {
+            $script:FailingListing = $Failing
+            $script:PartialRead = $false
+            $MyRoleParams = switch ($Mode) {
+                'StringAlias' { @{ TenantAlias = 'contoso'; TenantMapPath = 'TestDrive:\TenantMap.psd1' } }
+                'ConfiguredAlias' { @{ TenantAlias = 'fabrikam'; TenantMapPath = 'TestDrive:\TenantMap.psd1' } }
+                default { @{ AllActivated = $true; Confirm = $false } }
+            }
+            # memberType, endDateTime and assignmentType are set as Graph sets them: the types'
+            # ScriptProperties of those names read $this.<name>, which resolves to itself on an
+            # object without the property.
+            $FakeActiveDirectoryRole = [PSCustomObject]@{
+                id = 'active-lf-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'
+                memberType = 'Direct'; endDateTime = '2026-10-07T18:00:00Z'
+            }
+            $FakeActiveDirectoryRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleInstance')
+            $FakeActiveGroup = [PSCustomObject]@{
+                id = 'active-grp-lf-001'; groupId = 'group-id-001'; accessId = 'member'
+                memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-07T18:00:00Z'
+            }
+            $FakeActiveGroup.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleInstance')
+            $FakeActiveAzureRole = [PSCustomObject]@{ Name = 'az-active-lf-001'; ScopeId = '/subscriptions/sub-001'; RoleDefinitionId = 'role-az-001' }
+            $FakeActiveAzureRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+            $FakeEligibleAzureRole = [PSCustomObject]@{ Name = 'elig-az-lf-001'; ScopeId = '/subscriptions/sub-001'; RoleDefinitionId = 'role-az-001' }
+            $FakeEligibleAzureRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    contoso  = '00000000-0000-0000-0000-000000000001'
+                    fabrikam = @{
+                        TenantId       = '00000000-0000-0000-0000-000000000002'
+                        DirectoryRoles = @('role-def-001')
+                        EntraIDGroups  = @('group-id-001_member')
+                        AzureRoles     = @('elig-az-lf-001')
+                    }
+                }
+            }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole {
+                if ($script:FailingListing -ne 'Directory') { return $FakeActiveDirectoryRole }
+                if ($script:PartialRead) { $FakeActiveDirectoryRole }
+                $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup {
+                if ($script:FailingListing -ne 'Group') { return $FakeActiveGroup }
+                if ($script:PartialRead) { $FakeActiveGroup }
+                $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole {
+                $Listing = if ($Activated) { 'AzureActive' } else { 'AzureEligible' }
+                $Item = if ($Activated) { $FakeActiveAzureRole } else { $FakeEligibleAzureRole }
+                if ($script:FailingListing -ne $Listing) { return $Item }
+                if ($script:PartialRead) { $Item }
+                $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            }
+        }
+
+        It "writes the listing's error" {
+            # The command's own error stream, not -ErrorVariable: -ErrorVariable also collects the
+            # record the listing raised and the command caught.
+            $script:PartialRead = $false
+            $Out = Disable-OPIMMyRole @MyRoleParams -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeLike 'Forbidden*'
+        }
+
+        It 'deactivates nothing the failed listing read' {
+            $script:PartialRead = $true
+            Disable-OPIMMyRole @MyRoleParams -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM $Deactivator -Times 0 -Scope It
+        }
+
+        It 'never reports the failed listing as no active roles' {
+            $script:PartialRead = $false
+            $Out = Disable-OPIMMyRole @MyRoleParams -ErrorAction SilentlyContinue -Verbose 4>&1
+            $Said = @($Out | Where-Object {
+                    $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message -match 'No active|not currently activated'
+                })
+            $Said.Count | Should -Be 0
+        }
+
+        It 'still lists and deactivates the other pillars' {
+            $script:PartialRead = $true
+            Disable-OPIMMyRole @MyRoleParams -ErrorAction SilentlyContinue
+            foreach ($Other in $Others) {
+                Should -Invoke -ModuleName Omnicit.PIM $Other -Times 1 -Exactly -Scope It
+            }
+        }
+    }
+
     Context 'When -AllActivated is specified but no roles are active' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Connect-OPIM {}

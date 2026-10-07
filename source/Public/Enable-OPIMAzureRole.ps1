@@ -69,7 +69,14 @@ function Enable-OPIMAzureRole {
     process {
         Initialize-OPIMAuth -IncludeARM
         if ($Identity) {
-            $Role = Get-OPIMAzureRole | Where-Object Name -EQ $Identity | Select-Object -First 1
+            try {
+                $Role = Get-OPIMAzureRole -ErrorAction Stop | Where-Object Name -EQ $Identity | Select-Object -First 1
+            } catch {
+                # OPIM-12: the listing failed; report it as itself and stop for this identity.
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+                return
+            }
             if (-not $Role) {
                 Write-CmdletError `
                     -Message ([System.Exception]::new("No eligible Azure role found with identity '$Identity'.")) `

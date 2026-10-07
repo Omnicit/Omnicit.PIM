@@ -585,6 +585,102 @@ Describe 'Enable-OPIMDirectoryRole' {
             Enable-OPIMDirectoryRole -Identity 'nonexistent-999' -ErrorVariable Errors -ErrorAction SilentlyContinue
             $Errors.Count | Should -BeGreaterThan 0
         }
+
+        It 'writes IdentityNotFound to its own error stream' {
+            $Out = Enable-OPIMDirectoryRole -Identity 'nonexistent-999' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeLike 'IdentityNotFound*'
+        }
+    }
+
+    Context 'When the listing for -Identity fails' {
+        # OPIM-12: a listing that cannot be read is reported as itself and stops for that identity;
+        # it is never reported as IdentityNotFound. The mock writes the record a listing writes for
+        # a failed read (a Graph 403).
+        # The mock takes its preference from an explicit -ErrorAction and is Continue otherwise, as a
+        # listing is under the default preference: a module-scoped mock body reads the test scope's
+        # preference (Stop under the build), never the caller's.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole {
+                $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {}
+        }
+
+        It "writes the listing's error as itself" {
+            # The command's own error stream, not -ErrorVariable: -ErrorVariable also collects the
+            # record the listing raised and the command caught.
+            $Out = Enable-OPIMDirectoryRole -Identity 'elig-403' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeLike 'Forbidden*'
+        }
+
+        It 'does not write IdentityNotFound' {
+            $Out = Enable-OPIMDirectoryRole -Identity 'elig-403' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            @($Written | Where-Object { $_.FullyQualifiedErrorId -like 'IdentityNotFound*' }).Count | Should -Be 0
+        }
+
+        It 'sends no activation' {
+            Enable-OPIMDirectoryRole -Identity 'elig-403' -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+    }
+
+    Context 'When the real listing for -Identity answers 403' {
+        # OPIM-12 acceptance, end to end: the real Get-OPIMDirectoryRole reads through the transport
+        # mock, which answers the list with the record the wrapper throws for a Graph 403.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Forbidden: Insufficient privileges to complete the operation.'), 'Forbidden',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            } -ParameterFilter { $Uri -like '*roleEligibilitySchedules*' -or $Uri -like '*roleAssignmentScheduleInstances*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {} -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'writes the 403 as itself, reads no further list and sends no activation' {
+            $Out = Enable-OPIMDirectoryRole -Identity 'elig-403' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeLike 'Forbidden*'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Uri -like '*roleEligibilitySchedules*' -or $Uri -like '*roleAssignmentScheduleInstances*'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+    }
+
+    Context 'When the listing for -RoleName fails' {
+        # OPIM-12: Resolve-RoleByName throws the listing's error as itself, so the command stops at
+        # the first name, as it does for a name it cannot resolve; it never goes on to the next name.
+        # The mock takes its preference from an explicit -ErrorAction and is Continue otherwise, as a
+        # listing is under the default preference: a module-scoped mock body reads the test scope's
+        # preference (Stop under the build), never the caller's.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole {
+                $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {}
+        }
+
+        It "stops with the listing's error and resolves no further name" {
+            { Enable-OPIMDirectoryRole -RoleName 'Role A (elig-a)', 'Role B (elig-b)' -ErrorAction Continue } |
+                Should -Throw -ErrorId 'Forbidden*'
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
     }
 
     Context 'When positional parameters are used' {

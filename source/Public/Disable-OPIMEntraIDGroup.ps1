@@ -36,7 +36,14 @@ function Disable-OPIMEntraIDGroup {
     process {
         Initialize-OPIMAuth
         if ($Identity) {
-            $Group = Get-OPIMEntraIDGroup -Activated -Identity $Identity | Select-Object -First 1
+            try {
+                $Group = Get-OPIMEntraIDGroup -Activated -Identity $Identity -ErrorAction Stop | Select-Object -First 1
+            } catch {
+                # OPIM-12: the listing failed; report it as itself and stop for this identity.
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+                return
+            }
             if (-not $Group) {
                 Write-CmdletError `
                     -Message ([System.Exception]::new("No active PIM group assignment found with identity '$Identity'.")) `

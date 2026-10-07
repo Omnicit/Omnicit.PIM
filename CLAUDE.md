@@ -981,6 +981,16 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
 - **Private helpers** such as `Resolve-RoleByName`, `Restore-GraphProperty` and `Get-MyId` may
   `throw` on caller error, and `Invoke-OPIMGraphRequest` throws the converted Graph error by
   design: the caller is responsible for catching and routing it.
+- **A list that cannot be read is reported as itself, never as "not found" (OPIM-12).** A command
+  that lists in order to resolve or act calls the `Get-OPIM*` listing with `-ErrorAction Stop` in
+  a `try` whose catch scrubs first. `Resolve-RoleByName` rethrows the listing's own record
+  (`throw $PSItem` keeps its id, such as `Forbidden,Get-OPIMDirectoryRole`), so the cmdlet stops
+  at that name as it does for a name it cannot resolve and never goes on to the next one. The
+  `-Identity` paths of the six `Enable-`/`Disable-` cmdlets write the record and stop for that
+  identity, with no `IdentityNotFound`; a written record keeps the listing's id with the writing
+  cmdlet as its suffix (`Forbidden,Enable-OPIMDirectoryRole`, measured 2026-10-07). Each pillar of `Enable-`/`Disable-OPIMMyRole` writes it and
+  skips the rest of that pillar only: nothing the failed listing read is acted on, no "no eligible"
+  or "not currently activated" message is written for it, and the other pillars still run.
 - **`Write-CmdletError`** (private) emits a structured record. Its `-Message` expects an
   `[Exception]`, not a string (`Write-CmdletError.ps1:76`) -- always wrap bare strings:
   `[System.Exception]::new('message')`. `-InnerException` chains a caught exception, `-Terminating`
@@ -1249,6 +1259,18 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `$ErrorActionPreference` does not pin it. Capture errors with
   `-ErrorVariable Errors -ErrorAction SilentlyContinue`; never use `Should -Throw` for an API error
   from a public function, which emits non-terminating errors.
+- **A mock that WRITES an error must take its preference from `$PesterBoundParameters`.** A
+  module-scoped mock body reads the test scope's `$ErrorActionPreference` (Stop under the build),
+  never the caller's, and `$PSCmdlet` in the body is Pester's own: a bare `$PSCmdlet.WriteError()`
+  there ends the call whether or not the module passed `-ErrorAction Stop`, so a test cannot see
+  that `-ErrorAction Stop` is missing. Set
+  `$ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }`
+  first, as the OPIM-12 listing mocks do (measured on Pester 6.2.0, 2026-10-07).
+- **Give a typed fake every property a self-referencing ScriptProperty reads.** `MemberType`,
+  `EndDateTime`, `AccessId` and `AssignmentType` in `Omnicit.PIM.Types.ps1xml` read
+  `$this.<same name>`, which resolves to the ScriptProperty itself on an object without the note
+  property; formatting such a fake (a failing `Should -Invoke` prints every piped argument)
+  overflows the stack and kills the test process.
 - **Test `-WhatIf` by invocation count**, not by catching an exception:
   `Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It`.
 - **`Should -Invoke -Times N` is AT LEAST N for `N >= 1` -- add `-Exactly`.** `-Times 0` already
