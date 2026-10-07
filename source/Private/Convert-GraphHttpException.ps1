@@ -8,8 +8,20 @@ function Convert-GraphHttpException {
     .DESCRIPTION
     Attempts to extract the JSON error body from the HTTP response content or from the exception
     message and constructs a new ErrorRecord with the parsed error code and message. The original
-    exception is preserved as the InnerException of the new record. If no parseable JSON body is
-    found, the original ErrorRecord is returned unchanged. Does not require typed Graph SDK classes.
+    exception is deliberately NOT chained as the InnerException of the new record: the raw Graph SDK
+    exception holds the HttpRequestMessage, whose Authorization header carries the bearer token in
+    plain text, so chaining it would leak the token whenever the error is displayed or logged. The
+    Graph error code and message are preserved in the new exception text and ErrorDetails. This
+    function ALWAYS returns a freshly built ErrorRecord and NEVER falls through to returning the raw
+    InputRecord: the raw record's .Exception is the original Graph SDK exception, which for a
+    transport failure (no HTTP response at all, or a non-JSON body such as an HTML gateway page)
+    still references that same bearer-carrying HttpRequestMessage, so letting it escape unconverted
+    would defeat the whole point of this function. When no Graph error code can be extracted, no
+    error id is invented: the new record keeps the id the input record carried -- its
+    FullyQualifiedErrorId STRING, never the record or its exception -- or, when that string is empty,
+    the input exception's type name. The HTTP status, when the response has one, goes into the
+    detail text instead ("HTTP 403: <message>"), and the exception's Message STRING (safe to reuse --
+    only the exception OBJECT is dangerous) is the message. Does not require typed Graph SDK classes.
 
     .PARAMETER InputRecord
     The ErrorRecord wrapping the raw HTTP exception thrown by Invoke-MgGraphRequest. The function
@@ -34,37 +46,83 @@ function Convert-GraphHttpException {
         try {
             $ResponseContent = $Exception.Response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
         } catch {
+            Remove-OPIMErrorRecord -Record $PSItem
             Write-Verbose "Could not read HTTP response content: $_"
         }
     }
 
-    # Fallback: sometimes the JSON payload is already in the exception message
+    # Fallback: the JSON payload is often embedded in the exception message. It may be the whole
+    # message (a single failed request) or wrapped in non-JSON text -- for example a Graph SDK retry
+    # AggregateException reads "Too many retries performed... (HTTP request failed... {"error":...})".
     if (-not $ResponseContent -and $Exception.Message -like '*"error"*') {
         $ResponseContent = $Exception.Message
     }
 
+    $ErrorCode    = $null
+    $ErrorMessage = $null
+
     if ($ResponseContent) {
+        # Preferred path: the content is a clean JSON error body. -ErrorAction Stop makes a parse
+        # failure terminating so the catch below actually runs; without it ConvertFrom-Json writes a
+        # non-terminating error that bypasses the catch and is left in the caller's $Error.
         try {
-            $Parsed    = $ResponseContent | ConvertFrom-Json
-            $ErrorInfo = $Parsed.error
+            $ErrorInfo = ($ResponseContent | ConvertFrom-Json -ErrorAction Stop).error
             if ($ErrorInfo) {
-                $ErrorCode   = $ErrorInfo.code
-                $ErrorMessage = $ErrorInfo.message
-                $Detail       = "$ErrorCode`: $ErrorMessage"
-                $NewException = [System.Exception]::new($Detail, $Exception)
-                $ErrorRecord  = [ErrorRecord]::new(
-                    $NewException,
-                    $ErrorCode,
-                    [System.Management.Automation.ErrorCategory]::OperationStopped,
-                    $null
-                )
-                $ErrorRecord.ErrorDetails = [System.Management.Automation.ErrorDetails]::new($Detail)
-                return $ErrorRecord
+                $ErrorCode    = [string]$ErrorInfo.code
+                $ErrorMessage = [string]$ErrorInfo.message
             }
         } catch {
-            Write-Verbose "Could not parse Graph error JSON from response body: $_"
+            # The content is not pure JSON (for example a wrapped retry/aggregate message, or an HTML
+            # gateway page). Remove the parse failure from $Error so it does not pollute the caller's
+            # $Error, then fall through to targeted extraction below.
+            Remove-OPIMErrorRecord -Record $PSItem
+        }
+
+        # Fallback path: pull the first embedded code/message out of wrapped text so throttling
+        # (TooManyRequests) and other aggregate failures still convert into a clean, single error.
+        if (-not $ErrorMessage -and $ResponseContent -match '"message"\s*:\s*"([^"]+)"') { $ErrorMessage = $Matches[1] }
+        if (-not $ErrorCode    -and $ResponseContent -match '"code"\s*:\s*"([^"]+)"')    { $ErrorCode    = $Matches[1] }
+    }
+
+    # Some Graph errors return an empty or unextractable code (for example a 403 "Attempted to
+    # perform an unauthorized operation.", a transport failure with no response body at all, or an
+    # HTML gateway page). No error id is invented for them: the new record keeps the id the caller
+    # saw before -- the input record's FullyQualifiedErrorId STRING; the record and its exception
+    # are never reused -- or, when that string is empty, the input exception's type name. The HTTP
+    # status goes into the detail text instead, so the failure stays diagnosable and this function
+    # never has a reason to fall through to returning the raw InputRecord below.
+    $HasGraphCode = [bool]$ErrorCode
+    $StatusCode = $null
+    if (-not $HasGraphCode) {
+        try { $StatusCode = [int]$Exception.Response.StatusCode } catch { Remove-OPIMErrorRecord -Record $PSItem }
+        $ErrorCode = [string]$InputRecord.FullyQualifiedErrorId
+        if ([string]::IsNullOrWhiteSpace($ErrorCode)) {
+            $ErrorCode = if ($null -ne $Exception) { $Exception.GetType().FullName } else { [System.Exception].FullName }
         }
     }
 
-    return $InputRecord
+    # SECURITY: never fall through to the raw InputRecord. Its .Exception is the original Graph SDK
+    # exception, which for a transport failure references the HttpRequestMessage whose Authorization
+    # header carries the bearer token in plain text. The exception's Message STRING is safe to reuse
+    # here (it is just text); the exception OBJECT is not, so it is never chained as -InnerException.
+    if (-not $ErrorMessage) { $ErrorMessage = $Exception.Message }
+    $Detail = if ($HasGraphCode) {
+        if ($ErrorMessage) { "$ErrorCode`: $ErrorMessage" } else { [string]$ErrorCode }
+    } else {
+        $StatusText = if ($StatusCode) { "HTTP $StatusCode" } else { $null }
+        if ($StatusText -and $ErrorMessage) { "$StatusText`: $ErrorMessage" }
+        elseif ($StatusText) { $StatusText }
+        elseif ($ErrorMessage) { [string]$ErrorMessage }
+        else { [string]$ErrorCode }
+    }
+
+    $NewException = [System.Exception]::new($Detail)
+    $ErrorRecord  = [ErrorRecord]::new(
+        $NewException,
+        $ErrorCode,
+        [System.Management.Automation.ErrorCategory]::OperationStopped,
+        $null
+    )
+    $ErrorRecord.ErrorDetails = [System.Management.Automation.ErrorDetails]::new($Detail)
+    return $ErrorRecord
 }

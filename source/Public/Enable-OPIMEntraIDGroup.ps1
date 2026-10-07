@@ -63,7 +63,14 @@ function Enable-OPIMEntraIDGroup {
     process {
         Initialize-OPIMAuth
         if ($Identity) {
-            $Group = Get-OPIMEntraIDGroup -Identity $Identity | Select-Object -First 1
+            try {
+                $Group = Get-OPIMEntraIDGroup -Identity $Identity -ErrorAction Stop | Select-Object -First 1
+            } catch {
+                # OPIM-12: the listing failed; report it as itself and stop for this identity.
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+                return
+            }
             if (-not $Group) {
                 Write-CmdletError `
                     -Message ([System.Exception]::new("No eligible PIM group assignment found with identity '$Identity'.")) `
@@ -123,6 +130,7 @@ function Enable-OPIMEntraIDGroup {
                 $Response = try {
                     Invoke-OPIMGraphRequest -Method POST -Uri $GraphUri -Body $Request
                 } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
                     $Err = $PSItem
                     if (-not (ConvertTo-PolicyValidationError -CaughtError $Err -ResourceType 'group' -Cmdlet $PSCmdlet)) {
                         $PSCmdlet.WriteError($Err)

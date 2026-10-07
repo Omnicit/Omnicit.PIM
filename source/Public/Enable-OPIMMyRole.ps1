@@ -15,6 +15,15 @@ function Enable-OPIMMyRole {
     selected categories are activated. Confirmation is required -- use -WhatIf to preview or
     -Confirm:$false to suppress the prompt.
 
+    The command signs in to Microsoft Graph first and then, when Azure RBAC roles are to be
+    activated, to Azure for the same tenant. A failed Graph sign-in stops the command before any
+    role or group is listed or activated. A failed Azure sign-in is written as an error and skips
+    the Azure RBAC roles only -- except under the error preference Stop ($ErrorActionPreference or
+    -ErrorAction), where that error ends the command before any category runs. A list of roles or
+    groups that cannot be read is written as its own error, and nothing of that category is
+    activated; the other categories still run, except under the error preference Stop, where the
+    first such error ends the command.
+
     Use the 'pim' alias for daily quick activation:
 
         pim -TenantAlias contoso
@@ -138,8 +147,11 @@ function Enable-OPIMMyRole {
         $ResolvedTenantId = if ($Config -is [hashtable]) { $Config.TenantId } else { [string]$Config }
     }
 
+    # The Azure pillar runs for -AllEligible, -AllEligibleAzureRoles, a hashtable alias that lists
+    # AzureRoles, and the plain string form of an alias, whose Azure pillar activates every eligible
+    # Azure role.
     [bool]$NeedsArm = $AllEligible -or $AllEligibleAzureRoles -or
-                      ($Config -is [hashtable] -and $Config.AzureRoles)
+                      ($TenantAlias -and ($Config -isnot [hashtable] -or $Config.AzureRoles))
 
     # -- Progress --------------------------------------------------------------
     [int]$ProgressPillarCount = ([int][bool]($TenantAlias -or $AllEligible -or $AllEligibleDirectoryRoles)) +
@@ -149,12 +161,38 @@ function Enable-OPIMMyRole {
     [int]$ProgressPillarIndex = 0
     Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status 'Connecting...' -PercentComplete 3
 
-    Connect-OPIM -TenantId $ResolvedTenantId -IncludeARM:$NeedsArm -DeviceCode:$DeviceCode
+    # OPIM-08: Graph first. A failed Graph sign-in stops the command: nothing is listed or activated,
+    # not even in the tenant an earlier sign-in pinned.
+    try {
+        Connect-OPIM -TenantId $ResolvedTenantId -DeviceCode:$DeviceCode -ErrorAction Stop
+    } catch {
+        Remove-OPIMErrorRecord -Record $PSItem
+        $PSCmdlet.WriteError($PSItem)
+        Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Completed
+        return
+    }
+    # Then Azure, for the same tenant, only when an Azure pillar runs. A failed Azure sign-in skips
+    # the Azure pillar only.
+    [bool]$ArmConnected = $false
+    if ($NeedsArm) {
+        try {
+            Connect-OPIM -TenantId $ResolvedTenantId -IncludeARM -DeviceCode:$DeviceCode -ErrorAction Stop
+            $ArmConnected = $true
+        } catch {
+            Remove-OPIMErrorRecord -Record $PSItem
+            $PSCmdlet.WriteError($PSItem)
+        }
+    }
 
     $ActivateParams = @{ Hours = $Hours }
     if ($Justification) { $ActivateParams.Justification = $Justification }
     if ($TicketNumber)  { $ActivateParams.TicketNumber   = $TicketNumber }
     if ($TicketSystem)  { $ActivateParams.TicketSystem   = $TicketSystem }
+
+    # OPIM-12: in every pillar below, a listing that fails is written as its own error and ends that
+    # pillar only. $ListRead is set only after the listing returned, so nothing a failed listing
+    # read is activated and the failure is never reported as "no eligible ..."; the other pillars
+    # still run.
 
     # -- Directory Roles -------------------------------------------------------
     if ($TenantAlias -or $AllEligible -or $AllEligibleDirectoryRoles) {
@@ -163,25 +201,43 @@ function Enable-OPIMMyRole {
                 Write-Verbose "No DirectoryRoles configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add roles, or run with -AllEligibleDirectoryRoles."
             } else {
                 Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- fetching eligible roles..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare)
-                $DirectoryRoles = Get-OPIMDirectoryRole
-                if ($Config -is [hashtable] -and $Config.DirectoryRoles) {
-                    $DirectoryRoles = $DirectoryRoles | Where-Object { $_.roleDefinitionId -in $Config.DirectoryRoles }
+                [bool]$ListRead = $false
+                try {
+                    $DirectoryRoles = Get-OPIMDirectoryRole -ErrorAction Stop
+                    $ListRead = $true
+                } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
+                    $PSCmdlet.WriteError($PSItem)
                 }
-                if ($DirectoryRoles) {
-                    Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($DirectoryRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                    $DirectoryRoles | Enable-OPIMDirectoryRole @ActivateParams -Wait:$Wait | ConvertTo-OPIMMyRoleResult
-                } else {
-                    Write-Verbose 'No eligible directory roles matched the configured set.'
+                if ($ListRead) {
+                    if ($Config -is [hashtable] -and $Config.DirectoryRoles) {
+                        $DirectoryRoles = $DirectoryRoles | Where-Object { $_.roleDefinitionId -in $Config.DirectoryRoles }
+                    }
+                    if ($DirectoryRoles) {
+                        Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($DirectoryRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
+                        $DirectoryRoles | Enable-OPIMDirectoryRole @ActivateParams -Wait:$Wait | ConvertTo-OPIMMyRoleResult
+                    } else {
+                        Write-Verbose 'No eligible directory roles matched the configured set.'
+                    }
                 }
             }
         } elseif ($PSCmdlet.ShouldProcess('all eligible directory roles', 'Activate')) {
             Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- fetching eligible roles..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare)
-            $DirectoryRoles = Get-OPIMDirectoryRole
-            if ($DirectoryRoles) {
-                Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($DirectoryRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                $DirectoryRoles | Enable-OPIMDirectoryRole @ActivateParams -Wait:$Wait | ConvertTo-OPIMMyRoleResult
-            } else {
-                Write-Verbose 'No eligible directory roles found.'
+            [bool]$ListRead = $false
+            try {
+                $DirectoryRoles = Get-OPIMDirectoryRole -ErrorAction Stop
+                $ListRead = $true
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+            }
+            if ($ListRead) {
+                if ($DirectoryRoles) {
+                    Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($DirectoryRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
+                    $DirectoryRoles | Enable-OPIMDirectoryRole @ActivateParams -Wait:$Wait | ConvertTo-OPIMMyRoleResult
+                } else {
+                    Write-Verbose 'No eligible directory roles found.'
+                }
             }
         }
         $ProgressPillarIndex++
@@ -194,56 +250,94 @@ function Enable-OPIMMyRole {
                 Write-Verbose "No EntraIDGroups configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add groups, or run with -AllEligibleEntraIDGroups."
             } else {
                 Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- fetching eligible groups..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare)
-                $Groups = Get-OPIMEntraIDGroup
-                if ($Config -is [hashtable] -and $Config.EntraIDGroups) {
-                    $Groups = $Groups | Where-Object { "$($_.groupId)_$($_.accessId)" -in $Config.EntraIDGroups }
+                [bool]$ListRead = $false
+                try {
+                    $Groups = Get-OPIMEntraIDGroup -ErrorAction Stop
+                    $ListRead = $true
+                } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
+                    $PSCmdlet.WriteError($PSItem)
                 }
-                if ($Groups) {
-                    Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($Groups.Count) group(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                    $Groups | Enable-OPIMEntraIDGroup @ActivateParams | ConvertTo-OPIMMyRoleResult
-                } else {
-                    Write-Verbose 'No eligible Entra ID group assignments matched the configured set.'
+                if ($ListRead) {
+                    if ($Config -is [hashtable] -and $Config.EntraIDGroups) {
+                        $Groups = $Groups | Where-Object { "$($_.groupId)_$($_.accessId)" -in $Config.EntraIDGroups }
+                    }
+                    if ($Groups) {
+                        Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($Groups.Count) group(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
+                        $Groups | Enable-OPIMEntraIDGroup @ActivateParams | ConvertTo-OPIMMyRoleResult
+                    } else {
+                        Write-Verbose 'No eligible Entra ID group assignments matched the configured set.'
+                    }
                 }
             }
         } elseif ($PSCmdlet.ShouldProcess('all eligible Entra ID group assignments', 'Activate')) {
             Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- fetching eligible groups..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare)
-            $Groups = Get-OPIMEntraIDGroup
-            if ($Groups) {
-                Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($Groups.Count) group(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                $Groups | Enable-OPIMEntraIDGroup @ActivateParams | ConvertTo-OPIMMyRoleResult
-            } else {
-                Write-Verbose 'No eligible Entra ID group assignments found.'
+            [bool]$ListRead = $false
+            try {
+                $Groups = Get-OPIMEntraIDGroup -ErrorAction Stop
+                $ListRead = $true
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+            }
+            if ($ListRead) {
+                if ($Groups) {
+                    Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($Groups.Count) group(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
+                    $Groups | Enable-OPIMEntraIDGroup @ActivateParams | ConvertTo-OPIMMyRoleResult
+                } else {
+                    Write-Verbose 'No eligible Entra ID group assignments found.'
+                }
             }
         }
         $ProgressPillarIndex++
     }
 
     # -- Azure RBAC Roles ------------------------------------------------------
-    if ($TenantAlias -or $AllEligible -or $AllEligibleAzureRoles) {
+    # Only when Azure is signed in. Without $NeedsArm this is the verbose skip of a hashtable alias
+    # that lists no AzureRoles.
+    if (($TenantAlias -or $AllEligible -or $AllEligibleAzureRoles) -and (-not $NeedsArm -or $ArmConnected)) {
         if ($TenantAlias) {
             if ($Config -is [hashtable] -and -not $Config.AzureRoles) {
                 Write-Verbose "No AzureRoles configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add roles, or run with -AllEligibleAzureRoles."
             } else {
                 Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- fetching eligible roles..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare)
-                $AzureRoles = Get-OPIMAzureRole
-                if ($Config -is [hashtable] -and $Config.AzureRoles) {
-                    $AzureRoles = $AzureRoles | Where-Object { $_.Name -in $Config.AzureRoles }
+                [bool]$ListRead = $false
+                try {
+                    $AzureRoles = Get-OPIMAzureRole -ErrorAction Stop
+                    $ListRead = $true
+                } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
+                    $PSCmdlet.WriteError($PSItem)
                 }
-                if ($AzureRoles) {
-                    Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($AzureRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                    $AzureRoles | Enable-OPIMAzureRole @ActivateParams | ConvertTo-OPIMMyRoleResult
-                } else {
-                    Write-Verbose 'No eligible Azure roles matched the configured set.'
+                if ($ListRead) {
+                    if ($Config -is [hashtable] -and $Config.AzureRoles) {
+                        $AzureRoles = $AzureRoles | Where-Object { $_.Name -in $Config.AzureRoles }
+                    }
+                    if ($AzureRoles) {
+                        Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($AzureRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
+                        $AzureRoles | Enable-OPIMAzureRole @ActivateParams | ConvertTo-OPIMMyRoleResult
+                    } else {
+                        Write-Verbose 'No eligible Azure roles matched the configured set.'
+                    }
                 }
             }
         } elseif ($PSCmdlet.ShouldProcess('all eligible Azure RBAC roles', 'Activate')) {
             Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- fetching eligible roles..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare)
-            $AzureRoles = Get-OPIMAzureRole
-            if ($AzureRoles) {
-                Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($AzureRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                $AzureRoles | Enable-OPIMAzureRole @ActivateParams | ConvertTo-OPIMMyRoleResult
-            } else {
-                Write-Verbose 'No eligible Azure RBAC roles found.'
+            [bool]$ListRead = $false
+            try {
+                $AzureRoles = Get-OPIMAzureRole -ErrorAction Stop
+                $ListRead = $true
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+            }
+            if ($ListRead) {
+                if ($AzureRoles) {
+                    Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($AzureRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
+                    $AzureRoles | Enable-OPIMAzureRole @ActivateParams | ConvertTo-OPIMMyRoleResult
+                } else {
+                    Write-Verbose 'No eligible Azure RBAC roles found.'
+                }
             }
         }
     }

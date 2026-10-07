@@ -34,11 +34,43 @@ idempotent. You never need to call `Connect-MgGraph` or `Connect-AzAccount` manu
 browser prompt at a predictable time or need to target a specific tenant:
 
 ```powershell
-Connect-OPIM                                          # home / default tenant
+Connect-OPIM                                          # home tenant at the first sign-in, then the session's tenant
 Connect-OPIM -TenantId 'contoso.onmicrosoft.com'     # specific tenant
 Connect-OPIM -TenantAlias corp                        # resolve alias from TenantMap.psd1
-Connect-OPIM -IncludeARM                              # also acquire an Azure ARM token
+Connect-OPIM -IncludeARM                              # also sign in to Azure, for the same tenant
 ```
+
+A session stays on the tenant it signed in to. A command that names no tenant keeps that tenant,
+and every new token must be issued for it: a token for another tenant is refused with
+`TenantMismatch`, and nothing is sent. To work in another tenant, run `Connect-OPIM -TenantId`
+with it, or `Disconnect-OPIM` and sign in again.
+
+The Microsoft Graph PowerShell SDK keeps one session per PowerShell process. If something else in
+the same process runs `Connect-MgGraph` after Omnicit.PIM signed in, the role, group and sign-in
+commands refuse to send their calls under that session (`GraphSessionChanged`) instead of
+switching it back. Run `Disconnect-OPIM`, which also disconnects that other session, and sign in
+again -- or use a new PowerShell window. The configuration commands are the exception, by design:
+`Install-OPIMConfiguration` and `Set-OPIMConfiguration` read whatever Graph session is active --
+`Install-OPIMConfiguration` takes its tenant when you omit `-TenantId`, and both read the tenant's
+display name for the confirmation prompt.
+
+A command whose sign-in at its start was refused sends nothing more, even when it carries on past
+the error: every request it would still make is refused with `SignInRefused`. A sign-in refused
+while a failed request is retried -- an ACRS step-up or a token refresh -- fails only that request.
+Run `Connect-OPIM`, or the command again, once the sign-in can succeed.
+
+Azure signs in separately, through the Az module, for the same tenant as the Microsoft Graph
+sign-in. An earlier Azure sign-in is reused only when it is for that tenant and the same account as
+the Graph sign-in; otherwise Azure signs in again for that tenant. It never asks you to pick a
+subscription: every Azure role command names its own scope. A failed Azure sign-in ends with
+`AzureConnectFailed`, and the command then sends nothing to Azure under an earlier sign-in
+(`SignInRefused`).
+
+`pim` and `unpim` sign in to Microsoft Graph first; when that fails, the command stops before
+anything is listed or changed. They then sign in to Azure, only when Azure roles are part of the
+run; when that fails, the error is written and only the Azure roles are skipped -- unless
+`$ErrorActionPreference` is `Stop` (or you pass `-ErrorAction Stop`), in which case the error ends
+the command before any role or group is activated or deactivated.
 
 On a machine without a browser -- a remote session, a container, a cloud PC -- sign in with a
 device code instead. The command shows a short code and the address to open (Microsoft Entra
@@ -82,7 +114,7 @@ Disconnect-OPIM
 
 ```powershell
 # Connect — browser prompt appears automatically on first use, or pre-authenticate explicitly
-Connect-OPIM                                          # home / default tenant
+Connect-OPIM                                          # home tenant at the first sign-in
 Connect-OPIM -TenantId 'contoso.onmicrosoft.com'     # specific tenant
 
 # List eligible roles
@@ -119,7 +151,7 @@ Get-OPIMDirectoryRole | Enable-OPIMDirectoryRole -Wait
 ### Azure Resource (RBAC) Roles
 
 ```powershell
-# Connect — -IncludeARM acquires both Graph and Azure ARM tokens in a single browser prompt
+# Connect — -IncludeARM also signs in to Azure, for the same tenant as Graph
 Connect-OPIM -IncludeARM
 Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -IncludeARM
 

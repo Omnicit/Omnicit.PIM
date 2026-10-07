@@ -7,7 +7,8 @@ function Resolve-RoleByName ($RoleName, [Switch]$AD, [Switch]$Group, [Switch]$Ac
     Parses the schedule ID from a tab-completion string in the format 'Display Name (schedule-id)'
     and looks up the corresponding schedule object using Get-OPIMDirectoryRole, Get-OPIMAzureRole,
     or Get-OPIMEntraIDGroup depending on the switch parameters provided. Throws if the schedule ID
-    cannot be found or if more than one match is returned.
+    cannot be found or if more than one match is returned. A listing that cannot be read is thrown
+    as its own error record, never reported as a schedule that was not found.
 
     .PARAMETER RoleName
     A role or group name string in the format produced by the module's IArgumentCompleter classes:
@@ -40,12 +41,26 @@ function Resolve-RoleByName ($RoleName, [Switch]$AD, [Switch]$Group, [Switch]$Ac
         throw "RoleName '$RoleName' is in an unexpected format. Expected 'Display Name (schedule-id)'. The -RoleName parameter is meant to be used with tab completion, not typed manually."
     }
 
-    $Role = if ($Group) {
-        Get-OPIMEntraIDGroup -Activated:$Activated | Where-Object { $_.id -eq $ScheduleId }
-    } elseif ($AD) {
-        Get-OPIMDirectoryRole -Activated:$Activated | Where-Object { $_.id -eq $ScheduleId }
+    # OPIM-12: a listing that fails is thrown as itself, never reported as "not found". -ErrorAction
+    # Stop turns the error the listing writes into one that ends it, and the rethrow keeps its id
+    # (for example 'Forbidden,Get-OPIMDirectoryRole'), so the calling cmdlet stops at this name as
+    # it does for a name it cannot resolve.
+    try {
+        $Items = if ($Group) {
+            Get-OPIMEntraIDGroup -Activated:$Activated -ErrorAction Stop
+        } elseif ($AD) {
+            Get-OPIMDirectoryRole -Activated:$Activated -ErrorAction Stop
+        } else {
+            Get-OPIMAzureRole -Activated:$Activated -ErrorAction Stop
+        }
+    } catch {
+        Remove-OPIMErrorRecord -Record $PSItem
+        throw $PSItem
+    }
+    $Role = if ($Group -or $AD) {
+        $Items | Where-Object { $_.id -eq $ScheduleId }
     } else {
-        Get-OPIMAzureRole -Activated:$Activated | Where-Object { $_.Name -eq $ScheduleId }
+        $Items | Where-Object { $_.Name -eq $ScheduleId }
     }
 
     if (-not $Role) {

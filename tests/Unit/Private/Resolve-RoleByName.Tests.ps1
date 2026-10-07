@@ -120,4 +120,85 @@ Describe 'Resolve-RoleByName' {
             }
         }
     }
+
+    Context 'When the listing fails' {
+        # OPIM-12: a listing that cannot be read is thrown as itself, so the calling cmdlet stops as
+        # it does for a name it cannot resolve. The mock writes the record a listing writes for a
+        # failed read (a Graph 403 here); it never says the schedule was not found.
+        # The mock takes its preference from an explicit -ErrorAction and is Continue otherwise, as a
+        # listing is under the default preference: a module-scoped mock body reads the test scope's
+        # preference (Stop under the build), never the caller's.
+        It "throws the listing's error as itself (<Pillar>)" -ForEach @(
+            @{ Lister = 'Get-OPIMDirectoryRole'; Pillar = 'AD' }
+            @{ Lister = 'Get-OPIMEntraIDGroup'; Pillar = 'Group' }
+            @{ Lister = 'Get-OPIMAzureRole'; Pillar = 'Azure' }
+        ) {
+            InModuleScope Omnicit.PIM -Parameters @{ Lister = $Lister; Pillar = $Pillar } {
+                param($Lister, $Pillar)
+                Mock $Lister {
+                    $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                            [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+                }
+                $Switches = @{ AD = $Pillar -eq 'AD'; Group = $Pillar -eq 'Group' }
+                { Resolve-RoleByName -RoleName 'Role (id-1)' @Switches } | Should -Throw -ErrorId 'Forbidden*'
+            }
+        }
+
+        It 'never reports a failed listing as not found (<Pillar>)' -ForEach @(
+            @{ Lister = 'Get-OPIMDirectoryRole'; Pillar = 'AD' }
+            @{ Lister = 'Get-OPIMEntraIDGroup'; Pillar = 'Group' }
+            @{ Lister = 'Get-OPIMAzureRole'; Pillar = 'Azure' }
+        ) {
+            InModuleScope Omnicit.PIM -Parameters @{ Lister = $Lister; Pillar = $Pillar } {
+                param($Lister, $Pillar)
+                Mock $Lister {
+                    $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                            [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+                }
+                $Switches = @{ AD = $Pillar -eq 'AD'; Group = $Pillar -eq 'Group' }
+                $Thrown = $null
+                try { Resolve-RoleByName -RoleName 'Role (id-1)' @Switches } catch { $Thrown = $PSItem }
+                $Thrown | Should -Not -BeNullOrEmpty -Because 'a listing that cannot be read must stop the resolution'
+                $Thrown.Exception.Message | Should -Be 'Forbidden: denied'
+                $Thrown.Exception.Message | Should -Not -Match 'not found'
+                $Thrown.Exception.Message | Should -Not -Match 'report it as a bug'
+            }
+        }
+
+        It "throws a real listing's 403 as itself" {
+            # End to end: the real Get-OPIMEntraIDGroup reads through the transport mock, which
+            # answers with the record the wrapper throws for a Graph 403.
+            InModuleScope Omnicit.PIM {
+                Mock Initialize-OPIMAuth {}
+                Mock Invoke-OPIMGraphRequest {
+                    $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('Forbidden: Insufficient privileges to complete the operation.'), 'Forbidden',
+                            [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+                }
+                $Thrown = $null
+                try { Resolve-RoleByName -RoleName 'Owners - member (grp-403)' -Group } catch { $Thrown = $PSItem }
+                $Thrown | Should -Not -BeNullOrEmpty -Because 'a listing that cannot be read must stop the resolution'
+                $Thrown.FullyQualifiedErrorId | Should -BeLike 'Forbidden*'
+                $Thrown.Exception.Message | Should -Not -Match 'not found'
+                Should -Invoke Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It
+            }
+        }
+
+        It 'passes -Activated to the failing listing and still throws its error' {
+            InModuleScope Omnicit.PIM {
+                Mock Get-OPIMEntraIDGroup {
+                    $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                            [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+                }
+                { Resolve-RoleByName -RoleName 'Owners (grp-403)' -Group -Activated } | Should -Throw -ErrorId 'Forbidden*'
+                Should -Invoke Get-OPIMEntraIDGroup -Times 1 -Exactly -Scope It -ParameterFilter { $Activated -eq $true }
+            }
+        }
+    }
 }

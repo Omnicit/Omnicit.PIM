@@ -95,6 +95,9 @@ function Get-OPIMAzureRole {
                 $ActiveParams = @{ Scope = '/'; Filter = $OdataFilter; ErrorAction = 'Stop' }
             }
             try {
+                # SEC (EntraRBAC A19): the ARM gate, inside the try so the catch reports a refusal as itself.
+                $ArmRefusal = Get-OPIMArmRefusal
+                if ($null -ne $ArmRefusal) { throw $ArmRefusal }
                 Get-AzRoleEligibilitySchedule @EligParams |
                     ForEach-Object {
                         $_ | Add-Member -NotePropertyName Status -NotePropertyValue 'Eligible' -Force
@@ -103,18 +106,24 @@ function Get-OPIMAzureRole {
                         $_
                     }
             } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
                 if ($PSItem.FullyQualifiedErrorId.Split(',')[0] -eq 'InsufficientPermissions') {
+                    # OPIM-11: the rewrap keeps no reference to the raw Az record -- no inner
+                    # exception, and the scope as its target object instead of the caught record.
                     $Message = "You do not have sufficient rights to view eligible roles at scope (/). This typically requires Owner or UserAccessAdministrator rights."
-                    Write-CmdletError -Message ([System.Exception]::new($Message, $PSItem.Exception)) `
+                    Write-CmdletError -Message ([System.Exception]::new($Message)) `
                         -ErrorId 'InsufficientPermissions' `
                         -Category PermissionDenied `
                         -Details $Message `
+                        -TargetObject '/' `
                         -cmdlet $PSCmdlet
                 } else {
                     $PSCmdlet.WriteError($PSItem)
                 }
             }
             try {
+                $ArmRefusal = Get-OPIMArmRefusal
+                if ($null -ne $ArmRefusal) { throw $ArmRefusal }
                 Get-AzRoleAssignmentScheduleInstance @ActiveParams |
                     Where-Object AssignmentType -EQ 'Activated' |
                     ForEach-Object {
@@ -124,12 +133,14 @@ function Get-OPIMAzureRole {
                         $_
                     }
             } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
                 if ($PSItem.FullyQualifiedErrorId.Split(',')[0] -eq 'InsufficientPermissions') {
                     $Message = "You do not have sufficient rights to view active roles at scope (/). This typically requires Owner or UserAccessAdministrator rights."
-                    Write-CmdletError -Message ([System.Exception]::new($Message, $PSItem.Exception)) `
+                    Write-CmdletError -Message ([System.Exception]::new($Message)) `
                         -ErrorId 'InsufficientPermissions' `
                         -Category PermissionDenied `
                         -Details $Message `
+                        -TargetObject '/' `
                         -cmdlet $PSCmdlet
                 } else {
                     $PSCmdlet.WriteError($PSItem)
@@ -139,6 +150,10 @@ function Get-OPIMAzureRole {
         }
 
         try {
+            # SEC (EntraRBAC A19): the ARM gate for both reads below, inside the try so the catch
+            # reports a refusal as itself.
+            $ArmRefusal = Get-OPIMArmRefusal
+            if ($null -ne $ArmRefusal) { throw $ArmRefusal }
             if ($Activated) {
                 Get-AzRoleAssignmentScheduleInstance -Scope $Scope -Filter $OdataFilter -ErrorAction Stop |
                     Where-Object AssignmentType -EQ 'Activated' |
@@ -157,15 +172,19 @@ function Get-OPIMAzureRole {
                     }
             }
         } catch {
+            Remove-OPIMErrorRecord -Record $PSItem
             if (-not ($PSItem.FullyQualifiedErrorId.Split(',')[0] -eq 'InsufficientPermissions')) {
                 $PSCmdlet.WriteError($PSItem)
                 return
             }
+            # OPIM-11: no reference to the raw Az record -- no inner exception, and the scope as the
+            # target object instead of the caught record.
             $Message = "Insufficient permissions to list roles at scope ($Scope). If you are trying to view all users' roles, use -All (requires Owner or UserAccessAdministrator)."
-            Write-CmdletError -Message ([System.Exception]::new($Message, $PSItem.Exception)) `
+            Write-CmdletError -Message ([System.Exception]::new($Message)) `
                 -ErrorId 'InsufficientPermissions' `
                 -Category PermissionDenied `
                 -Details $Message `
+                -TargetObject $Scope `
                 -cmdlet $PSCmdlet
             return
         }

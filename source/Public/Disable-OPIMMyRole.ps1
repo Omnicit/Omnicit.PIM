@@ -16,6 +16,15 @@ function Disable-OPIMMyRole {
     in the selected categories are deactivated. Confirmation is required -- use -WhatIf to preview
     or -Confirm:$false to suppress the prompt.
 
+    The command signs in to Microsoft Graph first and then, when Azure RBAC roles are to be
+    deactivated, to Azure for the same tenant. A failed Graph sign-in stops the command before any
+    role or group is listed or deactivated. A failed Azure sign-in is written as an error and skips
+    the Azure RBAC roles only -- except under the error preference Stop ($ErrorActionPreference or
+    -ErrorAction), where that error ends the command before any category runs. A list of roles or
+    groups that cannot be read is written as its own error, and nothing of that category is
+    deactivated; the other categories still run, except under the error preference Stop, where the
+    first such error ends the command.
+
     Use the 'unpim' alias for quick deactivation:
 
         unpim -TenantAlias contoso
@@ -118,8 +127,11 @@ function Disable-OPIMMyRole {
         $ResolvedTenantId = if ($Config -is [hashtable]) { $Config.TenantId } else { [string]$Config }
     }
 
+    # The Azure pillar runs for -AllActivated, -AllActivatedAzureRoles, a hashtable alias that lists
+    # AzureRoles, and the plain string form of an alias, whose Azure pillar deactivates every active
+    # Azure role.
     [bool]$NeedsArm = $AllActivated -or $AllActivatedAzureRoles -or
-                      ($Config -is [hashtable] -and $Config.AzureRoles)
+                      ($TenantAlias -and ($Config -isnot [hashtable] -or $Config.AzureRoles))
 
     # -- Progress --------------------------------------------------------------
     [int]$ProgressPillarCount = ([int][bool]($TenantAlias -or $AllActivated -or $AllActivatedDirectoryRoles)) +
@@ -129,7 +141,33 @@ function Disable-OPIMMyRole {
     [int]$ProgressPillarIndex = 0
     Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status 'Connecting...' -PercentComplete 3
 
-    Connect-OPIM -TenantId $ResolvedTenantId -IncludeARM:$NeedsArm -DeviceCode:$DeviceCode
+    # OPIM-08: Graph first. A failed Graph sign-in stops the command: nothing is listed or
+    # deactivated, not even in the tenant an earlier sign-in pinned.
+    try {
+        Connect-OPIM -TenantId $ResolvedTenantId -DeviceCode:$DeviceCode -ErrorAction Stop
+    } catch {
+        Remove-OPIMErrorRecord -Record $PSItem
+        $PSCmdlet.WriteError($PSItem)
+        Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Completed
+        return
+    }
+    # Then Azure, for the same tenant, only when an Azure pillar runs. A failed Azure sign-in skips
+    # the Azure pillar only.
+    [bool]$ArmConnected = $false
+    if ($NeedsArm) {
+        try {
+            Connect-OPIM -TenantId $ResolvedTenantId -IncludeARM -DeviceCode:$DeviceCode -ErrorAction Stop
+            $ArmConnected = $true
+        } catch {
+            Remove-OPIMErrorRecord -Record $PSItem
+            $PSCmdlet.WriteError($PSItem)
+        }
+    }
+
+    # OPIM-12: in every pillar below, a listing that fails is written as its own error and ends that
+    # pillar only. $ListRead is set only after every listing of the pillar returned, so nothing a
+    # failed listing read is deactivated and the failure is never reported as "no active ..." or
+    # "not currently activated"; the other pillars still run.
 
     # -- Directory Roles -------------------------------------------------------
     if ($TenantAlias -or $AllActivated -or $AllActivatedDirectoryRoles) {
@@ -138,35 +176,53 @@ function Disable-OPIMMyRole {
                 Write-Verbose "No DirectoryRoles configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add roles, or run with -AllActivatedDirectoryRoles."
             } else {
                 Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- fetching active roles..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare)
-                $ActiveDirectoryRoles = Get-OPIMDirectoryRole -Activated
-                if ($Config -is [hashtable] -and $Config.DirectoryRoles) {
-                    Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($Config.DirectoryRoles.Count) configured role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                    foreach ($ConfiguredRoleId in $Config.DirectoryRoles) {
-                        $ActiveRole = $ActiveDirectoryRoles | Where-Object { $_.roleDefinitionId -eq $ConfiguredRoleId } | Select-Object -First 1
-                        if ($ActiveRole) {
-                            $ActiveRole | Disable-OPIMDirectoryRole | ConvertTo-OPIMMyRoleResult
-                        } else {
-                            Write-Verbose "Directory role '$ConfiguredRoleId' is not currently activated. No deactivation needed."
+                [bool]$ListRead = $false
+                try {
+                    $ActiveDirectoryRoles = Get-OPIMDirectoryRole -Activated -ErrorAction Stop
+                    $ListRead = $true
+                } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
+                    $PSCmdlet.WriteError($PSItem)
+                }
+                if ($ListRead) {
+                    if ($Config -is [hashtable] -and $Config.DirectoryRoles) {
+                        Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($Config.DirectoryRoles.Count) configured role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
+                        foreach ($ConfiguredRoleId in $Config.DirectoryRoles) {
+                            $ActiveRole = $ActiveDirectoryRoles | Where-Object { $_.roleDefinitionId -eq $ConfiguredRoleId } | Select-Object -First 1
+                            if ($ActiveRole) {
+                                $ActiveRole | Disable-OPIMDirectoryRole | ConvertTo-OPIMMyRoleResult
+                            } else {
+                                Write-Verbose "Directory role '$ConfiguredRoleId' is not currently activated. No deactivation needed."
+                            }
                         }
-                    }
-                } else {
-                    # Simple string config -- deactivate all active directory roles
-                    if ($ActiveDirectoryRoles) {
-                        Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveDirectoryRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                        $ActiveDirectoryRoles | Disable-OPIMDirectoryRole | ConvertTo-OPIMMyRoleResult
                     } else {
-                        Write-Verbose 'No active directory roles found.'
+                        # Simple string config -- deactivate all active directory roles
+                        if ($ActiveDirectoryRoles) {
+                            Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveDirectoryRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
+                            $ActiveDirectoryRoles | Disable-OPIMDirectoryRole | ConvertTo-OPIMMyRoleResult
+                        } else {
+                            Write-Verbose 'No active directory roles found.'
+                        }
                     }
                 }
             }
         } elseif ($PSCmdlet.ShouldProcess('all active directory roles', 'Deactivate')) {
             Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- fetching active roles..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare)
-            $ActiveDirectoryRoles = Get-OPIMDirectoryRole -Activated
-            if ($ActiveDirectoryRoles) {
-                Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveDirectoryRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                $ActiveDirectoryRoles | Disable-OPIMDirectoryRole | ConvertTo-OPIMMyRoleResult
-            } else {
-                Write-Verbose 'No active directory roles found.'
+            [bool]$ListRead = $false
+            try {
+                $ActiveDirectoryRoles = Get-OPIMDirectoryRole -Activated -ErrorAction Stop
+                $ListRead = $true
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+            }
+            if ($ListRead) {
+                if ($ActiveDirectoryRoles) {
+                    Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveDirectoryRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
+                    $ActiveDirectoryRoles | Disable-OPIMDirectoryRole | ConvertTo-OPIMMyRoleResult
+                } else {
+                    Write-Verbose 'No active directory roles found.'
+                }
             }
         }
         $ProgressPillarIndex++
@@ -179,82 +235,122 @@ function Disable-OPIMMyRole {
                 Write-Verbose "No EntraIDGroups configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add groups, or run with -AllActivatedEntraIDGroups."
             } else {
                 Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- fetching active groups..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare)
-                $ActiveGroups = Get-OPIMEntraIDGroup -Activated
-                if ($Config -is [hashtable] -and $Config.EntraIDGroups) {
-                    Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($Config.EntraIDGroups.Count) configured group(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                    foreach ($ConfiguredGroupKey in $Config.EntraIDGroups) {
-                        $ActiveGroup = $ActiveGroups | Where-Object { "$($_.groupId)_$($_.accessId)" -eq $ConfiguredGroupKey } | Select-Object -First 1
-                        if ($ActiveGroup) {
-                            $ActiveGroup | Disable-OPIMEntraIDGroup | ConvertTo-OPIMMyRoleResult
-                        } else {
-                            Write-Verbose "Entra ID group '$ConfiguredGroupKey' is not currently activated. No deactivation needed."
+                [bool]$ListRead = $false
+                try {
+                    $ActiveGroups = Get-OPIMEntraIDGroup -Activated -ErrorAction Stop
+                    $ListRead = $true
+                } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
+                    $PSCmdlet.WriteError($PSItem)
+                }
+                if ($ListRead) {
+                    if ($Config -is [hashtable] -and $Config.EntraIDGroups) {
+                        Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($Config.EntraIDGroups.Count) configured group(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
+                        foreach ($ConfiguredGroupKey in $Config.EntraIDGroups) {
+                            $ActiveGroup = $ActiveGroups | Where-Object { "$($_.groupId)_$($_.accessId)" -eq $ConfiguredGroupKey } | Select-Object -First 1
+                            if ($ActiveGroup) {
+                                $ActiveGroup | Disable-OPIMEntraIDGroup | ConvertTo-OPIMMyRoleResult
+                            } else {
+                                Write-Verbose "Entra ID group '$ConfiguredGroupKey' is not currently activated. No deactivation needed."
+                            }
                         }
-                    }
-                } else {
-                    # Simple string config -- deactivate all active groups
-                    if ($ActiveGroups) {
-                        Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveGroups.Count) group(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                        $ActiveGroups | Disable-OPIMEntraIDGroup | ConvertTo-OPIMMyRoleResult
                     } else {
-                        Write-Verbose 'No active Entra ID group assignments found.'
+                        # Simple string config -- deactivate all active groups
+                        if ($ActiveGroups) {
+                            Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveGroups.Count) group(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
+                            $ActiveGroups | Disable-OPIMEntraIDGroup | ConvertTo-OPIMMyRoleResult
+                        } else {
+                            Write-Verbose 'No active Entra ID group assignments found.'
+                        }
                     }
                 }
             }
         } elseif ($PSCmdlet.ShouldProcess('all active Entra ID group assignments', 'Deactivate')) {
             Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- fetching active groups..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare)
-            $ActiveGroups = Get-OPIMEntraIDGroup -Activated
-            if ($ActiveGroups) {
-                Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveGroups.Count) group(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                $ActiveGroups | Disable-OPIMEntraIDGroup | ConvertTo-OPIMMyRoleResult
-            } else {
-                Write-Verbose 'No active Entra ID group assignments found.'
+            [bool]$ListRead = $false
+            try {
+                $ActiveGroups = Get-OPIMEntraIDGroup -Activated -ErrorAction Stop
+                $ListRead = $true
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+            }
+            if ($ListRead) {
+                if ($ActiveGroups) {
+                    Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveGroups.Count) group(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
+                    $ActiveGroups | Disable-OPIMEntraIDGroup | ConvertTo-OPIMMyRoleResult
+                } else {
+                    Write-Verbose 'No active Entra ID group assignments found.'
+                }
             }
         }
         $ProgressPillarIndex++
     }
 
     # -- Azure RBAC Roles ------------------------------------------------------
-    if ($TenantAlias -or $AllActivated -or $AllActivatedAzureRoles) {
+    # Only when Azure is signed in. Without $NeedsArm this is the verbose skip of a hashtable alias
+    # that lists no AzureRoles.
+    if (($TenantAlias -or $AllActivated -or $AllActivatedAzureRoles) -and (-not $NeedsArm -or $ArmConnected)) {
         if ($TenantAlias) {
             if ($Config -is [hashtable] -and -not $Config.AzureRoles) {
                 Write-Verbose "No AzureRoles configured for alias '$TenantAlias'. Use Set-OPIMConfiguration to add roles, or run with -AllActivatedAzureRoles."
             } else {
                 Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- fetching active roles..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare)
-                $ActiveAzureRoles = Get-OPIMAzureRole -Activated
-                if ($Config -is [hashtable] -and $Config.AzureRoles) {
-                    # The config stores eligible schedule .Name values (same as Enable-OPIMMyRole).
-                    # Active instances are different objects -- correlate via RoleDefinitionId + ScopeId.
-                    $ConfiguredEligible = Get-OPIMAzureRole | Where-Object { $_.Name -in $Config.AzureRoles }
-                    Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($Config.AzureRoles.Count) configured role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                    foreach ($EligibleRole in $ConfiguredEligible) {
-                        $ActiveRole = $ActiveAzureRoles | Where-Object {
-                            $_.RoleDefinitionId -eq $EligibleRole.RoleDefinitionId -and
-                            $_.ScopeId -eq $EligibleRole.ScopeId
-                        } | Select-Object -First 1
-                        if ($ActiveRole) {
-                            $ActiveRole | Disable-OPIMAzureRole | ConvertTo-OPIMMyRoleResult
-                        } else {
-                            Write-Verbose "Azure role '$($EligibleRole.RoleDefinitionDisplayName)' on '$($EligibleRole.ScopeDisplayName)' is not currently activated. No deactivation needed."
-                        }
+                [bool]$ListRead = $false
+                try {
+                    $ActiveAzureRoles = Get-OPIMAzureRole -Activated -ErrorAction Stop
+                    if ($Config -is [hashtable] -and $Config.AzureRoles) {
+                        # The config stores eligible schedule .Name values (same as Enable-OPIMMyRole).
+                        # Active instances are different objects -- correlate via RoleDefinitionId + ScopeId.
+                        $ConfiguredEligible = Get-OPIMAzureRole -ErrorAction Stop | Where-Object { $_.Name -in $Config.AzureRoles }
                     }
-                } else {
-                    # Simple string config -- deactivate all active Azure roles
-                    if ($ActiveAzureRoles) {
-                        Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveAzureRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                        $ActiveAzureRoles | Disable-OPIMAzureRole | ConvertTo-OPIMMyRoleResult
+                    $ListRead = $true
+                } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
+                    $PSCmdlet.WriteError($PSItem)
+                }
+                if ($ListRead) {
+                    if ($Config -is [hashtable] -and $Config.AzureRoles) {
+                        Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($Config.AzureRoles.Count) configured role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
+                        foreach ($EligibleRole in $ConfiguredEligible) {
+                            $ActiveRole = $ActiveAzureRoles | Where-Object {
+                                $_.RoleDefinitionId -eq $EligibleRole.RoleDefinitionId -and
+                                $_.ScopeId -eq $EligibleRole.ScopeId
+                            } | Select-Object -First 1
+                            if ($ActiveRole) {
+                                $ActiveRole | Disable-OPIMAzureRole | ConvertTo-OPIMMyRoleResult
+                            } else {
+                                Write-Verbose "Azure role '$($EligibleRole.RoleDefinitionDisplayName)' on '$($EligibleRole.ScopeDisplayName)' is not currently activated. No deactivation needed."
+                            }
+                        }
                     } else {
-                        Write-Verbose 'No active Azure RBAC roles found.'
+                        # Simple string config -- deactivate all active Azure roles
+                        if ($ActiveAzureRoles) {
+                            Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveAzureRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
+                            $ActiveAzureRoles | Disable-OPIMAzureRole | ConvertTo-OPIMMyRoleResult
+                        } else {
+                            Write-Verbose 'No active Azure RBAC roles found.'
+                        }
                     }
                 }
             }
         } elseif ($PSCmdlet.ShouldProcess('all active Azure RBAC roles', 'Deactivate')) {
             Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- fetching active roles..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare)
-            $ActiveAzureRoles = Get-OPIMAzureRole -Activated
-            if ($ActiveAzureRoles) {
-                Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveAzureRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                $ActiveAzureRoles | Disable-OPIMAzureRole | ConvertTo-OPIMMyRoleResult
-            } else {
-                Write-Verbose 'No active Azure RBAC roles found.'
+            [bool]$ListRead = $false
+            try {
+                $ActiveAzureRoles = Get-OPIMAzureRole -Activated -ErrorAction Stop
+                $ListRead = $true
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+            }
+            if ($ListRead) {
+                if ($ActiveAzureRoles) {
+                    Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveAzureRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
+                    $ActiveAzureRoles | Disable-OPIMAzureRole | ConvertTo-OPIMMyRoleResult
+                } else {
+                    Write-Verbose 'No active Azure RBAC roles found.'
+                }
             }
         }
         $ProgressPillarIndex++

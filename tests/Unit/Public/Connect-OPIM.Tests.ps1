@@ -42,6 +42,15 @@ Describe 'Connect-OPIM' {
                 -not $DeviceCode
             }
         }
+
+        It 'passes no tenant to Initialize-OPIMAuth when none is given, so the session keeps its own' {
+            # OPIM-07: an empty -TenantId keeps the signed-in tenant; Connect-OPIM must never send
+            # 'organizations' on its own.
+            Connect-OPIM
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                [string]::IsNullOrEmpty($TenantId)
+            }
+        }
     }
 
     Context 'When called with -TenantAlias (simple string config)' {

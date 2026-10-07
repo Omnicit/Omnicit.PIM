@@ -121,9 +121,10 @@ function Get-OPIMEntraIDGroup {
             )) {
                 $RequestUri = "${Base}/$($TypeConfig.Type)${UserFilter}${Expand}${OdataFilter}"
                 try {
-                    $Items = Invoke-OPIMGraphRequest -Uri $RequestUri |
+                    $Items = Invoke-OPIMGraphRequest -Uri $RequestUri -All |
                         Select-Object -ExpandProperty Value
                 } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
                     $PSCmdlet.WriteError($PSItem)
                     continue
                 }
@@ -147,9 +148,10 @@ function Get-OPIMEntraIDGroup {
         $RequestUri = "${Base}/${Type}${UserFilter}${Expand}${OdataFilter}"
 
         try {
-            $Items = Invoke-OPIMGraphRequest -Uri $RequestUri |
+            $Items = Invoke-OPIMGraphRequest -Uri $RequestUri -All |
                 Select-Object -ExpandProperty Value
         } catch {
+            Remove-OPIMErrorRecord -Record $PSItem
             $PSCmdlet.WriteError($PSItem)
             return
         }

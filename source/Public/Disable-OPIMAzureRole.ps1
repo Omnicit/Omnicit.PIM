@@ -35,7 +35,14 @@ function Disable-OPIMAzureRole {
     process {
         Initialize-OPIMAuth -IncludeARM
         if ($Identity) {
-            $Role = Get-OPIMAzureRole -Activated | Where-Object Name -EQ $Identity | Select-Object -First 1
+            try {
+                $Role = Get-OPIMAzureRole -Activated -ErrorAction Stop | Where-Object Name -EQ $Identity | Select-Object -First 1
+            } catch {
+                # OPIM-12: the listing failed; report it as itself and stop for this identity.
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+                return
+            }
             if (-not $Role) {
                 Write-CmdletError `
                     -Message ([System.Exception]::new("No active Azure role found with identity '$Identity'.")) `
@@ -68,10 +75,15 @@ function Disable-OPIMAzureRole {
                 'Deactivate Azure Role'
             )) {
             try {
+                # SEC (EntraRBAC A19): the ARM gate, inside the try so the catch reports a refusal as
+                # itself.
+                $ArmRefusal = Get-OPIMArmRefusal
+                if ($null -ne $ArmRefusal) { throw $ArmRefusal }
                 $Response = New-AzRoleAssignmentScheduleRequest @RoleDeactivateParams -ErrorAction Stop
                 $Response.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleRequest')
                 $Response
             } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
                 if (-not (ConvertTo-ActiveDurationTooShortError -CaughtError $PSItem -ResourceType 'role' -Cmdlet $PSCmdlet)) {
                     $PSCmdlet.WriteError($PSItem)
                 }

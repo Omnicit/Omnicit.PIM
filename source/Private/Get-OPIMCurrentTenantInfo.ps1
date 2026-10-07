@@ -46,9 +46,9 @@ function Get-OPIMCurrentTenantInfo {
             $DisplayName = [string]$OrgResponse.value[0].displayName
         }
     } catch {
-        # $Error entry contains the raw HttpRequestMessage with the Authorization: Bearer
-        # header in plain text -- remove it immediately per module security policy.
-        $null = $Error.Remove($PSItem)
+        # The raw record points at the HttpRequestMessage whose Authorization header carries the
+        # bearer token in plain text -- scrub it and drop the record first, per module security policy.
+        Remove-OPIMErrorRecord -Record $PSItem
     }
 
     return [PSCustomObject]@{

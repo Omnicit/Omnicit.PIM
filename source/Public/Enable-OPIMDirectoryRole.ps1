@@ -74,7 +74,14 @@ function Enable-OPIMDirectoryRole {
     }
     process {
         if ($Identity) {
-            $Role = Get-OPIMDirectoryRole -Identity $Identity | Select-Object -First 1
+            try {
+                $Role = Get-OPIMDirectoryRole -Identity $Identity -ErrorAction Stop | Select-Object -First 1
+            } catch {
+                # OPIM-12: the listing failed; report it as itself and stop for this identity.
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+                return
+            }
             if (-not $Role) {
                 Write-CmdletError `
                     -Message ([System.Exception]::new("No eligible directory role found with identity '$Identity'.")) `
@@ -135,6 +142,7 @@ function Enable-OPIMDirectoryRole {
                 $Response = try {
                     Invoke-OPIMGraphRequest -Method POST -Uri $GraphUri -Body $Request
                 } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
                     $Err = $PSItem
                     if (-not (ConvertTo-PolicyValidationError -CaughtError $Err -ResourceType 'role' -Cmdlet $PSCmdlet)) {
                         $PSCmdlet.WriteError($Err)

@@ -39,7 +39,14 @@ function Disable-OPIMDirectoryRole {
     process {
         Initialize-OPIMAuth
         if ($Identity) {
-            $Role = Get-OPIMDirectoryRole -Activated -Identity $Identity | Select-Object -First 1
+            try {
+                $Role = Get-OPIMDirectoryRole -Activated -Identity $Identity -ErrorAction Stop | Select-Object -First 1
+            } catch {
+                # OPIM-12: the listing failed; report it as itself and stop for this identity.
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+                return
+            }
             if (-not $Role) {
                 Write-CmdletError `
                     -Message ([System.Exception]::new("No active directory role found with identity '$Identity'.")) `
@@ -73,6 +80,7 @@ function Disable-OPIMDirectoryRole {
             $Response = try {
                 Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/roleManagement/directory/roleAssignmentScheduleRequests' -Body $Request
             } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
                 $Err = $PSItem
                 if (-not (ConvertTo-ActiveDurationTooShortError -CaughtError $Err -ResourceType 'role' -Cmdlet $PSCmdlet)) {
                     $PSCmdlet.WriteError($Err)
