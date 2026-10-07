@@ -145,38 +145,246 @@ Describe 'Get-OPIMAzureRole' {
     }
 
     Context 'When -Identity is specified' {
+        # OPIM-23: a normal user is refused a GET of one schedule by Name at the root scope
+        # (InsufficientPermissions), while the asTarget() listing is allowed. A Name is therefore found
+        # among the posts that listing returns and is never handed to Az.Resources. The mocks answer
+        # a listing with every post whatever it is asked for, so a call that sent -Name would still get
+        # them all: what separates the post is the cmdlet's own filter, and the arguments of each call
+        # are asserted on their own. The fakes are built inside the mocks, so each call gets objects
+        # that no earlier call has decorated.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            $FakeEligible = [PSCustomObject]@{
-                Name                      = 'elig-001'
-                RoleDefinitionDisplayName = 'Contributor'
-                ScopeId                   = '/subscriptions/sub-001'
-                PrincipalId               = 'principal-001'
-            }
-            # Name and Filter are mutually exclusive parameter sets in Az.Resources cmdlets.
-            # When -Name is specified, -Filter is NOT passed.
+            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
             Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
-                return $FakeEligible
-            } -ParameterFilter { $Name -eq 'elig-001' }
+                [PSCustomObject]@{
+                    Name = 'azure-001'; RoleDefinitionDisplayName = 'Reader'
+                    ScopeId = '/subscriptions/sub-001/resourceGroups/rg-one'; ScopeDisplayName = 'rg-one'; PrincipalId = 'principal-001'
+                }
+                [PSCustomObject]@{
+                    Name = 'azure-002'; RoleDefinitionDisplayName = 'Reader'
+                    ScopeId = '/subscriptions/sub-001/resourceGroups/rg-two'; ScopeDisplayName = 'rg-two'; PrincipalId = 'principal-001'
+                }
+                [PSCustomObject]@{
+                    Name = 'azure-003'; RoleDefinitionDisplayName = 'Contributor'
+                    ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'Subscription One'; PrincipalId = 'principal-001'
+                }
+            }
             Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance {
-                return @()
-            } -ParameterFilter { $Name -eq 'elig-001' }
+                [PSCustomObject]@{
+                    Name = 'azure-act-001'; AssignmentType = 'Activated'; RoleDefinitionDisplayName = 'Reader'
+                    ScopeId = '/subscriptions/sub-001/resourceGroups/rg-one'; ScopeDisplayName = 'rg-one'; PrincipalId = 'principal-001'
+                }
+                [PSCustomObject]@{
+                    Name = 'azure-act-002'; AssignmentType = 'Activated'; RoleDefinitionDisplayName = 'Reader'
+                    ScopeId = '/subscriptions/sub-001/resourceGroups/rg-two'; ScopeDisplayName = 'rg-two'; PrincipalId = 'principal-001'
+                }
+                [PSCustomObject]@{
+                    Name = 'azure-act-003'; AssignmentType = 'Activated'; RoleDefinitionDisplayName = 'Contributor'
+                    ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'Subscription One'; PrincipalId = 'principal-001'
+                }
+            }
         }
 
-        It 'passes the Name to both eligible and active cmdlets (dual-search)' {
-            Get-OPIMAzureRole -Identity 'elig-001'
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Scope It -ParameterFilter { $Name -eq 'elig-001' }
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 1 -Scope It -ParameterFilter { $Name -eq 'elig-001' }
+        Context 'in the default dual search' {
+            It 'returns only the eligible post that carries the Name' {
+                $Result = @(Get-OPIMAzureRole -Identity 'azure-002')
+                $Result | Should -HaveCount 1
+                $Result[0].Name | Should -BeExactly 'azure-002'
+                $Result[0].Status | Should -BeExactly 'Eligible'
+                $Result[0].PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureCombinedSchedule'
+                $Result[0].PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureEligibilitySchedule'
+            }
+
+            It 'returns only the active post that carries the Name' {
+                $Result = @(Get-OPIMAzureRole -Identity 'azure-act-002')
+                $Result | Should -HaveCount 1
+                $Result[0].Name | Should -BeExactly 'azure-act-002'
+                $Result[0].Status | Should -BeExactly 'Active'
+                $Result[0].PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureCombinedSchedule'
+                $Result[0].PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureAssignmentScheduleInstance'
+            }
+
+            It 'returns nothing, and writes no error, for a Name that no post carries' {
+                $Output = @(Get-OPIMAzureRole -Identity 'azure-999' -ErrorAction Continue 2>&1)
+                $Output | Should -HaveCount 0
+            }
+
+            It 'lists both states with the asTarget() filter at the root scope' {
+                $null = Get-OPIMAzureRole -Identity 'azure-002'
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Filter -eq 'asTarget()' -and $Scope -eq '/'
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Filter -eq 'asTarget()' -and $Scope -eq '/'
+                }
+            }
+
+            It 'never hands a Name to Az.Resources' {
+                $null = Get-OPIMAzureRole -Identity 'azure-002'
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It -ParameterFilter { $Name }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 0 -Scope It -ParameterFilter { $Name }
+            }
         }
 
-        It 'returns an object tagged with Omnicit.PIM.AzureCombinedSchedule' {
-            $Result = Get-OPIMAzureRole -Identity 'elig-001'
-            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureCombinedSchedule'
+        Context 'with -Activated' {
+            It 'returns only the active instance that carries the Name' {
+                $Result = @(Get-OPIMAzureRole -Activated -Identity 'azure-act-002')
+                $Result | Should -HaveCount 1
+                $Result[0].Name | Should -BeExactly 'azure-act-002'
+                $Result[0].PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureAssignmentScheduleInstance'
+            }
+
+            It 'returns nothing for the Name of an eligible post' {
+                $Output = @(Get-OPIMAzureRole -Activated -Identity 'azure-002' -ErrorAction Continue 2>&1)
+                $Output | Should -HaveCount 0
+            }
+
+            It 'lists the active posts with the asTarget() filter at the root scope, passes no Name and reads no eligible list' {
+                $null = Get-OPIMAzureRole -Activated -Identity 'azure-act-002'
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Filter -eq 'asTarget()' -and $Scope -eq '/' -and -not $Name
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
+            }
+
+            It 'lists the active posts at the scope that -Scope names, and keeps the instance there' {
+                $Result = @(Get-OPIMAzureRole -Activated -Identity 'azure-act-002' -Scope '/subscriptions/sub-001/resourceGroups/rg-two')
+                $Result | Should -HaveCount 1
+                $Result[0].Name | Should -BeExactly 'azure-act-002'
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Scope -eq '/subscriptions/sub-001/resourceGroups/rg-two' -and $Filter -eq 'asTarget()'
+                }
+            }
+
+            It 'returns nothing when -Scope names another scope than the instance is at' {
+                $Result = @(Get-OPIMAzureRole -Activated -Identity 'azure-act-002' -Scope '/subscriptions/sub-001/resourceGroups/rg-one')
+                $Result | Should -HaveCount 0
+            }
+
+            It 'compares the scope without regard to case' {
+                $Result = @(Get-OPIMAzureRole -Activated -Identity 'azure-act-002' -Scope '/SUBSCRIPTIONS/SUB-001/RESOURCEGROUPS/RG-TWO')
+                $Result | Should -HaveCount 1
+                $Result[0].Name | Should -BeExactly 'azure-act-002'
+            }
         }
 
-        It 'returns an object with Status set to Eligible' {
-            $Result = Get-OPIMAzureRole -Identity 'elig-001'
-            $Result.Status | Should -Be 'Eligible'
+        Context 'with -Scope' {
+            It 'returns nothing when -Scope names another scope than the eligible post is at' {
+                $Result = @(Get-OPIMAzureRole -Identity 'azure-001' -Scope '/subscriptions/sub-001/resourceGroups/rg-two')
+                $Result | Should -HaveCount 0
+            }
+
+            It 'returns nothing when -Scope names another scope than the active post is at' {
+                $Result = @(Get-OPIMAzureRole -Identity 'azure-act-001' -Scope '/subscriptions/sub-001/resourceGroups/rg-two')
+                $Result | Should -HaveCount 0
+            }
+
+            It 'returns the eligible post when -Scope names its scope' {
+                $Result = @(Get-OPIMAzureRole -Identity 'azure-001' -Scope '/subscriptions/sub-001/resourceGroups/rg-one')
+                $Result | Should -HaveCount 1
+                $Result[0].Name | Should -BeExactly 'azure-001'
+            }
+
+            It 'compares the scope of an eligible post without regard to case' {
+                $Result = @(Get-OPIMAzureRole -Identity 'azure-001' -Scope '/SUBSCRIPTIONS/SUB-001/RESOURCEGROUPS/RG-ONE')
+                $Result | Should -HaveCount 1
+                $Result[0].Name | Should -BeExactly 'azure-001'
+            }
+
+            It 'compares the scope of an active post without regard to case' {
+                $Result = @(Get-OPIMAzureRole -Identity 'azure-act-001' -Scope '/SUBSCRIPTIONS/SUB-001/RESOURCEGROUPS/RG-ONE')
+                $Result | Should -HaveCount 1
+                $Result[0].Name | Should -BeExactly 'azure-act-001'
+            }
+
+            It 'matches the scope exactly, not as a prefix' {
+                $Result = @(Get-OPIMAzureRole -Identity 'azure-001' -Scope '/subscriptions/sub-001')
+                $Result | Should -HaveCount 0
+            }
+
+            It 'still lists at the root scope, whatever scope -Scope names' {
+                $null = Get-OPIMAzureRole -Identity 'azure-001' -Scope '/subscriptions/sub-001/resourceGroups/rg-one'
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Filter -eq 'asTarget()' -and $Scope -eq '/'
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Filter -eq 'asTarget()' -and $Scope -eq '/'
+                }
+            }
+
+            It 'reads -Scope ''/'' as every scope, like the default' {
+                $Result = @(Get-OPIMAzureRole -Identity 'azure-002' -Scope '/')
+                $Result | Should -HaveCount 1
+                $Result[0].Name | Should -BeExactly 'azure-002'
+            }
+
+            It 'filters the -All listing to the scope as well' {
+                $Everything = @(Get-OPIMAzureRole -All)
+                $Everything | Should -HaveCount 6
+                $Result = @(Get-OPIMAzureRole -All -Scope '/subscriptions/sub-001/resourceGroups/rg-two')
+                ($Result | Sort-Object Name | ForEach-Object { "$($_.Status):$($_.Name)" }) -join ',' |
+                    Should -BeExactly 'Eligible:azure-002,Active:azure-act-002'
+            }
+        }
+
+        Context 'with a scope that arrives from the pipeline' {
+            It 'looks the Name up at that scope' {
+                $Result = @('/subscriptions/sub-001/resourceGroups/rg-two' | Get-OPIMAzureRole -Identity 'azure-002')
+                $Result | Should -HaveCount 1
+                $Result[0].Name | Should -BeExactly 'azure-002'
+            }
+
+            It 'returns nothing for a Name at another scope' {
+                $Result = @('/subscriptions/sub-001/resourceGroups/rg-two' | Get-OPIMAzureRole -Identity 'azure-001')
+                $Result | Should -HaveCount 0
+            }
+        }
+    }
+
+    Context 'When -Scope ends in a slash' {
+        # Only the root scope is written '/'; any other trailing slash is refused when the parameter
+        # binds, like the -Scope of Enable and Disable, so nothing runs: no sign-in and no ARM call.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
+            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {}
+            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance {}
+        }
+
+        It 'refuses the scope before anything runs (<Name>)' -ForEach @(
+            @{ Name = 'eligible'; Parameters = @{} }
+            @{ Name = '-Activated'; Parameters = @{ Activated = $true } }
+            @{ Name = '-All'; Parameters = @{ All = $true } }
+            @{ Name = '-Identity'; Parameters = @{ Identity = 'azure-001' } }
+        ) {
+            { Get-OPIMAzureRole @Parameters -Scope '/subscriptions/sub-001/' } |
+                Should -Throw -ErrorId 'ParameterArgumentValidationError*' -ExpectedMessage '*ends with*'
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 0 -Scope It
+        }
+
+        It 'refuses a piped scope before anything runs' {
+            $Output = @('/subscriptions/sub-001/' | Get-OPIMAzureRole -Identity 'azure-001' -ErrorAction Continue 2>&1)
+            $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written | Should -HaveCount 1
+            $Written[0].FullyQualifiedErrorId | Should -BeLike 'ParameterArgumentValidationError*'
+            @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
+        }
+
+        It 'binds the root scope ''/''' {
+            { Get-OPIMAzureRole -Scope '/' -ErrorAction Stop } | Should -Not -Throw
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Exactly -Scope It
+        }
+
+        It 'binds a scope without a trailing slash' {
+            { Get-OPIMAzureRole -Scope '/subscriptions/sub-001' -ErrorAction Stop } | Should -Not -Throw
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Scope -eq '/subscriptions/sub-001'
+            }
         }
     }
 
@@ -307,13 +515,12 @@ Describe 'Get-OPIMAzureRole' {
                 @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
             }
 
-            It 'refuses a -Scope that ends in a slash, and returns nothing' {
-                $Output = @(Get-OPIMAzureRole -RoleName 'Reader' -Scope '/subscriptions/sub-001/resourceGroups/rg-one/' -ErrorAction Continue 2>&1)
-                $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
-                $Written | Should -HaveCount 1
-                $Written[0].FullyQualifiedErrorId | Should -BeLike 'ParameterArgumentValidationError*'
-                $Written[0].Exception.Message | Should -Match 'ends with'
-                @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
+            It 'refuses a -Scope that ends in a slash when it binds, before anything is listed' {
+                { Get-OPIMAzureRole -RoleName 'Reader' -Scope '/subscriptions/sub-001/resourceGroups/rg-one/' } |
+                    Should -Throw -ErrorId 'ParameterArgumentValidationError*' -ExpectedMessage '*ends with*'
+                Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 0 -Scope It
             }
         }
 
@@ -683,6 +890,7 @@ Describe 'Get-OPIMAzureRole' {
             @{ Name = 'eligible'; Parameters = @{} }
             @{ Name = '-Activated'; Parameters = @{ Activated = $true } }
             @{ Name = '-All'; Parameters = @{ All = $true } }
+            @{ Name = '-Identity'; Parameters = @{ Identity = 'azure-001' } }
         ) {
             Get-OPIMAzureRole @Parameters -ErrorAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
@@ -693,6 +901,7 @@ Describe 'Get-OPIMAzureRole' {
             @{ Name = 'eligible'; Parameters = @{}; Expected = 1 }
             @{ Name = '-Activated'; Parameters = @{ Activated = $true }; Expected = 1 }
             @{ Name = '-All'; Parameters = @{ All = $true }; Expected = 2 }
+            @{ Name = '-Identity'; Parameters = @{ Identity = 'azure-001' }; Expected = 2 }
         ) {
             $Errs = @()
             Get-OPIMAzureRole @Parameters -ErrorVariable Errs -ErrorAction SilentlyContinue

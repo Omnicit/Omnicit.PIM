@@ -36,8 +36,12 @@ function Get-OPIMAzureRole {
     The Azure scope to query, such as a subscription, resource group, or resource path.
     Accepts pipeline input. Defaults to the root scope '/' which covers all subscriptions.
     When -Activated is used with a specific scope, only instances at that exact scope are returned.
+    With -All, -RoleName or -Identity the roles are read at the root and only those at exactly this
+    scope are returned, compared without regard to case; '/' means every scope. A scope that ends
+    in a slash is refused, since only the root scope is written '/'.
     .PARAMETER All
-    Return BOTH eligible and active roles for the current user at scope '/'.
+    Return BOTH eligible and active roles for the current user, read at scope '/' (-Scope narrows
+    them to one scope).
     Objects are emitted with the Omnicit.PIM.AzureCombinedSchedule type for consistent table
     formatting with a Status column. Mutually exclusive with -Activated.
     .PARAMETER Activated
@@ -54,13 +58,16 @@ function Get-OPIMAzureRole {
     .PARAMETER Identity
     The schedule Name (the Name property from Get-OPIMAzureRole output) used to retrieve a specific
     role schedule. When supplied, both eligible and active schedules are searched (dual-search)
-    unless -Activated is also specified.
+    unless -Activated is also specified. The Name is matched among the roles listed for you, never
+    requested by itself, so it needs no rights beyond your own; add -Scope to look only at one scope.
     #>
     [Alias('Get-PIMResourceRole')]
     [CmdletBinding(DefaultParameterSetName = 'Default')]
     [OutputType([PSCustomObject])]
     param(
-        [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)][String]$Scope = '/',
+        [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [ValidateScript({ $_ -eq '/' -or -not $_.EndsWith('/') }, ErrorMessage = "The scope '{0}' ends with '/'. Give it without the trailing slash; only the root scope is written '/'.")]
+        [String]$Scope = '/',
         [Parameter(ParameterSetName = 'All')][Switch]$All,
         [Parameter(ParameterSetName = 'Activated')][Switch]$Activated,
         [Parameter(Position = 0)]
@@ -85,29 +92,30 @@ function Get-OPIMAzureRole {
             }
             return
         }
-        [string]$ResolvedName = $Identity
 
         $OdataFilter = 'asTarget()'
 
+        # An explicit -Scope narrows a lookup to the posts at exactly that scope. The default '/' is no
+        # filter: this cmdlet has always read it as every scope.
+        $ScopeFilter = if ($Scope -ne '/') { $Scope }
+
         # Dual mode: -All, or a schedule Name was provided and -Activated not explicitly requested
-        [bool]$IsDual = $All -or (-not $Activated -and $ResolvedName)
+        [bool]$IsDual = $All -or (-not $Activated -and $Identity)
 
         if ($IsDual) {
-            # Return both eligible and active with AzureCombinedSchedule type for consistent formatting
-            # When a Name is supplied, use the Get parameter set (Name + Scope) - Filter and Name are
-            # mutually exclusive parameter sets in Az.Resources cmdlets.
-            if ($ResolvedName) {
-                $EligParams   = @{ Scope = '/'; Name = $ResolvedName; ErrorAction = 'Stop' }
-                $ActiveParams = @{ Scope = '/'; Name = $ResolvedName; ErrorAction = 'Stop' }
-            } else {
-                $EligParams   = @{ Scope = '/'; Filter = $OdataFilter; ErrorAction = 'Stop' }
-                $ActiveParams = @{ Scope = '/'; Filter = $OdataFilter; ErrorAction = 'Stop' }
-            }
+            # Return both eligible and active with AzureCombinedSchedule type for consistent formatting.
+            # OPIM-23: a Name is found among the posts the asTarget() listing returns and is never asked
+            # for with -Name, since a GET by Name at '/' is refused for a normal user
+            # (InsufficientPermissions). Both reads are made at the root; -Scope narrows what they return.
+            $EligParams   = @{ Scope = '/'; Filter = $OdataFilter; ErrorAction = 'Stop' }
+            $ActiveParams = @{ Scope = '/'; Filter = $OdataFilter; ErrorAction = 'Stop' }
             try {
                 # SEC (EntraRBAC A19): the ARM gate, inside the try so the catch reports a refusal as itself.
                 $ArmRefusal = Get-OPIMArmRefusal
                 if ($null -ne $ArmRefusal) { throw $ArmRefusal }
                 Get-AzRoleEligibilitySchedule @EligParams |
+                    Where-Object { -not $Identity -or $_.Name -eq $Identity } |
+                    Where-Object { -not $ScopeFilter -or [string]::Equals($_.ScopeId, $ScopeFilter, [System.StringComparison]::OrdinalIgnoreCase) } |
                     ForEach-Object {
                         $_ | Add-Member -NotePropertyName Status -NotePropertyValue 'Eligible' -Force
                         $_.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
@@ -135,6 +143,8 @@ function Get-OPIMAzureRole {
                 if ($null -ne $ArmRefusal) { throw $ArmRefusal }
                 Get-AzRoleAssignmentScheduleInstance @ActiveParams |
                     Where-Object AssignmentType -EQ 'Activated' |
+                    Where-Object { -not $Identity -or $_.Name -eq $Identity } |
+                    Where-Object { -not $ScopeFilter -or [string]::Equals($_.ScopeId, $ScopeFilter, [System.StringComparison]::OrdinalIgnoreCase) } |
                     ForEach-Object {
                         $_ | Add-Member -NotePropertyName Status -NotePropertyValue 'Active' -Force
                         $_.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
@@ -166,15 +176,15 @@ function Get-OPIMAzureRole {
             if ($Activated) {
                 Get-AzRoleAssignmentScheduleInstance -Scope $Scope -Filter $OdataFilter -ErrorAction Stop |
                     Where-Object AssignmentType -EQ 'Activated' |
-                    Where-Object { $Scope -eq '/' -or $_.ScopeId -eq $Scope } |
-                    Where-Object { -not $ResolvedName -or $_.Name -eq $ResolvedName } |
+                    Where-Object { -not $ScopeFilter -or [string]::Equals($_.ScopeId, $ScopeFilter, [System.StringComparison]::OrdinalIgnoreCase) } |
+                    Where-Object { -not $Identity -or $_.Name -eq $Identity } |
                     ForEach-Object {
                         $_.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
                         $_
                     }
             } else {
+                # No -Identity here: a Name without -Activated is a dual search above.
                 Get-AzRoleEligibilitySchedule -Scope $Scope -Filter $OdataFilter -ErrorAction Stop |
-                    Where-Object { -not $ResolvedName -or $_.Name -eq $ResolvedName } |
                     ForEach-Object {
                         $_.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
                         $_
