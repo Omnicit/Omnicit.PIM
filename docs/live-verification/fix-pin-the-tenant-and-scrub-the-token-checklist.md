@@ -302,7 +302,9 @@ $Az = Get-AzContext
 "Az context is the test tenant: $([string]::Equals([string]$Az.Tenant.Id, $Target.TenantId, [System.StringComparison]::OrdinalIgnoreCase))"
 "Az context is the test user: $([string]::Equals([string]$Az.Account.Id, $Target.UserPrincipalName, [System.StringComparison]::OrdinalIgnoreCase))"
 "Eligible Azure roles: $($Rows.Count); scopes: $((@($Rows.ScopeDisplayName) | Sort-Object) -join ', ')"
-"Subscription prompts in the host log so far: $(([regex]::Matches([System.IO.File]::ReadAllText($env:OPIMLIVE_HOSTLOG), '(?i)select a tenant and subscription|subscription name or number|tenant and subscription selection')).Count)"
+$Reader = [System.IO.StreamReader]::new([System.IO.FileStream]::new($env:OPIMLIVE_HOSTLOG, 'Open', 'Read', 'ReadWrite'))
+$HostText = $Reader.ReadToEnd(); $Reader.Dispose()
+"Subscription prompts in the host log so far: $(([regex]::Matches($HostText, '(?i)select a tenant and subscription|subscription name or number|tenant and subscription selection')).Count)"
 "Process scope LoginExperienceV2: $((Get-AzConfig -LoginExperienceV2 -Scope Process -ErrorAction SilentlyContinue).Value)"
 "CurrentUser LoginExperienceV2 unchanged: $((Get-AzConfig -LoginExperienceV2 -Scope CurrentUser -ErrorAction SilentlyContinue).Value -eq $UserConfigBefore)"
 "Subscriptions the test user reaches: $(@(Get-AzSubscription -TenantId $Target.TenantId -ErrorAction SilentlyContinue).Count)"
@@ -332,7 +334,9 @@ try { Disconnect-AzAccount -ErrorAction Stop | Out-Null } catch { $null = $PSIte
 $Offset = (Get-Item -LiteralPath $env:OPIMLIVE_HOSTLOG).Length
 $Sign = Connect-OpimLiveUser -IncludeARM -NoDisconnect -RawFolder 'docs/live-verification/raw/opim-s13'
 $Sign.Codes | Format-Table App, Stream, Tagged, Status -AutoSize
-"Subscription prompts in the host log so far: $(([regex]::Matches([System.IO.File]::ReadAllText($env:OPIMLIVE_HOSTLOG), '(?i)select a tenant and subscription|subscription name or number|tenant and subscription selection')).Count)"
+$Reader = [System.IO.StreamReader]::new([System.IO.FileStream]::new($env:OPIMLIVE_HOSTLOG, 'Open', 'Read', 'ReadWrite'))
+$HostText = $Reader.ReadToEnd(); $Reader.Dispose()
+"Subscription prompts in the host log so far: $(([regex]::Matches($HostText, '(?i)select a tenant and subscription|subscription name or number|tenant and subscription selection')).Count)"
 "Az context has no default subscription (SkipContextPopulation): $($null -eq (Get-AzContext).Subscription.Id)"
 ```
 
@@ -353,19 +357,29 @@ $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | So
 if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built.DirectoryName) { throw 'A different build of Omnicit.PIM is loaded; use a fresh window.' }
 if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
 $Cc = & (Get-Module OerLive) { $script:OerLive.Config }
+# Microsoft.Graph.Authentication 2.36.0 refuses a certificate Connect-MgGraph on top of the process's
+# -AccessToken session ("MSAL deserialization failed to parse the cache contents", measured), so the SDK
+# session is closed first. The module's own state is untouched: the process then holds a session the
+# module did not connect, which is what this check is about.
+try { Disconnect-MgGraph -ErrorAction Stop | Out-Null } catch { $null = $PSItem }
 Connect-MgGraph -ClientId $Cc.AppId -TenantId $Cc.TenantId -CertificateThumbprint $Cc.CertificateThumbprint -ContextScope Process -NoWelcome -ErrorAction Stop
 $Cc = $null
 "The process's Graph session is now app-only: $((Get-MgContext).AuthType -eq 'AppOnly')"
 $global:OpimS13GraphCalls = 0
 function global:Invoke-MgGraphRequest { $global:OpimS13GraphCalls++; Microsoft.Graph.Authentication\Invoke-MgGraphRequest @args }
-$Errors = @()
-$Rows = @(Get-OPIMDirectoryRole -ErrorVariable Errors -ErrorAction SilentlyContinue)
-"Get-OPIMDirectoryRole: rows $($Rows.Count); errors: $(@($Errors | ForEach-Object { $_.FullyQualifiedErrorId }) -join ', ')"
-$Errors = @()
-$Rows = @(Get-OPIMAzureRole -ErrorVariable Errors -ErrorAction SilentlyContinue)
-"Get-OPIMAzureRole: rows $($Rows.Count); errors: $(@($Errors | ForEach-Object { $_.FullyQualifiedErrorId }) -join ', ')"
-"Graph requests sent by the module: $global:OpimS13GraphCalls"
-Remove-Item -Path Function:\Invoke-MgGraphRequest
+try {
+    # Each call in its own try: a window that runs this block under a try sees the module's terminating
+    # refusal propagate (outside any try the cmdlet would carry on and be refused again at its send).
+    $Errors = @()
+    try { $Rows = @(Get-OPIMDirectoryRole -ErrorVariable Errors -ErrorAction SilentlyContinue) } catch { $Errors += $PSItem; $Rows = @() }
+    "Get-OPIMDirectoryRole: rows $($Rows.Count); errors: $(@($Errors | ForEach-Object { $_.FullyQualifiedErrorId } | Select-Object -Unique) -join ', ')"
+    $Errors = @()
+    try { $Rows = @(Get-OPIMAzureRole -ErrorVariable Errors -ErrorAction SilentlyContinue) } catch { $Errors += $PSItem; $Rows = @() }
+    "Get-OPIMAzureRole: rows $($Rows.Count); errors: $(@($Errors | ForEach-Object { $_.FullyQualifiedErrorId } | Select-Object -Unique) -join ', ')"
+    "Graph requests sent by the module: $global:OpimS13GraphCalls"
+} finally {
+    Remove-Item -Path Function:\Invoke-MgGraphRequest -ErrorAction SilentlyContinue
+}
 "The session is still oer-live-cc's (never switched back by the module): $((Get-MgContext).AuthType -eq 'AppOnly')"
 ```
 
