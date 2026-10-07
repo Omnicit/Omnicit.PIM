@@ -616,4 +616,67 @@ Describe 'Enable-OPIMAzureRole' {
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
         }
     }
+
+    Context 'When the ARM gate refuses' {
+        # SEC (EntraRBAC A19): the gate stands inside the try that holds the activation request,
+        # directly before it, and first in every round of the -Wait poll.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $FakeRole = [PSCustomObject]@{
+                Name                      = 'elig-001'
+                ScopeId                   = '/subscriptions/sub-001'
+                ScopeDisplayName          = 'My Subscription'
+                PrincipalId               = 'principal-001'
+                RoleDefinitionId          = '/providers/Microsoft.Authorization/roleDefinitions/role-def-001'
+                RoleDefinitionDisplayName = 'Contributor'
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeRole }
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
+                [PSCustomObject]@{ Name = 'request-001'; Scope = '/subscriptions/sub-001'; RequestType = 'SelfActivate' }
+            }
+            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleRequest {
+                [PSCustomObject]@{ Name = 'request-001'; Status = 'Provisioned' }
+            }
+        }
+        BeforeEach {
+            # Every call refuses unless a test lets the first ones through. The mock body runs in this
+            # test file's scope, so the counters live there.
+            $script:ArmGateCalls = 0
+            $script:ArmGatePasses = 0
+            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal {
+                $script:ArmGateCalls++
+                if ($script:ArmGateCalls -gt $script:ArmGatePasses) {
+                    [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('refused'), 'SignInRefused', 'AuthenticationError', 'x')
+                }
+            }
+        }
+
+        It 'sends no ARM request' {
+            Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)' -Wait -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
+        }
+
+        It 'writes the refusal as itself' {
+            # ConvertTo-PolicyValidationError does not claim it, so the catch writes it unchanged.
+            $Errs = @()
+            $Result = Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[0].FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+            @($Errs | Where-Object FullyQualifiedErrorId -EQ 'SignInRefused,Enable-OPIMAzureRole').Count | Should -Be 1
+            @($Errs | Where-Object FullyQualifiedErrorId -Like 'RoleAssignmentRequestPolicyValidationFailed*').Count | Should -Be 0
+            $Result | Should -BeNullOrEmpty
+        }
+
+        It 'stops the -Wait poll before its first request when the gate refuses there' {
+            $script:ArmGatePasses = 1
+            $Errs = @()
+            $Result = Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)' -Wait -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMArmRefusal -Times 2 -Exactly -Scope It
+            @($Errs | Where-Object FullyQualifiedErrorId -EQ 'SignInRefused,Enable-OPIMAzureRole').Count | Should -Be 1
+            # The activation request was sent before the refusal, so its response is still returned.
+            $Result.Name | Should -Be 'request-001'
+        }
+    }
 }

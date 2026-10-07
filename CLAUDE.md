@@ -524,6 +524,28 @@ connected only when a cached Az context for the tenant can mint an ARM token sil
 `Get-AzAccessToken` (`:144-164`): the Az module autosaves its context, so a bare context can
 resurface in a new session with an expired token.
 
+**A refused sign-in closes the transport for its command (EntraRBAC A19).** Outside any `try` a
+cmdlet carries on past a terminating error `Initialize-OPIMAuth` raises, and would then send under
+the session or the Az context an earlier sign-in left. So `Initialize-OPIMAuth` first refuses a
+sign-in under a command whose own sign-in was refused -- a latched command on the call stack OUTSIDE
+the one that called it (`Get-OPIMSignInRefusal -OutsideCaller`, BL-74) -- with the terminating
+`SignInRefused` (built by `New-OPIMSignInRefusedError`) before any prompt, and otherwise latches the
+calling command (`Lock-OPIMSignIn`) and releases it only on a success (`Unlock-OPIMSignIn`): at the
+cached return and as its last statement. Every refusal and terminating error, and a failed Azure
+connection, leave it latched. `Invoke-OPIMGraphRequest` reads the latch before each of its requests,
+straight after the session gate (a changed session is still `GraphSessionChanged`) and outside the
+`try`; the ARM gate `Get-OPIMArmRefusal` stands inside the `try` before every `Az.Resources` call,
+and calls nothing while the latch table does not exist (unit tests that mock `Initialize-OPIMAuth`).
+Both refuse a latched command's request with `SignInRefused`. The latch, `$script:_OPIMSignInLatch`,
+is a `ConditionalWeakTable` keyed on the calling command's invocation and holding only `$true`, so a
+nested command's or a pipeline neighbour's success releases only its own entry, and a finished
+command is on no call stack. A wrapper retry's own sign-in latches `Invoke-OPIMGraphRequest` itself.
+**The rule:** call `Lock-OPIMSignIn` and `Unlock-OPIMSignIn` only in `Initialize-OPIMAuth`, and call
+`Initialize-OPIMAuth` directly in the command's own block -- never from a nested function or a script
+block, which would latch a frame that ends at once -- the transport's own retries in
+`Invoke-OPIMGraphRequest` being the one place where the latched frame is not a cmdlet's. Static tests
+in `tests/Unit/Private/Lock-OPIMSignIn.Tests.ps1` hold both halves.
+
 **Graph tokens come from MSAL.NET, reached by reflection.** `Get-OPIMMsalApplication` finds the
 `Microsoft.Identity.Client` assembly (4.x or 5.x) that `Microsoft.Graph.Authentication` loads into
 its own `AssemblyLoadContext`, falling back to loading the DLL from that module's folder
@@ -642,8 +664,9 @@ not authorised for Azure Resource Manager, so `-IncludeARM` uses the Az module's
 no validated context exists, it disables WAM at PROCESS scope only
 (`Update-AzConfig -EnableLoginByWam $false -Scope Process`; the persisted Az configuration is never
 touched) and calls `Connect-AzAccount`, with `-Tenant` unless the tenant is `organizations`
-(`:350-379`). A failed connection is the non-terminating `AzureConnectFailed`. The `Az.Resources`
-cmdlets then run in that Az context.
+(`:350-379`). A failed connection is the non-terminating `AzureConnectFailed`, which leaves the
+calling command latched, so its `Az.Resources` calls are refused with `SignInRefused`. After a
+connection the `Az.Resources` cmdlets run in that Az context, each behind the ARM gate.
 
 **State.** `$script:_OPIMAuthState` holds `TenantId`, `TokenTenantId`, `AuthorityTenant`,
 `Account`, `GraphTokenExpiry`, `ClaimsSatisfied`, `DeviceCode` and `GraphSessionFingerprint` --
@@ -831,7 +854,7 @@ called by `Install`, `Set` and `Remove`; never inline it.
   `$FakeRole`, `$ScheduleId`. Exceptions: automatic variables (`$PSCmdlet`, `$PSItem`, `$_`),
   preference variables (`$ErrorActionPreference`), boolean/null literals (`$null`, `$true`,
   `$false`), and the module-scope caches (`$script:_OPIMAuthState`, `$script:_OPIMMsalApp`,
-  `$script:_OPIMMsalAppTenantId`, `$script:_MyIDCache`). Older code -- `Wait-OPIMDirectoryRole` in
+  `$script:_OPIMMsalAppTenantId`, `$script:_MyIDCache`, `$script:_OPIMSignInLatch`). Older code -- `Wait-OPIMDirectoryRole` in
   particular -- still has camelCase locals; new and edited lines follow the rule.
 - **One function per file; filename must equal function name.**
 - `[CmdletBinding(SupportsShouldProcess)]` on every state-changing function (every Enable- and

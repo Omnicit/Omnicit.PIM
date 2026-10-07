@@ -68,6 +68,10 @@ function Disable-OPIMAzureRole {
                 'Deactivate Azure Role'
             )) {
             try {
+                # SEC (EntraRBAC A19): the ARM gate, inside the try so the catch reports a refusal as
+                # itself.
+                $ArmRefusal = Get-OPIMArmRefusal
+                if ($null -ne $ArmRefusal) { throw $ArmRefusal }
                 $Response = New-AzRoleAssignmentScheduleRequest @RoleDeactivateParams -ErrorAction Stop
                 $Response.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleRequest')
                 $Response

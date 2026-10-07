@@ -249,4 +249,43 @@ Describe 'Disable-OPIMAzureRole' {
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
         }
     }
+
+    Context 'When the ARM gate refuses' {
+        # SEC (EntraRBAC A19): the gate stands inside the try that holds the deactivation request,
+        # directly before it, so the cmdlet's own catch reports the refusal as itself.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $FakeRole = [PSCustomObject]@{
+                Name                      = 'active-001'
+                ScopeId                   = '/subscriptions/sub-001'
+                ScopeDisplayName          = 'My Subscription'
+                PrincipalId               = 'principal-001'
+                RoleDefinitionId          = '/providers/Microsoft.Authorization/roleDefinitions/role-def-001'
+                RoleDefinitionDisplayName = 'Contributor'
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeRole }
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
+                [PSCustomObject]@{ Name = 'request-001'; Scope = '/subscriptions/sub-001'; RequestType = 'SelfDeactivate' }
+            }
+            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal {
+                [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('refused'), 'SignInRefused', 'AuthenticationError', 'x')
+            }
+        }
+
+        It 'sends no ARM request' {
+            Disable-OPIMAzureRole -RoleName 'Contributor (active-001)' -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
+        }
+
+        It 'writes the refusal as itself' {
+            # ConvertTo-ActiveDurationTooShortError does not claim it, so the catch writes it unchanged.
+            $Errs = @()
+            $Result = Disable-OPIMAzureRole -RoleName 'Contributor (active-001)' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[0].FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+            @($Errs | Where-Object FullyQualifiedErrorId -EQ 'SignInRefused,Disable-OPIMAzureRole').Count | Should -Be 1
+            @($Errs | Where-Object FullyQualifiedErrorId -Like 'ActiveDurationTooShort*').Count | Should -Be 0
+            $Result | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMArmRefusal -Times 1 -Exactly -Scope It
+        }
+    }
 }

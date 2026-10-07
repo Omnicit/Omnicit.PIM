@@ -6,7 +6,7 @@ function Invoke-OPIMGraphRequest {
 
     .DESCRIPTION
     Drop-in replacement for Invoke-MgGraphRequest used by every public and private function in
-    Omnicit.PIM. Adds four layers on top of the raw Graph SDK call:
+    Omnicit.PIM. Adds five layers on top of the raw Graph SDK call:
 
     1. Bearer token security: every catch block starts with Remove-OPIMErrorRecord, which clears
        the Authorization header off the raw HttpRequestMessage the SDK record points at (the
@@ -34,6 +34,13 @@ function Invoke-OPIMGraphRequest {
        one Initialize-OPIMAuth connected, and throws GraphSessionChanged, sending nothing, when
        another Connect-MgGraph has replaced it. The gate stands outside the try that sends, and
        returns after its throw, so a caller under -ErrorAction SilentlyContinue sends nothing either.
+
+    5. Sign-in latch gate: straight after each session gate it asks Get-OPIMSignInRefusal whether a
+       command on the call stack is latched -- its sign-in was refused and it carried on past the
+       refusal -- and throws SignInRefused, sending nothing, when one is. A retry whose own sign-in
+       is refused latches this function itself, which calls Initialize-OPIMAuth from its own body,
+       so the retry's gate refuses it. The gate stands outside the try that sends and returns after
+       its throw, as the session gate does.
 
     .PARAMETER Method
     HTTP method for the Graph request. Defaults to GET.
@@ -125,6 +132,17 @@ function Invoke-OPIMGraphRequest {
         throw (New-OPIMGraphSessionChangedError)
         return
     }
+    # SEC (EntraRBAC A19): never a Graph call for a command whose sign-in was refused.
+    # Initialize-OPIMAuth latches the command that called it and releases it only when the sign-in
+    # succeeds; its refusal does not stop that command, which carries on outside any try. So the latch
+    # is read before every request, after the session gate (a changed session is still reported as
+    # GraphSessionChanged) and outside the try (whose catch would convert the refusal). The return is
+    # load-bearing for the same reason as the session gate's.
+    $SignInRefusal = Get-OPIMSignInRefusal
+    if ($null -ne $SignInRefusal) {
+        throw (New-OPIMSignInRefusedError -Command $SignInRefusal)
+        return
+    }
     try {
         return Invoke-MgGraphRequest @InvokeParams
     } catch {
@@ -154,6 +172,14 @@ function Invoke-OPIMGraphRequest {
             throw (New-OPIMGraphSessionChangedError)
             return
         }
+        # SEC (EntraRBAC A19): the latch gate again. A step-up whose sign-in was refused latched this
+        # function itself (it called Initialize-OPIMAuth from its own body), and outside any try it
+        # carries on to here.
+        $SignInRefusal = Get-OPIMSignInRefusal
+        if ($null -ne $SignInRefusal) {
+            throw (New-OPIMSignInRefusedError -Command $SignInRefusal)
+            return
+        }
         try {
             return Invoke-MgGraphRequest @InvokeParams
         } catch {
@@ -178,6 +204,13 @@ function Invoke-OPIMGraphRequest {
         # session during the refresh, and a refusal by Initialize-OPIMAuth does not stop this function.
         if ((Get-OPIMGraphSessionState) -eq 'Changed') {
             throw (New-OPIMGraphSessionChangedError)
+            return
+        }
+        # SEC (EntraRBAC A19): the latch gate again, for a refresh whose sign-in was refused (a token
+        # for another tenant, a failed device code) -- it latched this function itself.
+        $SignInRefusal = Get-OPIMSignInRefusal
+        if ($null -ne $SignInRefusal) {
+            throw (New-OPIMSignInRefusedError -Command $SignInRefusal)
             return
         }
         try {

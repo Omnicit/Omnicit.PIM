@@ -120,6 +120,10 @@ function Enable-OPIMAzureRole {
                     "Activate Azure Role from $NotBefore to $RoleExpireTime"
                 )) {
                 try {
+                    # SEC (EntraRBAC A19): the ARM gate, inside the try so the catch reports a refusal
+                    # as itself.
+                    $ArmRefusal = Get-OPIMArmRefusal
+                    if ($null -ne $ArmRefusal) { throw $ArmRefusal }
                     $Response = New-AzRoleAssignmentScheduleRequest @RoleActivateParams -ErrorAction Stop
                 } catch {
                     Remove-OPIMErrorRecord -Record $PSItem
@@ -131,6 +135,11 @@ function Enable-OPIMAzureRole {
 
                 if ($Wait) {
                     do {
+                        # SEC (EntraRBAC A19): the ARM gate before every round of the poll. Outside the
+                        # try below, whose catch ends the command: a refusal is written and stops only
+                        # the wait; the request above was already sent.
+                        $ArmRefusal = Get-OPIMArmRefusal
+                        if ($null -ne $ArmRefusal) { $PSCmdlet.WriteError($ArmRefusal); break }
                         try {
                             $RoleActivation = Get-AzRoleAssignmentScheduleRequest -Name $Response.Name -Scope $Response.Scope -ErrorAction Stop
                         } catch {

@@ -349,4 +349,42 @@ Describe 'Get-OPIMAzureRole' {
             Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 2 -Scope It
         }
     }
+
+    Context 'When the ARM gate refuses' {
+        # SEC (EntraRBAC A19): the gate stands inside the try that holds each Az.Resources call,
+        # directly before it, so the cmdlet's own catch reports the refusal as itself.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal {
+                [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('refused'), 'SignInRefused', 'AuthenticationError', 'x')
+            }
+            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {}
+            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance {}
+        }
+
+        It 'sends no ARM request (<Name>)' -ForEach @(
+            @{ Name = 'eligible'; Parameters = @{} }
+            @{ Name = '-Activated'; Parameters = @{ Activated = $true } }
+            @{ Name = '-All'; Parameters = @{ All = $true } }
+        ) {
+            Get-OPIMAzureRole @Parameters -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 0 -Scope It
+        }
+
+        It 'writes the refusal as itself (<Name>)' -ForEach @(
+            @{ Name = 'eligible'; Parameters = @{}; Expected = 1 }
+            @{ Name = '-Activated'; Parameters = @{ Activated = $true }; Expected = 1 }
+            @{ Name = '-All'; Parameters = @{ All = $true }; Expected = 2 }
+        ) {
+            $Errs = @()
+            Get-OPIMAzureRole @Parameters -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[0].FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+            # One written record per try that holds an Az.Resources call (-All has two), each the
+            # refusal itself and not the InsufficientPermissions rewrap.
+            @($Errs | Where-Object FullyQualifiedErrorId -EQ 'SignInRefused,Get-OPIMAzureRole').Count | Should -Be $Expected
+            @($Errs | Where-Object FullyQualifiedErrorId -Like 'InsufficientPermissions*').Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMArmRefusal -Times $Expected -Exactly -Scope It
+        }
+    }
 }

@@ -38,6 +38,18 @@ function Initialize-OPIMAuth {
     Disconnect-OPIM and signs in again. When the process holds no session at all, a cached token does
     not count, and the function signs in and connects again.
 
+    A refused sign-in closes the transport for the command that asked for it (EntraRBAC A19). Every
+    entry first refuses a sign-in under a command whose own sign-in was refused: when a latched
+    command stands on the call stack outside the command that called this function
+    (Get-OPIMSignInRefusal -OutsideCaller), the function ends with SignInRefused before any token
+    call, Connect-MgGraph or Connect-AzAccount, and latches nothing (BL-74). Every other entry latches
+    the command that called it (Lock-OPIMSignIn) and releases it only on a success
+    (Unlock-OPIMSignIn): the cached return, or a sign-in that went the whole way. A refusal or a
+    terminating error -- TenantMismatch, GraphSessionChanged, a failed device code sign-in -- and a
+    failed Azure connection leave it latched, and Invoke-OPIMGraphRequest and the ARM gate
+    Get-OPIMArmRefusal then refuse every request that command makes with SignInRefused, since outside
+    any try a command carries on past a terminating error raised here.
+
     For Azure RBAC commands, pass -IncludeARM. Connect-AzAccount is called to establish an
     Azure context using the Az module's own authentication. This is separate from Graph auth
     and may open its own browser window, or in device code mode show its own code, on first use.
@@ -109,6 +121,26 @@ function Initialize-OPIMAuth {
         [switch]$ForceRefresh,
         [switch]$DeviceCode
     )
+
+    # SEC (EntraRBAC BL-74): a sign-in under a command whose own sign-in was refused is refused before
+    # any prompt. Only a frame OUTSIDE the calling command counts (Get-OPIMSignInRefusal
+    # -OutsideCaller): the caller's own latched frame, from an earlier refused sign-in in the same
+    # invocation, keeps its chance to sign in again. Before Lock-OPIMSignIn, so it latches nothing of
+    # its own; the outer command's latch already refuses every request the caller makes.
+    $OuterRefused = Get-OPIMSignInRefusal -OutsideCaller
+    if ($OuterRefused) {
+        Write-CmdletError -ErrorRecord (New-OPIMSignInRefusedError -Command $OuterRefused) -Cmdlet $PSCmdlet -Terminating
+        return
+    }
+    # SEC (EntraRBAC A19): latch the calling command. Only a success releases it -- the cached return
+    # and the last statement of a new sign-in that went the whole way. Every refusal and terminating
+    # error leaves it latched, and both transports refuse every request it makes (SignInRefused):
+    # outside any try a command carries on past a terminating error raised here, and would otherwise
+    # send under the session or the Azure context an earlier sign-in left. Keyed on the calling
+    # command's invocation, so a nested command's or a pipeline neighbour's success releases only its
+    # own entry. The caller is the command that called this function directly: the cmdlet, or
+    # Invoke-OPIMGraphRequest for its claims step-up and token-rejected retry.
+    $SignInCaller = Lock-OPIMSignIn
 
     # OPIM-07: a call that names no tenant keeps the session's tenant -- never 'organizations' once the
     # module holds one. 'organizations' is only the very first sign-in's authority.
@@ -202,6 +234,8 @@ function Initialize-OPIMAuth {
 
     if ($GraphCached -and $AzAlreadyConnected) {
         Write-Verbose "[Initialize-OPIMAuth] Returning cached auth state for tenant '$EffectiveTenant'."
+        # SEC (EntraRBAC A19): a cache hit is a success; release the calling command's latch.
+        Unlock-OPIMSignIn -Invocation $SignInCaller
         return
     }
 
@@ -471,8 +505,17 @@ function Initialize-OPIMAuth {
                 -ErrorId 'AzureConnectFailed' `
                 -Category AuthenticationError `
                 -Cmdlet $PSCmdlet
+            # SEC (EntraRBAC A19): a failed Azure connection is no success, so the calling command
+            # stays latched and its Azure calls are refused (SignInRefused). Returns before the
+            # release below.
+            return
         }
     } elseif ($IncludeARM -and $AzAlreadyConnected) {
         Write-Verbose "[Initialize-OPIMAuth] Azure already connected: $($AzCtxAtStart.Account.Id)"
     }
+
+    # SEC (EntraRBAC A19): the new sign-in went the whole way -- Graph connected or cached, and Azure
+    # connected or not asked for -- so release the calling command's latch. The last statement and not
+    # a finally: every refusal and terminating error above must leave the command latched.
+    Unlock-OPIMSignIn -Invocation $SignInCaller
 }

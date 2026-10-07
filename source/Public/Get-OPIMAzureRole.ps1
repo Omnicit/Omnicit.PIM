@@ -95,6 +95,9 @@ function Get-OPIMAzureRole {
                 $ActiveParams = @{ Scope = '/'; Filter = $OdataFilter; ErrorAction = 'Stop' }
             }
             try {
+                # SEC (EntraRBAC A19): the ARM gate, inside the try so the catch reports a refusal as itself.
+                $ArmRefusal = Get-OPIMArmRefusal
+                if ($null -ne $ArmRefusal) { throw $ArmRefusal }
                 Get-AzRoleEligibilitySchedule @EligParams |
                     ForEach-Object {
                         $_ | Add-Member -NotePropertyName Status -NotePropertyValue 'Eligible' -Force
@@ -116,6 +119,8 @@ function Get-OPIMAzureRole {
                 }
             }
             try {
+                $ArmRefusal = Get-OPIMArmRefusal
+                if ($null -ne $ArmRefusal) { throw $ArmRefusal }
                 Get-AzRoleAssignmentScheduleInstance @ActiveParams |
                     Where-Object AssignmentType -EQ 'Activated' |
                     ForEach-Object {
@@ -141,6 +146,10 @@ function Get-OPIMAzureRole {
         }
 
         try {
+            # SEC (EntraRBAC A19): the ARM gate for both reads below, inside the try so the catch
+            # reports a refusal as itself.
+            $ArmRefusal = Get-OPIMArmRefusal
+            if ($null -ne $ArmRefusal) { throw $ArmRefusal }
             if ($Activated) {
                 Get-AzRoleAssignmentScheduleInstance -Scope $Scope -Filter $OdataFilter -ErrorAction Stop |
                     Where-Object AssignmentType -EQ 'Activated' |

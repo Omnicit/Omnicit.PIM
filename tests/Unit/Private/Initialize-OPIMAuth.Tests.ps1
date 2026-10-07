@@ -1206,5 +1206,409 @@ Describe 'Initialize-OPIMAuth' {
                     Should -BeExactly (Get-OPIMGraphSessionFingerprint -Context $script:_OPIMTestOwnContext)
             }
         }
+
+        It 'sends nothing for a command that carries on after a Connect-MgGraph to another session' {
+            # Acceptance (OPIM-09): the module signs in, another Connect-MgGraph replaces the session,
+            # and a command that carries on past its refused sign-in sends no Graph call and no ARM
+            # call. The real Initialize-OPIMAuth, session functions, latch and Graph wrapper. Inside
+            # Pester a terminating error always propagates (Pester's own try), so the command that
+            # carries on is a module-scope test function with a try of its own around each step.
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
+                param($Token, $TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_OPIMSignInLatch = $null
+                $script:_OPIMTestToken = $Token
+                $script:_OPIMTestSession = $null
+                Mock Invoke-MgGraphRequest { @{ id = 'me-001' } }
+
+                Initialize-OPIMAuth -TenantId $TenantA
+                $script:_OPIMTestSession = [pscustomobject]@{
+                    AuthType = 'AppOnly'; TokenCredentialType = 'ClientCertificate'
+                    ClientId = 'dddddddd-0000-0000-0000-00000000000d'; TenantId = 'bbbbbbbb-0000-0000-0000-00000000000b'
+                    Account = $null; AppName = 'another-app'; Environment = 'Global'; Scopes = @()
+                }
+                function Invoke-CarryOnCommand {
+                    $Result = @{}
+                    try { Initialize-OPIMAuth } catch { $Result.SignIn = $PSItem }
+                    try { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } catch { $Result.Graph = $PSItem }
+                    $Result.Arm = Get-OPIMArmRefusal
+                    $Result
+                }
+                $Result = Invoke-CarryOnCommand
+                $Result.SignIn.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+                # The session gate comes before the latch gate in the wrapper.
+                $Result.Graph.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+                # The refused sign-in latched the command, so the ARM gate refuses as well.
+                $Result.Arm.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+                $Result.Arm.TargetObject | Should -BeExactly 'Invoke-CarryOnCommand'
+                Should -Invoke Invoke-MgGraphRequest -Times 0 -Scope It
+                Should -Invoke Connect-MgGraph -Times 1 -Exactly -Scope It
+            }
+        }
+
+        It 'refuses Get-OPIMDirectoryRole after a Connect-MgGraph to another session and sends nothing' {
+            # Acceptance (OPIM-09) at the public cmdlet: the real Initialize-OPIMAuth inside the real
+            # Get-OPIMDirectoryRole, with every transport mocked.
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
+                param($Token, $TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_OPIMSignInLatch = $null
+                $script:_OPIMTestToken = $Token
+                $script:_OPIMTestSession = $null
+                Mock Invoke-MgGraphRequest { @{ value = @() } }
+
+                Initialize-OPIMAuth -TenantId $TenantA
+                # Not vacuous: under its own session the cmdlet reaches Graph.
+                $null = Get-OPIMDirectoryRole
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+
+                $script:_OPIMTestSession = [pscustomobject]@{
+                    AuthType = 'AppOnly'; TokenCredentialType = 'ClientCertificate'
+                    ClientId = 'dddddddd-0000-0000-0000-00000000000d'; TenantId = 'bbbbbbbb-0000-0000-0000-00000000000b'
+                    Account = $null; AppName = 'another-app'; Environment = 'Global'; Scopes = @()
+                }
+                { Get-OPIMDirectoryRole } | Should -Throw -ErrorId 'GraphSessionChanged*'
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                Should -Invoke Connect-MgGraph -Times 1 -Exactly -Scope It
+            }
+        }
+    }
+
+    Context 'When a sign-in is refused (the latch)' {
+        # SEC (EntraRBAC A19). Lock-OPIMSignIn and Unlock-OPIMSignIn are mocked: Lock hands back a
+        # sentinel invocation, and every Unlock assertion names it. The acquisition runs through the
+        # Invoke-OPIMDeviceCodeAuth mock, as in the pin context.
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
+                Mock Invoke-OPIMDeviceCodeAuth {
+                    [PSCustomObject]@{
+                        AccessToken = $script:_OPIMTestToken
+                        ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
+                        Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    }
+                }
+                Mock Connect-MgGraph {}
+                Mock Get-MgContext { $null }
+                Mock Lock-OPIMSignIn { $script:_OPIMTestSentinel }
+                Mock Unlock-OPIMSignIn {}
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMTestSentinel = $MyInvocation
+                $script:_OPIMTestToken = $null
+                $script:_OPIMSignInLatch = $null
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMTestToken = $null
+                $script:_OPIMTestSentinel = $null
+                $script:_OPIMSignInLatch = $null
+            }
+        }
+
+        It 'latches its caller once' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMAuthState = $State
+                Initialize-OPIMAuth
+                Should -Invoke Lock-OPIMSignIn -Times 1 -Exactly -Scope It
+            }
+        }
+
+        It 'latches its caller before anything else' {
+            # Only the BL-74 check comes first. A Lock-OPIMSignIn that stops the function shows that
+            # nothing else ran before it.
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -Expired
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMAuthState = $State
+                Mock Lock-OPIMSignIn { throw [System.InvalidOperationException]::new('stopped at the latch') }
+                Mock Get-OPIMGraphSessionState { 'Own' }
+                Mock Get-OPIMSignInRefusal {}
+                { Initialize-OPIMAuth -TenantId $TenantA -DeviceCode } | Should -Throw '*stopped at the latch*'
+                Should -Invoke Get-OPIMSignInRefusal -Times 1 -Exactly -Scope It -ParameterFilter { $OutsideCaller }
+                Should -Invoke Get-OPIMGraphSessionState -Times 0 -Scope It
+                Should -Invoke Get-OPIMMsalApplication -Times 0 -Scope It
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 0 -Scope It
+            }
+        }
+
+        It 'releases the caller on the cached return' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMAuthState = $State
+                Initialize-OPIMAuth
+                Should -Invoke Get-OPIMMsalApplication -Times 0 -Scope It
+                Should -Invoke Unlock-OPIMSignIn -Times 1 -Exactly -Scope It
+                Should -Invoke Unlock-OPIMSignIn -Times 1 -Exactly -Scope It -ParameterFilter {
+                    [object]::ReferenceEquals($Invocation, $script:_OPIMTestSentinel)
+                }
+            }
+        }
+
+        It 'releases the caller after a new sign-in that went the whole way' {
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
+                param($Token, $TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_OPIMTestToken = $Token
+                Initialize-OPIMAuth -TenantId $TenantA
+                Should -Invoke Connect-MgGraph -Times 1 -Exactly -Scope It
+                Should -Invoke Unlock-OPIMSignIn -Times 1 -Exactly -Scope It
+                Should -Invoke Unlock-OPIMSignIn -Times 1 -Exactly -Scope It -ParameterFilter {
+                    [object]::ReferenceEquals($Invocation, $script:_OPIMTestSentinel)
+                }
+            }
+        }
+
+        It 'releases the caller after a new sign-in and an Azure connection' {
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
+                param($Token, $TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_OPIMTestToken = $Token
+                Mock Get-AzContext {}
+                Mock Update-AzConfig {}
+                Mock Connect-AzAccount {}
+                Initialize-OPIMAuth -TenantId $TenantA -IncludeARM
+                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It
+                Should -Invoke Unlock-OPIMSignIn -Times 1 -Exactly -Scope It
+            }
+        }
+
+        It 'keeps the caller latched after TenantMismatch' {
+            $Token = New-OPIMTestAccessToken -TenantId $TenantB
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
+                param($Token, $TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_OPIMTestToken = $Token
+                { Initialize-OPIMAuth -TenantId $TenantA } | Should -Throw -ErrorId 'TenantMismatch*'
+                Should -Invoke Lock-OPIMSignIn -Times 1 -Exactly -Scope It
+                Should -Invoke Unlock-OPIMSignIn -Times 0 -Scope It
+            }
+        }
+
+        It 'keeps the caller latched after GraphSessionChanged' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            $State.GraphSessionFingerprint = 'mine'
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMAuthState = $State
+                Mock Get-OPIMGraphSessionState { 'Changed' }
+                { Initialize-OPIMAuth } | Should -Throw -ErrorId 'GraphSessionChanged*'
+                Should -Invoke Lock-OPIMSignIn -Times 1 -Exactly -Scope It
+                Should -Invoke Unlock-OPIMSignIn -Times 0 -Scope It
+            }
+        }
+
+        It 'keeps the caller latched after a failed device code sign-in' {
+            InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA } {
+                param($TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                Mock Invoke-OPIMDeviceCodeAuth {
+                    $PSCmdlet.ThrowTerminatingError(
+                        [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('code_expired'),
+                            'DeviceCodeAuthFailed',
+                            [System.Management.Automation.ErrorCategory]::AuthenticationError,
+                            $null
+                        )
+                    )
+                }
+                { Initialize-OPIMAuth -TenantId $TenantA } | Should -Throw -ErrorId 'DeviceCodeAuthFailed*'
+                Should -Invoke Lock-OPIMSignIn -Times 1 -Exactly -Scope It
+                Should -Invoke Unlock-OPIMSignIn -Times 0 -Scope It
+            }
+        }
+
+        It 'keeps the caller latched after a failed Azure connect' {
+            # The Graph token is cached and the Azure connection fails: AzureConnectFailed is still a
+            # non-terminating error here, so the function returns without releasing the caller.
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMAuthState = $State
+                Mock Get-AzContext {}
+                Mock Update-AzConfig {}
+                Mock Connect-AzAccount { throw [System.Exception]::new('Azure auth failure') }
+                $Errors = @()
+                Initialize-OPIMAuth -IncludeARM -ErrorVariable Errors -ErrorAction SilentlyContinue
+                @($Errors | Where-Object { $_.FullyQualifiedErrorId -like 'AzureConnectFailed*' }).Count | Should -BeGreaterThan 0
+                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It
+                Should -Invoke Lock-OPIMSignIn -Times 1 -Exactly -Scope It
+                Should -Invoke Unlock-OPIMSignIn -Times 0 -Scope It
+            }
+        }
+
+        It 'refuses a sign-in under a refused outer command without a prompt' {
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
+                param($Token, $TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_OPIMTestToken = $Token
+                Mock Get-OPIMSignInRefusal { 'Enable-OPIMDirectoryRole' } -ParameterFilter { $OutsideCaller }
+                Mock Get-OPIMGraphSessionState { 'Untracked' }
+                { Initialize-OPIMAuth -TenantId $TenantA } | Should -Throw -ErrorId 'SignInRefused*'
+                $Caught = $null
+                try { Initialize-OPIMAuth -TenantId $TenantA } catch { $Caught = $PSItem }
+                $Caught.TargetObject | Should -BeExactly 'Enable-OPIMDirectoryRole'
+                $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+                Should -Invoke Get-OPIMMsalApplication -Times 0 -Scope It
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 0 -Scope It
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+                Should -Invoke Get-OPIMGraphSessionState -Times 0 -Scope It
+                Should -Invoke Lock-OPIMSignIn -Times 0 -Scope It
+                Should -Invoke Unlock-OPIMSignIn -Times 0 -Scope It
+            }
+        }
+    }
+
+    Context 'When a command carries on past its refused sign-in (end to end)' {
+        # Acceptance "Sparren" (EntraRBAC A19): a refused sign-in followed by a Graph and an ARM call
+        # in the same command gives SignInRefused and sends nothing. The real latch, the real
+        # Initialize-OPIMAuth and the real Graph wrapper, with every transport mocked. Inside Pester a
+        # terminating error always propagates (Pester's own try), so the command that carries on is a
+        # module-scope test function with its own try around each step, which is the shape a cmdlet
+        # has outside any try.
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
+                Mock Invoke-OPIMDeviceCodeAuth {
+                    [PSCustomObject]@{
+                        AccessToken = $script:_OPIMTestToken
+                        ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
+                        Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    }
+                }
+                Mock Connect-MgGraph {}
+                Mock Invoke-MgGraphRequest { @{ id = 'me-001' } }
+                Mock Get-AzContext {}
+                Mock Get-MgContext { $null }
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_OPIMSignInLatch = $null
+                $script:_OPIMTestToken = $null
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMSignInLatch = $null
+                $script:_OPIMTestToken = $null
+            }
+        }
+
+        It 'refuses the Graph and the ARM call of the command and sends nothing' {
+            $Token = New-OPIMTestAccessToken -TenantId $TenantB
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
+                param($Token, $TenantA)
+                $script:_OPIMTestToken = $Token
+                function Invoke-RefusedCommand {
+                    $Result = @{}
+                    try { Initialize-OPIMAuth -TenantId $TenantA } catch { $Result.SignIn = $PSItem }
+                    try { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } catch { $Result.Graph = $PSItem }
+                    $Result.Arm = Get-OPIMArmRefusal
+                    $Result
+                }
+                $Result = Invoke-RefusedCommand
+                $Result.SignIn.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
+                $Result.Graph.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+                $Result.Graph.TargetObject | Should -BeExactly 'Invoke-RefusedCommand'
+                $Result.Arm.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+                $Result.Arm.TargetObject | Should -BeExactly 'Invoke-RefusedCommand'
+                Should -Invoke Invoke-MgGraphRequest -Times 0 -Scope It
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+            }
+        }
+
+        It 'sends again from a new command whose sign-in succeeds' {
+            $Other = New-OPIMTestAccessToken -TenantId $TenantB
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ Other = $Other; Token = $Token; TenantA = $TenantA } {
+                param($Other, $Token, $TenantA)
+                function Invoke-RefusedCommand {
+                    $Result = @{}
+                    try { Initialize-OPIMAuth -TenantId $TenantA } catch { $Result.SignIn = $PSItem }
+                    try { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } catch { $Result.Graph = $PSItem }
+                    $Result
+                }
+                function Invoke-NextCommand {
+                    $Result = @{}
+                    Initialize-OPIMAuth -TenantId $TenantA
+                    $Result.Graph = Invoke-OPIMGraphRequest -Uri 'v1.0/me'
+                    $Result.Arm = Get-OPIMArmRefusal
+                    $Result
+                }
+                $script:_OPIMTestToken = $Other
+                $First = Invoke-RefusedCommand
+                $First.Graph.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+                $script:_OPIMTestToken = $Token
+                $Next = Invoke-NextCommand
+                $Next.Graph.id | Should -Be 'me-001'
+                $Next.Arm | Should -BeNullOrEmpty
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                Should -Invoke Connect-MgGraph -Times 1 -Exactly -Scope It
+            }
+        }
+
+        It 'refuses a nested sign-in under the refused command' {
+            # BL-74: a command the refused one calls is refused at its own sign-in, before any prompt.
+            $Token = New-OPIMTestAccessToken -TenantId $TenantB
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
+                param($Token, $TenantA)
+                $script:_OPIMTestToken = $Token
+                function Invoke-NestedSignIn {
+                    try { Initialize-OPIMAuth -TenantId $TenantA } catch { $PSItem }
+                }
+                function Invoke-RefusedCommand {
+                    $Result = @{}
+                    try { Initialize-OPIMAuth -TenantId $TenantA } catch { $Result.SignIn = $PSItem }
+                    $Result.Nested = Invoke-NestedSignIn
+                    $Result
+                }
+                $Result = Invoke-RefusedCommand
+                $Result.SignIn.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
+                $Result.Nested.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+                $Result.Nested.TargetObject | Should -BeExactly 'Invoke-RefusedCommand'
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+            }
+        }
+
+        It 'lets the refused command sign in again itself' {
+            # The caller's own latched frame does not count for BL-74, so the same command may retry
+            # its sign-in; a success then releases it and its next request is sent.
+            $Other = New-OPIMTestAccessToken -TenantId $TenantB
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ Other = $Other; Token = $Token; TenantA = $TenantA } {
+                param($Other, $Token, $TenantA)
+                function Invoke-RetryingCommand {
+                    $Result = @{}
+                    $script:_OPIMTestToken = $Other
+                    try { Initialize-OPIMAuth -TenantId $TenantA } catch { $Result.SignIn = $PSItem }
+                    $script:_OPIMTestToken = $Token
+                    Initialize-OPIMAuth -TenantId $TenantA
+                    $Result.Graph = Invoke-OPIMGraphRequest -Uri 'v1.0/me'
+                    $Result
+                }
+                $Result = Invoke-RetryingCommand
+                $Result.SignIn.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
+                $Result.Graph.id | Should -Be 'me-001'
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 2 -Exactly -Scope It
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+            }
+        }
     }
 }
