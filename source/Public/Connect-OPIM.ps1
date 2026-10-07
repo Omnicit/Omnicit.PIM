@@ -5,13 +5,16 @@ function Connect-OPIM {
 
     .DESCRIPTION
     Pre-authenticates the session before running Get-/Enable-/Disable-OPIM* cmdlets.
-    All PIM cmdlets call this automatically on first use, so running Connect-OPIM explicitly
+    All PIM cmdlets sign in automatically on first use, so running Connect-OPIM explicitly
     is optional -- use it when you want to control when the sign-in prompt appears.
 
-    A single browser window covers all PIM surfaces (directory roles, Entra ID groups, and
-    Azure RBAC). WAM is never used: authentication goes through the system browser, which works
-    identically on Windows, macOS, and Linux, or, with -DeviceCode, through a device code for a
-    machine without a browser.
+    One Microsoft Graph sign-in covers directory roles and Entra ID groups. WAM is never used: the
+    Graph sign-in goes through the system browser, which works identically on Windows, macOS, and
+    Linux, or, with -DeviceCode, through a device code for a machine without a browser. Azure RBAC
+    signs in separately, through the Az module's own sign-in (Connect-AzAccount) for the tenant of
+    the Graph session: with -IncludeARM here, or when an Azure role cmdlet first needs it. It may
+    open its own browser window, with WAM turned off for this PowerShell process, or, in device
+    code mode, show its own code.
 
     The session state is cached in memory. Subsequent calls are idempotent -- if a valid token
     already exists for the same tenant no sign-in prompt is shown.
@@ -20,7 +23,8 @@ function Connect-OPIM {
 
     .EXAMPLE
     Connect-OPIM -TenantId 'contoso.onmicrosoft.com'
-    Authenticate and cache tokens for the Contoso tenant (Graph + Azure RBAC).
+    Sign in to Microsoft Graph for the Contoso tenant and cache the token (directory roles and
+    Entra ID groups).
 
     .EXAMPLE
     Connect-OPIM -TenantAlias corp
@@ -28,7 +32,7 @@ function Connect-OPIM {
 
     .EXAMPLE
     Connect-OPIM -TenantAlias corp -IncludeARM
-    Authenticate and also acquire an Azure Resource Manager token (for Enable-OPIMAzureRole).
+    Authenticate and also sign in to Azure through the Az module, for the Azure role cmdlets.
 
     .EXAMPLE
     Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -DeviceCode -IncludeARM
@@ -45,9 +49,11 @@ function Connect-OPIM {
     Mutually exclusive with -TenantAlias.
 
     .PARAMETER IncludeARM
-    Also acquire an Azure Resource Manager token and connect to Azure (Connect-AzAccount).
-    Required when using Get-/Enable-/Disable-OPIMAzureRole in the same session.
-    If not set, Azure cmdlets will call Connect-OPIM -IncludeARM automatically on first use.
+    Also sign in to Azure, through the Az module's own sign-in (Connect-AzAccount), for the tenant
+    of the Microsoft Graph session. An earlier Azure sign-in is reused when it is for that tenant and
+    the same account and can still get a token silently. Optional: without it,
+    Get-/Enable-/Disable-OPIMAzureRole sign in to Azure on first use; use it to have the Azure
+    prompt appear now.
 
     .PARAMETER TenantMapPath
     Path to TenantMap.psd1. Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.

@@ -54,9 +54,10 @@ again -- or use a new PowerShell window. The configuration commands are the exce
 `Install-OPIMConfiguration` takes its tenant when you omit `-TenantId`, and both read the tenant's
 display name for the confirmation prompt.
 
-A command whose sign-in was refused sends nothing more, even when it carries on past the error:
-every request it would still make is refused with `SignInRefused`. Run `Connect-OPIM`, or the
-command again, once the sign-in can succeed.
+A command whose sign-in at its start was refused sends nothing more, even when it carries on past
+the error: every request it would still make is refused with `SignInRefused`. A sign-in refused
+while a failed request is retried -- an ACRS step-up or a token refresh -- fails only that request.
+Run `Connect-OPIM`, or the command again, once the sign-in can succeed.
 
 Azure signs in separately, through the Az module, for the same tenant as the Microsoft Graph
 sign-in. An earlier Azure sign-in is reused only when it is for that tenant and the same account as

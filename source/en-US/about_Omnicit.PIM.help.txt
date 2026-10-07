@@ -47,10 +47,12 @@ LONG DESCRIPTION
     commands refuse their calls with GraphSessionChanged instead of switching the session
     back: run Disconnect-OPIM, which also disconnects that session, and sign in again. The
     configuration commands are the exception, by design: Install-OPIMConfiguration and
-    Set-OPIMConfiguration read whatever Graph session is active. A command whose sign-in was
-    refused sends nothing more (SignInRefused). Azure signs in to the same tenant, reuses an
-    earlier Azure sign-in only for the same account, and asks for no subscription; after a
-    failed Azure sign-in (AzureConnectFailed) nothing is sent to Azure under an earlier one.
+    Set-OPIMConfiguration read whatever Graph session is active. A command whose sign-in at
+    its start was refused sends nothing more (SignInRefused); a sign-in refused while a
+    failed request is retried fails only that request. Azure signs in to the same tenant,
+    reuses an earlier Azure sign-in only for the same account, and asks for no subscription;
+    after a failed Azure sign-in (AzureConnectFailed) nothing is sent to Azure under an
+    earlier one.
     Enable-OPIMMyRole and Disable-OPIMMyRole stop when the Microsoft Graph sign-in fails;
     when only the Azure sign-in fails they write the error and skip the Azure roles, unless
     the error preference is Stop, which ends the command.
