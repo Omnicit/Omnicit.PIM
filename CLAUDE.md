@@ -177,13 +177,17 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   `Import-Module`, and the root `AfterAll` calls `Assert-OPIMTransportTripwire` in a `try` with no
   `catch` whose `finally` calls `Uninstall-OPIMTransportTripwire` -- it checks that wiring, not the
   exact root form (see **Testing Conventions**); `source/` holds `ForEach-Object -Parallel` only in
-  a named list (`Wait-OPIMDirectoryRole.ps1` today), each block importing only
-  `Microsoft.Graph.Authentication`; and `Get-OPIMMsalApplication` is invoked only in its own test
-  file and the tripwire suite, where every `Get-MgContext` mock throws.
+  a named list -- empty today, so no `-Parallel` block is allowed anywhere -- each block importing
+  only `Microsoft.Graph.Authentication`; and `Get-OPIMMsalApplication` is invoked only in its own
+  test file and the tripwire suite, where every `Get-MgContext` mock throws.
 - **`sourcehygiene.tests.ps1`** -- every `.ps1`, `.psd1`, `.psm1` and `.ps1xml` under `source/` and
   `tests/` is ASCII without a BOM; every `Verb-OPIM` name in `source/**/*.ps1` resolves to a
   function file or an exported alias; the region `suffix.ps1` shares with the dev-mode psm1 is
-  byte-identical; and every `.ps1xml` under `source/` parses as XML.
+  byte-identical; every `.ps1xml` under `source/` parses as XML; and the bearer scrub: in every
+  file under `source/` that reaches a transport command -- directly or through any module function
+  it calls -- every `catch` starts with `Remove-OPIMErrorRecord -Record $PSItem` (see **Error
+  Handling**), with floors on the files and catches scanned and the exact catch count of
+  `Invoke-OPIMGraphRequest.ps1` as its named control.
 - **`dochygiene.tests.ps1`** -- over every tracked file under `docs/`, `specs/`, `source/` and
   `tests/`, plus `README.md` and `CHANGELOG.md`: object ids (only placeholders under `docs/` and
   `specs/`; elsewhere no version-4 id outside a pinned register of four public constants), email
@@ -559,7 +563,7 @@ their last parameter and hand it down to `Initialize-OPIMAuth`; without it nothi
   and a failed first sign-in -- a declined or expired code, Ctrl+C -- keeps the mode: the next call
   asks for a code again instead of opening the system browser, until `Disconnect-OPIM`. The
   token-rejected retry in `Invoke-OPIMGraphRequest` checks only that a state exists
-  (`Invoke-OPIMGraphRequest.ps1:148-150`), so it does run on such a state: when a pillar cmdlet goes
+  (`Invoke-OPIMGraphRequest.ps1:153-155`), so it does run on such a state: when a pillar cmdlet goes
   on to Graph after a failed first sign-in and a Graph context made outside the module answers 401,
   the retry asks for one more device code, for `organizations`, since the state has no `TenantId`.
 - **The mode lives in the module instance of the runspace that signed in.** A
@@ -633,44 +637,47 @@ discards the error (`Disconnect-OPIM.ps1:26-32`). `Disconnect-AzAccount` acts on
 context, whether or not the module established it.
 
 **`Invoke-OPIMGraphRequest` owns the Graph transport.** It calls `Invoke-MgGraphRequest` with
-`-Verbose:$false -ErrorAction Stop` (`Invoke-OPIMGraphRequest.ps1:101-110`) and, on a failure:
+`-Verbose:$false -ErrorAction Stop` (`Invoke-OPIMGraphRequest.ps1:105-114`) and, on a failure:
 
 1. **ACRS claims-challenge retry.** It looks for `claims=` in the `WWW-Authenticate` header, the
    response body and the exception message, and decodes the value as URL-encoded JSON (the PIM 400
    `RoleAssignmentRequestAcrsValidationFailed` body form), base64url JSON (the 401 step-up header
-   form) or raw JSON (`:61-98`). It then calls `Initialize-OPIMAuth -ClaimsChallenge` for one
+   form) or raw JSON (`:65-102`). It then calls `Initialize-OPIMAuth -ClaimsChallenge` for one
    step-up -- interactive, or with a device code in device code mode, which it does not pass but
    the auth state remembers -- and retries exactly once; a second failure is converted and thrown
-   (`:121-137`).
+   (`:126-142`).
 2. **Token-rejected retry.** A 401 that is not a claims challenge, or a message matching
    `InvalidAuthenticationToken`, `CompactToken`, `token is expired` or `Lifetime validation failed`,
-   calls `Initialize-OPIMAuth -ForceRefresh` and retries once (`:143-157`).
+   calls `Initialize-OPIMAuth -ForceRefresh` and retries once (`:148-162`).
 3. **Error conversion.** Anything else is thrown as `Convert-GraphHttpException`'s record, whose
-   `FullyQualifiedErrorId` is the Graph `error.code` (`:160`). A caller receives a response or a
+   `FullyQualifiedErrorId` is the Graph `error.code` -- or, when the body carries none, a status
+   label (`Forbidden`, `TooManyRequests`, `HTTP<n>`, ...) and else `GraphError` (`:165`). It is
+   always a NEW record that never chains the raw exception. A caller receives a response or a
    thrown `ErrorRecord` -- there is no side-channel protocol.
 
-Its catches call `$null = $Error.Remove($PSItem)` first; see **Error Handling** for what that does
-and does not do.
+Every one of its catches calls `Remove-OPIMErrorRecord -Record $PSItem` first; see **Error
+Handling** for what that does.
 
 **The places that call the raw SDK or Az authentication directly today**, from a `Select-String`
-over `source/` on 2026-10-06, listed as they are:
+over `source/` on 2026-10-07, listed as they are:
 
 | File:line (under `source/`) | Call |
 |---|---|
-| `Private/Invoke-OPIMGraphRequest.ps1:110, 132, 152` | `Invoke-MgGraphRequest` -- the wrapper itself |
+| `Private/Invoke-OPIMGraphRequest.ps1:114, 137, 157` | `Invoke-MgGraphRequest` -- the wrapper itself |
 | `Private/Get-OPIMCurrentTenantInfo.ps1:44` | `Invoke-MgGraphRequest` for `v1.0/organization` (best-effort tenant display name) |
-| `Public/Wait-OPIMDirectoryRole.ps1:101, 117` | `Invoke-MgGraphRequest` inside `ForEach-Object -Parallel`, with absolute `https://graph.microsoft.com/v1.0/...` URIs (`:101` passes `-ErrorAction Stop`, `:117` does not) |
-| `Private/Initialize-OPIMAuth.ps1:332` | `Connect-MgGraph -AccessToken` |
+| `Private/Initialize-OPIMAuth.ps1:336` | `Connect-MgGraph -AccessToken` |
 | `Private/Initialize-OPIMAuth.ps1:159` | `Get-AzAccessToken` (silent validation; the token is discarded) |
-| `Private/Initialize-OPIMAuth.ps1:371` | `Connect-AzAccount` (with `-UseDeviceAuthentication` in device code mode) |
+| `Private/Initialize-OPIMAuth.ps1:375` | `Connect-AzAccount` (with `-UseDeviceAuthentication` in device code mode) |
 | `Public/Disconnect-OPIM.ps1:31, 32` | `Disconnect-MgGraph`, `Disconnect-AzAccount` |
+
+`Wait-OPIMDirectoryRole` is not in it: it polls in sequence through `Invoke-OPIMGraphRequest`.
 
 `Invoke-OPIMDeviceCodeAuth` is not in this table: it reaches MSAL through the application object it
 is handed, not through the Graph SDK or an Az cmdlet.
 
 Beside these, the module reads `Get-MgContext` (`Initialize-OPIMAuth.ps1:132`,
 `Get-OPIMMsalApplication.ps1:46`, `Get-MyId.ps1:26`, `Get-OPIMCurrentTenantInfo.ps1:30`), reads
-`Get-AzContext` (`Initialize-OPIMAuth.ps1:144`), calls `Update-AzConfig` (`:358`), and calls the
+`Get-AzContext` (`Initialize-OPIMAuth.ps1:144`), calls `Update-AzConfig` (`:362`), and calls the
 `Az.Resources` cmdlets listed under **API Mapping**.
 
 ---
@@ -846,9 +853,12 @@ called by `Install`, `Set` and `Remove`; never inline it.
   module function calls it today.
 - **PSScriptAnalyzer:** the QA gate requires zero findings, with the default rules, for every
   function's source file. A targeted suppression is acceptable only for a known false positive and
-  only with a `Justification` string; **never suppress a rule that hides a real bug.** No function
-  file carries a suppression today; the six completer classes carry two each
-  (`PSAvoidUsingWriteHost` and `PSUseDeclaredVarsMoreThanAssignments`), each with a `Justification`.
+  only with a `Justification` string; **never suppress a rule that hides a real bug.** One function
+  file carries suppressions today: `Remove-OPIMErrorRecord` suppresses `PSAvoidGlobalVars` (the
+  caller's `$global:Error` is the list it must edit) and
+  `PSUseShouldProcessForStateChangingFunctions` (it runs unconditionally first in a catch). The six
+  completer classes carry two each (`PSAvoidUsingWriteHost` and
+  `PSUseDeclaredVarsMoreThanAssignments`). Each suppression carries a `Justification`.
 
 ---
 
@@ -882,10 +892,10 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
 - **Non-terminating errors** in public functions: `$PSCmdlet.WriteError()` followed by `return` (in
   a `process` block) or `continue` (inside a `foreach` loop over multiple items). Never use bare
   `throw` in a public function -- it terminates the pipeline and prevents
-  `-ErrorAction SilentlyContinue` from working. The two in `Wait-OPIMDirectoryRole` are deliberate
-  and commented: `:79` runs inside `ForEach-Object -Parallel`, where `$PSCmdlet` does not exist,
-  and `:145` is a bare re-throw in the `catch` around the progress loop (`:125-145`). Errors from
-  the parallel jobs themselves surface through `Receive-Job -Wait` in the `finally` (`:146`).
+  `-ErrorAction SilentlyContinue` from working. No public function holds one: `Wait-OPIMDirectoryRole`
+  writes a failed request with `Write-CmdletError` (non-terminating) and ends a timeout with
+  `Write-CmdletError -Terminating`, both without an `-ErrorId`, so their `FullyQualifiedErrorId` is
+  the bare command name `Wait-OPIMDirectoryRole`.
 - **Private helpers** such as `Resolve-RoleByName`, `Restore-GraphProperty` and `Get-MyId` may
   `throw` on caller error, and `Invoke-OPIMGraphRequest` throws the converted Graph error by
   design: the caller is responsible for catching and routing it.
@@ -899,9 +909,11 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   $Err.ErrorDetails = [System.Management.Automation.ErrorDetails]::new('Your message here.')
   ```
 - **Graph errors and Az.Resources errors differ by design.** A Graph failure reaches the caller as
-  the record `Convert-GraphHttpException` built inside the wrapper: the Graph `error.code` as
-  `FullyQualifiedErrorId`, `"<code>: <message>"` as `ErrorDetails`, and the original exception as
-  `InnerException`. An `Az.Resources` error arrives in `$PSItem` as the cmdlet threw it; inspect
+  the record `Convert-GraphHttpException` built inside the wrapper: the Graph `error.code` (else a
+  status label such as `Forbidden`, else `GraphError`) as `FullyQualifiedErrorId` and
+  `"<code>: <message>"` as `ErrorDetails`. It never chains the original exception -- that
+  exception reaches the request message and its token -- and it is never the raw record itself.
+  An `Az.Resources` error arrives in `$PSItem` as the cmdlet threw it; inspect
   `$PSItem.FullyQualifiedErrorId` (`.Split(',')[0]` where the id carries a suffix, as
   `Get-OPIMAzureRole.ps1:106` does) and pass it to `$PSCmdlet.WriteError()` or rewrap it with
   `Write-CmdletError`.
@@ -913,16 +925,19 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `Get-OPIMAzureRole` rewraps `InsufficientPermissions` with the rights it needs.
 - **Never print, log or persist an error record from a failed request, or anything reached through
   it.** The record `Invoke-MgGraphRequest` throws carries the raw `HttpRequestMessage`, whose
-  `Authorization: Bearer` header holds the token in plain text, as its target object
-  (`Invoke-OPIMGraphRequest.ps1:112-113`). The rule as it stands: every catch that wraps a raw
-  `Invoke-MgGraphRequest` call runs `$null = $Error.Remove($PSItem)` as its FIRST statement --
-  `Invoke-OPIMGraphRequest.ps1:114, 134, 154` and `Get-OPIMCurrentTenantInfo.ps1:51` today. **That
-  idiom was measured in Omnicit.EntraRBAC to remove nothing:** a module's `$Error` is a private list
-  distinct from the caller's, and even against the caller's `$global:Error` the `ErrorRecord` bound
-  to `$PSItem` is not the same object instance PowerShell stored there, so the reference-equality
-  `Remove` silently no-ops. A replacement is planned, not yet in this repository. Until it lands,
-  keep the idiom where it is, put it first in any new catch around a raw call (there should be none
-  outside the wrapper), and never rely on it.
+  `Authorization: Bearer` header holds the token in plain text, as its target object and through
+  its exception's response. **`Remove-OPIMErrorRecord -Record $PSItem` is the FIRST statement of
+  every catch in a file that reaches a transport command** -- directly or through any module
+  function it calls -- and `tests/QA/sourcehygiene.tests.ps1` holds that rule over the whole call
+  closure, nested functions included. It clears the `Authorization` header ON the shared request
+  object, which also disarms every copy of the record that already escaped (the caller's
+  `-ErrorVariable`, a nested frame's republished record), and then removes the entry from the
+  caller's `$global:Error` whose `Exception` is the same object. It never throws and emits
+  nothing. The idiom it replaced, `$null = $Error.Remove($PSItem)`, removed nothing: a module's
+  `$Error` is a private list distinct from the caller's, and the `ErrorRecord` bound to `$PSItem`
+  is not the instance PowerShell stored in `$global:Error`. A new catch on a transport path starts
+  with the scrub. The gate's exemption table is empty, and an entry there needs a structural
+  predicate on the catch's try body, never a file name alone.
 - **Error flow patterns:**
   ```powershell
   # In process blocks (single-item cmdlets: Disable-*, Get-*): use return
@@ -998,16 +1013,18 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   outranks every form, so the mocks below work unchanged, and the replacements refuse whether or
   not the process holds a Graph or Az context -- run the suite in a fresh `pwsh` process all the
   same.
-- **A `ForEach-Object -Parallel` block is mocked through the stand-in.** No Pester mock and no
-  global function reaches such a runspace, so the tripwire puts a generated stand-in
-  `Microsoft.Graph.Authentication` first on `PSModulePath`; the block's own
+- **A `ForEach-Object -Parallel` block is mocked through the stand-in.** `source/` holds no such
+  block today (testhygiene's named list is empty); this is the form a future one is tested with.
+  No Pester mock and no global function reaches such a runspace, so the tripwire puts a generated
+  stand-in `Microsoft.Graph.Authentication` first on `PSModulePath`; the block's own
   `Import-Module 'Microsoft.Graph.Authentication'` loads it, and its four commands refuse and
   record unless a response is registered for them:
   ```powershell
   $Response = @{ value = @(@{ status = 'PendingProvisioning' }) }
   Register-OPIMParallelTransportStandIn -Name 'Invoke-MgGraphRequest' -Response $Response
   try {
-      { $Request | Wait-OPIMDirectoryRole -NoSummary -Timeout 0 2>$null } | Should -Throw
+      # Invoke-ParallelThing stands for the command under test that holds the -Parallel block.
+      { $Items | Invoke-ParallelThing 2>$null } | Should -Throw
       @(Get-OPIMParallelTransportStandInCall).Count | Should -Be 1
   } finally {
       Unregister-OPIMParallelTransportStandIn
@@ -1056,8 +1073,11 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `Get-MgContext`), `Get-MyId.Tests.ps1` and `Get-OPIMMsalApplication.Tests.ps1` (`Get-MgContext`,
   which must THROW in the latter -- see below), `Initialize-OPIMAuth.Tests.ps1` (`Connect-MgGraph`,
   `Connect-AzAccount`, `Get-AzContext`, `Get-AzAccessToken`, `Update-AzConfig`,
-  `Get-OPIMMsalApplication`) and `Disconnect-OPIM.Tests.ps1` (`Disconnect-MgGraph`,
-  `Disconnect-AzAccount`).
+  `Get-OPIMMsalApplication`), `Disconnect-OPIM.Tests.ps1` (`Disconnect-MgGraph`,
+  `Disconnect-AzAccount`), and the end-to-end bearer-scrub context in
+  `Get-OPIMDirectoryRole.Tests.ps1`, whose module-scoped `Invoke-MgGraphRequest` mock throws a
+  record pointing at a request with an `Authorization` header so the real wrapper, its scrub and
+  `Convert-GraphHttpException` run underneath the cmdlet.
 - **`Get-OPIMMsalApplication` is stopped at its `Get-MgContext` call in every test.** Past that
   call (`Get-OPIMMsalApplication.ps1:46`) it builds a real MSAL `PublicClientApplication` by
   reflection, which no mock intercepts. Its two build-path tests therefore mock `Get-MgContext` to
@@ -1123,10 +1143,18 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
 - **A `Mock -ModuleName` covers only calls made from inside the module.** A command the test body
   calls itself runs for real unless it has its own test-scope `Mock`. Mocks do not cross
   `ForEach-Object -Parallel` runspaces either -- the stand-in above is what answers there.
-- **`Wait-OPIMDirectoryRole`'s three `-Parallel` tests reached the real `Invoke-MgGraphRequest`
-  in a thread job until the tripwire caught them; they now register the stand-in, which closed
-  that exception.** The `-PassThru` test is still skipped, and its skip comment's "integration
-  tests" do not exist in this repository.
+- **`Wait-OPIMDirectoryRole` is tested at the module boundary like every other cmdlet.** It polls
+  in sequence through `Invoke-OPIMGraphRequest`, so its tests mock that wrapper per URI (the
+  `roleAssignmentScheduleRequests` status query and the `roleAssignmentScheduleInstances` query)
+  and need no stand-in; the `-PassThru` test runs. Its polling contexts call the REAL
+  `Write-CmdletError` and read errors through `-ErrorVariable` and the thrown timeout: Pester 6
+  throws "No mock ... matched" for a call no `-ParameterFilter` matches instead of passing it to
+  the real command, so a filtered `Write-CmdletError` mock cannot let the terminating timeout
+  through. Only the expiry-only context, which never polls, mocks `Write-CmdletError`.
+- **`-ErrorVariable` collects more than the command's own error.** The engine fills it from every
+  nested frame's error stream, so a mock that throws can leave several entries -- wrapper
+  exceptions first -- before the record the command itself wrote, which is the LAST entry.
+  Assert on the entry you mean, not on `$Errs[0]` by habit.
 - **Pin `-ErrorAction` on any call whose non-terminating error the test observes or has to
   survive.** Module code reads the GLOBAL `$ErrorActionPreference`, which the workflow's
   `shell: pwsh` steps and many operator profiles set to Stop, and a test-local
@@ -1267,12 +1295,12 @@ version drift.
   is already present". Types are loaded by a single
   `Update-TypeData -AppendPath ... -ErrorAction SilentlyContinue` in `suffix.ps1` (`:4`), mirrored
   in the dev-mode psm1 (`:37`).
-- **Parallel runspaces need an explicit Graph import.** `Wait-OPIMDirectoryRole` calls
-  `Import-Module 'Microsoft.Graph.Authentication'` inside `ForEach-Object -Parallel` (`:68`); any
-  new parallel block must do the same. Module functions, mocks and `$script:` state are not
-  available there. A new block also goes on testhygiene's named list, and it may import nothing
-  else and call no transport command but the four Graph ones -- that is all the tripwire's stand-in
-  covers.
+- **Parallel runspaces need an explicit Graph import.** `source/` holds no `ForEach-Object
+  -Parallel` block today; a new one must call `Import-Module 'Microsoft.Graph.Authentication'`
+  itself, since module functions -- the wrapper and its bearer scrub included -- mocks and
+  `$script:` state are not available there. A new block also goes on testhygiene's named list, and
+  it may import nothing else and call no transport command but the four Graph ones -- that is all
+  the tripwire's stand-in covers.
 - **`Invoke-MgGraphRequest` must run with `-Verbose:$false -ErrorAction Stop`** -- it suppresses
   SDK noise and makes the failure catchable. `Invoke-OPIMGraphRequest` does it for every caller; all
   new code calls the wrapper instead.

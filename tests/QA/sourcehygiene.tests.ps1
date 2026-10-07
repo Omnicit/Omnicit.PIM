@@ -126,8 +126,8 @@ BeforeAll {
     <#
         The floors sit just under the counts measured on 2026-10-07, after every catch in a
         transport-reaching file was made to scrub first: 20 transport-reaching files under source/
-        holding 28 of the 49 catch clauses in source/. The named control, source/Private/Invoke-OPIMGraphRequest.ps1,
-        is asserted with its EXACT count instead (7: the three in its nested
+        holding 28 of the 49 catch clauses in source/. The named control,
+        source/Private/Invoke-OPIMGraphRequest.ps1, is asserted with its EXACT count instead (7: the three in its nested
         Get-ClaimsFromException, the first attempt, the claims retry, the status read and the
         refresh retry), so a catch that stops being seen fails there with a clear cause instead of
         quietly shrinking a total.
