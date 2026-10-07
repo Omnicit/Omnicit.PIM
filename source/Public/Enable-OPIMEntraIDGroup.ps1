@@ -38,6 +38,9 @@ function Enable-OPIMEntraIDGroup {
     .PARAMETER Until
     Explicit end date and time for the activation. Takes precedence over -Hours when specified.
     Aliased as -NotAfter.
+    .PARAMETER AccessType
+    Member or Owner. A group display name means the membership unless -AccessType Owner is given.
+    The tab-completed form names its access type itself.
     .PARAMETER Wait
     Wait until the group assignment is fully provisioned and active before returning.
     #>
@@ -58,19 +61,29 @@ function Enable-OPIMEntraIDGroup {
         [Parameter(Position = 2)][ValidateNotNullOrEmpty()][int]$Hours = 1,
         [ValidateNotNullOrEmpty()][DateTime]$NotBefore = [DateTime]::Now,
         [DateTime][Alias('NotAfter')]$Until,
+        [Parameter(ParameterSetName = 'GroupName')]
+        [ValidateSet('Member', 'Owner')]
+        [string]$AccessType,
         [Switch]$Wait
     )
     process {
         Initialize-OPIMAuth
         if ($Identity) {
             try {
-                $Group = Get-OPIMEntraIDGroup -Identity $Identity -ErrorAction Stop | Select-Object -First 1
+                $FoundByIdentity = @(Get-OPIMEntraIDGroup -Identity $Identity -ErrorAction Stop)
             } catch {
                 # OPIM-12: the listing failed; report it as itself and stop for this identity.
                 Remove-OPIMErrorRecord -Record $PSItem
                 $PSCmdlet.WriteError($PSItem)
                 return
             }
+            if ($FoundByIdentity.Count -gt 1) {
+                # Never the first of several: refuse with the candidates and act on none.
+                $PSCmdlet.WriteError((New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Group `
+                    -Name $Identity -Status Both -Candidate $FoundByIdentity -Identity))
+                return
+            }
+            $Group = $FoundByIdentity | Select-Object -First 1
             if (-not $Group) {
                 Write-CmdletError `
                     -Message ([System.Exception]::new("No eligible PIM group assignment found with identity '$Identity'.")) `
@@ -82,7 +95,18 @@ function Enable-OPIMEntraIDGroup {
             }
         }
         $ResolvedGroups = if ($GroupName) {
-            $GroupName | ForEach-Object { Resolve-RoleByName -Group $_ }
+            $ResolveParams = @{ Pillar = 'Group'; FilterParameter = 'AccessType'; ErrorAction = 'Stop' }
+            if ($PSBoundParameters.ContainsKey('AccessType')) { $ResolveParams.AccessType = $AccessType.ToLowerInvariant() }
+            foreach ($EachName in $GroupName) {
+                try {
+                    Resolve-OPIMSchedule -Name $EachName @ResolveParams
+                } catch {
+                    # Each name resolves on its own: a name that is ambiguous, unknown or cannot be
+                    # listed is written as itself, and the next name still runs (OPIM-12).
+                    Remove-OPIMErrorRecord -Record $PSItem
+                    $PSCmdlet.WriteError($PSItem)
+                }
+            }
         } else {
             @($Group)
         }

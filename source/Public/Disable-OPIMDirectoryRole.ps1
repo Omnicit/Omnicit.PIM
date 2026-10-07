@@ -23,6 +23,10 @@ function Disable-OPIMDirectoryRole {
     .PARAMETER Identity
     The schedule instance ID from Get-OPIMDirectoryRole -Activated (the id property) to deactivate
     directly without tab completion. Mutually exclusive with -Role and -RoleName.
+    .PARAMETER Scope
+    Picks one role when the name matches the role at more than one scope: '/' or an administrative
+    unit's id path or display name for a directory role, the ARM scope for an Azure role. Compared
+    without regard to letter case; a scope that ends in '/' (other than '/') is refused.
     #>
     [Alias('Disable-PIMADRole', 'Disable-PIMRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
@@ -34,19 +38,30 @@ function Disable-OPIMDirectoryRole {
         [Parameter(ParameterSetName = 'RoleName', Mandatory, Position = 0)]
         [String]$RoleName,
         [Parameter(ParameterSetName = 'ByIdentity', Mandatory)]
-        [String]$Identity
+        [String]$Identity,
+        [Parameter(ParameterSetName = 'RoleName')]
+        [ValidateNotNullOrEmpty()]
+        [ValidateScript({ $_ -eq '/' -or -not $_.EndsWith('/') }, ErrorMessage = "The scope '{0}' ends with '/'. Give it without the trailing slash; only the root scope is written '/'.")]
+        [string]$Scope
     )
     process {
         Initialize-OPIMAuth
         if ($Identity) {
             try {
-                $Role = Get-OPIMDirectoryRole -Activated -Identity $Identity -ErrorAction Stop | Select-Object -First 1
+                $FoundByIdentity = @(Get-OPIMDirectoryRole -Activated -Identity $Identity -ErrorAction Stop)
             } catch {
                 # OPIM-12: the listing failed; report it as itself and stop for this identity.
                 Remove-OPIMErrorRecord -Record $PSItem
                 $PSCmdlet.WriteError($PSItem)
                 return
             }
+            if ($FoundByIdentity.Count -gt 1) {
+                # Never the first of several: refuse with the candidates and act on none.
+                $PSCmdlet.WriteError((New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Directory `
+                    -Name $Identity -Status Active -Candidate $FoundByIdentity -Identity))
+                return
+            }
+            $Role = $FoundByIdentity | Select-Object -First 1
             if (-not $Role) {
                 Write-CmdletError `
                     -Message ([System.Exception]::new("No active directory role found with identity '$Identity'.")) `
@@ -57,7 +72,17 @@ function Disable-OPIMDirectoryRole {
                 return
             }
         }
-        if ($RoleName) { $Role = Resolve-RoleByName -AD -Activated $RoleName }
+        if ($RoleName) {
+            $ResolveParams = @{ Pillar = 'Directory'; Status = 'Active'; FilterParameter = 'Scope'; ErrorAction = 'Stop' }
+            if ($PSBoundParameters.ContainsKey('Scope')) { $ResolveParams.Scope = $Scope }
+            try {
+                $Role = Resolve-OPIMSchedule -Name $RoleName @ResolveParams
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+                return
+            }
+        }
 
         # Skip eligible-only schedules piped from Get-OPIMDirectoryRole -All
         if ($Role.PSObject.TypeNames -contains 'Omnicit.PIM.DirectoryEligibilitySchedule') {

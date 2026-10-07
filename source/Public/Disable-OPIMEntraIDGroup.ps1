@@ -20,6 +20,9 @@ function Disable-OPIMEntraIDGroup {
     .PARAMETER Identity
     The schedule instance ID from Get-OPIMEntraIDGroup -Activated (the id property) to deactivate
     directly without tab completion. Mutually exclusive with -Group and -GroupName.
+    .PARAMETER AccessType
+    Member or Owner. A group display name means the membership unless -AccessType Owner is given.
+    The tab-completed form names its access type itself.
     #>
     [Alias('Disable-PIMGroup')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'GroupName')]
@@ -31,19 +34,29 @@ function Disable-OPIMEntraIDGroup {
         [Parameter(ParameterSetName = 'GroupName', Mandatory, Position = 0)]
         [String]$GroupName,
         [Parameter(ParameterSetName = 'ByIdentity', Mandatory)]
-        [String]$Identity
+        [String]$Identity,
+        [Parameter(ParameterSetName = 'GroupName')]
+        [ValidateSet('Member', 'Owner')]
+        [string]$AccessType
     )
     process {
         Initialize-OPIMAuth
         if ($Identity) {
             try {
-                $Group = Get-OPIMEntraIDGroup -Activated -Identity $Identity -ErrorAction Stop | Select-Object -First 1
+                $FoundByIdentity = @(Get-OPIMEntraIDGroup -Activated -Identity $Identity -ErrorAction Stop)
             } catch {
                 # OPIM-12: the listing failed; report it as itself and stop for this identity.
                 Remove-OPIMErrorRecord -Record $PSItem
                 $PSCmdlet.WriteError($PSItem)
                 return
             }
+            if ($FoundByIdentity.Count -gt 1) {
+                # Never the first of several: refuse with the candidates and act on none.
+                $PSCmdlet.WriteError((New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Group `
+                    -Name $Identity -Status Active -Candidate $FoundByIdentity -Identity))
+                return
+            }
+            $Group = $FoundByIdentity | Select-Object -First 1
             if (-not $Group) {
                 Write-CmdletError `
                     -Message ([System.Exception]::new("No active PIM group assignment found with identity '$Identity'.")) `
@@ -54,7 +67,17 @@ function Disable-OPIMEntraIDGroup {
                 return
             }
         }
-        if ($GroupName) { $Group = Resolve-RoleByName -Group -Activated $GroupName }
+        if ($GroupName) {
+            $ResolveParams = @{ Pillar = 'Group'; Status = 'Active'; FilterParameter = 'AccessType'; ErrorAction = 'Stop' }
+            if ($PSBoundParameters.ContainsKey('AccessType')) { $ResolveParams.AccessType = $AccessType.ToLowerInvariant() }
+            try {
+                $Group = Resolve-OPIMSchedule -Name $GroupName @ResolveParams
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+                return
+            }
+        }
 
         # Skip eligible-only schedules piped from Get-OPIMEntraIDGroup -All
         if ($Group.PSObject.TypeNames -contains 'Omnicit.PIM.GroupEligibilitySchedule') {

@@ -46,6 +46,10 @@ function Enable-OPIMDirectoryRole {
     .PARAMETER Until
     Explicit end date and time for the activation. Takes precedence over -Hours when specified.
     Aliased as -NotAfter.
+    .PARAMETER Scope
+    Picks one role when the name matches the role at more than one scope: '/' or an administrative
+    unit's id path or display name for a directory role, the ARM scope for an Azure role. Compared
+    without regard to letter case; a scope that ends in '/' (other than '/') is refused.
     .PARAMETER Wait
     Wait until the directory role is fully provisioned before returning.
     #>
@@ -66,6 +70,10 @@ function Enable-OPIMDirectoryRole {
         [Parameter(Position = 2)][ValidateNotNullOrEmpty()][int]$Hours = 1,
         [ValidateNotNullOrEmpty()][DateTime]$NotBefore = [DateTime]::Now,
         [DateTime][Alias('NotAfter')]$Until,
+        [Parameter(ParameterSetName = 'RoleName')]
+        [ValidateNotNullOrEmpty()]
+        [ValidateScript({ $_ -eq '/' -or -not $_.EndsWith('/') }, ErrorMessage = "The scope '{0}' ends with '/'. Give it without the trailing slash; only the root scope is written '/'.")]
+        [string]$Scope,
         [Switch]$Wait
     )
     begin {
@@ -75,13 +83,20 @@ function Enable-OPIMDirectoryRole {
     process {
         if ($Identity) {
             try {
-                $Role = Get-OPIMDirectoryRole -Identity $Identity -ErrorAction Stop | Select-Object -First 1
+                $FoundByIdentity = @(Get-OPIMDirectoryRole -Identity $Identity -ErrorAction Stop)
             } catch {
                 # OPIM-12: the listing failed; report it as itself and stop for this identity.
                 Remove-OPIMErrorRecord -Record $PSItem
                 $PSCmdlet.WriteError($PSItem)
                 return
             }
+            if ($FoundByIdentity.Count -gt 1) {
+                # Never the first of several: refuse with the candidates and act on none.
+                $PSCmdlet.WriteError((New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Directory `
+                    -Name $Identity -Status Both -Candidate $FoundByIdentity -Identity))
+                return
+            }
+            $Role = $FoundByIdentity | Select-Object -First 1
             if (-not $Role) {
                 Write-CmdletError `
                     -Message ([System.Exception]::new("No eligible directory role found with identity '$Identity'.")) `
@@ -93,7 +108,18 @@ function Enable-OPIMDirectoryRole {
             }
         }
         $ResolvedRoles = if ($RoleName) {
-            $RoleName | ForEach-Object { Resolve-RoleByName -AD $_ }
+            $ResolveParams = @{ Pillar = 'Directory'; FilterParameter = 'Scope'; ErrorAction = 'Stop' }
+            if ($PSBoundParameters.ContainsKey('Scope')) { $ResolveParams.Scope = $Scope }
+            foreach ($EachName in $RoleName) {
+                try {
+                    Resolve-OPIMSchedule -Name $EachName @ResolveParams
+                } catch {
+                    # Each name resolves on its own: a name that is ambiguous, unknown or cannot be
+                    # listed is written as itself, and the next name still runs (OPIM-12).
+                    Remove-OPIMErrorRecord -Record $PSItem
+                    $PSCmdlet.WriteError($PSItem)
+                }
+            }
         } else {
             @($Role)
         }

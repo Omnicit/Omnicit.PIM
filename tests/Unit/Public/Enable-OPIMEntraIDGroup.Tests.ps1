@@ -10,6 +10,35 @@ AfterAll {
 }
 
 Describe 'Enable-OPIMEntraIDGroup' {
+    BeforeAll {
+        # A post as Get-OPIMEntraIDGroup lists it, typed as it types it. Each carries the properties
+        # the self-referencing ScriptProperties of its type read (Omnicit.PIM.Types.ps1xml): the
+        # eligibility type reads accessId and memberType, the instance type accessId, assignmentType
+        # and endDateTime, and a typed fake without them overflows the stack when a failing assertion
+        # formats it.
+        function New-GroupPost {
+            param([string]$Id, [string]$GroupId, [string]$Name, [string]$AccessId, [switch]$Active)
+            $Post = [PSCustomObject]@{
+                id           = $Id
+                groupId      = $GroupId
+                principalId  = 'principal-001'
+                accessId     = $AccessId
+                memberType   = 'direct'
+                group        = [PSCustomObject]@{ displayName = $Name }
+                principal    = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
+                scheduleInfo = $null
+            }
+            if ($Active) {
+                $Post | Add-Member -NotePropertyName assignmentType -NotePropertyValue 'activated'
+                $Post | Add-Member -NotePropertyName endDateTime -NotePropertyValue $null
+                $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleInstance')
+            } else {
+                $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupEligibilitySchedule')
+            }
+            $Post
+        }
+    }
+
     Context 'When called with -GroupName (happy path)' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
@@ -20,7 +49,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 principalId = 'principal-001'
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
             }
-            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $fakeGroup }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeGroup }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     id          = 'req-001'
@@ -34,9 +63,9 @@ Describe 'Enable-OPIMEntraIDGroup' {
             } -ParameterFilter { $Method -eq 'POST' }
         }
 
-        It 'calls Resolve-RoleByName for the supplied group name' {
+        It 'calls Resolve-OPIMSchedule for the supplied group name' {
             Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Resolve-RoleByName -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Scope It
         }
 
         It 'calls Invoke-OPIMGraphRequest with POST to the group assignmentScheduleRequests endpoint' {
@@ -97,8 +126,8 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 principalId = 'principal-001'
                 group       = [PSCustomObject]@{ displayName = 'DevOps Team' }
             }
-            Mock -ModuleName Omnicit.PIM Resolve-RoleByName {
-                if ($RoleName -like '*elig-001*') { return $fakeGroupA } else { return $fakeGroupB }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule {
+                if ($Name -like '*elig-001*') { return $fakeGroupA } else { return $fakeGroupB }
             }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
@@ -173,7 +202,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
             }
             $script:UntilDateTime = [DateTime]::Now.AddHours(3)
-            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $fakeGroup }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeGroup }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     id     = 'req-001'
@@ -209,7 +238,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 principalId = 'principal-001'
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
             }
-            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $fakeGroup }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeGroup }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     id     = 'req-001'
@@ -245,7 +274,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 principalId = 'principal-001'
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
             }
-            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $fakeGroup }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeGroup }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     id     = 'req-001'
@@ -276,7 +305,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 principalId = 'principal-001'
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
             }
-            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $fakeGroup }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeGroup }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     id     = 'req-001'
@@ -305,7 +334,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 principalId = 'principal-001'
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
             }
-            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $fakeGroup }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeGroup }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest { } -ParameterFilter { $Method -eq 'POST' }
         }
 
@@ -325,7 +354,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 principalId = 'principal-001'
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
             }
-            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $fakeGroup }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeGroup }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 throw [System.Net.Http.HttpRequestException]::new(
                     '{"error":{"code":"GeneralError","message":"An unexpected error occurred."}}'
@@ -354,7 +383,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 principalId = 'principal-001'
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
             }
-            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $fakeGroup }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeGroup }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 throw [System.Net.Http.HttpRequestException]::new(
                     '{"error":{"code":"RoleAssignmentRequestPolicyValidationFailed","message":"Policy validation failed: JustificationRule requires a justification."}}'
@@ -385,7 +414,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 principalId = 'principal-001'
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
             }
-            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $fakeGroup }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeGroup }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 throw [System.Net.Http.HttpRequestException]::new(
                     '{"error":{"code":"RoleAssignmentRequestPolicyValidationFailed","message":"Policy validation failed: ExpirationRule duration exceeded."}}'
@@ -416,7 +445,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 principalId = 'principal-001'
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
             }
-            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $fakeGroup }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeGroup }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     id     = 'req-poll-001'
@@ -461,7 +490,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 principalId = 'principal-001'
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
             }
-            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeGroup }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $FakeGroup }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 throw [System.Net.Http.HttpRequestException]::new(
                     '{"error":{"code":"RoleAssignmentRequestPolicyValidationFailed","message":"Policy validation failed: UnknownRuleViolation."}}'
@@ -490,7 +519,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 principalId = 'principal-001'
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
             }
-            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeGroup }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $FakeGroup }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 $PSCmdlet.ThrowTerminatingError(
                     [System.Management.Automation.ErrorRecord]::new(
@@ -619,8 +648,8 @@ Describe 'Enable-OPIMEntraIDGroup' {
     }
 
     Context 'When the listing for -GroupName fails' {
-        # OPIM-12: Resolve-RoleByName throws the listing's error as itself, so the command stops at
-        # the first name, as it does for a name it cannot resolve; it never goes on to the next name.
+        # OPIM-12: each name resolves on its own. A listing that cannot be read is written as itself
+        # for that name, never as "not found", and the next name still runs.
         # The mock takes its preference from an explicit -ErrorAction and is Continue otherwise, as a
         # listing is under the default preference: a module-scoped mock body reads the test scope's
         # preference (Stop under the build), never the caller's.
@@ -635,10 +664,15 @@ Describe 'Enable-OPIMEntraIDGroup' {
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {}
         }
 
-        It "stops with the listing's error and resolves no further name" {
-            { Enable-OPIMEntraIDGroup -GroupName 'Group A - member (elig-a)', 'Group B - member (elig-b)' -ErrorAction Continue } |
-                Should -Throw -ErrorId 'Forbidden*'
-            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Exactly -Scope It
+        It "writes the listing's error as itself for each name and activates nothing" {
+            # The command's own error stream, not -ErrorVariable: -ErrorVariable also collects the
+            # record the listing raised and the command caught.
+            $Out = Enable-OPIMEntraIDGroup -GroupName 'Group A - member (elig-a)', 'Group B - member (elig-b)' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 2
+            @($Written | Where-Object { $_.FullyQualifiedErrorId -like 'Forbidden*' }).Count | Should -Be 2
+            @($Written | Where-Object { $_.FullyQualifiedErrorId -like '*NotFound*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 2 -Exactly -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
         }
     }
@@ -654,7 +688,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
                 principal   = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
             }
-            Mock -ModuleName Omnicit.PIM Resolve-RoleByName { return $FakeElig }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $FakeElig }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     id          = 'req-pos-001'
@@ -693,6 +727,181 @@ Describe 'Enable-OPIMEntraIDGroup' {
             $AlreadyActive.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleInstance')
             $AlreadyActive | Enable-OPIMEntraIDGroup
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It
+        }
+    }
+
+    Context 'When two groups carry the same display name' {
+        # The real resolver runs; only the listing and the transport are mocked.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $Listing = @(
+                New-GroupPost -Id 'grp-elig-003' -GroupId 'g-2' -Name 'Twin' -AccessId 'member'
+                New-GroupPost -Id 'grp-elig-004' -GroupId 'g-3' -Name 'Twin' -AccessId 'member'
+                New-GroupPost -Id 'grp-elig-005' -GroupId 'g-4' -Name 'unique-grp' -AccessId 'member'
+            )
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Listing }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                @{ id = 'req-001'; action = 'selfActivate'; status = 'Provisioned' }
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'writes AmbiguousName and sends no activation' {
+            $Errs = @()
+            Enable-OPIMEntraIDGroup -GroupName 'Twin' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            # The listing was read, so the resolver and the catch that writes its record were reached.
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+            $Errs[-1].FullyQualifiedErrorId | Should -Be 'AmbiguousName,Enable-OPIMEntraIDGroup'
+        }
+
+        It 'points at the tab-completed form, since -AccessType cannot tell the groups apart' {
+            $Errs = @()
+            Enable-OPIMEntraIDGroup -GroupName 'Twin' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[-1].Exception.Message | Should -BeLike '*tab-completed form*'
+        }
+
+        It 'activates a unique display name with its own ids' {
+            Enable-OPIMEntraIDGroup -GroupName 'UNIQUE-GRP' -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.groupId -eq 'g-4' -and $Body.accessId -eq 'member' -and $Body.principalId -eq 'principal-001'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+    }
+
+    Context 'When the name is held as a member and as an owner' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $Listing = @(
+                New-GroupPost -Id 'grp-elig-001' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'member'
+                New-GroupPost -Id 'grp-elig-002' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'owner'
+                New-GroupPost -Id 'grp-elig-006' -GroupId 'g-5' -Name 'owner-only-grp' -AccessId 'owner'
+            )
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Listing }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                @{ id = 'req-001'; action = 'selfActivate'; status = 'Provisioned' }
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'activates the membership when no -AccessType is given' {
+            Enable-OPIMEntraIDGroup -GroupName 'opim-grp' -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.accessId -eq 'member' -and $Body.groupId -eq 'g-1'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'activates the ownership when -AccessType is <Given>' -ForEach @(
+            @{ Given = 'Owner' }
+            @{ Given = 'owner' }
+        ) {
+            Enable-OPIMEntraIDGroup -GroupName 'opim-grp' -AccessType $Given -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.accessId -eq 'owner' -and $Body.groupId -eq 'g-1'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'activates the membership when -AccessType Member is given' {
+            Enable-OPIMEntraIDGroup -GroupName 'opim-grp' -AccessType Member -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.accessId -eq 'member' -and $Body.groupId -eq 'g-1'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'refuses an owner-only group without -AccessType Owner and says so' {
+            $Errs = @()
+            Enable-OPIMEntraIDGroup -GroupName 'owner-only-grp' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+            $Errs[-1].FullyQualifiedErrorId | Should -Be 'EligibleRoleNotFound,Enable-OPIMEntraIDGroup'
+            $Errs[-1].Exception.Message | Should -BeLike '*-AccessType Owner*'
+        }
+
+        It 'activates the owner-only group when -AccessType Owner is given' {
+            Enable-OPIMEntraIDGroup -GroupName 'owner-only-grp' -AccessType Owner -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.accessId -eq 'owner' -and $Body.groupId -eq 'g-5'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+    }
+
+    Context 'When several names are given and one of them is unknown' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $Listing = @(
+                New-GroupPost -Id 'grp-elig-001' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'member'
+                New-GroupPost -Id 'grp-elig-005' -GroupId 'g-4' -Name 'unique-grp' -AccessId 'member'
+            )
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Listing }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                @{ id = 'req-001'; action = 'selfActivate'; status = 'Provisioned' }
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'writes EligibleRoleNotFound for the unknown name and still activates the other (<Names>)' -ForEach @(
+            @{ Names = 'unknown first'; List = @('Unknown Group', 'unique-grp') }
+            @{ Names = 'unknown last'; List = @('unique-grp', 'Unknown Group') }
+        ) {
+            $Errs = @()
+            Enable-OPIMEntraIDGroup -GroupName $List -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[-1].FullyQualifiedErrorId | Should -Be 'EligibleRoleNotFound,Enable-OPIMEntraIDGroup'
+            # -ErrorVariable also collects the record the resolver threw, so count the one the cmdlet wrote.
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'EligibleRoleNotFound,Enable-OPIMEntraIDGroup' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.groupId -eq 'g-4'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+    }
+
+    Context 'When -Identity matches more than one listed post' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $Listing = @(
+                New-GroupPost -Id 'dup-001' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'member'
+                New-GroupPost -Id 'dup-001' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'owner'
+            )
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Listing }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                @{ id = 'req-001'; action = 'selfActivate'; status = 'Provisioned' }
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'writes AmbiguousName, not IdentityNotFound, and sends no activation' {
+            $Errs = @()
+            Enable-OPIMEntraIDGroup -Identity 'dup-001' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+            $Errs[-1].FullyQualifiedErrorId | Should -Be 'AmbiguousName,Enable-OPIMEntraIDGroup'
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'IdentityNotFound*' }).Count | Should -Be 0
+        }
+    }
+
+    Context 'When -AccessType is given where it does not belong' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest { } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'fails to bind -AccessType together with -Identity' {
+            { Enable-OPIMEntraIDGroup -Identity 'grp-elig-001' -AccessType Owner } | Should -Throw -ErrorId 'AmbiguousParameterSet*'
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
+        }
+
+        It 'puts -AccessType in the GroupName parameter set only' {
+            # A piped object binds -Group in another set, so -AccessType with it selects the GroupName set, whose
+            # mandatory name is then missing. Read the sets from the command metadata instead of
+            # binding: an interactive host would prompt for the name.
+            (Get-Command Enable-OPIMEntraIDGroup).Parameters['AccessType'].ParameterSets.Keys | Should -Be 'GroupName'
+        }
+
+        It 'refuses an -AccessType other than Member or Owner' {
+            { Enable-OPIMEntraIDGroup -GroupName 'opim-grp' -AccessType Admin } |
+                Should -Throw -ErrorId 'ParameterArgumentValidationError*'
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
         }
     }
 }
