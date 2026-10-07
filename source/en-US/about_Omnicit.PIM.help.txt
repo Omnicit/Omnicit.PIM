@@ -43,14 +43,17 @@ LONG DESCRIPTION
     A session stays on the tenant it signed in to: a command that names no tenant keeps
     it, and a token issued for another tenant is refused with TenantMismatch. To work in
     another tenant, run Connect-OPIM -TenantId with it. If another Connect-MgGraph in the
-    same process replaces the module's Microsoft Graph session, the module refuses its calls
-    with GraphSessionChanged instead of switching the session back: run Disconnect-OPIM,
-    which also disconnects that session, and sign in again. A command whose sign-in was
-    refused sends nothing more (SignInRefused). Azure signs in for the same tenant and
-    account and asks for no subscription; a failed Azure sign-in stops the command
-    (AzureConnectFailed). Enable-OPIMMyRole and Disable-OPIMMyRole stop when the Microsoft
-    Graph sign-in fails; when only the Azure sign-in fails they write the error and skip the
-    Azure roles, unless the error preference is Stop, which ends the command.
+    same process replaces the module's Microsoft Graph session, the role, group and sign-in
+    commands refuse their calls with GraphSessionChanged instead of switching the session
+    back: run Disconnect-OPIM, which also disconnects that session, and sign in again. The
+    configuration commands are the exception, by design: Install-OPIMConfiguration and
+    Set-OPIMConfiguration read whatever Graph session is active. A command whose sign-in was
+    refused sends nothing more (SignInRefused). Azure signs in to the same tenant, reuses an
+    earlier Azure sign-in only for the same account, and asks for no subscription; after a
+    failed Azure sign-in (AzureConnectFailed) nothing is sent to Azure under an earlier one.
+    Enable-OPIMMyRole and Disable-OPIMMyRole stop when the Microsoft Graph sign-in fails;
+    when only the Azure sign-in fails they write the error and skip the Azure roles, unless
+    the error preference is Stop, which ends the command.
 
     On a machine without a browser, sign in with a device code. The command shows a code and
     the address to open; enter the code there on any device. The message is written to the

@@ -46,18 +46,24 @@ and every new token must be issued for it: a token for another tenant is refused
 with it, or `Disconnect-OPIM` and sign in again.
 
 The Microsoft Graph PowerShell SDK keeps one session per PowerShell process. If something else in
-the same process runs `Connect-MgGraph` after Omnicit.PIM signed in, the module refuses to send its
-calls under that session (`GraphSessionChanged`) instead of switching it back. Run
-`Disconnect-OPIM`, which also disconnects that other session, and sign in again -- or use a new
-PowerShell window.
+the same process runs `Connect-MgGraph` after Omnicit.PIM signed in, the role, group and sign-in
+commands refuse to send their calls under that session (`GraphSessionChanged`) instead of
+switching it back. Run `Disconnect-OPIM`, which also disconnects that other session, and sign in
+again -- or use a new PowerShell window. The configuration commands are the exception, by design:
+`Install-OPIMConfiguration` and `Set-OPIMConfiguration` read whatever Graph session is active --
+`Install-OPIMConfiguration` takes its tenant when you omit `-TenantId`, and both read the tenant's
+display name for the confirmation prompt.
 
 A command whose sign-in was refused sends nothing more, even when it carries on past the error:
 every request it would still make is refused with `SignInRefused`. Run `Connect-OPIM`, or the
 command again, once the sign-in can succeed.
 
-Azure signs in separately, through the Az module, for the same tenant and the same account as the
-Microsoft Graph sign-in, and it never asks you to pick a subscription: every Azure role command
-names its own scope. A failed Azure sign-in stops the command with `AzureConnectFailed`.
+Azure signs in separately, through the Az module, for the same tenant as the Microsoft Graph
+sign-in. An earlier Azure sign-in is reused only when it is for that tenant and the same account as
+the Graph sign-in; otherwise Azure signs in again for that tenant. It never asks you to pick a
+subscription: every Azure role command names its own scope. A failed Azure sign-in ends with
+`AzureConnectFailed`, and the command then sends nothing to Azure under an earlier sign-in
+(`SignInRefused`).
 
 `pim` and `unpim` sign in to Microsoft Graph first; when that fails, the command stops before
 anything is listed or changed. They then sign in to Azure, only when Azure roles are part of the
@@ -144,7 +150,7 @@ Get-OPIMDirectoryRole | Enable-OPIMDirectoryRole -Wait
 ### Azure Resource (RBAC) Roles
 
 ```powershell
-# Connect — -IncludeARM also signs in to Azure, for the same tenant and account as Graph
+# Connect — -IncludeARM also signs in to Azure, for the same tenant as Graph
 Connect-OPIM -IncludeARM
 Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -IncludeARM
 

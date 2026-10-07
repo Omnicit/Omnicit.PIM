@@ -549,7 +549,11 @@ retry. `Changed` is the terminating `GraphSessionChanged`, raised before any cac
 other session's calls to this module's tenant -- so the user runs `Disconnect-OPIM`, which
 disconnects that session too, and signs in again. `Absent` (no session at all, for example after
 `Disconnect-MgGraph`) means the cached token does not count: the function signs in and connects
-again.
+again. The configuration cmdlets are outside the gate by design: `Install-OPIMConfiguration` and
+`Set-OPIMConfiguration` do not authenticate and read the ACTIVE Graph context through
+`Get-OPIMCurrentTenantInfo` (raw `Get-MgContext`, and `Invoke-MgGraphRequest` for
+`v1.0/organization`) -- `Install` to take its tenant when `-TenantId` is omitted, both for the
+display name in the confirmation prompt -- so they run under whatever session is active.
 
 **A refused sign-in closes the transport for its command (EntraRBAC A19).** Outside any `try` a
 cmdlet carries on past a terminating error `Initialize-OPIMAuth` raises, and would then send under
