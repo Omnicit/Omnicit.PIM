@@ -11,9 +11,12 @@ AfterAll {
 
 Describe 'Resolve-OPIMSchedule' {
     BeforeAll {
-        # Typed fakes, one list per pillar and state. Group fakes carry accessId and memberType, the
-        # properties their self-referencing ScriptProperties read. Every fake carries a Status, as
-        # the -All listing tags it ('Eligible' or 'Active').
+        # Typed fakes, one list per pillar and state. Each fake carries the properties the
+        # self-referencing ScriptProperties of its type names read (Omnicit.PIM.Types.ps1xml): the
+        # directory instance memberType and endDateTime, the group types accessId and memberType, the
+        # group instance also assignmentType and endDateTime. The Azure type names have none. The
+        # first Context checks this against the type data. Every fake carries a Status, as the -All
+        # listing tags it ('Eligible' or 'Active').
         $Sets = InModuleScope Omnicit.PIM {
             function New-DirectoryPost {
                 param([string]$Id, [string]$Role, [string]$ScopeId = '/', [string]$ScopeName, [string]$Status = 'Eligible')
@@ -25,7 +28,15 @@ Describe 'Resolve-OPIMSchedule' {
                     scheduleInfo     = $null
                     Status           = $Status
                 }
-                $TypeName = if ($Status -eq 'Active') { 'Omnicit.PIM.DirectoryAssignmentScheduleInstance' } else { 'Omnicit.PIM.DirectoryEligibilitySchedule' }
+                if ($Status -eq 'Active') {
+                    # MemberType and EndDateTime of the instance type read $this.memberType and
+                    # $this.endDateTime; a fake without them overflows the stack when formatted.
+                    $Post | Add-Member -NotePropertyName memberType -NotePropertyValue 'Direct'
+                    $Post | Add-Member -NotePropertyName endDateTime -NotePropertyValue $null
+                    $TypeName = 'Omnicit.PIM.DirectoryAssignmentScheduleInstance'
+                } else {
+                    $TypeName = 'Omnicit.PIM.DirectoryEligibilitySchedule'
+                }
                 $Post.PSObject.TypeNames.Insert(0, $TypeName)
                 $Post
             }
@@ -36,13 +47,19 @@ Describe 'Resolve-OPIMSchedule' {
                     groupId        = $GroupId
                     accessId       = $AccessId
                     memberType     = 'direct'
-                    assignmentType = 'activated'
-                    endDateTime    = $null
                     group          = [PSCustomObject]@{ displayName = $Name }
                     scheduleInfo   = $null
                     Status         = $Status
                 }
-                $TypeName = if ($Status -eq 'Active') { 'Omnicit.PIM.GroupAssignmentScheduleInstance' } else { 'Omnicit.PIM.GroupEligibilitySchedule' }
+                if ($Status -eq 'Active') {
+                    # AssignmentType and EndDateTime of the instance type read $this.assignmentType and
+                    # $this.endDateTime; the eligibility type reads neither of its own name.
+                    $Post | Add-Member -NotePropertyName assignmentType -NotePropertyValue 'activated'
+                    $Post | Add-Member -NotePropertyName endDateTime -NotePropertyValue $null
+                    $TypeName = 'Omnicit.PIM.GroupAssignmentScheduleInstance'
+                } else {
+                    $TypeName = 'Omnicit.PIM.GroupEligibilitySchedule'
+                }
                 $Post.PSObject.TypeNames.Insert(0, $TypeName)
                 $Post
             }
@@ -128,6 +145,37 @@ Describe 'Resolve-OPIMSchedule' {
             InModuleScope Omnicit.PIM -Parameters @{ Params = $Params } {
                 param($Params)
                 try { Resolve-OPIMSchedule @Params } catch { $PSItem }
+            }
+        }
+    }
+
+    Context 'When the fakes are typed' {
+        # A ScriptProperty that reads its own name (MemberType reading $this.memberType) resolves to
+        # itself on a typed fake without that note property, and formatting such a fake overflows the
+        # stack. Read from the type data: every self-referencing getter of every type name a fake
+        # carries needs a note property of that name on the fake. Nothing is evaluated here.
+        It 'gives every typed fake the properties its self-referencing ScriptProperties read' {
+            $Posts = foreach ($Pillar in $Sets.Values) { foreach ($List in $Pillar.Values) { $List } }
+            $Checked = [System.Collections.Generic.HashSet[string]]::new()
+            $Missing = foreach ($Post in $Posts) {
+                foreach ($TypeName in $Post.PSObject.TypeNames) {
+                    $TypeData = Get-TypeData -TypeName $TypeName
+                    if ($null -eq $TypeData) { continue }
+                    foreach ($Entry in $TypeData.Members.GetEnumerator()) {
+                        $Getter = $Entry.Value.GetScriptBlock
+                        if ($null -eq $Getter -or $Getter.ToString() -notmatch "(?i)\`$this\.$([regex]::Escape($Entry.Key))\b") { continue }
+                        $null = $Checked.Add("$TypeName/$($Entry.Key)")
+                        if ($Post.PSObject.Properties[$Entry.Key].MemberType -ne 'NoteProperty') {
+                            "$TypeName/$($Entry.Key)"
+                        }
+                    }
+                }
+            }
+            @($Missing | Sort-Object -Unique) | Should -BeNullOrEmpty -Because 'each self-referencing ScriptProperty needs its note property on the fake'
+            foreach ($Expected in 'DirectoryAssignmentScheduleInstance/MemberType', 'DirectoryAssignmentScheduleInstance/EndDateTime',
+                'GroupEligibilitySchedule/AccessId', 'GroupEligibilitySchedule/MemberType',
+                'GroupAssignmentScheduleInstance/AccessId', 'GroupAssignmentScheduleInstance/AssignmentType', 'GroupAssignmentScheduleInstance/EndDateTime') {
+                $Checked | Should -Contain "Omnicit.PIM.$Expected"
             }
         }
     }
