@@ -106,7 +106,9 @@ tests/
   Unit/Private/, Unit/Public/ # One *.Tests.ps1 per source file
   Unit/TestHelpers/           # OPIMTransportTripwire.ps1 (the transport tripwire every unit
                               #   test file installs) and its known-answer suite -- see
-                              #   Testing Conventions
+                              #   Testing Conventions -- and OPIMTestToken.ps1
+                              #   (New-OPIMTestAccessToken: token-shaped fixtures built at
+                              #   runtime, NOT-A-REAL-TOKEN)
 docs/live-verification/       # README.md: the redaction and credential rules, the placeholder
                               #   register dochygiene reads, and the checklist template
 build.yaml, build.ps1         # Sampler/ModuleBuilder config and bootstrap entry point
@@ -499,18 +501,17 @@ pre-authentication shortcut, since every pillar cmdlet authenticates on first us
 `Enable-OPIMMyRole` and `Disable-OPIMMyRole` call `Connect-OPIM`, handing on their own
 `-DeviceCode`, and then the pillar cmdlets. The `*-OPIMConfiguration` cmdlets do not authenticate.
 
-**It is idempotent.** It returns without a network call or a prompt when the cached Graph token is
-for the same tenant label, has more than 5 minutes left, and neither `-ClaimsChallenge` nor
-`-ForceRefresh` was passed (`Initialize-OPIMAuth.ps1:117-122`). A `Get-MgContext` fallback runs only
-when the module's own `$script:_OPIMAuthState` already exists with more than 5 minutes left
-(`:129-131`): it then accepts the live Graph context for the requested tenant -- or any tenant when
-the request names none, which means `organizations` -- and relabels the module's own session
-(`:132-140`). The fallback does not check where the live Graph context came from: while the
-module's own state is fresh, a `Connect-MgGraph` made outside the module for the requested tenant
--- or for any tenant when none is requested (`organizations`) -- is accepted, and the module's
-state is relabelled with the requested tenant label, keeping the old `GraphTokenExpiry`
-(`Initialize-OPIMAuth.ps1:129-140`). Only without fresh module state, or with `-ClaimsChallenge`
-or `-ForceRefresh`, does the fallback not run. With `-IncludeARM`, Azure counts as
+**It is idempotent, and the session is pinned to one tenant.** It returns without a network call
+or a prompt when the request matches the module's own session, the cached Graph token has more than
+5 minutes left, and neither `-ClaimsChallenge` nor `-ForceRefresh` was passed. A call that names no
+tenant keeps the session's tenant: `organizations` is the authority only for a first sign-in that
+names none, and the session is then pinned to the `tid` of that sign-in's token. A request matches
+the session when it names the session's tenant label, or a GUID equal to the `tid` of the
+session's Graph token, so a GUID for a session signed in by domain needs no new sign-in. A refresh
+builds the MSAL application for the authority the session was built with (`AuthorityTenant`), so
+a session first signed in under `organizations` refreshes from the same application and token
+cache. Only the module's own session counts: a Graph context made outside the module is never
+adopted, and `Initialize-OPIMAuth` does not read `Get-MgContext`. With `-IncludeARM`, Azure counts as
 connected only when a cached Az context for the tenant can mint an ARM token silently through
 `Get-AzAccessToken` (`:144-164`): the Az module autosaves its context, so a bare context can
 resurface in a new session with an expired token.
@@ -544,8 +545,18 @@ challenge was given, chained with `.WithForceRefresh($true)` under `-ForceRefres
 (`Initialize-OPIMAuth.ps1:202-240`); otherwise, or when that fails, `AcquireTokenInteractive` in
 the SYSTEM BROWSER -- `.WithUseEmbeddedWebView($false)`, no WAM, no embedded view -- with a login
 hint for a cached account and `.WithClaims()` for an ACRS step-up (`:256-298`). An interactive
-failure is the terminating `InteractiveAuthFailed` (a headless system cannot open the browser). The
-Graph token is then handed to `Connect-MgGraph -AccessToken` as a SecureString (`:331-332`).
+failure is the terminating `InteractiveAuthFailed` (a headless system cannot open the browser).
+
+**Every token's tenant is checked, in either mode.** `Get-OPIMTokenTenantId` reads the `tid` claim
+from the token's payload segment only -- it never validates, logs or writes the token -- and
+`Initialize-OPIMAuth` compares it with the tenant asked for: the GUID requested, else the session's
+recorded `TokenTenantId`. A token for another tenant, or one whose `tid` cannot be read, ends the
+function with the terminating `TenantMismatch` (built by `New-OPIMTenantMismatchError`, whose
+message names only the requested tenant) before the token reaches `Connect-MgGraph` or the auth
+state. A first sign-in under `organizations` or a new domain has nothing to compare with yet; its
+token's `tid` is recorded instead. The Graph token is then handed to `Connect-MgGraph -AccessToken`
+as a SecureString, inside a `try` whose `catch` scrubs the record first and rethrows it as
+terminating, so a failed hand-off still writes no auth state.
 
 **Device code (`-DeviceCode`).** A machine without a browser signs in with a device code instead of
 the system browser. `Connect-OPIM`, `Enable-OPIMMyRole` and `Disable-OPIMMyRole` take the switch as
@@ -622,9 +633,12 @@ touched) and calls `Connect-AzAccount`, with `-Tenant` unless the tenant is `org
 (`:350-379`). A failed connection is the non-terminating `AzureConnectFailed`. The `Az.Resources`
 cmdlets then run in that Az context.
 
-**State.** `$script:_OPIMAuthState` holds `TenantId`, `Account`, `GraphTokenExpiry`,
-`ClaimsSatisfied` and `DeviceCode` (`:335-341`) -- never a token -- except that before the first
-Graph sign-in it holds `DeviceCode` alone, when `-DeviceCode` was given (`:102-108`). The tokens
+**State.** `$script:_OPIMAuthState` holds `TenantId`, `TokenTenantId`, `AuthorityTenant`,
+`Account`, `GraphTokenExpiry`, `ClaimsSatisfied` and `DeviceCode` -- never a token -- except that
+before the first Graph sign-in it holds `DeviceCode` alone, when `-DeviceCode` was given
+(`:102-108`). `TenantId` is the label the session is pinned to: as requested, or the token's `tid`
+after a first sign-in under `organizations`. `TokenTenantId` is the `tid` of the current Graph
+token, and `AuthorityTenant` the tenant the MSAL application was built for. The tokens
 themselves live in the
 MSAL application's in-memory cache (`$script:_OPIMMsalApp`) and in the Graph SDK's context; see
 **SECURITY**.
@@ -676,8 +690,8 @@ over `source/` on 2026-10-07, listed as they are:
 `Invoke-OPIMDeviceCodeAuth` is not in this table: it reaches MSAL through the application object it
 is handed, not through the Graph SDK or an Az cmdlet.
 
-Beside these, the module reads `Get-MgContext` (`Initialize-OPIMAuth.ps1:132`,
-`Get-OPIMMsalApplication.ps1:46`, `Get-MyId.ps1:26`, `Get-OPIMCurrentTenantInfo.ps1:30`), reads
+Beside these, the module reads `Get-MgContext` (`Get-OPIMMsalApplication.ps1:46`,
+`Get-MyId.ps1:26`, `Get-OPIMCurrentTenantInfo.ps1:30`), reads
 `Get-AzContext` (`Initialize-OPIMAuth.ps1:144`), calls `Update-AzConfig` (`:362`), and calls the
 `Az.Resources` cmdlets listed under **API Mapping**.
 
@@ -941,8 +955,9 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   is not the instance PowerShell stored in `$global:Error`. A new catch on a transport path starts
   with the scrub. The gate's exemption table is empty, and an entry there needs a structural
   predicate on the catch's try body, never a file name alone. The gate checks catches, not that a
-  raw call HAS one: a raw transport call outside any `try` is not scrubbed. Today that is only the
-  `Connect-MgGraph -AccessToken` hand-off in `Initialize-OPIMAuth.ps1:336`; wrap any new raw call.
+  raw call HAS one: a raw transport call outside any `try` is not scrubbed. None is left today --
+  the `Connect-MgGraph -AccessToken` hand-off in `Initialize-OPIMAuth` sits in a `try` whose
+  `catch` scrubs first and rethrows -- so wrap any new raw call.
 - **Error flow patterns:**
   ```powershell
   # In process blocks (single-item cmdlets: Disable-*, Get-*): use return
@@ -1077,7 +1092,7 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   inside `InModuleScope`), `Get-OPIMCurrentTenantInfo.Tests.ps1` (`Invoke-MgGraphRequest` and
   `Get-MgContext`), `Get-MyId.Tests.ps1` and `Get-OPIMMsalApplication.Tests.ps1` (`Get-MgContext`,
   which must THROW in the latter -- see below), `Initialize-OPIMAuth.Tests.ps1` (`Connect-MgGraph`,
-  `Connect-AzAccount`, `Get-AzContext`, `Get-AzAccessToken`, `Update-AzConfig`,
+  `Connect-AzAccount`, `Get-AzContext`, `Get-AzAccessToken`, `Update-AzConfig`, `Get-MgContext`,
   `Get-OPIMMsalApplication`), `Disconnect-OPIM.Tests.ps1` (`Disconnect-MgGraph`,
   `Disconnect-AzAccount`), and the end-to-end bearer-scrub context in
   `Get-OPIMDirectoryRole.Tests.ps1`, whose module-scoped `Invoke-MgGraphRequest` mock throws a

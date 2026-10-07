@@ -3,6 +3,31 @@ BeforeAll {
     Import-Module Omnicit.PIM -Force
     . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
     Install-OPIMTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OPIMTestToken.ps1"
+
+    # Two tenants for the tenant-pin tests. Letter-repeat placeholders: neither is a version-4 id.
+    $TenantA = 'aaaaaaaa-0000-0000-0000-00000000000a'
+    $TenantB = 'bbbbbbbb-0000-0000-0000-00000000000b'
+
+    # An auth state as Initialize-OPIMAuth writes it after a Graph sign-in, in device code mode so the
+    # tests drive the acquisition through the Invoke-OPIMDeviceCodeAuth mock.
+    function New-PinState {
+        param(
+            [string]$TenantId,
+            [string]$TokenTenantId,
+            [string]$AuthorityTenant,
+            [switch]$Expired
+        )
+        @{
+            TenantId         = $TenantId
+            TokenTenantId    = $TokenTenantId
+            AuthorityTenant  = $AuthorityTenant
+            Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
+            GraphTokenExpiry = if ($Expired) { [DateTime]::UtcNow.AddMinutes(-1) } else { [DateTime]::UtcNow.AddHours(1) }
+            ClaimsSatisfied  = $false
+            DeviceCode       = $true
+        }
+    }
 }
 
 AfterAll {
@@ -365,11 +390,14 @@ Describe 'Initialize-OPIMAuth' {
 
     Context 'When -DeviceCode is set and no auth state exists' {
         BeforeAll {
-            InModuleScope Omnicit.PIM {
+            # The request names a domain, so any tenant GUID is a token for it.
+            InModuleScope Omnicit.PIM -Parameters @{ Token = (New-OPIMTestAccessToken -TenantId $TenantA) } {
+                param($Token)
+                $script:_OPIMTestToken = $Token
                 Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
                 Mock Invoke-OPIMDeviceCodeAuth {
                     [PSCustomObject]@{
-                        AccessToken = 'fake-graph-token'
+                        AccessToken = $script:_OPIMTestToken
                         ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
                         Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
                     }
@@ -381,7 +409,7 @@ Describe 'Initialize-OPIMAuth' {
             InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
         }
         AfterAll {
-            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null; $script:_OPIMTestToken = $null }
         }
 
         It 'acquires the Graph token with the device code flow and hands it to Connect-MgGraph' {
@@ -412,12 +440,14 @@ Describe 'Initialize-OPIMAuth' {
 
     Context 'When the auth state remembers device code mode and a retry signs in again' {
         BeforeAll {
-            InModuleScope Omnicit.PIM {
+            InModuleScope Omnicit.PIM -Parameters @{ Token = (New-OPIMTestAccessToken -TenantId $TenantA) } {
+                param($Token)
+                $script:_OPIMTestToken = $Token
                 # An empty object: the silent path finds no AcquireTokenSilent and falls through.
                 Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
                 Mock Invoke-OPIMDeviceCodeAuth {
                     [PSCustomObject]@{
-                        AccessToken = 'fake-graph-token'
+                        AccessToken = $script:_OPIMTestToken
                         ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
                         Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
                     }
@@ -426,9 +456,12 @@ Describe 'Initialize-OPIMAuth' {
             }
         }
         BeforeEach {
-            InModuleScope Omnicit.PIM {
+            InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA } {
+                param($TenantA)
                 $script:_OPIMAuthState = @{
                     TenantId         = 'contoso.onmicrosoft.com'
+                    TokenTenantId    = $TenantA
+                    AuthorityTenant  = 'contoso.onmicrosoft.com'
                     Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
                     GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
                     ClaimsSatisfied  = $false
@@ -437,7 +470,7 @@ Describe 'Initialize-OPIMAuth' {
             }
         }
         AfterAll {
-            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null; $script:_OPIMTestToken = $null }
         }
 
         It 'uses the device code flow on -ForceRefresh, not the browser' {
@@ -601,6 +634,323 @@ Describe 'Initialize-OPIMAuth' {
                     $UseDeviceAuthentication -and $Tenant -eq 'contoso.onmicrosoft.com'
                 }
             }
+        }
+    }
+
+    Context 'When the session is pinned to a tenant' {
+        # OPIM-07. Each It seeds the auth state and the token the device code mock hands back; the
+        # acquisition runs through Invoke-OPIMDeviceCodeAuth (device code mode), so no reflection
+        # into MSAL is involved. Get-OPIMMsalApplication is mocked: its -TenantId is the authority.
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
+                Mock Invoke-OPIMDeviceCodeAuth {
+                    [PSCustomObject]@{
+                        AccessToken = $script:_OPIMTestToken
+                        ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
+                        Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    }
+                }
+                Mock Connect-MgGraph {}
+                Mock Get-MgContext { $null }
+            }
+        }
+        BeforeEach {
+            # No token unless the It hands one out: an It that expects no sign-in then fails with
+            # NoAccessToken if one happens, instead of riding on a token an earlier It left behind.
+            InModuleScope Omnicit.PIM { $script:_OPIMTestToken = $null }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null; $script:_OPIMTestToken = $null }
+        }
+
+        It 'keeps the cached tenant when no tenant is given' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; TenantA = $TenantA } {
+                param($State, $TenantA)
+                $script:_OPIMAuthState = $State
+                Initialize-OPIMAuth
+                Should -Invoke Get-OPIMMsalApplication -Times 0 -Scope It
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 0 -Scope It
+                $script:_OPIMAuthState.TenantId | Should -Be $TenantA
+            }
+        }
+
+        It 'signs in again for the cached tenant on -ForceRefresh without a tenant' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Token = $Token; TenantA = $TenantA } {
+                param($State, $Token, $TenantA)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestToken = $Token
+                Initialize-OPIMAuth -ForceRefresh
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It -ParameterFilter { $TenantId -eq 'aaaaaaaa-0000-0000-0000-00000000000a' }
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It
+                $script:_OPIMAuthState.TenantId | Should -Be $TenantA
+                $script:_OPIMAuthState.TokenTenantId | Should -Be $TenantA
+            }
+        }
+
+        It 'never relabels the session to organizations' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; TenantA = $TenantA } {
+                param($State, $TenantA)
+                $script:_OPIMAuthState = $State
+                Mock Get-MgContext { [pscustomobject]@{ TenantId = 'bbbbbbbb-0000-0000-0000-00000000000b' } }
+                Initialize-OPIMAuth
+                $script:_OPIMAuthState.TenantId | Should -Be $TenantA
+                $script:_OPIMAuthState.TokenTenantId | Should -Be $TenantA
+            }
+        }
+
+        It 'never adopts a Graph context the module did not make' {
+            # OPIM-09: a Connect-MgGraph made outside the module, for the tenant now asked for, is not
+            # taken over as the module's session; the module signs in for that tenant itself.
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            $Token = New-OPIMTestAccessToken -TenantId $TenantB
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Token = $Token; TenantB = $TenantB } {
+                param($State, $Token, $TenantB)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestToken = $Token
+                Mock Get-MgContext { [pscustomobject]@{ TenantId = 'bbbbbbbb-0000-0000-0000-00000000000b' } }
+                Initialize-OPIMAuth -TenantId $TenantB
+                Should -Invoke Get-MgContext -Times 0 -Scope It
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It -ParameterFilter { $TenantId -eq 'bbbbbbbb-0000-0000-0000-00000000000b' }
+                Should -Invoke Connect-MgGraph -Times 1 -Exactly -Scope It
+                $script:_OPIMAuthState.TokenTenantId | Should -Be $TenantB
+            }
+        }
+
+        It 'throws TenantMismatch and does not connect Graph when the token is for another tenant' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -Expired
+            $Token = New-OPIMTestAccessToken -TenantId $TenantB
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Token = $Token; TenantA = $TenantA; TenantB = $TenantB } {
+                param($State, $Token, $TenantA, $TenantB)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestToken = $Token
+                $Expiry = $State.GraphTokenExpiry
+                $Caught = $null
+                try { Initialize-OPIMAuth -TenantId $TenantA } catch { $Caught = $PSItem }
+                $Caught | Should -Not -BeNullOrEmpty
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
+                $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+                $Caught.Exception.Message | Should -BeLike "*'$TenantA'*"
+                $Caught.Exception.Message | Should -Not -BeLike "*$TenantB*"
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+                $script:_OPIMAuthState.TenantId | Should -Be $TenantA
+                $script:_OPIMAuthState.TokenTenantId | Should -Be $TenantA
+                $script:_OPIMAuthState.GraphTokenExpiry | Should -Be $Expiry
+            }
+        }
+
+        It 'throws TenantMismatch when the token carries no tenant' {
+            # A first sign-in that names no tenant has no tenant to compare with yet, so this is the
+            # path on which only the unreadable-tid check can stop the token.
+            $Token = New-OPIMTestAccessToken -NoTenant
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token } {
+                param($Token)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_OPIMTestToken = $Token
+                $Caught = $null
+                try { Initialize-OPIMAuth } catch { $Caught = $PSItem }
+                $Caught | Should -Not -BeNullOrEmpty
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
+                $Caught.Exception.Message | Should -BeLike '*could not be read*'
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+                $script:_OPIMAuthState.ContainsKey('TenantId') | Should -BeFalse
+            }
+        }
+
+        It 'throws TenantMismatch when the token carries no tenant for a tenant asked for by GUID' {
+            $Token = New-OPIMTestAccessToken -NoTenant
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
+                param($Token, $TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_OPIMTestToken = $Token
+                $Caught = $null
+                try { Initialize-OPIMAuth -TenantId $TenantA } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+                $script:_OPIMAuthState.ContainsKey('TenantId') | Should -BeFalse
+            }
+        }
+
+        It "pins the session to the token's tenant on a first sign-in without a tenant" {
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
+                param($Token, $TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_OPIMTestToken = $Token
+                Initialize-OPIMAuth
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It -ParameterFilter { $TenantId -eq 'organizations' }
+                $script:_OPIMAuthState.TenantId | Should -Be $TenantA
+                $script:_OPIMAuthState.TokenTenantId | Should -Be $TenantA
+                $script:_OPIMAuthState.AuthorityTenant | Should -Be 'organizations'
+                $script:_OPIMAuthState.DeviceCode | Should -BeTrue
+            }
+        }
+
+        It 'reuses the organizations app on a later refresh of that session' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant 'organizations'
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Token = $Token; TenantA = $TenantA } {
+                param($State, $Token, $TenantA)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestToken = $Token
+                Initialize-OPIMAuth -ForceRefresh
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It -ParameterFilter { $TenantId -eq 'organizations' }
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It
+                $script:_OPIMAuthState.TenantId | Should -Be $TenantA
+                $script:_OPIMAuthState.AuthorityTenant | Should -Be 'organizations'
+            }
+        }
+
+        It 'compares a later token of an organizations session with the pinned tenant' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant 'organizations'
+            $Token = New-OPIMTestAccessToken -TenantId $TenantB
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Token = $Token; TenantA = $TenantA } {
+                param($State, $Token, $TenantA)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestToken = $Token
+                $Caught = $null
+                try { Initialize-OPIMAuth -ForceRefresh } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+                $script:_OPIMAuthState.TokenTenantId | Should -Be $TenantA
+            }
+        }
+
+        It "records the token's tenant for a tenant named by domain" {
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
+                param($Token, $TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_OPIMTestToken = $Token
+                Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com'
+                $script:_OPIMAuthState.TenantId | Should -Be 'contoso.onmicrosoft.com'
+                $script:_OPIMAuthState.TokenTenantId | Should -Be $TenantA
+                $script:_OPIMAuthState.AuthorityTenant | Should -Be 'contoso.onmicrosoft.com'
+            }
+        }
+
+        It 'compares a later token of a domain session with the recorded tenant' {
+            $State = New-PinState -TenantId 'contoso.onmicrosoft.com' -TokenTenantId $TenantA -AuthorityTenant 'contoso.onmicrosoft.com'
+            $Token = New-OPIMTestAccessToken -TenantId $TenantB
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Token = $Token; TenantA = $TenantA } {
+                param($State, $Token, $TenantA)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestToken = $Token
+                $Caught = $null
+                # As the token-rejected retry in Invoke-OPIMGraphRequest calls it.
+                try { Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -ForceRefresh } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
+                $Caught.Exception.Message | Should -BeLike "*'contoso.onmicrosoft.com'*"
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+                $script:_OPIMAuthState.TokenTenantId | Should -Be $TenantA
+            }
+        }
+
+        It 'accepts a GUID for the same tenant as a domain session without a new sign-in' {
+            $State = New-PinState -TenantId 'contoso.onmicrosoft.com' -TokenTenantId $TenantA -AuthorityTenant 'contoso.onmicrosoft.com'
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; TenantA = $TenantA } {
+                param($State, $TenantA)
+                $script:_OPIMAuthState = $State
+                Initialize-OPIMAuth -TenantId $TenantA
+                Should -Invoke Get-OPIMMsalApplication -Times 0 -Scope It
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+            }
+        }
+
+        It 'builds a new app when another tenant is requested' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            $Token = New-OPIMTestAccessToken -TenantId $TenantB
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Token = $Token; TenantB = $TenantB } {
+                param($State, $Token, $TenantB)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestToken = $Token
+                Initialize-OPIMAuth -TenantId $TenantB
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It -ParameterFilter { $TenantId -eq 'bbbbbbbb-0000-0000-0000-00000000000b' }
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It
+                $script:_OPIMAuthState.TenantId | Should -Be $TenantB
+                $script:_OPIMAuthState.TokenTenantId | Should -Be $TenantB
+                $script:_OPIMAuthState.AuthorityTenant | Should -Be $TenantB
+            }
+        }
+
+        It 'stores the requested GUID as the session tenant' {
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
+                param($Token, $TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_OPIMTestToken = $Token
+                Initialize-OPIMAuth -TenantId $TenantA
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It -ParameterFilter { $TenantId -eq 'aaaaaaaa-0000-0000-0000-00000000000a' }
+                $script:_OPIMAuthState.TenantId | Should -Be $TenantA
+                $script:_OPIMAuthState.TokenTenantId | Should -Be $TenantA
+                $script:_OPIMAuthState.AuthorityTenant | Should -Be $TenantA
+            }
+        }
+    }
+
+    Context 'When Connect-MgGraph fails to take the token' {
+        BeforeAll {
+            InModuleScope Omnicit.PIM -Parameters @{ Token = (New-OPIMTestAccessToken -TenantId $TenantA) } {
+                param($Token)
+                $script:_OPIMTestToken = $Token
+                Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
+                Mock Invoke-OPIMDeviceCodeAuth {
+                    [PSCustomObject]@{
+                        AccessToken = $script:_OPIMTestToken
+                        ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
+                        Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    }
+                }
+                # Throws the queued record exactly as a cmdlet throws its own.
+                Mock Connect-MgGraph { $PSCmdlet.ThrowTerminatingError($script:_ConnectRecord) }
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMTestToken = $null
+                $script:_ConnectRecord = $null
+            }
+        }
+
+        It 'ends with the Connect-MgGraph error and writes no auth state' {
+            $Record = [System.Management.Automation.ErrorRecord]::new(
+                [System.InvalidOperationException]::new('connect failed'), 'ConnectMgGraphFailed', 'AuthenticationError', $null)
+            InModuleScope Omnicit.PIM -Parameters @{ Record = $Record; TenantA = $TenantA } {
+                param($Record, $TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_ConnectRecord = $Record
+                $Caught = $null
+                try { Initialize-OPIMAuth -TenantId $TenantA } catch { $Caught = $PSItem }
+                $Caught | Should -Not -BeNullOrEmpty
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'ConnectMgGraphFailed*'
+                Should -Invoke Connect-MgGraph -Times 1 -Exactly -Scope It
+                $script:_OPIMAuthState.ContainsKey('TenantId') | Should -BeFalse
+                $script:_OPIMAuthState.ContainsKey('GraphTokenExpiry') | Should -BeFalse
+            }
+        }
+
+        It 'scrubs the request of the failed Connect-MgGraph' {
+            # The token is built at runtime and says what it is, so no token-shaped literal sits here.
+            $Request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://graph.microsoft.com/v1.0/me')
+            $null = $Request.Headers.TryAddWithoutValidation('Authorization', ('Bearer ' + ('x' * 40) + 'NOT-A-REAL-TOKEN'))
+            $Record = [System.Management.Automation.ErrorRecord]::new(
+                [System.InvalidOperationException]::new('connect failed'), 'ConnectMgGraphFailed', 'AuthenticationError', $Request)
+            $Request.Headers.Contains('Authorization') | Should -BeTrue -Because 'the fixture must carry the header the scrub removes'
+            InModuleScope Omnicit.PIM -Parameters @{ Record = $Record; TenantA = $TenantA } {
+                param($Record, $TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_ConnectRecord = $Record
+                $Caught = $null
+                try { Initialize-OPIMAuth -TenantId $TenantA } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'ConnectMgGraphFailed*'
+            }
+            $Request.Headers.Contains('Authorization') | Should -BeFalse
         }
     }
 }

@@ -18,6 +18,17 @@ function Initialize-OPIMAuth {
          If a ClaimsChallenge string is supplied the interactive call chains
          .WithClaims() so the step-up happens in the same single browser window.
 
+    The session is pinned to one tenant. A call that names no tenant keeps the tenant the session
+    is signed in to; 'organizations' is used only for a first sign-in that names none, and the
+    session is then pinned to the tenant its token was issued for. A request matches the session
+    when it names the session's tenant label, or a GUID equal to the tenant of the session's Graph
+    token. A refresh of the session reuses the MSAL application it was built with. After every
+    token, its tid claim is compared with the tenant asked for -- the GUID requested, or the
+    session's recorded tenant -- and a token for another tenant, or one whose tenant cannot be read,
+    ends this function with TenantMismatch before the token reaches Connect-MgGraph or the auth
+    state. Only the module's own session counts as signed in: a Microsoft Graph context made outside
+    the module is never adopted.
+
     For Azure RBAC commands, pass -IncludeARM. Connect-AzAccount is called to establish an
     Azure context using the Az module's own authentication. This is separate from Graph auth
     and may open its own browser window, or in device code mode show its own code, on first use.
@@ -38,9 +49,11 @@ function Initialize-OPIMAuth {
     ends this function with the helper's DeviceCodeAuthFailed error and no second error after it.
 
     .PARAMETER TenantId
-    The Entra ID tenant GUID or domain. When omitted or empty, 'organizations' is used
-    (multi-tenant / home tenant of the authenticating account). Must match the tenant the
-    user intends to manage PIM in.
+    The Entra ID tenant GUID or domain. When omitted or empty, the session keeps the tenant it is
+    signed in to. Only before the first sign-in is 'organizations' used (the home tenant of the
+    authenticating account), and the session is then pinned to the tenant of that sign-in's token.
+    Must match the tenant the user intends to manage PIM in; a token issued for another tenant is
+    refused with TenantMismatch.
 
     .PARAMETER IncludeARM
     When set, ensures an Azure context is available. A cached Az context is trusted only after it
@@ -88,8 +101,17 @@ function Initialize-OPIMAuth {
         [switch]$DeviceCode
     )
 
-    # Resolve effective tenant; fall back to 'organizations' when caller supplies nothing.
-    [string]$EffectiveTenant = if ($TenantId) { $TenantId } else { 'organizations' }
+    # OPIM-07: a call that names no tenant keeps the session's tenant -- never 'organizations' once the
+    # module holds one. 'organizations' is only the very first sign-in's authority.
+    [string]$EffectiveTenant = if ($TenantId) {
+        $TenantId
+    } elseif ($script:_OPIMAuthState -and $script:_OPIMAuthState.TenantId) {
+        [string]$script:_OPIMAuthState.TenantId
+    } else {
+        'organizations'
+    }
+    $ParsedTenant = [guid]::Empty
+    [bool]$EffectiveIsGuid = [guid]::TryParse($EffectiveTenant, [ref]$ParsedTenant)
 
     # -- Sign-in mode ------------------------------------------------------------
     # -DeviceCode is remembered in the auth state, so every later sign-in in the session uses it:
@@ -108,37 +130,23 @@ function Initialize-OPIMAuth {
     }
     [bool]$UseDeviceCode = $DeviceCode -or ($script:_OPIMAuthState -and $script:_OPIMAuthState.DeviceCode)
 
+    # -- Session match -----------------------------------------------------------
+    # The request names the session's tenant: its label, or the GUID its Graph token was issued for.
+    # A state that holds only DeviceCode has no TenantId, so it never matches.
+    [bool]$SessionMatches = $script:_OPIMAuthState -and $script:_OPIMAuthState.TenantId -and (
+        $script:_OPIMAuthState.TenantId -eq $EffectiveTenant -or
+        ($EffectiveIsGuid -and $script:_OPIMAuthState.TokenTenantId -eq $ParsedTenant.ToString('D')))
+
     # -- Idempotency check -----------------------------------------------------
     # Graph: cached token is valid for at least 5 more minutes, same tenant, no new claims
-    # challenge.
-    # Azure: only checked when -IncludeARM is specified. Get-AzContext returning a context
-    # for the right tenant means the Az module already has an active connection -- no sign-in
-    # prompt will be needed.
+    # challenge. OPIM-09: only the module's own session counts -- a live Graph context the module
+    # did not make (Get-MgContext) is never adopted as one.
+    # Azure: only checked when -IncludeARM is specified (below).
     $FiveMinutesFromNow = [DateTime]::UtcNow.AddMinutes(5)
-    [bool]$GraphCached = $script:_OPIMAuthState -and
-                         $script:_OPIMAuthState.TenantId -eq $EffectiveTenant -and
+    [bool]$GraphCached = $SessionMatches -and
                          -not $ClaimsChallenge -and
                          -not $ForceRefresh -and
                          $script:_OPIMAuthState.GraphTokenExpiry -gt $FiveMinutesFromNow
-
-    # Fallback idempotency check via Get-MgContext -- handles the case where the caller supplies
-    # a different label for the same tenant (e.g. 'organizations' vs a specific GUID).
-    # If the Graph SDK is already connected to the target tenant and the cached token hasn't
-    # expired, we can skip re-authentication entirely and update the cached TenantId so that
-    # the strict check passes on subsequent calls.
-    if (-not $GraphCached -and -not $ClaimsChallenge -and -not $ForceRefresh -and
-        $script:_OPIMAuthState -and
-        $script:_OPIMAuthState.GraphTokenExpiry -gt $FiveMinutesFromNow) {
-        $LiveMgContext = Get-MgContext -ErrorAction SilentlyContinue
-        if ($LiveMgContext -and (
-                $EffectiveTenant -eq 'organizations' -or
-                $LiveMgContext.TenantId -eq $EffectiveTenant
-            )) {
-            Write-Verbose "[Initialize-OPIMAuth] Graph context already connected to tenant '$($LiveMgContext.TenantId)' (requested '$EffectiveTenant'). Updating cached tenant label."
-            $script:_OPIMAuthState.TenantId = $EffectiveTenant
-            $GraphCached = $true
-        }
-    }
 
     # Evaluate Azure connectivity once here and reuse below to avoid a second Get-AzContext call.
     $AzCtxAtStart = if ($IncludeARM) { Get-AzContext -ErrorAction SilentlyContinue } else { $null }
@@ -171,9 +179,28 @@ function Initialize-OPIMAuth {
 
     # -- Graph authentication (skipped when Graph token is still valid) --------
     if (-not $GraphCached) {
-        Write-Verbose "[Initialize-OPIMAuth] Acquiring Graph token for tenant '$EffectiveTenant'. ClaimsChallenge=$(if ($ClaimsChallenge) { 'YES' } else { 'NO' })"
+        # OPIM-07: the MSAL app is rebuilt only when the tenant really changes. A session keeps the
+        # authority its app was built with -- 'organizations' after a first sign-in that named none --
+        # so a refresh reuses the app and its token cache instead of prompting again.
+        [string]$Authority = if ($SessionMatches -and $script:_OPIMAuthState.AuthorityTenant) {
+            [string]$script:_OPIMAuthState.AuthorityTenant
+        } else {
+            $EffectiveTenant
+        }
+        # The tenant every token must be issued for: the GUID asked for, else the session's recorded
+        # tenant. A first sign-in under 'organizations' or a new domain has none to compare with yet;
+        # its token's tid becomes the session's tenant.
+        [string]$ExpectedTenant = if ($EffectiveIsGuid) {
+            $ParsedTenant.ToString('D')
+        } elseif ($SessionMatches -and $script:_OPIMAuthState.TokenTenantId) {
+            [string]$script:_OPIMAuthState.TokenTenantId
+        } else {
+            ''
+        }
 
-        $MsalApp = Get-OPIMMsalApplication -TenantId $EffectiveTenant
+        Write-Verbose "[Initialize-OPIMAuth] Acquiring Graph token for tenant '$EffectiveTenant' (authority '$Authority'). ClaimsChallenge=$(if ($ClaimsChallenge) { 'YES' } else { 'NO' })"
+
+        $MsalApp = Get-OPIMMsalApplication -TenantId $Authority
 
         # -- Graph scopes (all PIM surfaces in one prompt) ---------------------
         [string[]]$GraphScopes = @(
@@ -326,18 +353,42 @@ function Initialize-OPIMAuth {
                 -Terminating
         }
 
+        # -- Tenant check (OPIM-07) ---------------------------------------------
+        # After EVERY token, compare its tid with the tenant asked for. A difference is
+        # TenantMismatch, raised before the token reaches Connect-MgGraph or the auth state.
+        [string]$TokenTenant = Get-OPIMTokenTenantId -AccessToken $AuthResult.AccessToken
+        if (-not $TokenTenant) {
+            Write-CmdletError -ErrorRecord (New-OPIMTenantMismatchError -RequestedTenant $EffectiveTenant -Unreadable) -Cmdlet $PSCmdlet -Terminating
+            return
+        }
+        if ($ExpectedTenant -and $TokenTenant -ne $ExpectedTenant) {
+            Write-CmdletError -ErrorRecord (New-OPIMTenantMismatchError -RequestedTenant $EffectiveTenant) -Cmdlet $PSCmdlet -Terminating
+            return
+        }
+
         $GraphTokenExpiry = $AuthResult.ExpiresOn.UtcDateTime
         Write-Verbose "[Initialize-OPIMAuth] Graph token acquired. Account: $($AuthResult.Account.Username). Expiry (UTC): $GraphTokenExpiry. FromCache: $($AuthResult.AuthenticationResultMetadata.TokenSource -eq 'Cache')"
 
         # -- Wire Graph token into Connect-MgGraph -----------------------------
         # Use NetworkCredential to convert plaintext to SecureString -- avoids
-        # PSAvoidUsingConvertToSecureStringWithPlainText PSSA rule.
+        # PSAvoidUsingConvertToSecureStringWithPlainText PSSA rule. A failure is scrubbed first, as
+        # on every transport path, and still ends this function, before the auth state is written.
         $SecureToken = [System.Net.NetworkCredential]::new('', $AuthResult.AccessToken).SecurePassword
-        Connect-MgGraph -AccessToken $SecureToken -NoWelcome -ErrorAction Stop
+        try {
+            Connect-MgGraph -AccessToken $SecureToken -NoWelcome -ErrorAction Stop
+        } catch {
+            Remove-OPIMErrorRecord -Record $PSItem
+            $PSCmdlet.ThrowTerminatingError($PSItem)
+        }
 
         # -- Cache auth state ---------------------------------------------------
+        # TenantId is the label the session is pinned to: as requested, or the token's tid after a
+        # first sign-in under 'organizations'. TokenTenantId is the tid of the current Graph token;
+        # AuthorityTenant is the tenant the MSAL app was built for.
         $script:_OPIMAuthState = @{
-            TenantId         = $EffectiveTenant
+            TenantId         = if ($EffectiveTenant -eq 'organizations') { $TokenTenant } else { $EffectiveTenant }
+            TokenTenantId    = $TokenTenant
+            AuthorityTenant  = $Authority
             Account          = $AuthResult.Account
             GraphTokenExpiry = $GraphTokenExpiry
             ClaimsSatisfied  = [bool]$ClaimsChallenge

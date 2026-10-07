@@ -3,6 +3,10 @@ BeforeAll {
     Import-Module Omnicit.PIM -Force
     . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
     Install-OPIMTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OPIMTestToken.ps1"
+
+    # The tenant of the device code sessions below; a letter-repeat placeholder, not a version-4 id.
+    $SessionTenant = 'aaaaaaaa-0000-0000-0000-00000000000a'
 
     # A failed Graph call as the SDK leaves it: a request message carrying an Authorization header,
     # the response pointing back at it, and an HttpResponseException holding the response. The
@@ -306,7 +310,7 @@ Describe 'Invoke-OPIMGraphRequest' {
                 Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
                 Mock Invoke-OPIMDeviceCodeAuth {
                     [PSCustomObject]@{
-                        AccessToken = 'fake-graph-token'
+                        AccessToken = $script:_OPIMTestToken
                         ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
                         Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
                     }
@@ -315,10 +319,16 @@ Describe 'Invoke-OPIMGraphRequest' {
             }
         }
         BeforeEach {
-            InModuleScope Omnicit.PIM {
+            # A session as Initialize-OPIMAuth writes it, and a new token for the same tenant.
+            $Token = New-OPIMTestAccessToken -TenantId $SessionTenant
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; SessionTenant = $SessionTenant } {
+                param($Token, $SessionTenant)
                 $script:_CallCount = 0
+                $script:_OPIMTestToken = $Token
                 $script:_OPIMAuthState = @{
-                    TenantId         = 'contoso.onmicrosoft.com'
+                    TenantId         = $SessionTenant
+                    TokenTenantId    = $SessionTenant
+                    AuthorityTenant  = $SessionTenant
                     Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
                     GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
                     ClaimsSatisfied  = $false
@@ -327,7 +337,7 @@ Describe 'Invoke-OPIMGraphRequest' {
             }
         }
         AfterAll {
-            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null; $script:_OPIMTestToken = $null }
         }
 
         It 'signs in again with the device code flow before it retries' {
@@ -335,6 +345,22 @@ Describe 'Invoke-OPIMGraphRequest' {
                 $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/some/resource'
                 $Result.value[0].id | Should -Be 'after-refresh'
                 Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It
+            }
+        }
+
+        It 'refuses a new token for another tenant and sends no retry' {
+            # OPIM-07 end to end: the refresh hands back a token for another tenant. Called inside a
+            # try, as the pillar cmdlets call the wrapper.
+            $Other = New-OPIMTestAccessToken -TenantId 'bbbbbbbb-0000-0000-0000-00000000000b'
+            InModuleScope Omnicit.PIM -Parameters @{ Other = $Other } {
+                param($Other)
+                $script:_OPIMTestToken = $Other
+                $Caught = $null
+                try { Invoke-OPIMGraphRequest -Uri 'v1.0/some/resource' } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+                $script:_OPIMAuthState.TokenTenantId | Should -Be 'aaaaaaaa-0000-0000-0000-00000000000a'
             }
         }
     }
@@ -355,7 +381,7 @@ Describe 'Invoke-OPIMGraphRequest' {
                 Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
                 Mock Invoke-OPIMDeviceCodeAuth {
                     [PSCustomObject]@{
-                        AccessToken = 'fake-graph-token'
+                        AccessToken = $script:_OPIMTestToken
                         ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
                         Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
                     }
@@ -364,10 +390,15 @@ Describe 'Invoke-OPIMGraphRequest' {
             }
         }
         BeforeEach {
-            InModuleScope Omnicit.PIM {
+            $Token = New-OPIMTestAccessToken -TenantId $SessionTenant
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; SessionTenant = $SessionTenant } {
+                param($Token, $SessionTenant)
                 $script:_CallCount = 0
+                $script:_OPIMTestToken = $Token
                 $script:_OPIMAuthState = @{
-                    TenantId         = 'contoso.onmicrosoft.com'
+                    TenantId         = $SessionTenant
+                    TokenTenantId    = $SessionTenant
+                    AuthorityTenant  = $SessionTenant
                     Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
                     GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
                     ClaimsSatisfied  = $false
@@ -376,7 +407,7 @@ Describe 'Invoke-OPIMGraphRequest' {
             }
         }
         AfterAll {
-            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null; $script:_OPIMTestToken = $null }
         }
 
         It 'steps up with the device code flow and the decoded claims' {
