@@ -157,7 +157,11 @@ Describe 'Lock-OPIMSignIn' {
         It 'is reached through Initialize-OPIMAuth called directly in each caller''s own body' {
             # Lock-OPIMSignIn latches the frame that called Initialize-OPIMAuth. A call from a nested
             # function or a script block would latch a frame that ends at once and leave the command
-            # itself unlatched, so every call site must sit in the calling function's own body.
+            # itself unlatched, so every call site must sit in the calling function's own body. The one
+            # exception is the transport's own retries: Invoke-OPIMGraphRequest makes every request in
+            # its nested Invoke-OPIMGraphSingle (OPIM-13, one call per page), whose frame a refused retry
+            # sign-in latches, and whose own latch gate, before the retry is sent, then refuses it --
+            # Invoke-OPIMGraphRequest.Tests.ps1 holds that gate and those sends in the nested function.
             $Sites = foreach ($Function in $script:Functions) {
                 # A function's ScriptBlock.Ast is its FunctionDefinitionAst; its own body is .Body.
                 $Ast = $Function.ScriptBlock.Ast
@@ -169,15 +173,24 @@ Describe 'Lock-OPIMSignIn' {
                             }, $true))) {
                     $Node = $Command.Parent
                     while ($Node -and $Node -isnot [System.Management.Automation.Language.ScriptBlockAst]) { $Node = $Node.Parent }
+                    # The body of a function defined in the wrapper's own body: ScriptBlockAst ->
+                    # FunctionDefinitionAst -> the wrapper's named block -> the wrapper's body.
+                    $Nested = $Node.Parent
+                    [bool]$InTransportRetry = $Function.Name -eq 'Invoke-OPIMGraphRequest' -and
+                        $Nested -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                        $Nested.Name -eq 'Invoke-OPIMGraphSingle' -and
+                        [object]::ReferenceEquals($Nested.Parent.Parent, $Body)
                     [pscustomobject]@{
-                        Caller = $Function.Name
-                        Line   = $Command.Extent.StartLineNumber
-                        Direct = [object]::ReferenceEquals($Node, $Body)
+                        Caller           = $Function.Name
+                        Line             = $Command.Extent.StartLineNumber
+                        Direct           = [object]::ReferenceEquals($Node, $Body)
+                        InTransportRetry = $InTransportRetry
                     }
                 }
             }
             @($Sites).Count | Should -BeGreaterOrEqual 12 -Because 'the walk must reach the pillar cmdlets, Connect-OPIM, Wait-OPIMDirectoryRole and the wrapper retries'
-            @($Sites | Where-Object { -not $_.Direct } | ForEach-Object { '{0}:{1}' -f $_.Caller, $_.Line }) | Should -BeNullOrEmpty
+            @($Sites | Where-Object { -not $_.Direct -and -not $_.InTransportRetry } | ForEach-Object { '{0}:{1}' -f $_.Caller, $_.Line }) | Should -BeNullOrEmpty
+            @($Sites | Where-Object InTransportRetry).Count | Should -Be 2 -Because 'the claims step-up and the token-rejected retry are the only sign-ins the transport makes'
         }
     }
 }

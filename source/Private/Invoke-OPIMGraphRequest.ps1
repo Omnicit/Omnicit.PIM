@@ -38,9 +38,18 @@ function Invoke-OPIMGraphRequest {
     5. Sign-in latch gate: straight after each session gate it asks Get-OPIMSignInRefusal whether a
        command on the call stack is latched -- its sign-in was refused and it carried on past the
        refusal -- and throws SignInRefused, sending nothing, when one is. A retry whose own sign-in
-       is refused latches this function itself, which calls Initialize-OPIMAuth from its own body,
-       so the retry's gate refuses it. The gate stands outside the try that sends and returns after
-       its throw, as the session gate does.
+       is refused latches the nested function that makes the request, Invoke-OPIMGraphSingle,
+       which calls Initialize-OPIMAuth from its own body and holds the retry's gates too, so the
+       retry's gate refuses it. The gate stands outside the try that sends and returns after its
+       throw, as the session gate does.
+
+    6. Paging (OPIM-13): with -All it follows @odata.nextLink until a page carries none and returns
+       one response, @{ value = <the items of every page> }. Every page is one request through the
+       four layers above. A page that fails throws its own error -- never a shorter list -- with
+       three note properties on the record's Exception: PartialValue (the items of the pages read
+       before it), NextLink (the URI of the failed page) and PageNumber (its number, from 1). The
+       verbose stream names a page by its number and item count, never by its link, which can
+       carry a skip token.
 
     .PARAMETER Method
     HTTP method for the Graph request. Defaults to GET.
@@ -51,21 +60,38 @@ function Invoke-OPIMGraphRequest {
     .PARAMETER Body
     Optional request body hashtable (for POST/PATCH requests).
 
+    .PARAMETER All
+    Reads every page of a Graph list: follows @odata.nextLink until a page carries none and returns
+    @{ value = <the items of every page> }. A failed page throws its own error, with PartialValue,
+    NextLink and PageNumber on its Exception, and nothing is returned.
+
     .OUTPUTS
-    The Graph API response hashtable on success.
+    The Graph API response hashtable on success; with -All, a hashtable whose value holds the items
+    of every page.
 
     .EXAMPLE
     $Items = (Invoke-OPIMGraphRequest -Uri 'v1.0/roleManagement/directory/roleEligibilitySchedules/filterByCurrentUser(on=''principal'')').value
 
     .EXAMPLE
     $Response = Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/roleManagement/directory/roleAssignmentScheduleRequests' -Body $Request
+
+    .EXAMPLE
+    try {
+        $Items = (Invoke-OPIMGraphRequest -Uri 'v1.0/roleManagement/directory/roleEligibilitySchedules/filterByCurrentUser(on=''principal'')' -All).value
+    } catch {
+        $ReadBeforeTheFailure = $PSItem.Exception.PartialValue
+    }
+
+    Reads every page of the list. When a page fails, the items of the pages read before it are on
+    the error's Exception, as PartialValue, beside the failed page's NextLink and PageNumber.
     #>
     [OutputType([object])]
     param(
         [string]$Method = 'GET',
         [Parameter(Mandatory)]
         [string]$Uri,
-        [hashtable]$Body
+        [hashtable]$Body,
+        [switch]$All
     )
 
     # -- Helper: extract claims from a Graph failure --------------------------
@@ -114,67 +140,36 @@ function Invoke-OPIMGraphRequest {
         return $null
     }
 
-    # -- First attempt ---------------------------------------------------------
-    $InvokeParams = @{
-        Method      = $Method
-        Uri         = $Uri
-        Verbose     = $false
-        ErrorAction = 'Stop'
-    }
-    if ($Body) { $InvokeParams.Body = $Body }
+    # -- One request: its gates, the first attempt and the two retries --------
+    # Every send of this function sits in here, so a page of a -All read is one request with the
+    # same gates, scrubs and retries as a single call. The retries call Initialize-OPIMAuth from this
+    # function's own body, so a refused retry sign-in latches this function's frame, and the retry's
+    # latch gate, in the same body, finds it.
+    function Invoke-OPIMGraphSingle ([string]$SingleMethod, [string]$SingleUri, [hashtable]$SingleBody) {
+        # -- First attempt -----------------------------------------------------
+        $InvokeParams = @{
+            Method      = $SingleMethod
+            Uri         = $SingleUri
+            Verbose     = $false
+            ErrorAction = 'Stop'
+        }
+        if ($SingleBody) { $InvokeParams.Body = $SingleBody }
 
-    # SEC (OPIM-09, EntraRBAC A18): never a Graph call under a Graph SDK session this module did not
-    # connect. Initialize-OPIMAuth refuses one at a cmdlet's entry, but that refusal does not stop the
-    # cmdlet: outside a try the caller carries on, so the check is repeated before every request. The
-    # return is load-bearing: under -ErrorAction SilentlyContinue with no try up the call stack a
-    # function carries on past its own throw.
-    if ((Get-OPIMGraphSessionState) -eq 'Changed') {
-        throw (New-OPIMGraphSessionChangedError)
-        return
-    }
-    # SEC (EntraRBAC A19): never a Graph call for a command whose sign-in was refused.
-    # Initialize-OPIMAuth latches the command that called it and releases it only when the sign-in
-    # succeeds; its refusal does not stop that command, which carries on outside any try. So the latch
-    # is read before every request, after the session gate (a changed session is still reported as
-    # GraphSessionChanged) and outside the try (whose catch would convert the refusal). The return is
-    # load-bearing for the same reason as the session gate's.
-    $SignInRefusal = Get-OPIMSignInRefusal
-    if ($null -ne $SignInRefusal) {
-        throw (New-OPIMSignInRefusedError -Command $SignInRefusal)
-        return
-    }
-    try {
-        return Invoke-MgGraphRequest @InvokeParams
-    } catch {
-        # Security: scrub the raw error record before anything else.
-        # Its request message (TargetObject, and the exception's response) carries the
-        # Authorization header with the bearer token in plain text.
-        Remove-OPIMErrorRecord -Record $PSItem
-        $FirstError = $PSItem
-    }
-
-    # -- Check for ACRS claims challenge on the first failure ------------------
-    # No session-sticky guard: this function retries at most once per call (the retry block
-    # below has no loop and a second failure throws), so each command can step up as needed.
-    $ClaimsJson = Get-ClaimsFromException $FirstError
-
-    if ($ClaimsJson) {
-        Write-Verbose "[Invoke-OPIMGraphRequest] ACRS claims challenge detected. Performing step-up authentication..."
-        Write-Verbose "[Invoke-OPIMGraphRequest] Claims: $ClaimsJson"
-
-        $TenantId = $script:_OPIMAuthState.TenantId
-        Initialize-OPIMAuth -TenantId $TenantId -ClaimsChallenge $ClaimsJson
-
-        # -- Retry once with the upgraded token --------------------------------
-        # SEC (OPIM-09): the session gate again -- another Connect-MgGraph may have replaced the
-        # session during the step-up, and a refusal by Initialize-OPIMAuth does not stop this function.
+        # SEC (OPIM-09, EntraRBAC A18): never a Graph call under a Graph SDK session this module did
+        # not connect. Initialize-OPIMAuth refuses one at a cmdlet's entry, but that refusal does not
+        # stop the cmdlet: outside a try the caller carries on, so the check is repeated before every
+        # request. The return is load-bearing: under -ErrorAction SilentlyContinue with no try up the
+        # call stack a function carries on past its own throw.
         if ((Get-OPIMGraphSessionState) -eq 'Changed') {
             throw (New-OPIMGraphSessionChangedError)
             return
         }
-        # SEC (EntraRBAC A19): the latch gate again. A step-up whose sign-in was refused latched this
-        # function itself (it called Initialize-OPIMAuth from its own body), and outside any try it
-        # carries on to here.
+        # SEC (EntraRBAC A19): never a Graph call for a command whose sign-in was refused.
+        # Initialize-OPIMAuth latches the command that called it and releases it only when the
+        # sign-in succeeds; its refusal does not stop that command, which carries on outside any try.
+        # So the latch is read before every request, after the session gate (a changed session is
+        # still reported as GraphSessionChanged) and outside the try (whose catch would convert the
+        # refusal). The return is load-bearing for the same reason as the session gate's.
         $SignInRefusal = Get-OPIMSignInRefusal
         if ($null -ne $SignInRefusal) {
             throw (New-OPIMSignInRefusedError -Command $SignInRefusal)
@@ -183,44 +178,129 @@ function Invoke-OPIMGraphRequest {
         try {
             return Invoke-MgGraphRequest @InvokeParams
         } catch {
+            # Security: scrub the raw error record before anything else.
+            # Its request message (TargetObject, and the exception's response) carries the
+            # Authorization header with the bearer token in plain text.
             Remove-OPIMErrorRecord -Record $PSItem
-            throw Convert-GraphHttpException $PSItem
+            $FirstError = $PSItem
         }
+
+        # -- Check for ACRS claims challenge on the first failure --------------
+        # No session-sticky guard: this function retries at most once per call (the retry block
+        # below has no loop and a second failure throws), so each command can step up as needed.
+        $ClaimsJson = Get-ClaimsFromException $FirstError
+
+        if ($ClaimsJson) {
+            Write-Verbose "[Invoke-OPIMGraphRequest] ACRS claims challenge detected. Performing step-up authentication..."
+            Write-Verbose "[Invoke-OPIMGraphRequest] Claims: $ClaimsJson"
+
+            $TenantId = $script:_OPIMAuthState.TenantId
+            Initialize-OPIMAuth -TenantId $TenantId -ClaimsChallenge $ClaimsJson
+
+            # -- Retry once with the upgraded token ----------------------------
+            # SEC (OPIM-09): the session gate again -- another Connect-MgGraph may have replaced the
+            # session during the step-up, and a refusal by Initialize-OPIMAuth does not stop this
+            # function.
+            if ((Get-OPIMGraphSessionState) -eq 'Changed') {
+                throw (New-OPIMGraphSessionChangedError)
+                return
+            }
+            # SEC (EntraRBAC A19): the latch gate again. A step-up whose sign-in was refused latched
+            # this function itself (it called Initialize-OPIMAuth from its own body), and outside any
+            # try it carries on to here.
+            $SignInRefusal = Get-OPIMSignInRefusal
+            if ($null -ne $SignInRefusal) {
+                throw (New-OPIMSignInRefusedError -Command $SignInRefusal)
+                return
+            }
+            try {
+                return Invoke-MgGraphRequest @InvokeParams
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                throw Convert-GraphHttpException $PSItem
+            }
+        }
+
+        # -- Token rejected/expired (not a claims challenge) -- re-auth and retry
+        # A 401 here means the bearer token is invalid or expired (claims challenges were already
+        # handled above). Force a token refresh (MSAL refresh-token path, usually no prompt) and
+        # retry once instead of surfacing the failure.
+        $StatusCode = $null
+        try { $StatusCode = [int]$FirstError.Exception.Response.StatusCode } catch { Remove-OPIMErrorRecord -Record $PSItem }
+        [bool]$TokenInvalid = $StatusCode -eq 401 -or
+            $FirstError.Exception.Message -match 'InvalidAuthenticationToken|CompactToken|token is expired|Lifetime validation failed'
+
+        if ($TokenInvalid -and $script:_OPIMAuthState) {
+            Write-Verbose "[Invoke-OPIMGraphRequest] Token rejected (status=$StatusCode). Forcing re-authentication and retrying once..."
+            Initialize-OPIMAuth -TenantId $script:_OPIMAuthState.TenantId -ForceRefresh
+            # SEC (OPIM-09): the session gate again -- another Connect-MgGraph may have replaced the
+            # session during the refresh, and a refusal by Initialize-OPIMAuth does not stop this
+            # function.
+            if ((Get-OPIMGraphSessionState) -eq 'Changed') {
+                throw (New-OPIMGraphSessionChangedError)
+                return
+            }
+            # SEC (EntraRBAC A19): the latch gate again, for a refresh whose sign-in was refused (a
+            # token for another tenant, a failed device code) -- it latched this function itself.
+            $SignInRefusal = Get-OPIMSignInRefusal
+            if ($null -ne $SignInRefusal) {
+                throw (New-OPIMSignInRefusedError -Command $SignInRefusal)
+                return
+            }
+            try {
+                return Invoke-MgGraphRequest @InvokeParams
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                throw Convert-GraphHttpException $PSItem
+            }
+        }
+
+        # -- Not recoverable -- convert and re-throw ----------------------------
+        throw Convert-GraphHttpException $FirstError
     }
 
-    # -- Token rejected/expired (not a claims challenge) -- re-auth and retry ---
-    # A 401 here means the bearer token is invalid or expired (claims challenges were already
-    # handled above). Force a token refresh (MSAL refresh-token path, usually no prompt) and
-    # retry once instead of surfacing the failure.
-    $StatusCode = $null
-    try { $StatusCode = [int]$FirstError.Exception.Response.StatusCode } catch { Remove-OPIMErrorRecord -Record $PSItem }
-    [bool]$TokenInvalid = $StatusCode -eq 401 -or
-        $FirstError.Exception.Message -match 'InvalidAuthenticationToken|CompactToken|token is expired|Lifetime validation failed'
+    if (-not $All) {
+        return Invoke-OPIMGraphSingle -SingleMethod $Method -SingleUri $Uri -SingleBody $Body
+    }
 
-    if ($TokenInvalid -and $script:_OPIMAuthState) {
-        Write-Verbose "[Invoke-OPIMGraphRequest] Token rejected (status=$StatusCode). Forcing re-authentication and retrying once..."
-        Initialize-OPIMAuth -TenantId $script:_OPIMAuthState.TenantId -ForceRefresh
-        # SEC (OPIM-09): the session gate again -- another Connect-MgGraph may have replaced the
-        # session during the refresh, and a refusal by Initialize-OPIMAuth does not stop this function.
-        if ((Get-OPIMGraphSessionState) -eq 'Changed') {
-            throw (New-OPIMGraphSessionChangedError)
-            return
-        }
-        # SEC (EntraRBAC A19): the latch gate again, for a refresh whose sign-in was refused (a token
-        # for another tenant, a failed device code) -- it latched this function itself.
-        $SignInRefusal = Get-OPIMSignInRefusal
-        if ($null -ne $SignInRefusal) {
-            throw (New-OPIMSignInRefusedError -Command $SignInRefusal)
-            return
-        }
+    # -- Paging (OPIM-13): follow @odata.nextLink ----------------------------------
+    # Invoke-MgGraphRequest returns a Hashtable, so the link is read with the indexer. A failed page
+    # throws its own error with what was read before it attached to the Exception (a note property
+    # on the ErrorRecord does not survive a throw; on the Exception it does).
+    # No page cap and no loop detection, on purpose (ruling R-T7c): a cap would hand back a list cut
+    # short as if it were complete -- the very defect -All exists to fix. Graph ends every list with
+    # a page that carries no next link.
+    $AllValues = [System.Collections.Generic.List[object]]::new()
+    $NextUri = $Uri
+    [int]$PageNumber = 0
+    while ($NextUri) {
+        $PageNumber++
+        $PageFailed = $false
         try {
-            return Invoke-MgGraphRequest @InvokeParams
+            $Page = Invoke-OPIMGraphSingle -SingleMethod $Method -SingleUri $NextUri -SingleBody $Body
         } catch {
             Remove-OPIMErrorRecord -Record $PSItem
-            throw Convert-GraphHttpException $PSItem
+            $PageFailed = $true
+            $PSItem.Exception | Add-Member -NotePropertyName PartialValue -NotePropertyValue $AllValues.ToArray() -Force
+            $PSItem.Exception | Add-Member -NotePropertyName NextLink -NotePropertyValue $NextUri -Force
+            $PSItem.Exception | Add-Member -NotePropertyName PageNumber -NotePropertyValue $PageNumber -Force
+            throw
         }
+        # A throw inside a catch resumes after the try under -ErrorAction SilentlyContinue with no try
+        # up the call stack. return, never break: break would hand back a short list as complete.
+        if ($PageFailed) { return }
+        if ($null -eq $Page) { break }
+        [int]$PageItemCount = 0
+        foreach ($Item in @($Page.value)) {
+            if ($null -ne $Item) {
+                $AllValues.Add($Item)
+                $PageItemCount++
+            }
+        }
+        # Ruling R-T7a: the page's number and item count only -- never its link, which can carry a
+        # skip token.
+        Write-Verbose "[Invoke-OPIMGraphRequest] Read page $PageNumber of the list: $PageItemCount item(s)."
+        $NextUri = [string]$Page['@odata.nextLink']
     }
-
-    # -- Not recoverable -- convert and re-throw --------------------------------
-    throw Convert-GraphHttpException $FirstError
+    return @{ value = $AllValues.ToArray() }
 }

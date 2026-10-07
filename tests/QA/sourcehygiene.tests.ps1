@@ -53,10 +53,12 @@ BeforeAll {
     # CMDLET REFERENCES.
     #
     # A name is known when it is the basename of a function file under source/Public or
-    # source/Private, or an alias in the source manifest's AliasesToExport (Enable-OPIMMyRoles and
-    # Disable-OPIMMyRoles are aliases, not files). The pattern is case-sensitive; the verb may
-    # carry an inner capital (ConvertTo-OPIM...), and a family form with a trailing '*'
-    # (Get-OPIM*) names no command and is not matched.
+    # source/Private, an alias in the source manifest's AliasesToExport (Enable-OPIMMyRoles and
+    # Disable-OPIMMyRoles are aliases, not files), or the name of a function defined inside
+    # another function in one of those files (Invoke-OPIMGraphRequest's nested
+    # Invoke-OPIMGraphSingle). The pattern is case-sensitive; the verb may carry an inner capital
+    # (ConvertTo-OPIM...), and a family form with a trailing '*' (Get-OPIM*) names no command and
+    # is not matched.
     # =====================================================================================
     $script:CmdletRefPattern = '\b[A-Z][A-Za-z]+-OPIM[A-Za-z]*\b(?!\*)'
 
@@ -71,6 +73,26 @@ BeforeAll {
     )
     foreach ($Alias in $script:ManifestAliases) {
         $null = $script:KnownCommandNames.Add($Alias)
+    }
+
+    <#
+        A function defined inside another function is a command the module defines as well, so its
+        name is known too. It is found through the AST -- a function definition with another one
+        above it -- never by a text match, so a name that appears only in prose never makes itself
+        known.
+    #>
+    $script:NestedCommandNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($File in $script:HygieneFiles) {
+        if ($File.RelativePath -notmatch '^source/(Public|Private)/[^/]+\.ps1$') { continue }
+        $DefinitionAst = [System.Management.Automation.Language.Parser]::ParseInput($File.Text, $File.Path, [ref]$null, [ref]$null)
+        foreach ($Definition in $DefinitionAst.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+            $Above = $Definition.Parent
+            while ($Above -and $Above -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) { $Above = $Above.Parent }
+            if ($Above) { $null = $script:NestedCommandNames.Add($Definition.Name) }
+        }
+    }
+    foreach ($Name in $script:NestedCommandNames) {
+        $null = $script:KnownCommandNames.Add($Name)
     }
 
     $script:CmdletRefFiles = @($script:HygieneFiles | Where-Object {
@@ -128,15 +150,16 @@ BeforeAll {
         transport-reaching file was made to scrub first and the Connect-MgGraph hand-off in
         Initialize-OPIMAuth was wrapped: 20 transport-reaching files under source/ holding 30 of the
         52 catch clauses in source/. The named control,
-        source/Private/Invoke-OPIMGraphRequest.ps1, is asserted with its EXACT count instead (7: the three in its nested
-        Get-ClaimsFromException, the first attempt, the claims retry, the status read and the
-        refresh retry), so a catch that stops being seen fails there with a clear cause instead of
+        source/Private/Invoke-OPIMGraphRequest.ps1, is asserted with its EXACT count instead (8: the three in its nested
+        Get-ClaimsFromException; the first attempt, the claims retry, the status read and the
+        refresh retry, all four in its nested Invoke-OPIMGraphSingle; and the paging catch of -All,
+        OPIM-13), so a catch that stops being seen fails there with a clear cause instead of
         quietly shrinking a total.
     #>
     $script:ScrubTransportFileFloor = 18
     $script:ScrubCatchFloor = 28
     $script:ScrubControlPath = 'source/Private/Invoke-OPIMGraphRequest.ps1'
-    $script:ScrubControlCatchCount = 7
+    $script:ScrubControlCatchCount = 8
 
     # --- Pass 1: parse every PowerShell-syntax source file exactly once. ---
     #
@@ -402,6 +425,10 @@ Describe 'Cmdlet reference hygiene' -Tags 'SourceHygiene' {
             'source/**/*.ps1 carried 349 Verb-OPIM tokens when this gate was written; a scan that drops to the floor or below has broken detection, not found fewer references')
         $script:ManifestAliases | Should -Contain 'Enable-OPIMMyRoles' -Because (
             'the known names must include the manifest aliases; if the AliasesToExport read returned nothing, an alias reference would be reported as stale')
+        @($script:NestedCommandNames) | Should -Contain 'Invoke-OPIMGraphSingle' -Because (
+            'the known names must include the nested functions source/ defines; if the AST walk found none, a reference to the Graph wrapper''s request function would be reported as stale')
+        $script:NestedCommandNames.Contains('Get-OPIMDirectoryRole') | Should -BeFalse -Because (
+            'a top-level function is known by its file, never as a nested one')
     }
 
     It 'resolves every Verb-OPIM token in source/**/*.ps1 to a function file or an exported alias' {

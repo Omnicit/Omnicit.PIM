@@ -113,7 +113,7 @@ function Get-OPIMDirectoryRole {
             )) {
                 [string]$RequestUri = "v1.0/roleManagement/directory/$($TypeConfig.Type)${UserFilter}${Expand}${ObjectFilter}"
                 try {
-                    $Items = Invoke-OPIMGraphRequest -Uri $RequestUri |
+                    $Items = Invoke-OPIMGraphRequest -Uri $RequestUri -All |
                         Select-Object -ExpandProperty Value
                 } catch {
                     Remove-OPIMErrorRecord -Record $PSItem
@@ -145,7 +145,7 @@ function Get-OPIMDirectoryRole {
         $RequestUri = "v1.0/roleManagement/directory/${Type}${UserFilter}${Expand}${ObjectFilter}"
 
         try {
-            $Items = Invoke-OPIMGraphRequest -Uri $RequestUri |
+            $Items = Invoke-OPIMGraphRequest -Uri $RequestUri -All |
                 Select-Object -ExpandProperty Value
         } catch {
             Remove-OPIMErrorRecord -Record $PSItem

@@ -150,7 +150,8 @@ function Initialize-OPIMAuth {
     # send under the session or the Azure context an earlier sign-in left. Keyed on the calling
     # command's invocation, so a nested command's or a pipeline neighbour's success releases only its
     # own entry. The caller is the command that called this function directly: the cmdlet, or
-    # Invoke-OPIMGraphRequest for its claims step-up and token-rejected retry.
+    # Invoke-OPIMGraphRequest's nested Invoke-OPIMGraphSingle for its claims step-up and
+    # token-rejected retry.
     $SignInCaller = Lock-OPIMSignIn
 
     # OPIM-07: a call that names no tenant keeps the session's tenant -- never 'organizations' once the

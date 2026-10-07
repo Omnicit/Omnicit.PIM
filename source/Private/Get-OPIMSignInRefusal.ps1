@@ -21,8 +21,9 @@ function Get-OPIMSignInRefusal {
 
     The latched command is the one that called Initialize-OPIMAuth directly: a pillar cmdlet,
     Wait-OPIMDirectoryRole or Connect-OPIM. Inside the Graph wrapper's own refresh (the claims
-    step-up or the token-rejected retry) it is Invoke-OPIMGraphRequest itself, which calls
-    Initialize-OPIMAuth from its own body, so the name returned for that retry is the wrapper's.
+    step-up or the token-rejected retry) it is Invoke-OPIMGraphSingle, the function nested in
+    Invoke-OPIMGraphRequest that makes every request and calls Initialize-OPIMAuth from its own
+    body, so the name returned for that retry is the nested function's.
 
     With -OutsideCaller, which only Initialize-OPIMAuth passes, for its BL-74 check before it
     latches its own caller, the walk starts after the command that called Initialize-OPIMAuth: frame

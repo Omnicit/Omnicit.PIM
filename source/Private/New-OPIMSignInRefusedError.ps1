@@ -12,8 +12,9 @@ function New-OPIMSignInRefusedError {
     gate first, so a Graph request made while the Graph SDK session is changed is refused as
     GraphSessionChanged instead. The target is the latched command's name, which is the immediate
     caller of Initialize-OPIMAuth: the cmdlet (a pillar cmdlet, Wait-OPIMDirectoryRole or
-    Connect-OPIM), for a sign-in refused at its entry, or Invoke-OPIMGraphRequest, for one refused
-    during that wrapper's own claims step-up or token-rejected retry. The message names no tenant, no
+    Connect-OPIM), for a sign-in refused at its entry, or Invoke-OPIMGraphSingle, the function nested
+    in Invoke-OPIMGraphRequest that makes every Graph request, for one refused during that wrapper's
+    own claims step-up or token-rejected retry. The message names no tenant, no
     account and no token: it is fixed text, and the command's name is the only value the record
     carries.
 

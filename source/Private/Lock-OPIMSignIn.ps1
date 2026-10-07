@@ -10,8 +10,9 @@ function Lock-OPIMSignIn {
     own frame and Initialize-OPIMAuth's, that carries an invocation -- records it in the module's
     sign-in latch, and returns it. That command is a pillar cmdlet (Get-, Enable- and Disable- for
     DirectoryRole, AzureRole and EntraIDGroup), Wait-OPIMDirectoryRole, Connect-OPIM, or
-    Invoke-OPIMGraphRequest itself for the sign-in of its claims step-up or its token-rejected retry,
-    which it calls from its own body.
+    Invoke-OPIMGraphSingle, the function nested in Invoke-OPIMGraphRequest that makes every Graph
+    request, for the sign-in of its claims step-up or its token-rejected retry, which it calls from
+    its own body.
 
     Initialize-OPIMAuth hands that invocation to Unlock-OPIMSignIn when the sign-in succeeds; every
     refusal, terminating error and early return leaves it latched -- except the BL-74 refusal before

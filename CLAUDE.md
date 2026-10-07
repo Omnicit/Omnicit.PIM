@@ -547,11 +547,12 @@ is for another tenant than the session's Graph token, or there is none (OPIM-08)
 Az context while the module holds no sign-in (unit tests that mock `Initialize-OPIMAuth`). The latch, `$script:_OPIMSignInLatch`,
 is a `ConditionalWeakTable` keyed on the calling command's invocation and holding only `$true`, so a
 nested command's or a pipeline neighbour's success releases only its own entry, and a finished
-command is on no call stack. A wrapper retry's own sign-in latches `Invoke-OPIMGraphRequest` itself.
+command is on no call stack. A wrapper retry's own sign-in latches `Invoke-OPIMGraphSingle`, the
+function nested in `Invoke-OPIMGraphRequest` that makes every Graph request and holds the retry's gates.
 **The rule:** call `Lock-OPIMSignIn` and `Unlock-OPIMSignIn` only in `Initialize-OPIMAuth`, and call
 `Initialize-OPIMAuth` directly in the command's own block -- never from a nested function or a script
-block, which would latch a frame that ends at once -- the transport's own retries in
-`Invoke-OPIMGraphRequest` being the one place where the latched frame is not a cmdlet's. Static tests
+block, which would latch a frame that ends at once -- the transport's own retries in that nested
+`Invoke-OPIMGraphSingle` being the one place where the latched frame is not a cmdlet's. Static tests
 in `tests/Unit/Private/Lock-OPIMSignIn.Tests.ps1` hold both halves.
 
 **Graph tokens come from MSAL.NET, reached by reflection.** `Get-OPIMMsalApplication` finds the
@@ -727,6 +728,14 @@ context, whether or not the module established it.
 
 Every one of its catches calls `Remove-OPIMErrorRecord -Record $PSItem` first; see **Error
 Handling** for what that does.
+
+**A Graph list is read to its last page (OPIM-13).** With `-All` the wrapper follows
+`@odata.nextLink`, each page one request through its nested `Invoke-OPIMGraphSingle` and so through
+every gate and retry above, and returns `@{ value = <every page's items> }`; the four listings in
+`Get-OPIMDirectoryRole` and `Get-OPIMEntraIDGroup` pass it. A failed page throws its own error, never
+a shorter list, with `PartialValue`, `NextLink` and `PageNumber` as note properties on its
+`Exception`, which survives the throw where the record does not. There is no page cap, since a cap
+would cut a list short silently, and verbose output never prints a next link.
 
 **The places that call the raw SDK or Az authentication directly today**, from a `Select-String`
 over `source/` on 2026-10-07, listed as they are:

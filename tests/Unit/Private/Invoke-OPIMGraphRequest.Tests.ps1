@@ -28,6 +28,24 @@ BeforeAll {
             Record  = [System.Management.Automation.ErrorRecord]::new($Exception, 'HttpFail', 'InvalidOperation', $Request)
         }
     }
+
+    # Runs a script in Omnicit.PIM's scope in a nested pipeline of this runspace and returns what it
+    # wrote. Pester runs every It inside a try, and while any try is up the call stack a throw always
+    # propagates. A nested pipeline has none above it: a throw in a catch under SilentlyContinue
+    # resumes after that try there, and propagates under an outer try (measured 2026-10-07,
+    # PowerShell 7.6). So it shows what a caller outside any try receives. The mocks stay in force,
+    # since the nested pipeline shares this runspace and the module's session state.
+    function Invoke-OutsideAnyTry {
+        param([Parameter(Mandatory)][string]$Script)
+        $Shell = [powershell]::Create([System.Management.Automation.RunspaceMode]::CurrentRunspace)
+        try {
+            $null = $Shell.AddScript('param($Module) & $Module {' + $Script + '}').AddArgument((Get-Module Omnicit.PIM))
+            $Output = $Shell.Invoke()
+            [pscustomobject]@{ Output = @($Output | Where-Object { $null -ne $_ }) }
+        } finally {
+            $Shell.Dispose()
+        }
+    }
 }
 
 AfterAll {
@@ -545,6 +563,22 @@ Describe 'Invoke-OPIMGraphRequest' {
                         $Node.GetCommandName() -eq 'Invoke-MgGraphRequest'
                     }, $true))
             $Sends.Count | Should -Be 3 -Because 'the walk must reach the first attempt, the claims retry and the refresh retry'
+            # OPIM-13: every send sits in the nested Invoke-OPIMGraphSingle, the one function a single
+            # request and every page of a -All read go through, so the gates below stand before every
+            # request the wrapper makes.
+            foreach ($Send in $Sends) {
+                $Owner = $Send.Parent
+                while ($Owner -and $Owner -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) { $Owner = $Owner.Parent }
+                $Owner.Name | Should -BeExactly 'Invoke-OPIMGraphSingle' -Because "the request at line $($Send.Extent.StartLineNumber) must sit in the nested request function"
+            }
+            $Single = @($Ast.Body.FindAll({
+                        param($Node)
+                        $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                        $Node.Name -eq 'Invoke-OPIMGraphSingle'
+                    }, $true))
+            $Single.Count | Should -Be 1
+            [object]::ReferenceEquals($Single[0].Parent.Parent, $Ast.Body) |
+                Should -BeTrue -Because 'the request function is defined in the wrapper''s own body'
             $IsGate = {
                 param($Statement)
                 $Statement -is [System.Management.Automation.Language.IfStatementAst] -and
@@ -577,12 +611,12 @@ Describe 'Invoke-OPIMGraphRequest' {
     Context 'When the calling command is latched' {
         # SEC (EntraRBAC A19). Get-OPIMSignInRefusal answers what the test sets in
         # $script:_OPIMTestRefusal; the Initialize-OPIMAuth mock of a retry test latches, as a retry
-        # sign-in that is refused latches the wrapper itself.
+        # sign-in that is refused latches the wrapper's nested request function, Invoke-OPIMGraphSingle.
         BeforeAll {
             InModuleScope Omnicit.PIM {
                 Mock Get-OPIMGraphSessionState { $script:_OPIMTestSessionState }
                 Mock Get-OPIMSignInRefusal { $script:_OPIMTestRefusal }
-                Mock Initialize-OPIMAuth { $script:_OPIMTestRefusal = 'Invoke-OPIMGraphRequest' }
+                Mock Initialize-OPIMAuth { $script:_OPIMTestRefusal = 'Invoke-OPIMGraphSingle' }
             }
         }
         BeforeEach {
@@ -645,7 +679,7 @@ Describe 'Invoke-OPIMGraphRequest' {
                 $Caught = $null
                 try { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } catch { $Caught = $PSItem }
                 $Caught.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
-                $Caught.TargetObject | Should -BeExactly 'Invoke-OPIMGraphRequest'
+                $Caught.TargetObject | Should -BeExactly 'Invoke-OPIMGraphSingle'
                 Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter { $ForceRefresh }
                 Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
                 Should -Invoke Get-OPIMSignInRefusal -Times 2 -Exactly -Scope It
@@ -703,6 +737,10 @@ Describe 'Invoke-OPIMGraphRequest' {
                     }, $true))
             $Sends.Count | Should -Be 3 -Because 'the walk must reach the first attempt, the claims retry and the refresh retry'
             foreach ($Send in $Sends) {
+                # OPIM-13: in the nested request function, the frame a refused retry sign-in latches.
+                $Owner = $Send.Parent
+                while ($Owner -and $Owner -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) { $Owner = $Owner.Parent }
+                $Owner.Name | Should -BeExactly 'Invoke-OPIMGraphSingle' -Because "the latch gate of the request at line $($Send.Extent.StartLineNumber) must read the frame the retry's sign-in latched"
                 $Try = $Send.Parent
                 while ($Try -and $Try -isnot [System.Management.Automation.Language.TryStatementAst]) { $Try = $Try.Parent }
                 $Block = $Try.Parent
@@ -804,12 +842,13 @@ Describe 'Invoke-OPIMGraphRequest' {
             }
         }
 
-        It 'latches the wrapper itself, keeps it latched and sends no retry' {
+        It 'latches the wrapper''s request function, keeps it latched and sends no retry' {
             # Inside Pester the error the caller sees is TenantMismatch: the retry's Initialize-OPIMAuth
             # raises it as a terminating error, and Pester's own try (and this test's) makes it propagate
             # out of the wrapper before the retry's gates run. Outside any try the wrapper carries on to
-            # them, and the latch gate finds the wrapper's own frame -- latched, as this test records --
-            # and throws SignInRefused; the mocked context above holds that gate.
+            # them, and the latch gate finds the frame of the wrapper's nested Invoke-OPIMGraphSingle,
+            # which called Initialize-OPIMAuth and holds the retry's gates -- latched, as this test
+            # records -- and throws SignInRefused; the mocked context above holds that gate.
             InModuleScope Omnicit.PIM {
                 $Caught = $null
                 try { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } catch { $Caught = $PSItem }
@@ -817,8 +856,283 @@ Describe 'Invoke-OPIMGraphRequest' {
                 Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
                 Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It
                 Should -Invoke Connect-MgGraph -Times 0 -Scope It
-                ($script:_OPIMSignInLatch.Latched -join ', ') | Should -BeExactly 'Invoke-OPIMGraphRequest'
+                ($script:_OPIMSignInLatch.Latched -join ', ') | Should -BeExactly 'Invoke-OPIMGraphSingle'
                 $script:_OPIMSignInLatch.Released.Count | Should -Be 0
+            }
+        }
+    }
+
+    Context 'When -All reads a list of several pages' {
+        # OPIM-13. Graph answers a list in pages, each but the last carrying @odata.nextLink. The mock
+        # answers three pages by URI, and refuses any other URI, so a link that is rebuilt or lost
+        # shows as a failed request.
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Initialize-OPIMAuth {}
+                Mock Invoke-MgGraphRequest {
+                    param($Method, $Uri)
+                    switch -CaseSensitive ($Uri) {
+                        'v1.0/x' {
+                            return @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                        }
+                        'https://graph.microsoft.com/v1.0/x?$skiptoken=2' {
+                            return @{ value = @(@{ id = '2' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=3' }
+                        }
+                        'https://graph.microsoft.com/v1.0/x?$skiptoken=3' {
+                            return @{ value = @(@{ id = '3' }) }
+                        }
+                        'v1.0/empty' {
+                            return @{ value = @() }
+                        }
+                        'v1.0/single' {
+                            return @{ value = @(@{ id = 'only' }) }
+                        }
+                    }
+                    throw "The mock answers no request for $Uri."
+                }
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+
+        It 'returns the items of every page' {
+            InModuleScope Omnicit.PIM {
+                $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All
+                $Result | Should -BeOfType ([hashtable])
+                (@($Result.value) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1,2,3'
+            }
+        }
+
+        It 'follows the next link verbatim' {
+            InModuleScope Omnicit.PIM {
+                $null = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Uri -ceq 'https://graph.microsoft.com/v1.0/x?$skiptoken=2'
+                }
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Uri -ceq 'https://graph.microsoft.com/v1.0/x?$skiptoken=3'
+                }
+            }
+        }
+
+        It 'requests each page once' {
+            InModuleScope Omnicit.PIM {
+                $null = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All
+                Should -Invoke Invoke-MgGraphRequest -Times 3 -Exactly -Scope It
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Uri -ceq 'v1.0/x' }
+            }
+        }
+
+        It 'returns an empty value for a list with no items' {
+            InModuleScope Omnicit.PIM {
+                $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/empty' -All
+                $Result | Should -BeOfType ([hashtable])
+                $Result.ContainsKey('value') | Should -BeTrue
+                @($Result.value).Count | Should -Be 0
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+            }
+        }
+
+        It 'stops at a page without a next link' {
+            InModuleScope Omnicit.PIM {
+                $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/single' -All
+                (@($Result.value) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'only'
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+            }
+        }
+
+        It 'writes the page number and item count to the verbose stream, never the next link' {
+            # Ruling R-T7a: a next link can carry a skip token, so verbose output names the page by its
+            # number only.
+            InModuleScope Omnicit.PIM {
+                $Records = @(Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All -Verbose 4>&1 |
+                        Where-Object { $_ -is [System.Management.Automation.VerboseRecord] })
+                $Text = ($Records | ForEach-Object { $_.Message }) -join "`n"
+                $Records.Count | Should -BeGreaterOrEqual 3
+                $Text | Should -Match 'page 3'
+                $Text | Should -Not -Match 'skiptoken'
+                $Text | Should -Not -Match 'https?://'
+                $Text | Should -Not -Match 'v1\.0/x'
+            }
+        }
+
+        It 'sends one request without -All and ignores its next link' {
+            InModuleScope Omnicit.PIM {
+                $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/x'
+                (@($Result.value) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1'
+                $Result['@odata.nextLink'] | Should -BeExactly 'https://graph.microsoft.com/v1.0/x?$skiptoken=2'
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+            }
+        }
+    }
+
+    Context 'When a later page fails' {
+        # Page 1 answers with a next link; page 2 fails with a Graph 500, thrown as the SDK throws it:
+        # a record pointing at a request message that carries an Authorization header.
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Initialize-OPIMAuth {}
+                Mock Invoke-MgGraphRequest {
+                    param($Method, $Uri)
+                    if ($Uri -ceq 'v1.0/x') {
+                        return @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                    }
+                    $PSCmdlet.ThrowTerminatingError($script:_OPIMTestPageFailure)
+                }
+            }
+        }
+        BeforeEach {
+            $script:PageFailure = New-ScrubFixture -Status 500 -Content '{"error":{"code":"generalException","message":"An unexpected error occurred."}}'
+            InModuleScope Omnicit.PIM -Parameters @{ Record = $script:PageFailure.Record } {
+                param($Record)
+                $script:_OPIMAuthState = $null
+                $script:_OPIMTestPageFailure = $Record
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM { $script:_OPIMTestPageFailure = $null }
+        }
+
+        It 'throws the page error as itself' {
+            InModuleScope Omnicit.PIM {
+                $Caught = $null
+                try { $null = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All } catch { $Caught = $PSItem }
+                $Caught | Should -Not -BeNullOrEmpty
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'generalException'
+                $Caught.Exception.Message | Should -BeExactly 'generalException: An unexpected error occurred.'
+                $Caught.Exception.InnerException | Should -BeNullOrEmpty
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+            }
+            $script:PageFailure.Request.Headers.Contains('Authorization') | Should -BeFalse -Because 'the failed page is scrubbed as a single request is'
+        }
+
+        It 'carries the items read before the failure as PartialValue' {
+            InModuleScope Omnicit.PIM {
+                $Caught = $null
+                try { $null = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All } catch { $Caught = $PSItem }
+                $Caught.Exception.PSObject.Properties['PartialValue'] | Should -Not -BeNullOrEmpty
+                $Partial = $Caught.Exception.PartialValue
+                , $Partial | Should -BeOfType ([object[]])
+                $Partial.Count | Should -Be 1
+                $Partial[0].id | Should -BeExactly '1'
+            }
+        }
+
+        It 'carries the failed page''s link and number' {
+            InModuleScope Omnicit.PIM {
+                $Caught = $null
+                try { $null = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All } catch { $Caught = $PSItem }
+                $Caught.Exception.NextLink | Should -BeExactly 'https://graph.microsoft.com/v1.0/x?$skiptoken=2'
+                $Caught.Exception.PageNumber | Should -Be 2
+                $Caught.Exception.PageNumber | Should -BeOfType ([int])
+            }
+        }
+
+        It 'never returns a short list under -ErrorAction SilentlyContinue' {
+            # Outside any try a throw inside a catch resumes after that try under SilentlyContinue; the
+            # loop must then return nothing, never page 1 as if it were the whole list.
+            $Run = Invoke-OutsideAnyTry -Script '$ErrorActionPreference = ''SilentlyContinue''; $R = Invoke-OPIMGraphRequest -Uri ''v1.0/x'' -All; $R'
+            $Run.Output.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+            $Run = Invoke-OutsideAnyTry -Script '$R = Invoke-OPIMGraphRequest -Uri ''v1.0/x'' -All -ErrorAction SilentlyContinue; $R'
+            $Run.Output.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 4 -Exactly -Scope It
+        }
+    }
+
+    Context 'When the first page fails' {
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Initialize-OPIMAuth {}
+                Mock Invoke-MgGraphRequest { $PSCmdlet.ThrowTerminatingError($script:_OPIMTestPageFailure) }
+            }
+        }
+        BeforeEach {
+            $Failure = New-ScrubFixture -Status 500 -Content '{"error":{"code":"generalException","message":"An unexpected error occurred."}}'
+            InModuleScope Omnicit.PIM -Parameters @{ Record = $Failure.Record } {
+                param($Record)
+                $script:_OPIMAuthState = $null
+                $script:_OPIMTestPageFailure = $Record
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM { $script:_OPIMTestPageFailure = $null }
+        }
+
+        It 'throws with an empty PartialValue' {
+            InModuleScope Omnicit.PIM {
+                $Caught = $null
+                try { $null = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'generalException'
+                $Caught.Exception.PSObject.Properties['PartialValue'] | Should -Not -BeNullOrEmpty
+                , $Caught.Exception.PartialValue | Should -BeOfType ([object[]])
+                $Caught.Exception.PartialValue.Count | Should -Be 0
+                $Caught.Exception.NextLink | Should -BeExactly 'v1.0/x'
+                $Caught.Exception.PageNumber | Should -Be 1
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+            }
+        }
+    }
+
+    Context 'When a gate refuses a later page' {
+        # Every page passes the session gate and the latch gate, as a single request does. The gate
+        # mocks answer 'Own' and nothing for page 1 and refuse from their second call on.
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Initialize-OPIMAuth {}
+                Mock Invoke-MgGraphRequest {
+                    param($Method, $Uri)
+                    $script:_OPIMTestSends++
+                    if ($Uri -ceq 'v1.0/x') {
+                        return @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                    }
+                    return @{ value = @(@{ id = '2' }) }
+                }
+                Mock Get-OPIMGraphSessionState {
+                    $script:_OPIMTestSessionReads++
+                    if ($script:_OPIMTestFlip -eq 'session' -and $script:_OPIMTestSessionReads -ge 2) { 'Changed' } else { 'Own' }
+                }
+                Mock Get-OPIMSignInRefusal {
+                    $script:_OPIMTestLatchReads++
+                    if ($script:_OPIMTestFlip -eq 'latch' -and $script:_OPIMTestLatchReads -ge 2) { 'Get-OPIMDirectoryRole' }
+                }
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM -Parameters @{ SessionTenant = $SessionTenant } {
+                param($SessionTenant)
+                $script:_OPIMAuthState = @{ TenantId = $SessionTenant; GraphSessionFingerprint = 'mine' }
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMTestFlip = $null
+                $script:_OPIMTestSends = $null
+                $script:_OPIMTestSessionReads = $null
+                $script:_OPIMTestLatchReads = $null
+            }
+        }
+
+        It 'refuses every page through the session and latch gates' {
+            InModuleScope Omnicit.PIM {
+                foreach ($Case in @(
+                        @{ Flip = 'session'; ErrorId = 'GraphSessionChanged*' }
+                        @{ Flip = 'latch'; ErrorId = 'SignInRefused*' }
+                    )) {
+                    $script:_OPIMTestFlip = $Case.Flip
+                    $script:_OPIMTestSends = 0
+                    $script:_OPIMTestSessionReads = 0
+                    $script:_OPIMTestLatchReads = 0
+                    $Caught = $null
+                    try { $null = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All } catch { $Caught = $PSItem }
+                    $Caught.FullyQualifiedErrorId | Should -BeLike $Case.ErrorId -Because "the $($Case.Flip) gate refuses page 2"
+                    $script:_OPIMTestSends | Should -Be 1 -Because "the $($Case.Flip) gate sends nothing for page 2"
+                    $Caught.Exception.PageNumber | Should -Be 2
+                    @($Caught.Exception.PartialValue).Count | Should -Be 1
+                }
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
             }
         }
     }

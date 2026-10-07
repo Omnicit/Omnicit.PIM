@@ -356,4 +356,97 @@ Describe 'Get-OPIMEntraIDGroup' {
             $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.GroupCombinedSchedule'
         }
     }
+
+    Context 'When a list has more than one page' {
+        # OPIM-13. Under -All the transport reads every page and hands back one value holding the
+        # items of all of them; without it, it hands back the first page only, next link and all.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                @{
+                    value = @(
+                        @{ id = 'elig-001'; accessId = 'member'; groupId = 'group-001'; group = @{ displayName = 'PIM Admins' } }
+                        @{ id = 'elig-002'; accessId = 'owner'; groupId = 'group-002'; group = @{ displayName = 'Finance Team' } }
+                    )
+                }
+            } -ParameterFilter { $All }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                @{
+                    value             = @(@{ id = 'elig-001'; accessId = 'member'; groupId = 'group-001'; group = @{ displayName = 'PIM Admins' } })
+                    '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/identityGovernance/privilegedAccess/group/eligibilitySchedules?$skiptoken=2'
+                }
+            } -ParameterFilter { -not $All }
+        }
+
+        It 'passes -All to the transport for the eligible list' {
+            $null = Get-OPIMEntraIDGroup
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $All -and $Uri -like '*eligibilitySchedules*'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { -not $All }
+        }
+
+        It 'passes -All to the transport for the active list' {
+            $null = Get-OPIMEntraIDGroup -Activated
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $All -and $Uri -like '*assignmentScheduleInstances*'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { -not $All }
+        }
+
+        It 'passes -All to the transport for both lists in dual mode' {
+            $null = Get-OPIMEntraIDGroup -All
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $All -and $Uri -like '*eligibilitySchedules*'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $All -and $Uri -like '*assignmentScheduleInstances*'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { -not $All }
+        }
+
+        It 'returns the items of every page' {
+            $Result = @(Get-OPIMEntraIDGroup)
+            ($Result | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'elig-001,elig-002'
+            $Result | ForEach-Object { $_.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.GroupEligibilitySchedule' }
+        }
+    }
+
+    Context 'When a later page of the list fails' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            # As the transport throws a failed page under -All: the page's own record, with the items
+            # read before it attached to its Exception.
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                $Exception = [System.Exception]::new('generalException: An unexpected error occurred.')
+                $Read = @(
+                    @{ id = 'elig-001'; accessId = 'member'; groupId = 'group-001' }
+                    @{ id = 'elig-002'; accessId = 'owner'; groupId = 'group-002' }
+                )
+                $Exception | Add-Member -NotePropertyName PartialValue -NotePropertyValue $Read
+                $Exception | Add-Member -NotePropertyName NextLink -NotePropertyValue 'https://graph.microsoft.com/v1.0/identityGovernance/privilegedAccess/group/eligibilitySchedules?$skiptoken=3'
+                $Exception | Add-Member -NotePropertyName PageNumber -NotePropertyValue 3
+                $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                        $Exception, 'generalException', [System.Management.Automation.ErrorCategory]::OperationStopped, $null))
+            } -ParameterFilter { $All }
+            # Without -All the transport would hand back the first page as if it were the whole list.
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                @{ value = @(@{ id = 'elig-001'; accessId = 'member'; groupId = 'group-001' }) }
+            } -ParameterFilter { -not $All }
+        }
+
+        It 'writes the error with the partial result when a later page fails' {
+            # The error stream is read through 2>&1, so the record counted is the one the cmdlet
+            # writes; -ErrorVariable also holds the record the cmdlet's own try caught.
+            $Output = @(Get-OPIMEntraIDGroup -ErrorVariable Errs -ErrorAction Continue 2>&1)
+            $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }).Count |
+                Should -Be 0 -Because 'a list whose page failed is never written as a shorter list'
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeLike 'generalException*'
+            $Written[0].Exception.PartialValue.Count | Should -Be 2
+            $Written[0].Exception.PageNumber | Should -Be 3
+            $Errs[0].Exception.PartialValue.Count | Should -Be 2
+        }
+    }
 }
