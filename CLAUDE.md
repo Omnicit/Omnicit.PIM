@@ -673,8 +673,12 @@ not authorised for Azure Resource Manager, so `-IncludeARM` uses the Az module's
 no validated context exists, it disables WAM at PROCESS scope only
 (`Update-AzConfig -EnableLoginByWam $false -Scope Process`; the persisted Az configuration is never
 touched) and calls `Connect-AzAccount -Tenant` with the tenant of the session's Graph token --
-always, also after a first sign-in under `organizations` (`:350-379`). A failed connection is the
-terminating `AzureConnectFailed`, which keeps the Az message but neither the Az exception nor its
+always, also after a first sign-in under `organizations` (`:350-379`). So that Azure never asks for
+a subscription (Az.Accounts 12.0 and later do when the account reaches more than one), it also sets
+`Update-AzConfig -LoginExperienceV2 Off -Scope Process` in a call of its own -- the user's own Az
+settings are never touched -- and passes `-SkipContextPopulation` to `Connect-AzAccount`, since every
+ARM call names its scope and the module never uses the default subscription. A failed connection is
+the terminating `AzureConnectFailed`, which keeps the Az message but neither the Az exception nor its
 record (its target object is the session tenant), and leaves the calling command latched, so its
 `Az.Resources` calls are refused with `SignInRefused`. An Az context for another tenant after the
 connection, or none, is the terminating `TenantMismatch` (`New-OPIMTenantMismatchError -Source

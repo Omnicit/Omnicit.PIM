@@ -60,6 +60,11 @@ function Initialize-OPIMAuth {
     device code mode show its own code. A failed Connect-AzAccount ends this function with the
     terminating AzureConnectFailed, which keeps the Az message but neither the Az exception nor its
     record; an Az context for another tenant after the sign-in, or none, ends it with TenantMismatch.
+    The Azure sign-in never asks for a subscription: the module names the scope of every ARM call and
+    never uses the default subscription, so before Connect-AzAccount the function sets the Az
+    configuration for this process only (Update-AzConfig -Scope Process) to WAM off and
+    LoginExperienceV2 off, each in a call of its own, and Connect-AzAccount gets
+    -SkipContextPopulation. The user's own Az configuration is never touched.
 
     Graph auth and Azure auth are intentionally independent -- the Microsoft Graph Command Line
     Tools app registration (used by MSAL here) is not authorised for Azure Resource Manager.
@@ -503,7 +508,17 @@ function Initialize-OPIMAuth {
                 Update-AzConfig -EnableLoginByWam $false -Scope Process -ErrorAction SilentlyContinue | Out-Null
             } catch { Remove-OPIMErrorRecord -Record $PSItem }
 
-            $AzParams = @{ Tenant = $ArmTenant; ErrorAction = 'Stop' }
+            # A15 (OPIM-43): Az.Accounts 12.0 and later ask for a subscription at sign-in when the
+            # account reaches more than one. The module never uses the default subscription -- every
+            # ARM call names its scope (asTarget() at '/', or the role's own scope) -- so the prompt is
+            # turned off for this PROCESS only, and Connect-AzAccount skips the subscription lookup.
+            # The user's own Az configuration (CurrentUser) is never touched. A call of its own, so an
+            # Az.Accounts without this key still gets the WAM setting above, and the sign-in goes on.
+            try {
+                Update-AzConfig -LoginExperienceV2 Off -Scope Process -ErrorAction SilentlyContinue | Out-Null
+            } catch { Remove-OPIMErrorRecord -Record $PSItem }
+
+            $AzParams = @{ Tenant = $ArmTenant; SkipContextPopulation = $true; ErrorAction = 'Stop' }
             # Device code mode signs in to Azure with a device code too. Connect-AzAccount writes its
             # own message with the code (Az.Accounts 5.5.3: an information record; older: a warning).
             if ($UseDeviceCode) {

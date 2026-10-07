@@ -239,6 +239,7 @@ Describe 'Initialize-OPIMAuth' {
                 $script:_OPIMTestAz = $null
                 $script:_OPIMTestAzAfter = $null
                 $script:_OPIMTestAzRecord = $null
+                $script:_OPIMTestCalls = $null
             }
         }
         AfterAll {
@@ -249,6 +250,7 @@ Describe 'Initialize-OPIMAuth' {
                 $script:_OPIMTestAz = $null
                 $script:_OPIMTestAzAfter = $null
                 $script:_OPIMTestAzRecord = $null
+                $script:_OPIMTestCalls = $null
             }
         }
 
@@ -412,6 +414,133 @@ Describe 'Initialize-OPIMAuth' {
                 Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It -ParameterFilter {
                     -not $UseDeviceAuthentication
                 }
+            }
+        }
+
+        # OPIM-43 (A15). Az.Accounts 12.0 and later ask for a subscription at sign-in when the account
+        # reaches more than one. The module never uses the default subscription -- every ARM call
+        # names its scope -- so the prompt is turned off for this PROCESS only and the sign-in skips
+        # the subscription lookup. The user's own Az configuration (CurrentUser) is never touched.
+        It 'turns the subscription prompt off for this process only before Azure signs in' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            $After = New-AzTestContext -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After } {
+                param($State, $After)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestAzAfter = $After
+                $script:_OPIMTestCalls = [System.Collections.Generic.List[string]]::new()
+                # A mock body does not see which parameters were bound -- its parameter variables keep
+                # the value of the previous call -- so the call is recognised by a -ParameterFilter.
+                Mock Update-AzConfig {
+                    $script:_OPIMTestCalls.Add('Update-AzConfig LoginExperienceV2 Off Process')
+                } -ParameterFilter { $LoginExperienceV2 -eq 'Off' -and $Scope -eq 'Process' }
+                Mock Connect-AzAccount {
+                    $script:_OPIMTestCalls.Add('Connect-AzAccount')
+                    $script:_OPIMTestAz = $script:_OPIMTestAzAfter
+                }
+                Initialize-OPIMAuth -IncludeARM
+                Should -Invoke Update-AzConfig -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $LoginExperienceV2 -eq 'Off' -and $Scope -eq 'Process'
+                }
+                # In that order: a setting made after the sign-in would not have kept the prompt away.
+                @($script:_OPIMTestCalls) | Should -Be @('Update-AzConfig LoginExperienceV2 Off Process', 'Connect-AzAccount')
+            }
+        }
+
+        It 'never changes the user''s own Az configuration' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            $After = New-AzTestContext -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After } {
+                param($State, $After)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestAzAfter = $After
+                Initialize-OPIMAuth -IncludeARM
+                # Both settings are made, each at Process scope; a call without -Scope would default to
+                # CurrentUser, and so would count against the zero below.
+                Should -Invoke Update-AzConfig -Times 2 -Exactly -Scope It -ParameterFilter { $Scope -eq 'Process' }
+                Should -Invoke Update-AzConfig -Times 0 -Scope It -ParameterFilter { $Scope -ne 'Process' }
+            }
+        }
+
+        It 'skips the subscription lookup at the Azure sign-in in <Mode>' -ForEach @(
+            @{ Mode = 'device code mode'; DeviceCode = $true }
+            @{ Mode = 'the system browser'; DeviceCode = $false }
+        ) {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            $State.DeviceCode = $DeviceCode
+            $After = New-AzTestContext -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After } {
+                param($State, $After)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestAzAfter = $After
+                Initialize-OPIMAuth -IncludeARM
+                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It
+                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It -ParameterFilter { $SkipContextPopulation }
+            }
+        }
+
+        It 'keeps WAM off for this process' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            $After = New-AzTestContext -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After } {
+                param($State, $After)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestAzAfter = $After
+                Initialize-OPIMAuth -IncludeARM
+                Should -Invoke Update-AzConfig -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $EnableLoginByWam -eq $false -and $Scope -eq 'Process'
+                }
+            }
+        }
+
+        It 'sets the two configuration keys in separate calls' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            $After = New-AzTestContext -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After } {
+                param($State, $After)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestAzAfter = $After
+                Initialize-OPIMAuth -IncludeARM
+                Should -Invoke Update-AzConfig -Times 0 -Scope It -ParameterFilter {
+                    $PesterBoundParameters.ContainsKey('EnableLoginByWam') -and $PesterBoundParameters.ContainsKey('LoginExperienceV2')
+                }
+            }
+        }
+
+        It 'still makes the other setting and signs in to Azure when the <Key> setting is refused' -ForEach @(
+            @{ Key = 'EnableLoginByWam' }
+            @{ Key = 'LoginExperienceV2' }
+        ) {
+            # An Az.Accounts that does not offer one of the keys fails that call at binding. The other
+            # key, and the sign-in, must not depend on it.
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            $After = New-AzTestContext -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After; Key = $Key } {
+                param($State, $After, $Key)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestAzAfter = $After
+                $script:_OPIMTestCalls = [System.Collections.Generic.List[string]]::new()
+                # The refusal is recognised by a -ParameterFilter: a mock body does not see which
+                # parameters were bound, since its parameter variables keep the previous call's value.
+                $Refusal = {
+                    $script:_OPIMTestCalls.Add('refused')
+                    $PSCmdlet.ThrowTerminatingError(
+                        [System.Management.Automation.ErrorRecord]::new(
+                            [System.Management.Automation.ParameterBindingException]::new('A parameter cannot be found.'),
+                            'NamedParameterNotFound',
+                            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                            $null))
+                }
+                if ($Key -eq 'EnableLoginByWam') {
+                    Mock Update-AzConfig $Refusal -ParameterFilter { $PesterBoundParameters.ContainsKey('EnableLoginByWam') }
+                } else {
+                    Mock Update-AzConfig $Refusal -ParameterFilter { $PesterBoundParameters.ContainsKey('LoginExperienceV2') }
+                }
+                { Initialize-OPIMAuth -IncludeARM } | Should -Not -Throw
+                @($script:_OPIMTestCalls).Count | Should -Be 1 -Because 'the call for the refused key must have been refused'
+                Should -Invoke Update-AzConfig -Times 1 -Exactly -Scope It -ParameterFilter { $PesterBoundParameters.ContainsKey('EnableLoginByWam') }
+                Should -Invoke Update-AzConfig -Times 1 -Exactly -Scope It -ParameterFilter { $PesterBoundParameters.ContainsKey('LoginExperienceV2') }
+                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It
             }
         }
 
