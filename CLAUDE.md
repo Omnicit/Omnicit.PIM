@@ -502,7 +502,8 @@ pre-authentication shortcut, since every pillar cmdlet authenticates on first us
 `-DeviceCode`, and then the pillar cmdlets. The `*-OPIMConfiguration` cmdlets do not authenticate.
 
 **It is idempotent, and the session is pinned to one tenant.** It returns without a network call
-or a prompt when the request matches the module's own session, the cached Graph token has more than
+or a prompt when the request matches the module's own session, the Graph SDK session in the process
+is still the one the module connected (or none is recorded yet), the cached Graph token has more than
 5 minutes left, and neither `-ClaimsChallenge` nor `-ForceRefresh` was passed. A call that names no
 tenant keeps the session's tenant: `organizations` is the authority only for a first sign-in that
 names none, and the session is then pinned to the `tid` of that sign-in's token. A request matches
@@ -511,7 +512,14 @@ session's Graph token, so a GUID for a session signed in by domain needs no new 
 builds the MSAL application for the authority the session was built with (`AuthorityTenant`), so
 a session first signed in under `organizations` refreshes from the same application and token
 cache. Only the module's own session counts: a Graph context made outside the module is never
-adopted, and `Initialize-OPIMAuth` does not read `Get-MgContext`. With `-IncludeARM`, Azure counts as
+adopted. Straight after its own `Connect-MgGraph` the function records a fingerprint of the Graph
+SDK session (`Get-OPIMGraphSessionFingerprint`, the only reader of `Get-MgContext` on this path),
+and `Get-OPIMGraphSessionState` compares the process's session with it at every entry and, in
+`Invoke-OPIMGraphRequest`, before every request. When another `Connect-MgGraph` has replaced it,
+both refuse with the terminating `GraphSessionChanged` (built by `New-OPIMGraphSessionChangedError`)
+before any cached return, token or `Connect-MgGraph`, and nothing takes the session back: the user
+runs `Disconnect-OPIM` and signs in again. When the process holds no session at all, the cached token
+does not count and the function signs in and connects again. With `-IncludeARM`, Azure counts as
 connected only when a cached Az context for the tenant can mint an ARM token silently through
 `Get-AzAccessToken` (`:144-164`): the Az module autosaves its context, so a bare context can
 resurface in a new session with an expired token.
@@ -638,11 +646,14 @@ touched) and calls `Connect-AzAccount`, with `-Tenant` unless the tenant is `org
 cmdlets then run in that Az context.
 
 **State.** `$script:_OPIMAuthState` holds `TenantId`, `TokenTenantId`, `AuthorityTenant`,
-`Account`, `GraphTokenExpiry`, `ClaimsSatisfied` and `DeviceCode` -- never a token -- except that
-before the first Graph sign-in it holds `DeviceCode` alone, when `-DeviceCode` was given
-(`:102-108`). `TenantId` is the label the session is pinned to: as requested, or the token's `tid`
-after a first sign-in under `organizations`. `TokenTenantId` is the `tid` of the current Graph
-token, and `AuthorityTenant` the tenant the MSAL application was built for. The tokens
+`Account`, `GraphTokenExpiry`, `ClaimsSatisfied`, `DeviceCode` and `GraphSessionFingerprint` --
+never a token -- except that before the first Graph sign-in it holds `DeviceCode` alone, when
+`-DeviceCode` was given (`:102-108`). `TenantId` is the label the session is pinned to: as
+requested, or the token's `tid` after a first sign-in under `organizations`. `TokenTenantId` is the
+`tid` of the current Graph token, and `AuthorityTenant` the tenant the MSAL application was built
+for. `GraphSessionFingerprint` is the Graph SDK session the module connected: eight properties of
+its context as compact JSON, written even when it is `$null`; a state without the key is
+`Untracked` and is never compared. The tokens
 themselves live in the
 MSAL application's in-memory cache (`$script:_OPIMMsalApp`) and in the Graph SDK's context; see
 **SECURITY**.
@@ -695,7 +706,7 @@ over `source/` on 2026-10-07, listed as they are:
 is handed, not through the Graph SDK or an Az cmdlet.
 
 Beside these, the module reads `Get-MgContext` (`Get-OPIMMsalApplication.ps1:46`,
-`Get-MyId.ps1:26`, `Get-OPIMCurrentTenantInfo.ps1:30`), reads
+`Get-MyId.ps1:26`, `Get-OPIMCurrentTenantInfo.ps1:30`, `Get-OPIMGraphSessionFingerprint.ps1:47`), reads
 `Get-AzContext` (`Initialize-OPIMAuth.ps1:144`), calls `Update-AzConfig` (`:362`), and calls the
 `Az.Resources` cmdlets listed under **API Mapping**.
 
@@ -1095,7 +1106,8 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   or the function calls it directly: `Invoke-OPIMGraphRequest.Tests.ps1` (the wrapper, mocked
   inside `InModuleScope`), `Get-OPIMCurrentTenantInfo.Tests.ps1` (`Invoke-MgGraphRequest` and
   `Get-MgContext`), `Get-MyId.Tests.ps1` and `Get-OPIMMsalApplication.Tests.ps1` (`Get-MgContext`,
-  which must THROW in the latter -- see below), `Initialize-OPIMAuth.Tests.ps1` (`Connect-MgGraph`,
+  which must THROW in the latter -- see below), `Get-OPIMGraphSessionFingerprint.Tests.ps1` and
+  `Get-OPIMGraphSessionState.Tests.ps1` (`Get-MgContext`), `Initialize-OPIMAuth.Tests.ps1` (`Connect-MgGraph`,
   `Connect-AzAccount`, `Get-AzContext`, `Get-AzAccessToken`, `Update-AzConfig`, `Get-MgContext`,
   `Get-OPIMMsalApplication`), `Disconnect-OPIM.Tests.ps1` (`Disconnect-MgGraph`,
   `Disconnect-AzAccount`), and the end-to-end bearer-scrub context in

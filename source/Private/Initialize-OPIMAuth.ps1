@@ -29,6 +29,15 @@ function Initialize-OPIMAuth {
     state. Only the module's own session counts as signed in: a Microsoft Graph context made outside
     the module is never adopted.
 
+    The Microsoft Graph PowerShell SDK keeps one session per process. Straight after its own
+    Connect-MgGraph this function records a fingerprint of that session
+    (Get-OPIMGraphSessionFingerprint), and at every entry it compares the session the process holds
+    with it (Get-OPIMGraphSessionState). When another Connect-MgGraph has replaced the session, the
+    function ends with GraphSessionChanged before the cached return, a new token or a Connect-MgGraph:
+    connecting again would move that session's calls to this module's tenant, so the user runs
+    Disconnect-OPIM and signs in again. When the process holds no session at all, a cached token does
+    not count, and the function signs in and connects again.
+
     For Azure RBAC commands, pass -IncludeARM. Connect-AzAccount is called to establish an
     Azure context using the Az module's own authentication. This is separate from Graph auth
     and may open its own browser window, or in device code mode show its own code, on first use.
@@ -137,16 +146,35 @@ function Initialize-OPIMAuth {
         $script:_OPIMAuthState.TenantId -eq $EffectiveTenant -or
         ($EffectiveIsGuid -and $script:_OPIMAuthState.TokenTenantId -eq $ParsedTenant.ToString('D')))
 
+    # -- Graph SDK session check (OPIM-09, EntraRBAC A18) -----------------------
+    # The SDK keeps one session per process, and every Graph call goes out under it. Compare it with
+    # the fingerprint recorded after this module's own Connect-MgGraph: Untracked (nothing recorded
+    # yet), Own, Absent (no session at all, so the module connects again with a token of its own) or
+    # Changed (another Connect-MgGraph replaced it).
+    $GraphSession = Get-OPIMGraphSessionState
+
     # -- Idempotency check -----------------------------------------------------
     # Graph: cached token is valid for at least 5 more minutes, same tenant, no new claims
-    # challenge. OPIM-09: only the module's own session counts -- a live Graph context the module
-    # did not make (Get-MgContext) is never adopted as one.
+    # challenge, and the SDK session is still the module's own. OPIM-09: only the module's own
+    # session counts -- a live Graph context the module did not make is never adopted as one.
     # Azure: only checked when -IncludeARM is specified (below).
     $FiveMinutesFromNow = [DateTime]::UtcNow.AddMinutes(5)
-    [bool]$GraphCached = $SessionMatches -and
+    [bool]$GraphCached = $GraphSession -ne 'Absent' -and
+                         $GraphSession -ne 'Changed' -and
+                         $SessionMatches -and
                          -not $ClaimsChallenge -and
                          -not $ForceRefresh -and
                          $script:_OPIMAuthState.GraphTokenExpiry -gt $FiveMinutesFromNow
+
+    # SEC (OPIM-09): never a cached return, a new token or a Connect-MgGraph under a session another
+    # Connect-MgGraph made. Connecting again would switch that session's calls to this module's
+    # tenant, so nothing here takes the session back; the message says to run Disconnect-OPIM. Before
+    # the Azure check, so a refused call reaches nothing. The refusal ends only this function: a caller
+    # outside any try carries on, so Invoke-OPIMGraphRequest repeats the check before every request.
+    if ($GraphSession -eq 'Changed') {
+        Write-CmdletError -ErrorRecord (New-OPIMGraphSessionChangedError) -Cmdlet $PSCmdlet -Terminating
+        return
+    }
 
     # Evaluate Azure connectivity once here and reuse below to avoid a second Get-AzContext call.
     $AzCtxAtStart = if ($IncludeARM) { Get-AzContext -ErrorAction SilentlyContinue } else { $null }
@@ -385,19 +413,25 @@ function Initialize-OPIMAuth {
             Remove-OPIMErrorRecord -Record $PSItem
             $PSCmdlet.ThrowTerminatingError($PSItem)
         }
+        # OPIM-09: the session this Connect-MgGraph left, read straight after it. Recorded even when it
+        # is $null, so the key says the module connected; Get-OPIMGraphSessionState compares every
+        # later session with it.
+        $GraphSessionFingerprint = Get-OPIMGraphSessionFingerprint
 
         # -- Cache auth state ---------------------------------------------------
         # TenantId is the label the session is pinned to: as requested, or the token's tid after a
         # first sign-in under 'organizations'. TokenTenantId is the tid of the current Graph token;
-        # AuthorityTenant is the tenant the MSAL app was built for.
+        # AuthorityTenant is the tenant the MSAL app was built for; GraphSessionFingerprint is the
+        # Graph SDK session the module connected (it holds no token).
         $script:_OPIMAuthState = @{
-            TenantId         = if ($EffectiveTenant -eq 'organizations') { $TokenTenant } else { $EffectiveTenant }
-            TokenTenantId    = $TokenTenant
-            AuthorityTenant  = $Authority
-            Account          = $AuthResult.Account
-            GraphTokenExpiry = $GraphTokenExpiry
-            ClaimsSatisfied  = [bool]$ClaimsChallenge
-            DeviceCode       = $UseDeviceCode
+            TenantId                = if ($EffectiveTenant -eq 'organizations') { $TokenTenant } else { $EffectiveTenant }
+            TokenTenantId           = $TokenTenant
+            AuthorityTenant         = $Authority
+            Account                 = $AuthResult.Account
+            GraphTokenExpiry        = $GraphTokenExpiry
+            ClaimsSatisfied         = [bool]$ClaimsChallenge
+            DeviceCode              = $UseDeviceCode
+            GraphSessionFingerprint = $GraphSessionFingerprint
         }
     }
 

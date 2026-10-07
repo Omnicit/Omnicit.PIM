@@ -316,6 +316,8 @@ Describe 'Invoke-OPIMGraphRequest' {
                     }
                 }
                 Mock Connect-MgGraph {}
+                # The session the sign-in records, and the one the retry's session gate then reads.
+                Mock Get-OPIMGraphSessionFingerprint { 'fp' }
             }
         }
         BeforeEach {
@@ -387,6 +389,8 @@ Describe 'Invoke-OPIMGraphRequest' {
                     }
                 }
                 Mock Connect-MgGraph {}
+                # The session the step-up records, and the one the retry's session gate then reads.
+                Mock Get-OPIMGraphSessionFingerprint { 'fp' }
             }
         }
         BeforeEach {
@@ -417,6 +421,155 @@ Describe 'Invoke-OPIMGraphRequest' {
                 Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It -ParameterFilter {
                     $ClaimsChallenge -match 'acrs' -and $ClaimsChallenge -match 'c1'
                 }
+            }
+        }
+    }
+
+    Context 'When the Graph SDK session has changed' {
+        # OPIM-09 (EntraRBAC A18). Get-OPIMGraphSessionState answers what the test sets in
+        # $script:_OPIMTestSessionState; the Initialize-OPIMAuth mock of a retry test changes it, as a
+        # Connect-MgGraph made elsewhere during the retry's sign-in would.
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Get-OPIMGraphSessionState { $script:_OPIMTestSessionState }
+                Mock Initialize-OPIMAuth { $script:_OPIMTestSessionState = 'Changed' }
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM -Parameters @{ SessionTenant = $SessionTenant } {
+                param($SessionTenant)
+                $script:_OPIMAuthState = @{ TenantId = $SessionTenant; GraphSessionFingerprint = 'mine' }
+                $script:_OPIMTestSessionState = 'Changed'
+                $script:_CallCount = 0
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMTestSessionState = $null
+                $script:_CallCount = $null
+            }
+        }
+
+        It 'refuses with GraphSessionChanged and sends nothing' {
+            InModuleScope Omnicit.PIM -Parameters @{ SessionTenant = $SessionTenant } {
+                param($SessionTenant)
+                Mock Invoke-MgGraphRequest {}
+                { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } | Should -Throw -ErrorId 'GraphSessionChanged*'
+                $Caught = $null
+                try { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } catch { $Caught = $PSItem }
+                $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+                $Caught.TargetObject | Should -Be $SessionTenant
+                Should -Invoke Invoke-MgGraphRequest -Times 0 -Scope It
+                Should -Invoke Initialize-OPIMAuth -Times 0 -Scope It
+            }
+        }
+
+        It 'sends nothing under -ErrorAction SilentlyContinue' {
+            # Inside Pester a terminating error always propagates (Pester runs every It in its own try,
+            # measured 2026-10-07), so the child script block sits in a try as well; the static It below
+            # holds the return that stops a caller outside any try.
+            InModuleScope Omnicit.PIM {
+                Mock Invoke-MgGraphRequest {}
+                $Caught = $null
+                try { Invoke-OPIMGraphRequest -Uri 'v1.0/me' -ErrorAction SilentlyContinue } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+                $Caught = $null
+                try {
+                    & { $ErrorActionPreference = 'SilentlyContinue'; Invoke-OPIMGraphRequest -Uri 'v1.0/me' }
+                } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+                Should -Invoke Invoke-MgGraphRequest -Times 0 -Scope It
+            }
+        }
+
+        It 'refuses the retry after a token refresh when the session changed meanwhile' {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMTestSessionState = 'Own'
+                Mock Invoke-MgGraphRequest {
+                    $script:_CallCount++
+                    throw [System.Net.Http.HttpRequestException]::new(
+                        '{"error":{"code":"InvalidAuthenticationToken","message":"Access token has expired."}}'
+                    )
+                }
+                $Caught = $null
+                try { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter { $ForceRefresh }
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                Should -Invoke Get-OPIMGraphSessionState -Times 2 -Exactly -Scope It
+            }
+        }
+
+        It 'refuses the retry after a claims step-up when the session changed meanwhile' {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMTestSessionState = 'Own'
+                Mock Invoke-MgGraphRequest {
+                    $script:_CallCount++
+                    throw [System.Net.Http.HttpRequestException]::new(
+                        '{"error":{"code":"RoleAssignmentRequestAcrsValidationFailed",' +
+                        '"message":"...&claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%20%22value%22%3A%22c1%22%7D%7D%7D"}}'
+                    )
+                }
+                $Caught = $null
+                try { Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{} } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter { $ClaimsChallenge -match 'acrs' }
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                Should -Invoke Get-OPIMGraphSessionState -Times 2 -Exactly -Scope It
+            }
+        }
+
+        It 'sends the request when the session is <State>' -ForEach @(
+            @{ State = 'Own' }
+            @{ State = 'Untracked' }
+        ) {
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMTestSessionState = $State
+                Mock Invoke-MgGraphRequest { @{ id = 'me-001' } }
+                (Invoke-OPIMGraphRequest -Uri 'v1.0/me').id | Should -Be 'me-001'
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+            }
+        }
+
+        It 'checks the session before each of its three requests, outside the try, and returns after the throw' {
+            # Static check on the function as the module loaded it. Under -ErrorAction SilentlyContinue
+            # with no try up the call stack a function carries on past its own throw (measured
+            # 2026-10-07, PowerShell 7.6.6), so each gate is a throw followed by a return, and it stands
+            # before the try that sends -- inside it, the catch would convert the refusal.
+            $Ast = InModuleScope Omnicit.PIM { (Get-Command Invoke-OPIMGraphRequest).ScriptBlock.Ast }
+            $Sends = @($Ast.FindAll({
+                        param($Node)
+                        $Node -is [System.Management.Automation.Language.CommandAst] -and
+                        $Node.GetCommandName() -eq 'Invoke-MgGraphRequest'
+                    }, $true))
+            $Sends.Count | Should -Be 3 -Because 'the walk must reach the first attempt, the claims retry and the refresh retry'
+            $IsGate = {
+                param($Statement)
+                $Statement -is [System.Management.Automation.Language.IfStatementAst] -and
+                $Statement.Clauses.Count -eq 1 -and -not $Statement.ElseClause -and
+                $Statement.Clauses[0].Item1.Extent.Text -match 'Get-OPIMGraphSessionState' -and
+                $Statement.Clauses[0].Item1.Extent.Text -match "-eq\s+'Changed'"
+            }
+            foreach ($Send in $Sends) {
+                $Try = $Send.Parent
+                while ($Try -and $Try -isnot [System.Management.Automation.Language.TryStatementAst]) { $Try = $Try.Parent }
+                $Try | Should -Not -BeNullOrEmpty -Because "the request at line $($Send.Extent.StartLineNumber) sits in a try"
+                $Block = $Try.Parent
+                $Index = $Block.Statements.IndexOf($Try)
+                $Gate = $null
+                for ($I = $Index - 1; $I -ge 0; $I--) {
+                    $Before = $Block.Statements[$I]
+                    if ($Before -is [System.Management.Automation.Language.TryStatementAst]) { break }
+                    if (& $IsGate $Before) { $Gate = $Before; break }
+                }
+                $Gate | Should -Not -BeNullOrEmpty -Because "a session gate must stand before the try of the request at line $($Send.Extent.StartLineNumber)"
+                $Body = $Gate.Clauses[0].Item2.Statements
+                $Body.Count | Should -Be 2
+                $Body[0] | Should -BeOfType [System.Management.Automation.Language.ThrowStatementAst]
+                $Body[0].Extent.Text | Should -Match 'New-OPIMGraphSessionChangedError'
+                $Body[1] | Should -BeOfType [System.Management.Automation.Language.ReturnStatementAst]
             }
         }
     }

@@ -6,7 +6,7 @@ function Invoke-OPIMGraphRequest {
 
     .DESCRIPTION
     Drop-in replacement for Invoke-MgGraphRequest used by every public and private function in
-    Omnicit.PIM. Adds three layers on top of the raw Graph SDK call:
+    Omnicit.PIM. Adds four layers on top of the raw Graph SDK call:
 
     1. Bearer token security: every catch block starts with Remove-OPIMErrorRecord, which clears
        the Authorization header off the raw HttpRequestMessage the SDK record points at (the
@@ -28,6 +28,12 @@ function Invoke-OPIMGraphRequest {
        produce structured ErrorRecord objects with the Graph error.code as the
        FullyQualifiedErrorId. The caller receives either a response or a thrown ErrorRecord --
        no _AcrsError hashtable protocol.
+
+    4. Graph SDK session gate: before the first attempt and before each retry it asks
+       Get-OPIMGraphSessionState whether the Microsoft Graph PowerShell SDK session is still the
+       one Initialize-OPIMAuth connected, and throws GraphSessionChanged, sending nothing, when
+       another Connect-MgGraph has replaced it. The gate stands outside the try that sends, and
+       returns after its throw, so a caller under -ErrorAction SilentlyContinue sends nothing either.
 
     .PARAMETER Method
     HTTP method for the Graph request. Defaults to GET.
@@ -110,6 +116,15 @@ function Invoke-OPIMGraphRequest {
     }
     if ($Body) { $InvokeParams.Body = $Body }
 
+    # SEC (OPIM-09, EntraRBAC A18): never a Graph call under a Graph SDK session this module did not
+    # connect. Initialize-OPIMAuth refuses one at a cmdlet's entry, but that refusal does not stop the
+    # cmdlet: outside a try the caller carries on, so the check is repeated before every request. The
+    # return is load-bearing: under -ErrorAction SilentlyContinue with no try up the call stack a
+    # function carries on past its own throw.
+    if ((Get-OPIMGraphSessionState) -eq 'Changed') {
+        throw (New-OPIMGraphSessionChangedError)
+        return
+    }
     try {
         return Invoke-MgGraphRequest @InvokeParams
     } catch {
@@ -133,6 +148,12 @@ function Invoke-OPIMGraphRequest {
         Initialize-OPIMAuth -TenantId $TenantId -ClaimsChallenge $ClaimsJson
 
         # -- Retry once with the upgraded token --------------------------------
+        # SEC (OPIM-09): the session gate again -- another Connect-MgGraph may have replaced the
+        # session during the step-up, and a refusal by Initialize-OPIMAuth does not stop this function.
+        if ((Get-OPIMGraphSessionState) -eq 'Changed') {
+            throw (New-OPIMGraphSessionChangedError)
+            return
+        }
         try {
             return Invoke-MgGraphRequest @InvokeParams
         } catch {
@@ -153,6 +174,12 @@ function Invoke-OPIMGraphRequest {
     if ($TokenInvalid -and $script:_OPIMAuthState) {
         Write-Verbose "[Invoke-OPIMGraphRequest] Token rejected (status=$StatusCode). Forcing re-authentication and retrying once..."
         Initialize-OPIMAuth -TenantId $script:_OPIMAuthState.TenantId -ForceRefresh
+        # SEC (OPIM-09): the session gate again -- another Connect-MgGraph may have replaced the
+        # session during the refresh, and a refusal by Initialize-OPIMAuth does not stop this function.
+        if ((Get-OPIMGraphSessionState) -eq 'Changed') {
+            throw (New-OPIMGraphSessionChangedError)
+            return
+        }
         try {
             return Invoke-MgGraphRequest @InvokeParams
         } catch {

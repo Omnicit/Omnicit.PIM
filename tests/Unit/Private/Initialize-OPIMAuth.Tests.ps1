@@ -403,6 +403,8 @@ Describe 'Initialize-OPIMAuth' {
                     }
                 }
                 Mock Connect-MgGraph {}
+                # Read once, by the fingerprint recorded after Connect-MgGraph.
+                Mock Get-MgContext { $null }
             }
         }
         BeforeEach {
@@ -453,6 +455,8 @@ Describe 'Initialize-OPIMAuth' {
                     }
                 }
                 Mock Connect-MgGraph {}
+                # Read once, by the fingerprint recorded after Connect-MgGraph.
+                Mock Get-MgContext { $null }
             }
         }
         BeforeEach {
@@ -705,13 +709,16 @@ Describe 'Initialize-OPIMAuth' {
 
         It 'never adopts a Graph context the module did not make' {
             # OPIM-09: a Connect-MgGraph made outside the module, for the tenant now asked for, is not
-            # taken over as the module's session; the module signs in for that tenant itself.
+            # taken over as the module's session; the module signs in for that tenant itself. The
+            # session fingerprint recorded after the module's own Connect-MgGraph is the one read of
+            # Get-MgContext on this path; it is mocked here, so any read of Get-MgContext is an adoption.
             $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
             $Token = New-OPIMTestAccessToken -TenantId $TenantB
             InModuleScope Omnicit.PIM -Parameters @{ State = $State; Token = $Token; TenantB = $TenantB } {
                 param($State, $Token, $TenantB)
                 $script:_OPIMAuthState = $State
                 $script:_OPIMTestToken = $Token
+                Mock Get-OPIMGraphSessionFingerprint { 'fp' }
                 Mock Get-MgContext { [pscustomobject]@{ TenantId = 'bbbbbbbb-0000-0000-0000-00000000000b' } }
                 Initialize-OPIMAuth -TenantId $TenantB
                 Should -Invoke Get-MgContext -Times 0 -Scope It
@@ -975,6 +982,229 @@ Describe 'Initialize-OPIMAuth' {
                 $Caught.FullyQualifiedErrorId | Should -BeLike 'ConnectMgGraphFailed*'
             }
             $Request.Headers.Contains('Authorization') | Should -BeFalse
+        }
+    }
+
+    Context 'When another Connect-MgGraph replaced the module session' {
+        # OPIM-09 (EntraRBAC A18). The acquisition runs through the Invoke-OPIMDeviceCodeAuth mock, as in
+        # the pin context. The Connect-MgGraph mock records that it ran, so the fingerprint mock can
+        # tell a read after the connect from one before it.
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
+                Mock Invoke-OPIMDeviceCodeAuth {
+                    [PSCustomObject]@{
+                        AccessToken = $script:_OPIMTestToken
+                        ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
+                        Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    }
+                }
+                Mock Connect-MgGraph { $script:_OPIMTestConnected = $true }
+                Mock Get-OPIMGraphSessionFingerprint { if ($script:_OPIMTestConnected) { 'fp' } else { 'read-before-the-connect' } }
+                Mock Get-AzContext {}
+                Mock Update-AzConfig {}
+                Mock Connect-AzAccount {}
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMTestToken = $null
+                $script:_OPIMTestConnected = $false
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMTestToken = $null
+                $script:_OPIMTestConnected = $null
+            }
+        }
+
+        It 'throws GraphSessionChanged before the cached return' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            $State.GraphSessionFingerprint = 'mine'
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; TenantA = $TenantA } {
+                param($State, $TenantA)
+                $script:_OPIMAuthState = $State
+                Mock Get-OPIMGraphSessionState { 'Changed' }
+                { Initialize-OPIMAuth } | Should -Throw -ErrorId 'GraphSessionChanged*'
+                $Caught = $null
+                try { Initialize-OPIMAuth } catch { $Caught = $PSItem }
+                $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+                $Caught.TargetObject | Should -Be $TenantA
+                Should -Invoke Get-OPIMGraphSessionState -Times 2 -Exactly -Scope It
+                Should -Invoke Get-OPIMMsalApplication -Times 0 -Scope It
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+                $script:_OPIMAuthState.GraphSessionFingerprint | Should -BeExactly 'mine'
+            }
+        }
+
+        It 'never connects Graph again by itself after a change (<Name>)' -ForEach @(
+            @{ Name = '-ForceRefresh'; Parameters = @{ ForceRefresh = $true } }
+            @{ Name = 'a claims challenge'; Parameters = @{ ClaimsChallenge = '{"access_token":{"acrs":{"essential":true,"value":"c1"}}}' } }
+            @{ Name = 'another tenant'; Parameters = @{ TenantId = 'bbbbbbbb-0000-0000-0000-00000000000b' } }
+            @{ Name = '-IncludeARM'; Parameters = @{ IncludeARM = $true } }
+        ) {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            $State.GraphSessionFingerprint = 'mine'
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Token = $Token; P = $Parameters; TenantA = $TenantA } {
+                param($State, $Token, $P, $TenantA)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestToken = $Token
+                Mock Get-OPIMGraphSessionState { 'Changed' }
+                $Caught = $null
+                try { Initialize-OPIMAuth @P } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+                # The module's own tenant, never the one the call named.
+                $Caught.TargetObject | Should -Be $TenantA
+                Should -Invoke Get-OPIMMsalApplication -Times 0 -Scope It
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 0 -Scope It
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+                Should -Invoke Get-AzContext -Times 0 -Scope It
+                Should -Invoke Connect-AzAccount -Times 0 -Scope It
+            }
+        }
+
+        It 'signs in again when the process holds no session' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            $State.GraphSessionFingerprint = 'mine'
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Token = $Token } {
+                param($State, $Token)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestToken = $Token
+                Mock Get-OPIMGraphSessionState { 'Absent' }
+                Initialize-OPIMAuth
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It
+                Should -Invoke Connect-MgGraph -Times 1 -Exactly -Scope It
+                $script:_OPIMAuthState.GraphSessionFingerprint | Should -BeExactly 'fp'
+            }
+        }
+
+        It 'returns from the cache under its own session' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+            $State.GraphSessionFingerprint = 'mine'
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMAuthState = $State
+                Mock Get-OPIMGraphSessionState { 'Own' }
+                Initialize-OPIMAuth
+                Should -Invoke Get-OPIMGraphSessionState -Times 1 -Exactly -Scope It
+                Should -Invoke Get-OPIMMsalApplication -Times 0 -Scope It
+                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+            }
+        }
+
+        It 'records the session it connected' {
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
+                param($Token, $TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_OPIMTestToken = $Token
+                Initialize-OPIMAuth -TenantId $TenantA
+                $script:_OPIMAuthState.ContainsKey('GraphSessionFingerprint') | Should -BeTrue
+                # 'fp' is what the mock gives only once Connect-MgGraph has run.
+                $script:_OPIMAuthState.GraphSessionFingerprint | Should -BeExactly 'fp'
+                Should -Invoke Get-OPIMGraphSessionFingerprint -Times 1 -Exactly -Scope It
+                Should -Invoke Connect-MgGraph -Times 1 -Exactly -Scope It
+            }
+        }
+
+        It 'records the key even when the process shows no session after the connect' {
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
+                param($Token, $TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_OPIMTestToken = $Token
+                Mock Get-OPIMGraphSessionFingerprint { $null }
+                Initialize-OPIMAuth -TenantId $TenantA
+                $script:_OPIMAuthState.ContainsKey('GraphSessionFingerprint') | Should -BeTrue
+                $script:_OPIMAuthState.GraphSessionFingerprint | Should -BeNullOrEmpty
+            }
+        }
+    }
+
+    Context 'When another Connect-MgGraph replaced the module session (end to end)' {
+        # The real Get-OPIMGraphSessionState and Get-OPIMGraphSessionFingerprint over a stateful
+        # Get-MgContext mock: no session until the module's own Connect-MgGraph, then the module's
+        # session, until a test puts another sign-in's session in its place.
+        BeforeAll {
+            InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA } {
+                param($TenantA)
+                $script:_OPIMTestOwnContext = [pscustomobject]@{
+                    AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+                    ClientId = 'cccccccc-0000-0000-0000-00000000000c'; TenantId = $TenantA
+                    Account = 'user@contoso.com'; AppName = 'opim-test-app'; Environment = 'Global'; Scopes = @('User.Read')
+                }
+                Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
+                Mock Invoke-OPIMDeviceCodeAuth {
+                    [PSCustomObject]@{
+                        AccessToken = $script:_OPIMTestToken
+                        ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
+                        Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    }
+                }
+                Mock Connect-MgGraph { $script:_OPIMTestSession = $script:_OPIMTestOwnContext }
+                Mock Get-MgContext { $script:_OPIMTestSession }
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMTestToken = $null
+                $script:_OPIMTestOwnContext = $null
+                $script:_OPIMTestSession = $null
+            }
+        }
+
+        It 'refuses its cached token once another Connect-MgGraph replaced the session it recorded' {
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
+                param($Token, $TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_OPIMTestToken = $Token
+                $script:_OPIMTestSession = $null
+
+                Initialize-OPIMAuth -TenantId $TenantA
+                $Recorded = $script:_OPIMAuthState.GraphSessionFingerprint
+                $Recorded | Should -BeExactly (Get-OPIMGraphSessionFingerprint -Context $script:_OPIMTestOwnContext)
+                # Under its own session the next call returns from the cache.
+                Initialize-OPIMAuth
+                Should -Invoke Connect-MgGraph -Times 1 -Exactly -Scope It
+
+                $script:_OPIMTestSession = [pscustomobject]@{
+                    AuthType = 'AppOnly'; TokenCredentialType = 'ClientCertificate'
+                    ClientId = 'dddddddd-0000-0000-0000-00000000000d'; TenantId = 'bbbbbbbb-0000-0000-0000-00000000000b'
+                    Account = $null; AppName = 'another-app'; Environment = 'Global'; Scopes = @()
+                }
+                $Caught = $null
+                try { Initialize-OPIMAuth } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+                $Caught.TargetObject | Should -Be $TenantA
+                $Caught.Exception.Message | Should -Not -BeLike '*bbbbbbbb-0000-0000-0000-00000000000b*'
+                $Caught.Exception.Message | Should -Not -BeLike '*dddddddd-0000-0000-0000-00000000000d*'
+                Should -Invoke Connect-MgGraph -Times 1 -Exactly -Scope It
+                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It
+                $script:_OPIMAuthState.GraphSessionFingerprint | Should -BeExactly $Recorded
+            }
+        }
+
+        It 'signs in again with its own token after Disconnect-MgGraph left no session' {
+            $Token = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
+                param($Token, $TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_OPIMTestToken = $Token
+                $script:_OPIMTestSession = $null
+
+                Initialize-OPIMAuth -TenantId $TenantA
+                $script:_OPIMTestSession = $null
+                Initialize-OPIMAuth
+                Should -Invoke Connect-MgGraph -Times 2 -Exactly -Scope It
+                $script:_OPIMAuthState.GraphSessionFingerprint |
+                    Should -BeExactly (Get-OPIMGraphSessionFingerprint -Context $script:_OPIMTestOwnContext)
+            }
         }
     }
 }
