@@ -51,7 +51,7 @@ Describe 'Enable-OPIMAzureRole' {
 
         It 'calls Resolve-OPIMSchedule for the supplied role name' {
             Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It
         }
 
         It 'calls New-AzRoleAssignmentScheduleRequest with SelfActivate RequestType' {

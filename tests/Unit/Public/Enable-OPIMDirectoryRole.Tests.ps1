@@ -66,7 +66,7 @@ Describe 'Enable-OPIMDirectoryRole' {
 
         It 'calls Resolve-OPIMSchedule for the supplied role name' {
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It
         }
 
         It 'calls Invoke-OPIMGraphRequest with POST to the roleAssignmentScheduleRequests endpoint' {
