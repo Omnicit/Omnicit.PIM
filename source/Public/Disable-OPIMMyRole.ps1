@@ -338,11 +338,15 @@ function Disable-OPIMMyRole {
                     if ($Config -is [hashtable] -and $Config.AzureRoles) {
                         # The config stores eligible schedule .Name values (same as Enable-OPIMMyRole), read
                         # through the tenant map's key helper; a blank entry yields no key (the set then holds a
-                        # null, which no post's key equals), so it matches nothing. Active instances are
-                        # different objects -- correlate via RoleDefinitionId + ScopeId.
+                        # null, which no post's key equals), so it matches nothing. OPIM-22: an entry stored from
+                        # an active role is Name|ScopeId and selects the eligibility only at that scope. Active
+                        # instances are different objects -- correlate via RoleDefinitionId + ScopeId.
                         $ConfiguredAzureKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
                         foreach ($Entry in $Config.AzureRoles) { [void]$ConfiguredAzureKeys.Add((ConvertTo-OPIMTenantMapKey -Pillar Azure -Entry $Entry)) }
-                        $ConfiguredEligible = Get-OPIMAzureRole -ErrorAction Stop | Where-Object { $ConfiguredAzureKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem)) }
+                        $ConfiguredEligible = Get-OPIMAzureRole -ErrorAction Stop | Where-Object {
+                            $ConfiguredAzureKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem)) -or
+                            $ConfiguredAzureKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem -WithScope))
+                        }
                     }
                     $ListRead = $true
                 } catch {

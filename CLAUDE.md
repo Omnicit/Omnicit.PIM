@@ -1104,24 +1104,31 @@ a completion must not print a warning into the prompt.
 `Set-OPIMConfiguration`. The private `Export-OPIMTenantMap` owns the PSD1 serialization and is
 called by `Install`, `Set` and `Remove`; never inline it.
 
-**The stored keys (OPIM-10, A13).** `DirectoryRoles` holds `roleDefinitionId|directoryScopeId`,
-`EntraIDGroups` holds `groupId_accessId`, and `AzureRoles` the eligibility schedule's `Name` -- for
-an active Azure role piped from `-Activated` (or an active row of `-All`), the eligibility it was
-activated from, the last segment of its `LinkedRoleEligibilityScheduleId` (OPIM-22), and only when
-the link names that eligibility at the instance's own `ScopeId`: `pim` activates an eligibility at
-its own scope, so storing one activated at a narrower scope would widen it (SECURITY 4). The
-private `ConvertTo-OPIMTenantMapKey` is the single owner of these formats and of how a stored entry
-is read: `-InputObject` returns a post's key and `-Entry` an entry as the key to compare with, where
-a directory entry without `|` -- the form 0.5.x wrote -- means the role at `/` only, never every
-scope of the role, and a blank entry returns nothing and matches no post. Build or read a key
-nowhere else: `Enable-OPIMMyRole` and `Disable-OPIMMyRole` read every configured entry of all
-three lists through `-Entry` and every listed post through `-InputObject`. `Install` and `Set`
-store each key once (`OrdinalIgnoreCase`, in the order first piped); `Enable-OPIMMyRole` keeps only
-the eligible posts whose key is configured, and `Disable-OPIMMyRole` reads each distinct directory
-key once, in the order configured, and matches the active posts by key -- a group entry is matched
-the same way, entry by entry, and an Azure entry selects the eligible schedules whose active
-instances it then finds by `RoleDefinitionId` and `ScopeId`; keys compare `OrdinalIgnoreCase`. So a
-configured directory role is activated and deactivated only at the scope its entry names.
+**The stored keys (OPIM-10, A13, OPIM-22).** `DirectoryRoles` holds
+`roleDefinitionId|directoryScopeId`, `EntraIDGroups` holds `groupId_accessId`, and `AzureRoles` the
+eligibility schedule's `Name` -- or, for an active Azure role piped from `-Activated` (or an active
+row of `-All`), `Name|ScopeId`: the eligibility it was activated from (the last segment of its
+`LinkedRoleEligibilityScheduleId`, which ARM returns as a bare name) and the instance's OWN
+`ScopeId`. A role can be activated at a narrower scope than its eligibility, and `pim` activates an
+eligibility at the eligibility's own scope, so an eligible post matches an Azure entry only when the
+entry equals its `Name` or its `-WithScope` key `Name|ScopeId`: an entry from a narrower activation
+matches nothing and activates nothing, never the wider eligibility (SECURITY 4). The private
+`ConvertTo-OPIMTenantMapKey` is the single owner of these formats and of how a stored entry is
+read: `-InputObject` returns a post's key, `-InputObject -WithScope` an Azure eligibility's
+`Name|ScopeId` (any other post's key unchanged), and `-Entry` an entry as the key to compare with,
+where a directory entry without `|` -- the form 0.5.x wrote -- means the role at `/` only, never
+every scope of the role, and a blank entry returns nothing and matches no post. Build or read a key
+nowhere else: `Enable-OPIMMyRole` and `Disable-OPIMMyRole` read every configured entry of all three
+lists through `-Entry` and every listed post through `-InputObject` (an Azure post with and without
+`-WithScope`). `Install` and `Set` store each key once (`OrdinalIgnoreCase`, in the order first
+piped), comparing by the `-WithScope` key, so an eligible Azure role and its activation at its own
+scope are stored once; `Enable-OPIMMyRole` keeps only the eligible posts whose key is configured,
+and `Disable-OPIMMyRole` reads each distinct directory key once, in the order configured, and
+matches the active posts by key -- a group entry is matched the same way, entry by entry, and an
+Azure entry selects the eligible schedules whose active instances it then finds by
+`RoleDefinitionId` and `ScopeId`; keys compare `OrdinalIgnoreCase`. So a configured directory role
+is activated and deactivated only at the scope its entry names, and an Azure role only at its
+eligibility's scope.
 
 ---
 
@@ -1253,13 +1260,16 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
 - **`LinkedEligibilityNotFound` has one owner.** `ConvertTo-OPIMTenantMapKey` builds it (category
   `ObjectNotFound`, the instance as its target) and throws it with `ThrowTerminatingError` when an
   active Azure role cannot be stored in the tenant map (OPIM-22): its
-  `LinkedRoleEligibilityScheduleId` is empty or missing, or the scope the link names (the text
-  before `/providers/Microsoft.Authorization/roleEligibilitySchedules/`, compared
-  `OrdinalIgnoreCase`) differs from the instance's `ScopeId` -- an activation at a narrower scope --
-  or is absent (a bare name, or the provider-only form), since an unprovable scope is no proof of
-  the same scope. The two cases carry messages of their own; build the record nowhere else. `Install-OPIMConfiguration` and `Set-OPIMConfiguration` call the helper with
-  `-ErrorAction Stop` in a `try` whose catch scrubs first, writes the record (non-terminating) and
-  skips only that piped object; the others are still stored.
+  `LinkedRoleEligibilityScheduleId` names no eligibility (empty, missing, or ending in `/`), or it is
+  a full ARM id whose scope (the text before
+  `/providers/Microsoft.Authorization/roleEligibilitySchedules/`, found and compared
+  `OrdinalIgnoreCase`) differs from the instance's `ScopeId` -- an activation at a narrower scope. A
+  bare link, or the provider-only form, is not refused: it is stored with the instance's scope, and
+  the scope is proven when the entry is read (see **The stored keys** under **Configuration CRUD**).
+  The two cases carry messages of their own; build the record nowhere else.
+  `Install-OPIMConfiguration` and `Set-OPIMConfiguration` call the helper with `-ErrorAction Stop`
+  in a `try` whose catch scrubs first, writes the record (non-terminating) and skips only that piped
+  object; the others are still stored.
 - **Request status has one owner.** `Get-OPIMRequestOutcome` classifies a status (Succeeded,
   InProgress, AwaitingDecision, Failed; table in its help; `-Deactivate` for SelfDeactivate, whose
   success is `Revoked`); `Write-OPIMRequestOutcome` writes the status back onto the request and

@@ -847,6 +847,87 @@ Describe 'Enable-OPIMMyRole' {
         }
     }
 
+    Context 'When a tenant alias lists an Azure role stored from an active role (OPIM-22)' {
+        # An active Azure role is stored as '<eligibility Name>|<its own ScopeId>'. It matches an
+        # eligible post only when that post is the eligibility AT that scope, so an entry from an
+        # activation at a narrower scope than its eligibility matches nothing -- never the wider
+        # eligibility. An entry stored from an eligible role (its Name) matches as before.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @() }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @() }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    scoped   = @{ TenantId = '00000000-0000-0000-0000-000000000003'; AzureRoles = @('elig-az-101|/subscriptions/sub-001') }
+                    narrowed = @{ TenantId = '00000000-0000-0000-0000-000000000003'; AzureRoles = @('elig-az-101|/subscriptions/sub-001/resourceGroups/rg-001') }
+                    upper    = @{ TenantId = '00000000-0000-0000-0000-000000000003'; AzureRoles = @('ELIG-AZ-101|/SUBSCRIPTIONS/SUB-001') }
+                    bare     = @{ TenantId = '00000000-0000-0000-0000-000000000003'; AzureRoles = @('elig-az-101') }
+                    both     = @{ TenantId = '00000000-0000-0000-0000-000000000003'; AzureRoles = @('elig-az-101', 'elig-az-101|/subscriptions/sub-001') }
+                }
+            }
+
+            $EligibleSub = [PSCustomObject]@{
+                Name = 'elig-az-101'; RoleDefinitionId = 'role-az-101'; ScopeId = '/subscriptions/sub-001'
+                RoleDefinitionDisplayName = 'Contributor'; ScopeDisplayName = 'ProdSub'
+            }
+            $EligibleOther = [PSCustomObject]@{
+                Name = 'elig-az-102'; RoleDefinitionId = 'role-az-101'; ScopeId = '/subscriptions/sub-002'
+                RoleDefinitionDisplayName = 'Contributor'; ScopeDisplayName = 'DevSub'
+            }
+            foreach ($Post in @($EligibleSub, $EligibleOther)) {
+                $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
+            }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($EligibleSub, $EligibleOther) }
+            Mock -ModuleName Omnicit.PIM Enable-OPIMAzureRole { $script:EnabledAzure.Add($Role) }
+        }
+        BeforeEach {
+            $script:EnabledAzure = [System.Collections.Generic.List[object]]::new()
+        }
+
+        It 'activates exactly the eligibility at the scope the entry names' {
+            Enable-OPIMMyRole -TenantAlias scoped -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:EnabledAzure.Count | Should -Be 1
+            $script:EnabledAzure[0].Name | Should -BeExactly 'elig-az-101'
+            $script:EnabledAzure[0].ScopeId | Should -BeExactly '/subscriptions/sub-001'
+        }
+
+        It 'activates nothing for an entry whose scope is not the scope of its eligibility' {
+            # The reduced-scope case with a bare link: the eligibility is at the subscription, the
+            # entry names one of its resource groups. The wider eligibility is not activated.
+            $Out = Enable-OPIMMyRole -TenantAlias narrowed -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue -Verbose 4>&1
+            $Errs.Count | Should -Be 0
+            $script:EnabledAzure.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 0 -Scope It
+            # The listing was read and filtered: the entry was compared with every eligible post.
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It
+            @($Out | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] -and
+                    $_.Message -eq 'No eligible Azure roles matched the configured set.' }).Count | Should -Be 1
+        }
+
+        It 'compares a scoped entry without regard to letter case' {
+            Enable-OPIMMyRole -TenantAlias upper -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:EnabledAzure.Count | Should -Be 1
+            $script:EnabledAzure[0].Name | Should -BeExactly 'elig-az-101'
+        }
+
+        It 'activates the eligibility for an entry stored from an eligible role, as before' {
+            Enable-OPIMMyRole -TenantAlias bare -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:EnabledAzure.Count | Should -Be 1
+            $script:EnabledAzure[0].Name | Should -BeExactly 'elig-az-101'
+        }
+
+        It 'activates the eligibility once when both forms of it are configured' {
+            Enable-OPIMMyRole -TenantAlias both -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:EnabledAzure.Count | Should -Be 1
+            $script:EnabledAzure[0].Name | Should -BeExactly 'elig-az-101'
+        }
+    }
+
     Context 'The default -TenantMapPath (OPIM-21)' {
         BeforeAll {
             $Param = (Get-Command Enable-OPIMMyRole).ScriptBlock.Ast.Body.ParamBlock.Parameters |

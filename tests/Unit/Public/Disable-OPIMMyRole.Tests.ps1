@@ -1087,6 +1087,83 @@ Describe 'Disable-OPIMMyRole' {
         }
     }
 
+    Context 'When a tenant alias lists an Azure role stored from an active role (OPIM-22)' {
+        # An active Azure role is stored as '<eligibility Name>|<its own ScopeId>', which selects the
+        # eligibility only at that scope; its activation there is then deactivated. An entry from an
+        # activation at a narrower scope than its eligibility selects nothing, so nothing is deactivated.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    scoped   = @{ TenantId = '00000000-0000-0000-0000-000000000003'; AzureRoles = @('elig-az-101|/subscriptions/sub-001') }
+                    narrowed = @{ TenantId = '00000000-0000-0000-0000-000000000003'; AzureRoles = @('elig-az-101|/subscriptions/sub-001/resourceGroups/rg-001') }
+                    upper    = @{ TenantId = '00000000-0000-0000-0000-000000000003'; AzureRoles = @('ELIG-AZ-101|/SUBSCRIPTIONS/SUB-001') }
+                    bare     = @{ TenantId = '00000000-0000-0000-0000-000000000003'; AzureRoles = @('elig-az-101') }
+                }
+            }
+
+            $EligibleSub = [PSCustomObject]@{
+                Name = 'elig-az-101'; ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'ProdSub'
+                RoleDefinitionId = 'role-az-101'; RoleDefinitionDisplayName = 'Contributor'
+            }
+            $EligibleSub.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
+            # The eligibility activated at its own scope, and again at one of its resource groups.
+            $ActiveSub = [PSCustomObject]@{
+                Name = 'az-active-101'; ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'ProdSub'
+                RoleDefinitionId = 'role-az-101'; RoleDefinitionDisplayName = 'Contributor'
+                LinkedRoleEligibilityScheduleId = 'elig-az-101'
+            }
+            $ActiveRg = [PSCustomObject]@{
+                Name = 'az-active-102'; ScopeId = '/subscriptions/sub-001/resourceGroups/rg-001'; ScopeDisplayName = 'rg-001'
+                RoleDefinitionId = 'role-az-101'; RoleDefinitionDisplayName = 'Contributor'
+                LinkedRoleEligibilityScheduleId = 'elig-az-101'
+            }
+            foreach ($Post in @($ActiveSub, $ActiveRg)) {
+                $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+            }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @() } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @() } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($EligibleSub) } -ParameterFilter { -not $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($ActiveSub, $ActiveRg) } -ParameterFilter { $Activated }
+        }
+
+        It 'deactivates exactly the activation of the eligibility at the scope the entry names' {
+            Disable-OPIMMyRole -TenantAlias 'scoped' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Role.Name -eq 'az-active-101'
+            }
+        }
+
+        It 'deactivates nothing for an entry whose scope is not the scope of its eligibility' {
+            Disable-OPIMMyRole -TenantAlias 'narrowed' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 0 -Scope It
+            # Both listings were read: the entry was compared with the eligible posts.
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter { -not $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+        }
+
+        It 'compares a scoped entry without regard to letter case' {
+            Disable-OPIMMyRole -TenantAlias 'upper' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Role.Name -eq 'az-active-101'
+            }
+        }
+
+        It 'deactivates the activation for an entry stored from an eligible role, as before' {
+            Disable-OPIMMyRole -TenantAlias 'bare' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Role.Name -eq 'az-active-101'
+            }
+        }
+    }
+
     Context 'When called with -TenantAlias pointing to a hashtable config with no category lists' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Connect-OPIM {}

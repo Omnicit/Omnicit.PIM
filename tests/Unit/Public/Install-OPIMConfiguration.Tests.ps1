@@ -172,7 +172,9 @@ Describe 'Install-OPIMConfiguration' {
 
     Context 'When an active Azure role is piped (OPIM-22)' {
         # An active instance from Get-OPIMAzureRole -Activated (or an active row of -All) is stored by
-        # the eligibility schedule it was activated from, the Name pim compares with -- or refused.
+        # the eligibility schedule it was activated from and its own scope, '<Name>|<ScopeId>', which pim
+        # matches only with that eligibility at that scope -- or refused when its link names no
+        # eligibility, or names one at another scope.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
@@ -221,24 +223,54 @@ Describe 'Install-OPIMConfiguration' {
                 ScopeDisplayName                = 'rg-001'
             }
             $script:azNarrow.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+            # The link as ARM returns it and as Enable-OPIMAzureRole sends it: the bare Name.
+            $script:azBare = [PSCustomObject]@{
+                Name                            = 'az-active-005'
+                LinkedRoleEligibilityScheduleId = 'elig-az-005'
+                RoleDefinitionId                = '/providers/Microsoft.Authorization/roleDefinitions/role-def-az-005'
+                ScopeId                         = '/subscriptions/sub-001'
+            }
+            $script:azBare.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+            $script:azProviderOnly = [PSCustomObject]@{
+                Name                            = 'az-active-006'
+                LinkedRoleEligibilityScheduleId = '/providers/Microsoft.Authorization/roleEligibilitySchedules/elig-az-006'
+                RoleDefinitionId                = '/providers/Microsoft.Authorization/roleDefinitions/role-def-az-006'
+                ScopeId                         = '/subscriptions/sub-002'
+            }
+            $script:azProviderOnly.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
         }
         BeforeEach {
             $script:writtenContent = $null
         }
 
-        It 'stores the eligibility the active role was activated from, not the instance Name' {
+        It 'stores the eligibility the active role was activated from with its own scope, not the instance Name' {
             $script:azActive | Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
             $Errs.Count | Should -Be 0
-            $script:writtenContent | Should -Match "AzureRoles\s+=\s+@\('elig-az-001'\)"
+            $script:writtenContent | Should -Match ("AzureRoles\s+=\s+@\(" + [regex]::Escape("'elig-az-001|/subscriptions/sub-001'") + "\)")
             $script:writtenContent | Should -Not -Match 'az-active-001'
+        }
+
+        It 'stores an active role whose link is <Label> as its eligibility and its own scope' -ForEach @(
+            @{ Label = 'a bare name'; Fixture = 'azBare'; Expected = 'elig-az-005|/subscriptions/sub-001' }
+            @{ Label = 'the provider-only form'; Fixture = 'azProviderOnly'; Expected = 'elig-az-006|/subscriptions/sub-002' }
+        ) {
+            $Fixtures = @{ azBare = $script:azBare; azProviderOnly = $script:azProviderOnly }
+            $Fixtures[$Fixture] | Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:writtenContent | Should -Match ("AzureRoles\s+=\s+@\(" + [regex]::Escape("'$Expected'") + "\)")
         }
 
         It 'stores the key once when the eligible role and its active instance are piped' {
             $script:azEligible, $script:azActive | Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
             $Errs.Count | Should -Be 0
-            $script:writtenContent | Should -Not -BeNullOrEmpty
-            [regex]::Matches($script:writtenContent, [regex]::Escape("'elig-az-001'")).Count | Should -Be 1
+            $script:writtenContent | Should -Match "AzureRoles\s+=\s+@\('elig-az-001'\)"
             $script:writtenContent | Should -Not -Match 'az-active-001'
+        }
+
+        It 'stores the key once, in the form first piped, when the active instance comes before its eligible role' {
+            $script:azActive, $script:azEligible | Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:writtenContent | Should -Match ("AzureRoles\s+=\s+@\(" + [regex]::Escape("'elig-az-001|/subscriptions/sub-001'") + "\)")
         }
 
         It 'writes LinkedEligibilityNotFound for an active role that names no eligibility, and stores the other piped objects' {

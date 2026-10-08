@@ -52,13 +52,15 @@ function Install-OPIMConfiguration {
     A directory role is stored with its scope, as roleDefinitionId|directoryScopeId, so pim and unpim
     act on it only at that scope; a group is stored as groupId_accessId, and an Azure role as the
     Name of its eligibility schedule. An active Azure role (from Get-OPIMAzureRole -Activated, or an
-    active row of -All) is stored as the eligibility schedule it was activated from, which pim
-    activates at the eligibility's own scope. An active Azure role that names no eligibility, or that
-    is not shown to be active at its eligibility's scope (activated at a narrower scope, or a link
-    without a scope), is written as the error LinkedEligibilityNotFound and not stored; pipe the
-    eligible role instead. The other piped objects still are stored. Each key is stored once,
-    without regard to letter case, in the order first piped. Objects not matching a known
-    Omnicit.PIM type are silently ignored.
+    active row of -All) is stored as the eligibility schedule it was activated from plus its own
+    scope (Name|ScopeId), and pim activates it only while that eligibility is at that scope. One
+    activated at another scope than its eligibility is refused when its link names the
+    eligibility's scope -- the error LinkedEligibilityNotFound, and nothing stored -- and otherwise
+    matches no eligible role, so pim activates nothing for it; one that names no eligibility is
+    refused the same way. Pipe the eligible role to activate it at its own scope. The other piped
+    objects still are stored. Each key is stored once, without regard to letter case, in the order
+    first piped; an eligible role and its activation at its own scope are one key. Objects not
+    matching a known Omnicit.PIM type are silently ignored.
     #>
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     [OutputType([void])]
@@ -105,21 +107,25 @@ function Install-OPIMConfiguration {
             }
             { $null -ne $InputObject.RoleDefinitionId -and $null -ne $InputObject.ScopeId } {
                 # Azure role from Get-OPIMAzureRole: the Name of its eligibility schedule, or for an
-                # active role the eligibility it was activated from
+                # active role the eligibility it was activated from and its own scope
                 'Azure'; break
             }
         }
         if (-not $Pillar) { return }
-        # OPIM-22: an active Azure role that names no eligibility is refused by the key helper with
-        # LinkedEligibilityNotFound; it is written and skipped, and the other piped objects are stored.
+        # OPIM-22: an active Azure role that names no eligibility, or names it at another scope, is refused
+        # by the key helper with LinkedEligibilityNotFound; it is written and skipped, and the other piped
+        # objects are stored.
         try {
             $Key = ConvertTo-OPIMTenantMapKey -Pillar $Pillar -InputObject $InputObject -ErrorAction Stop
+            # An Azure eligibility (stored as its Name) and an active role of it at its own scope (stored as
+            # Name|ScopeId) are one post, so both are seen under the scoped key and the first piped is stored.
+            $SeenKey = ConvertTo-OPIMTenantMapKey -Pillar $Pillar -InputObject $InputObject -WithScope -ErrorAction Stop
         } catch {
             Remove-OPIMErrorRecord -Record $PSItem
             $PSCmdlet.WriteError($PSItem)
             return
         }
-        if ($SeenKeys[$Pillar].Add($Key)) { $StoredKeys[$Pillar].Add($Key) }
+        if ($SeenKeys[$Pillar].Add($SeenKey)) { $StoredKeys[$Pillar].Add($Key) }
     }
     end {
         # -- Resolve TenantId from the module's own sign-in when not supplied ---

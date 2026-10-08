@@ -329,10 +329,15 @@ function Enable-OPIMMyRole {
                 if ($ListRead) {
                     if ($Config -is [hashtable] -and $Config.AzureRoles) {
                         # The eligibility schedule Name, read through the tenant map's key helper; a blank entry
-                        # yields no key and matches nothing, as above.
+                        # yields no key and matches nothing, as above. OPIM-22: an entry stored from an active role
+                        # is Name|ScopeId and matches the eligibility only at that scope -- an activation at a
+                        # narrower scope than its eligibility matches nothing, never the wider eligibility.
                         $ConfiguredAzureKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
                         foreach ($Entry in $Config.AzureRoles) { [void]$ConfiguredAzureKeys.Add((ConvertTo-OPIMTenantMapKey -Pillar Azure -Entry $Entry)) }
-                        $AzureRoles = $AzureRoles | Where-Object { $ConfiguredAzureKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem)) }
+                        $AzureRoles = $AzureRoles | Where-Object {
+                            $ConfiguredAzureKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem)) -or
+                            $ConfiguredAzureKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem -WithScope))
+                        }
                     }
                     if ($AzureRoles) {
                         Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($AzureRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))

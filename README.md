@@ -470,7 +470,7 @@ The file is safe to edit manually — it is standard PowerShell data file syntax
 |---|---|---|
 | Directory Role | `"{roleDefinitionId}\|{directoryScopeId}"` | `"$($_.roleDefinitionId)\|$($_.directoryScopeId)"` |
 | Entra ID Group | `"{groupId}_{accessId}"` | `"$($_.groupId)_$($_.accessId)"` |
-| Azure Role | Eligibility schedule name | `$_.Name`; for an active role from `-Activated`, the eligibility it was activated from (the last segment of `$_.LinkedRoleEligibilityScheduleId`), only when the role is active at that eligibility's own scope |
+| Azure Role | Eligibility schedule name; for an active role, `"{name}\|{ScopeId}"` | `$_.Name`; for an active role from `-Activated`, the eligibility it was activated from (the last segment of `$_.LinkedRoleEligibilityScheduleId`) and the role's own `$_.ScopeId` |
 
 These identifiers are stable across eligibility renewals. The `accessId` in the group key is
 either `member` or `owner`, so you can store member and owner eligibility for the same group
@@ -479,9 +479,11 @@ independently.
 A directory role is stored with its scope -- `/` for the whole directory, or
 `/administrativeUnits/{id}` for an administrative unit -- and `pim` and `unpim` activate and
 deactivate it only at that scope. An entry written by 0.5.x holds only the `roleDefinitionId` and
-now means the role at the root scope `/` only. An older module version reading an entry with a
-scope matches nothing for it: it activates and deactivates no directory role for that entry. Keys
-are compared without regard to letter case, and each key is stored once.
+now means the role at the root scope `/` only; for a role eligible only below the root, pipe the
+role to `Set-OPIMConfiguration` again to store its scope. An older module version (0.5.x) reading
+an entry with a scope matches nothing for it: it activates and deactivates no directory role, and
+no Azure role stored from `-Activated`, for that entry. Keys are compared without regard to letter
+case, and each key is stored once.
 
 ### Creating and managing entries
 
@@ -515,12 +517,14 @@ without it the tenant Omnicit.PIM is signed in to is stored, and without such a 
 stored (`TenantIdNotResolvable`). The file written is the default tenant map unless
 `-TenantMapPath` names another.
 
-An active Azure role is stored as the eligibility it was activated from, so `pim` finds it among
-your eligible roles and activates it at that eligibility's own scope. An active Azure role that
-names no eligibility, or that is active at another scope than its eligibility (a narrower scope
-chosen when it was activated), is refused with the error `LinkedEligibilityNotFound` and is not
-stored, since `pim` would activate the wider scope; pipe the eligible role from `Get-OPIMAzureRole`
-instead. The other piped objects are still stored.
+An active Azure role is stored as the eligibility it was activated from plus its own scope
+(`{name}|{ScopeId}`), and `pim` and `unpim` act on it only while that eligibility is at that
+scope. One activated at another scope than its eligibility (a narrower scope chosen when it was
+activated) never stands for the wider eligibility: when Azure names the eligibility's scope, it is
+refused with the error `LinkedEligibilityNotFound` and not stored, and otherwise the stored entry
+matches no eligible role, so `pim` activates nothing for it. An active Azure role that names no
+eligibility is refused the same way. To activate the eligibility at its own scope, pipe the
+eligible role from `Get-OPIMAzureRole` instead. The other piped objects are still stored.
 
 ```powershell
 # Store all eligible directory roles for this tenant
@@ -545,8 +549,9 @@ Get-OPIMAzureRole |
     Where-Object { $_.RoleDefinitionDisplayName -like 'Contributor*' } |
     Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>'
 
-# Store your currently active Azure roles as the eligibilities they were activated from
-# (a role activated at a narrower scope than its eligibility is refused)
+# Store your currently active Azure roles as the eligibilities they were activated from, each
+# with its own scope (a role activated at a narrower scope than its eligibility is refused, or
+# stored as an entry that activates nothing)
 Get-OPIMAzureRole -Activated |
     Install-OPIMConfiguration -TenantAlias fabrikam -TenantId '<guid>'
 
