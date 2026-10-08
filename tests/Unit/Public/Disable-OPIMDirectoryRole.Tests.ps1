@@ -65,7 +65,7 @@ Describe 'Disable-OPIMDirectoryRole' {
 
         It 'calls Resolve-OPIMSchedule for the supplied role name' {
             Disable-OPIMDirectoryRole -RoleName 'Global Administrator (instance-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It
         }
 
         It 'calls Invoke-OPIMGraphRequest with POST to the roleAssignmentScheduleRequests endpoint' {
@@ -541,6 +541,23 @@ Describe 'Disable-OPIMDirectoryRole' {
             # Both lists were read on the second call: the active list, then the eligible one for the hint.
             Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 2 -Exactly -Scope It -ParameterFilter { $Activated }
             Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter { -not $Activated }
+        }
+
+        It 'names the active form, and deactivates nothing, for the eligibility key of a role that is active' {
+            # What the 0.5.1 completers offered: the role's own key. The role is active as act-001, so the
+            # message must not call it deactivated, and the name is not the active instance's.
+            $Held.IsActive = $true
+            $Out = & {
+                Disable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader (elig-001)' -ErrorAction Continue
+                'reached'
+            } 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            ($Out -contains 'reached') | Should -BeTrue
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Disable-OPIMDirectoryRole'
+            $Written[0].Exception.Message | Should -Not -BeLike '*already deactivated*'
+            $Written[0].Exception.Message | Should -BeLike "*It is active as 'Usage Summary Reports Reader (act-001)'*"
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
         }
     }
 

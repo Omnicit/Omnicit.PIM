@@ -15,8 +15,11 @@ function Resolve-OPIMSchedule {
       be returned, since they are different states of the same thing.
     - no match: the terminating EligibleRoleNotFound (ActiveRoleNotFound for -Status Active). For
       -Status Active the eligible list is read once more, and a name that still matches an eligible
-      post (under the same -Scope and -AccessType) is reported as already deactivated. That read is
-      best effort: if it fails, the hint is left out and the error is still ActiveRoleNotFound.
+      post (under the same -Scope and -AccessType) is reported as already deactivated -- unless an
+      active post that those filters admit carries the label of that eligible post, in which case
+      the role IS active under another key and the message names its active form instead. That
+      read is best effort: if it fails, the hint is left out and the error is still
+      ActiveRoleNotFound.
     - several: the terminating AmbiguousName, listing the candidates. The first match is never taken.
 
     A listing that fails is thrown as its own record, never reported as not found (OPIM-12).
@@ -137,7 +140,26 @@ function Resolve-OPIMSchedule {
                     @(Find-OPIMScheduleMatch -Pillar $Pillar -Name $Known.OldForm -InputObject $Eligible @Filters) -contains $Post
             })
         }
-        if ($StillEligible.Count -gt 0) { $Hint.AlreadyInactive = $true }
+        if ($StillEligible.Count -gt 0) {
+            # An eligible post does not make the name deactivated: the name may carry the key of the
+            # eligibility (what the 0.5.1 completers offered) or the stale instance key of a role that
+            # IS active under the same label. So "already deactivated" is claimed only when no active
+            # post that the explicit filters admit carries the label of an eligible match; otherwise
+            # the message names the active form.
+            $EligibleLabels = @($StillEligible | ForEach-Object {
+                (Get-OPIMScheduleName -Pillar $Pillar -InputObject $PSItem).Label
+            })
+            $ActiveForm = @($Items | Where-Object {
+                $Active = $PSItem
+                $Known = Get-OPIMScheduleName -Pillar $Pillar -InputObject $Active
+                $SameLabel = $false
+                foreach ($EligibleLabel in $EligibleLabels) {
+                    if ([string]::Equals($Known.Label, $EligibleLabel, [System.StringComparison]::OrdinalIgnoreCase)) { $SameLabel = $true }
+                }
+                $SameLabel -and @(Find-OPIMScheduleMatch -Pillar $Pillar -Name $Known.OldForm -InputObject $Items @Filters) -contains $Active
+            })
+            if ($ActiveForm.Count -gt 0) { $Hint.ActiveForm = $ActiveForm } else { $Hint.AlreadyInactive = $true }
+        }
     }
     $NotFoundId = if ($Status -eq 'Active') { 'ActiveRoleNotFound' } else { 'EligibleRoleNotFound' }
     $PSCmdlet.ThrowTerminatingError((New-OPIMScheduleNameError -ErrorId $NotFoundId -Pillar $Pillar `

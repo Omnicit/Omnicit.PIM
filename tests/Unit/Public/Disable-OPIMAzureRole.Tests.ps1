@@ -52,7 +52,7 @@ Describe 'Disable-OPIMAzureRole' {
 
         It 'calls Resolve-OPIMSchedule for the supplied role name' {
             Disable-OPIMAzureRole -RoleName 'Contributor (active-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It
         }
 
         It 'calls New-AzRoleAssignmentScheduleRequest with SelfDeactivate RequestType' {
@@ -602,6 +602,23 @@ Describe 'Disable-OPIMAzureRole' {
             # Both lists were read on the second call: the active list, then the eligible one for the hint.
             Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 2 -Exactly -Scope It -ParameterFilter { $Activated }
             Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter { -not $Activated }
+        }
+
+        It 'names the active form, and deactivates nothing, for the eligibility key of a role that is active' {
+            # What the 0.5.1 completers offered: the role's own key. The role is active as active-001, so
+            # the message must not call it deactivated, and the name is not the active assignment's.
+            $Held.IsActive = $true
+            $Out = & {
+                Disable-OPIMAzureRole -RoleName 'Reader -> rg-one (azure-001)' -ErrorAction Continue
+                'reached'
+            } 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            ($Out -contains 'reached') | Should -BeTrue
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Disable-OPIMAzureRole'
+            $Written[0].Exception.Message | Should -Not -BeLike '*already deactivated*'
+            $Written[0].Exception.Message | Should -BeLike "*It is active as 'Reader -> rg-one (active-001)'*"
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
         }
     }
 

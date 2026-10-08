@@ -109,24 +109,41 @@ Describe 'Resolve-OPIMSchedule' {
             $AzureActive = @(New-AzurePost -Name 'azure-act-003' -Role 'Contributor' -ScopeId '/subscriptions/sub-001' -ScopeName 'sub-001' -Status Active)
             $AzureActiveTwin = New-AzurePost -Name 'azure-act-103' -Role 'Contributor' -ScopeId '/subscriptions/sub-001' -ScopeName 'sub-001' -Status Active
 
+            # One role at two scopes that carry the same display name, the eligible post at the first
+            # and the active post at the second: they share a label, and only a -Scope tells them apart.
+            $DirectorySameLabelEligible = @(New-DirectoryPost -Id 'elig-021' -Role 'Scoped Reader' -ScopeId '/administrativeUnits/au-001' -ScopeName 'Sales AU')
+            $DirectorySameLabelActive   = @(New-DirectoryPost -Id 'act-022' -Role 'Scoped Reader' -ScopeId '/administrativeUnits/au-002' -ScopeName 'Sales AU' -Status Active)
+            $AzureSameLabelEligible     = @(New-AzurePost -Name 'azure-021' -Role 'Scoped Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one')
+            $AzureSameLabelActive       = @(New-AzurePost -Name 'azure-act-022' -Role 'Scoped Reader' -ScopeId '/subscriptions/sub-002/resourceGroups/rg-one' -ScopeName 'rg-one' -Status Active)
+            # The group the user holds as owner only while it is active.
+            $GroupActiveOwner = @(New-GroupPost -Id 'grp-act-001' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'owner' -Status Active)
+            # An eligible and an active Reader at one resource group, beside the eligible Reader at another.
+            $AzureReaderActive = New-AzurePost -Name 'azure-act-001' -Role 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one' -Status Active
+
             @{
                 Directory = @{
                     Eligible      = $DirectoryEligible
                     Active        = $DirectoryActive
                     Both          = @($DirectoryEligible) + $DirectoryActive
                     BothTwoActive = @($DirectoryEligible) + $DirectoryActive + @($DirectoryActiveTwin)
+                    SameLabelEligible = $DirectorySameLabelEligible
+                    SameLabelActive   = $DirectorySameLabelActive
                 }
                 Group     = @{
                     Eligible      = $GroupEligible
                     Active        = $GroupActive
                     Both          = @($GroupEligible) + $GroupActive
                     BothTwoActive = @($GroupEligible) + $GroupActive + @($GroupActiveTwin)
+                    ActiveOwner   = $GroupActiveOwner
                 }
                 Azure     = @{
                     Eligible      = $AzureEligible
                     Active        = $AzureActive
                     Both          = @($AzureEligible) + $AzureActive
                     BothTwoActive = @($AzureEligible) + $AzureActive + @($AzureActiveTwin)
+                    SameLabelEligible = $AzureSameLabelEligible
+                    SameLabelActive   = $AzureSameLabelActive
+                    BothReaderActive  = @($AzureEligible) + @($AzureReaderActive)
                 }
             }
         }
@@ -542,7 +559,7 @@ Describe 'Resolve-OPIMSchedule' {
             $Record = & $Capture @{ Pillar = $Pillar; Name = $DisplayName; Status = 'Active' }
             $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Resolve-OPIMSchedule'
             $Record.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
-            $Record.Exception.Message | Should -BeLike '*It is eligible but not active, so it is already deactivated.*'
+            $Record.Exception.Message | Should -BeLike '*It is eligible but not active: it is already deactivated, or its activation has not finished yet.*'
             $Record.TargetObject | Should -Be $DisplayName
             Should -Invoke -CommandName $Lister -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It -ParameterFilter { $Activated -eq $true }
             Should -Invoke -CommandName $Lister -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It -ParameterFilter { -not $Activated -and -not $All -and $ErrorAction -eq 'Stop' }
@@ -638,6 +655,150 @@ Describe 'Resolve-OPIMSchedule' {
             # A filter that admits it keeps the hint.
             $Record = & $Capture (@{ Pillar = $Pillar; Name = $DisplayName; Status = 'Active' } + $Admitted)
             $Record.Exception.Message | Should -BeLike '*already deactivated*'
+        }
+    }
+
+    Context 'When the post is eligible and the same label is active under another key (OPIM-40 guard)' -ForEach @(
+        @{
+            # 'Message Center Privacy Reader' is eligible as elig-003 and active as act-003.
+            Pillar = 'Directory'; Lister = 'Get-OPIMDirectoryRole'
+            DisplayName = 'Message Center Privacy Reader'
+            EligibleKeyForm = 'Message Center Privacy Reader (elig-003)'
+            StaleKeyForm = 'Message Center Privacy Reader (inst-old)'
+            ActiveForm = 'Message Center Privacy Reader (act-003)'
+            OtherLabelName = 'Ops (Tier 1)'; OtherLabelOldForm = 'Ops (Tier 1) (inst-011)'
+        }
+        @{
+            Pillar = 'Group'; Lister = 'Get-OPIMEntraIDGroup'
+            DisplayName = 'unique-grp'
+            EligibleKeyForm = 'unique-grp - member (grp-elig-005)'
+            StaleKeyForm = 'unique-grp - member (grp-inst-old)'
+            ActiveForm = 'unique-grp - member (grp-act-005)'
+            OtherLabelName = 'Ops (Tier 1)'; OtherLabelOldForm = 'Ops (Tier 1) - member (grp-inst-011)'
+        }
+        @{
+            Pillar = 'Azure'; Lister = 'Get-OPIMAzureRole'
+            DisplayName = 'Contributor'
+            EligibleKeyForm = 'Contributor -> sub-001 (azure-003)'
+            StaleKeyForm = 'Contributor -> sub-001 (azure-inst-old)'
+            ActiveForm = 'Contributor -> sub-001 (azure-act-003)'
+            OtherLabelName = 'Ops (Tier 1)'; OtherLabelOldForm = 'Ops (Tier 1) -> sub-001 (azure-inst-011)'
+        }
+    ) {
+        BeforeAll {
+            $Eligible = $Sets[$Pillar].Eligible
+            $Active = $Sets[$Pillar].Active
+        }
+
+        It 'names the active form and never says it is already deactivated for the eligible key (<Pillar>)' {
+            # A name typed from the 0.5.1-era completers: the eligibility's own key, while the role is active.
+            Mock -ModuleName Omnicit.PIM $Lister { $Eligible }
+            Mock -ModuleName Omnicit.PIM $Lister { $Active } -ParameterFilter { $Activated }
+            $Record = & $Capture @{ Pillar = $Pillar; Name = $EligibleKeyForm; Status = 'Active' }
+            $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Resolve-OPIMSchedule'
+            $Record.Exception.Message | Should -Not -BeLike '*already deactivated*'
+            $Record.Exception.Message | Should -BeLike "*It is active as '$ActiveForm'; deactivate it by that name or by its display name*"
+            # The eligible list was read, so the guard was reached.
+            Should -Invoke -CommandName $Lister -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It -ParameterFilter { -not $Activated -and $ErrorAction -eq 'Stop' }
+        }
+
+        It 'names the active form and never says it is already deactivated for a stale instance key (<Pillar>)' {
+            # The role was activated again since the name was typed: the instance key is gone.
+            Mock -ModuleName Omnicit.PIM $Lister { $Eligible }
+            Mock -ModuleName Omnicit.PIM $Lister { $Active } -ParameterFilter { $Activated }
+            $Record = & $Capture @{ Pillar = $Pillar; Name = $StaleKeyForm; Status = 'Active' }
+            $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Resolve-OPIMSchedule'
+            $Record.Exception.Message | Should -Not -BeLike '*already deactivated*'
+            $Record.Exception.Message | Should -BeLike "*It is active as '$ActiveForm'*"
+            Should -Invoke -CommandName $Lister -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It -ParameterFilter { -not $Activated -and $ErrorAction -eq 'Stop' }
+        }
+
+        It 'says it is already deactivated when the active list holds only other labels (<Pillar>)' {
+            Mock -ModuleName Omnicit.PIM $Lister { $Eligible }
+            Mock -ModuleName Omnicit.PIM $Lister { $Active } -ParameterFilter { $Activated }
+            foreach ($Name in $OtherLabelName, $OtherLabelOldForm) {
+                $Record = & $Capture @{ Pillar = $Pillar; Name = $Name; Status = 'Active' }
+                $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Resolve-OPIMSchedule'
+                $Record.Exception.Message | Should -BeLike '*already deactivated*' -Because "the active list holds no post labelled like '$Name'"
+                $Record.Exception.Message | Should -Not -BeLike '*It is active as*'
+            }
+        }
+
+        It 'returns the active post for its display name without reading the eligible list (<Pillar>)' {
+            Mock -ModuleName Omnicit.PIM $Lister { $Eligible }
+            Mock -ModuleName Omnicit.PIM $Lister { $Active } -ParameterFilter { $Activated }
+            $Found = @(& $Resolve @{ Pillar = $Pillar; Name = $DisplayName; Status = 'Active' })
+            $Found.Count | Should -Be 1
+            Should -Invoke -CommandName $Lister -ModuleName Omnicit.PIM -Times 0 -Scope It -ParameterFilter { -not $Activated }
+        }
+    }
+
+    Context 'When the same label is active at a scope the filter excludes (OPIM-40 guard)' -ForEach @(
+        @{
+            Pillar = 'Directory'; Lister = 'Get-OPIMDirectoryRole'
+            Name = 'Scoped Reader -> Sales AU (elig-021)'; Scope = '/administrativeUnits/au-001'
+            ActiveForm = 'Scoped Reader -> Sales AU (act-022)'
+        }
+        @{
+            Pillar = 'Azure'; Lister = 'Get-OPIMAzureRole'
+            Name = 'Scoped Reader -> rg-one (azure-021)'; Scope = '/subscriptions/sub-001/resourceGroups/rg-one'
+            ActiveForm = 'Scoped Reader -> rg-one (azure-act-022)'
+        }
+    ) {
+        BeforeAll {
+            $Eligible = $Sets[$Pillar].SameLabelEligible
+            $Active = $Sets[$Pillar].SameLabelActive
+        }
+
+        It 'says it is already deactivated for the admitted eligible post (<Pillar>)' {
+            Mock -ModuleName Omnicit.PIM $Lister { $Eligible }
+            Mock -ModuleName Omnicit.PIM $Lister { $Active } -ParameterFilter { $Activated }
+            $Record = & $Capture @{ Pillar = $Pillar; Name = $Name; Status = 'Active'; Scope = $Scope }
+            $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Resolve-OPIMSchedule'
+            $Record.Exception.Message | Should -BeLike '*already deactivated*'
+            $Record.Exception.Message | Should -Not -BeLike '*It is active as*'
+            Should -Invoke -CommandName $Lister -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It -ParameterFilter { -not $Activated -and $ErrorAction -eq 'Stop' }
+        }
+
+        It 'names the active form once no filter excludes it (<Pillar>)' {
+            Mock -ModuleName Omnicit.PIM $Lister { $Eligible }
+            Mock -ModuleName Omnicit.PIM $Lister { $Active } -ParameterFilter { $Activated }
+            $Record = & $Capture @{ Pillar = $Pillar; Name = $Name; Status = 'Active' }
+            $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Resolve-OPIMSchedule'
+            $Record.Exception.Message | Should -Not -BeLike '*already deactivated*'
+            $Record.Exception.Message | Should -BeLike "*It is active as '$ActiveForm'*"
+        }
+    }
+
+    Context 'When the group is eligible as member and active only as owner (OPIM-40 guard)' {
+        It 'still says the membership is already deactivated and names -AccessType Owner' {
+            $Eligible = $Sets.Group.Eligible
+            $Active = $Sets.Group.ActiveOwner
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Eligible }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Active } -ParameterFilter { $Activated }
+            $Record = & $Capture @{ Pillar = 'Group'; Name = 'opim-grp'; Status = 'Active' }
+            $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Resolve-OPIMSchedule'
+            $Record.Exception.Message | Should -BeLike '*It matches as owner: add -AccessType Owner.*'
+            $Record.Exception.Message | Should -BeLike '*already deactivated*'
+            $Record.Exception.Message | Should -Not -BeLike '*It is active as*'
+        }
+    }
+
+    Context 'When -Status Both finds an eligible and an active post at one scope (M5)' {
+        It 'suggests -Scope when the scopes differ within each state' {
+            $Posts = $Sets.Azure.BothReaderActive
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Posts }
+            $Record = & $Capture @{ Pillar = 'Azure'; Name = 'Reader'; Status = 'Both'; FilterParameter = @('Scope') }
+            $Record.FullyQualifiedErrorId | Should -Be 'AmbiguousName,Resolve-OPIMSchedule'
+            $Record.Exception.Message | Should -BeLike '*matches 3 eligible or active Azure roles*'
+            $Record.Exception.Message | Should -BeLike '*They differ in scope: add -Scope*'
+        }
+
+        It 'returns the eligible and the active Reader at the scope that -Scope names' {
+            $Posts = $Sets.Azure.BothReaderActive
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Posts }
+            $Found = @(& $Resolve @{ Pillar = 'Azure'; Name = 'Reader'; Status = 'Both'; Scope = '/subscriptions/sub-001/resourceGroups/rg-one' })
+            ($Found | ForEach-Object { $PSItem.Name } | Sort-Object) -join ',' | Should -Be 'azure-001,azure-act-001'
         }
     }
 }

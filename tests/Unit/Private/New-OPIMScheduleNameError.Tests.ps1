@@ -51,10 +51,55 @@ Describe 'New-OPIMScheduleNameError' {
                 Name = 'azure-002'; RoleDefinitionDisplayName = 'Reader'
                 ScopeId = '/subscriptions/sub-001/resourceGroups/rg-two'; ScopeDisplayName = 'rg-two'
             }
+            # The ACTIVE posts of the same names under their instance keys, for the old form
+            # 'Role (instance key)' (ActiveForm). Group instances carry the accessId and memberType
+            # the group types read.
+            $DirectoryActive = [PSCustomObject]@{
+                id = 'inst-001'; directoryScopeId = '/'; directoryScope = $null
+                roleDefinition = [PSCustomObject]@{ displayName = 'Usage Summary Reports Reader' }
+            }
+            $DirectoryActiveAu = [PSCustomObject]@{
+                id = 'inst-002'; directoryScopeId = '/administrativeUnits/au-001'
+                directoryScope = [PSCustomObject]@{ displayName = 'Sales AU' }
+                roleDefinition = [PSCustomObject]@{ displayName = 'Usage Summary Reports Reader' }
+            }
+            $GroupOwnerActive = [PSCustomObject]@{
+                id = 'grp-inst-002'; accessId = 'owner'; memberType = 'direct'
+                group = [PSCustomObject]@{ displayName = 'opim-grp' }
+            }
+            $GroupMemberActive = [PSCustomObject]@{
+                id = 'grp-inst-001'; accessId = 'member'; memberType = 'direct'
+                group = [PSCustomObject]@{ displayName = 'opim-grp' }
+            }
+            $AzureActive = [PSCustomObject]@{
+                Name = 'azure-inst-001'; RoleDefinitionDisplayName = 'Reader'
+                ScopeId = '/subscriptions/sub-001/resourceGroups/rg-one'; ScopeDisplayName = 'rg-one'
+            }
+            # Candidates of a -Status Both listing carry the Status the -All listing tags them with.
+            $WithStatus = {
+                param($Post, $Status)
+                $Copy = $Post.PSObject.Copy()
+                $Copy | Add-Member -NotePropertyName Status -NotePropertyValue $Status
+                $Copy
+            }
             @{
                 DirectoryRoot = $DirectoryRoot; DirectoryAu = $DirectoryAu; DirectoryAuAgain = $DirectoryAuAgain
                 GroupMember = $GroupMember; GroupOwner = $GroupOwner; TwinOne = $TwinOne; TwinTwo = $TwinTwo
                 AzureOne = $AzureOne; AzureTwo = $AzureTwo
+                DirectoryActive = $DirectoryActive; DirectoryActiveAu = $DirectoryActiveAu
+                GroupOwnerActive = $GroupOwnerActive; GroupMemberActive = $GroupMemberActive; AzureActive = $AzureActive
+                AzureOneEligible = (& $WithStatus $AzureOne 'Eligible'); AzureTwoEligible = (& $WithStatus $AzureTwo 'Eligible')
+                AzureOneActive = (& $WithStatus $AzureActive 'Active')
+                AzureOneEligibleAgain = (& $WithStatus ([PSCustomObject]@{
+                            Name = 'azure-004'; RoleDefinitionDisplayName = 'Reader'
+                            ScopeId = '/subscriptions/sub-001/resourceGroups/rg-one'; ScopeDisplayName = 'rg-one'
+                        }) 'Eligible')
+                GroupMemberEligible = (& $WithStatus $GroupMember 'Eligible'); GroupOwnerEligible = (& $WithStatus $GroupOwner 'Eligible')
+                GroupMemberActiveTagged = (& $WithStatus $GroupMemberActive 'Active')
+                GroupMemberEligibleAgain = (& $WithStatus ([PSCustomObject]@{
+                            id = 'grp-elig-009'; accessId = 'member'; memberType = 'direct'
+                            group = [PSCustomObject]@{ displayName = 'opim-grp' }
+                        }) 'Eligible')
             }
         }
     }
@@ -309,8 +354,26 @@ Describe 'New-OPIMScheduleNameError' {
                 New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Directory -Name 'Usage Summary Reports Reader' `
                     -Status Active -AlreadyInactive
             }
-            $Record.Exception.Message | Should -BeLike '*It is eligible but not active, so it is already deactivated.*'
+            $Record.Exception.Message | Should -BeLike '*already deactivated*'
             $Record.Exception.Message | Should -Not -BeLike '*or use tab completion*'
+        }
+
+        It 'says an activation that has not finished yet may be the reason, with -AlreadyInactive (I1)' {
+            # An activation pending approval or still provisioning is no active instance yet, so
+            # "already deactivated" alone would be false for it.
+            $Record = InModuleScope Omnicit.PIM {
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Directory -Name 'Usage Summary Reports Reader' `
+                    -Status Active -AlreadyInactive
+            }
+            $Record.Exception.Message | Should -BeLike '*It is eligible but not active: it is already deactivated, or its activation has not finished yet.*'
+        }
+
+        It 'says nothing of the sort without -AlreadyInactive' {
+            $Record = InModuleScope Omnicit.PIM {
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Directory -Name 'Nobody' -Status Active
+            }
+            $Record.Exception.Message | Should -Not -BeLike '*already deactivated*'
+            $Record.Exception.Message | Should -Not -BeLike '*activation has not finished*'
         }
 
         It 'lists the other scope with -OtherScope' {
@@ -349,6 +412,121 @@ Describe 'New-OPIMScheduleNameError' {
                     -OtherAccessType owner -OtherScope @($Fakes.GroupOwner)
             }
             $Record.Exception.Message | Should -BeLike "No eligible group assignment matches the name 'opim-grp'. It matches as owner: add -AccessType Owner. It matches at another scope:*"
+        }
+    }
+
+    Context 'When the name is active under another key (OPIM-40 guard)' {
+        It 'names the active form of the post (<Pillar>, <Post>)' -ForEach @(
+            @{ Pillar = 'Directory'; Post = 'DirectoryActive'; Form = 'Usage Summary Reports Reader (inst-001)' }
+            @{ Pillar = 'Directory'; Post = 'DirectoryActiveAu'; Form = 'Usage Summary Reports Reader -> Sales AU (inst-002)' }
+            @{ Pillar = 'Group'; Post = 'GroupMemberActive'; Form = 'opim-grp - member (grp-inst-001)' }
+            @{ Pillar = 'Azure'; Post = 'AzureActive'; Form = 'Reader -> rg-one (azure-inst-001)' }
+        ) {
+            $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes; Pillar = $Pillar; Post = $Post } {
+                param($Fakes, $Pillar, $Post)
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar $Pillar -Name 'Name (elig-001)' `
+                    -Status Active -ActiveForm @($Fakes[$Post])
+            }
+            $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound'
+            $Record.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+            $Record.Exception.Message | Should -BeLike "*It is active as '$Form'; deactivate it by that name or by its display name.*"
+            $Record.Exception.Message | Should -Not -BeLike '*already deactivated*'
+            $Record.Exception.Message | Should -Not -BeLike '*or use tab completion*'
+        }
+
+        It 'lists every active form when several posts are active under that label' {
+            $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes } {
+                param($Fakes)
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Directory -Name 'Usage Summary Reports Reader (elig-001)' `
+                    -Status Active -ActiveForm @($Fakes.DirectoryActive, $Fakes.DirectoryActiveAu)
+            }
+            $Record.Exception.Message | Should -BeLike "*It is active as 'Usage Summary Reports Reader (inst-001)', 'Usage Summary Reports Reader -> Sales AU (inst-002)'; deactivate it by one of those names.*"
+        }
+
+        It 'says the display name needs -AccessType Owner for a group held as owner' {
+            $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes } {
+                param($Fakes)
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Group -Name 'opim-grp - owner (grp-elig-002)' `
+                    -Status Active -ActiveForm @($Fakes.GroupOwnerActive)
+            }
+            $Record.Exception.Message | Should -BeLike "*It is active as 'opim-grp - owner (grp-inst-002)'; deactivate it by that name or by its display name with -AccessType Owner.*"
+        }
+
+        It 'does not say -AccessType Owner for a group held as member' {
+            $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes } {
+                param($Fakes)
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Group -Name 'opim-grp - member (grp-elig-001)' `
+                    -Status Active -ActiveForm @($Fakes.GroupMemberActive)
+            }
+            $Record.Exception.Message | Should -Not -BeLike '*-AccessType*'
+        }
+
+        It 'never also says the post is already deactivated when it is given the active form' {
+            $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes } {
+                param($Fakes)
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Directory -Name 'Usage Summary Reports Reader (elig-001)' `
+                    -Status Active -AlreadyInactive -ActiveForm @($Fakes.DirectoryActive)
+            }
+            $Record.Exception.Message | Should -BeLike "*It is active as 'Usage Summary Reports Reader (inst-001)'*"
+            $Record.Exception.Message | Should -Not -BeLike '*already deactivated*'
+            $Record.Exception.Message | Should -Not -BeLike '*eligible but not active*'
+        }
+
+        It 'keeps the already-deactivated sentence when the active form is empty' {
+            $Record = InModuleScope Omnicit.PIM {
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Directory -Name 'Usage Summary Reports Reader' `
+                    -Status Active -AlreadyInactive -ActiveForm @()
+            }
+            $Record.Exception.Message | Should -BeLike '*already deactivated*'
+            $Record.Exception.Message | Should -Not -BeLike '*It is active as*'
+        }
+
+        It 'adds no active-form sentence without -ActiveForm' {
+            $Record = InModuleScope Omnicit.PIM {
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Directory -Name 'Nobody' -Status Active
+            }
+            $Record.Exception.Message | Should -Not -BeLike '*It is active as*'
+        }
+    }
+
+    Context 'When -Status Both lists an eligible and an active post (M5)' {
+        It 'suggests -Scope when the scopes differ within each state, though an eligible and an active post share one' {
+            $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes } {
+                param($Fakes)
+                New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Azure -Name 'Reader' -Status Both `
+                    -Candidate @($Fakes.AzureOneEligible, $Fakes.AzureTwoEligible, $Fakes.AzureOneActive) -FilterParameter Scope
+            }
+            $Record.Exception.Message | Should -BeLike '*matches 3 eligible or active Azure roles*'
+            $Record.Exception.Message | Should -BeLike '*They differ in scope: add -Scope*'
+        }
+
+        It 'points at the tab-completed form when two eligible posts share a scope' {
+            $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes } {
+                param($Fakes)
+                New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Azure -Name 'Reader' -Status Both `
+                    -Candidate @($Fakes.AzureOneEligible, $Fakes.AzureOneEligibleAgain, $Fakes.AzureOneActive) -FilterParameter Scope
+            }
+            $Record.Exception.Message | Should -Not -BeLike '*-Scope*'
+            $Record.Exception.Message | Should -BeLike '*tab-completed form*'
+        }
+
+        It 'suggests -AccessType when the access types differ within each state' {
+            $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes } {
+                param($Fakes)
+                New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Group -Name 'opim-grp' -Status Both `
+                    -Candidate @($Fakes.GroupMemberEligible, $Fakes.GroupOwnerEligible, $Fakes.GroupMemberActiveTagged) -FilterParameter AccessType
+            }
+            $Record.Exception.Message | Should -BeLike '*They differ in access type: add -AccessType Member or -AccessType Owner*'
+        }
+
+        It 'points at the tab-completed form when two eligible groups share an access type' {
+            $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes } {
+                param($Fakes)
+                New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Group -Name 'opim-grp' -Status Both `
+                    -Candidate @($Fakes.GroupMemberEligible, $Fakes.GroupMemberEligibleAgain, $Fakes.GroupMemberActiveTagged) -FilterParameter AccessType
+            }
+            $Record.Exception.Message | Should -Not -BeLike '*-AccessType*'
+            $Record.Exception.Message | Should -BeLike '*tab-completed form*'
         }
     }
 }
