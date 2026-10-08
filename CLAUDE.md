@@ -861,7 +861,13 @@ makes no Graph call.
 | `Get-AzRoleEligibilitySchedule` | Eligible (inactive) RBAC roles |
 | `Get-AzRoleAssignmentScheduleInstance` | Active RBAC assignments (`AssignmentType` `Activated`) |
 | `New-AzRoleAssignmentScheduleRequest` | Activate (`SelfActivate`) or deactivate (`SelfDeactivate`) |
-| `Get-AzRoleAssignmentScheduleRequest` | `Enable-OPIMAzureRole -Wait` polling: `-Filter 'asRequestor()'` at the request's scope, keeping the item whose `Name` is the request's |
+| `Get-AzRoleAssignmentScheduleRequest` | `Enable-OPIMAzureRole -Wait` polling: `-Filter 'asTarget()'` at the request's scope, keeping the item whose `Name` is the request's |
+
+The `-Wait` poll uses `asTarget()`, never `asRequestor()`: `asTarget()` lists the requests made for
+the signed-in user and needs no role at the scope, while ARM refuses `asRequestor()` to a user who
+holds no active role there (`InsufficientPermissions`, "Please use $filter=asTarget() to filter on
+the requestor's assignments", measured live 2026-10-08). A poll runs exactly while the request is
+still in progress, before the role is active, so `asRequestor()` would fail every real poll.
 
 Reads use the filter `asTarget()` at scope `/` unless `-Scope` names another. `Get-OPIMAzureRole`
 reads at `-Scope` for a plain listing (no switch, name or `-Identity`), which hands the scope to

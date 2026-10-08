@@ -272,7 +272,11 @@ function Enable-OPIMAzureRole {
                             # this role only; the request above was already sent.
                             $ArmRefusal = Get-OPIMArmRefusal
                             if ($null -ne $ArmRefusal) { throw $ArmRefusal }
-                            $Polled = @(Get-AzRoleAssignmentScheduleRequest -Scope $Response.Scope -Filter 'asRequestor()' -ErrorAction Stop |
+                            # asTarget() lists the requests made for the signed-in user and needs no role
+                            # at the scope. asRequestor() would fail exactly while the poll is needed:
+                            # ARM refuses it to a user who holds no active role there yet
+                            # (InsufficientPermissions, measured live 2026-10-08).
+                            $Polled = @(Get-AzRoleAssignmentScheduleRequest -Scope $Response.Scope -Filter 'asTarget()' -ErrorAction Stop |
                                     Where-Object Name -EQ $Response.Name)
                         } catch {
                             # An ARM failure record can point at the request and its bearer token:

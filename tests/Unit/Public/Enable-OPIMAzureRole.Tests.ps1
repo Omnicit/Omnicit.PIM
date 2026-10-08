@@ -696,10 +696,24 @@ Describe 'Enable-OPIMAzureRole' {
             Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
         }
 
-        It 'polls the requests of the signed-in user at the scope of the request' {
+        It 'polls the requests made for the signed-in user with asTarget() at the scope of the request' {
             $null = Enable-OPIMAzureRole -RoleName 'Reader' -Wait -ErrorAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
-                $Scope -eq '/subscriptions/sub-001/resourceGroups/rg-one' -and $Filter -eq 'asRequestor()' -and -not $Name
+                $Scope -eq '/subscriptions/sub-001/resourceGroups/rg-one' -and $Filter -eq 'asTarget()' -and -not $Name
+            }
+        }
+
+        It 'never polls with asRequestor(), which ARM refuses to a user without a role at the scope' {
+            # Measured live 2026-10-08: asRequestor() at a scope where the user holds no active role
+            # is InsufficientPermissions; asTarget() lists the user's own requests there.
+            $Plan.Poll['azure-001'] = @('PendingProvisioning', 'Provisioned')
+            $Plan.Poll['azure-003'] = @('PendingProvisioning', 'Provisioned')
+            $null = Enable-OPIMAzureRole -RoleName 'Reader', 'Contributor' -Wait -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleRequest -Times 4 -Exactly -Scope It -ParameterFilter {
+                $Filter -eq 'asTarget()'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleRequest -Times 0 -Scope It -ParameterFilter {
+                $Filter -eq 'asRequestor()'
             }
         }
 
