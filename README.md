@@ -720,15 +720,15 @@ when that list cannot be read they write that error and send nothing. A role or 
 twice in one command is requested once, with a warning for the second.
 
 With `-Wait`, the `Enable-OPIM*` role and group cmdlets wait for at most `-TimeoutSeconds` (default
-300) and then report the request by its last status, written back onto the object they return.
-Groups and Azure roles read the status again, with a pause between reads, only while the request is
-still being worked on, counting from the start of the wait. Directory roles hand every request that
-has not failed to `Wait-OPIMDirectoryRole`, which reads each one at least once, waits for the role
-assignment to appear once a request is provisioned, and counts from the time Graph created the
-request. A request that waits for approval ends the wait at once, with a warning. One still in
-progress at the limit is an `ActivationWaitTimedOut` error and returns nothing; the request stays
-submitted. Each role or group is reported on its own, so one that fails or times out never stops
-the next.
+300) and then report the request by its last status, written back onto the request (a directory
+role returns its role assignment once that appears). Groups and Azure roles read the status
+again, with a pause between reads, only while the request is still being worked on, counting from
+the start of the wait. Directory roles hand every request that has not failed to
+`Wait-OPIMDirectoryRole`, which reads each one at least once, waits for the role assignment to
+appear once a request is provisioned, and counts from the time Graph created the request. A
+request that waits for approval ends the wait at once, with a warning. One still in progress at the
+limit is an `ActivationWaitTimedOut` error and returns nothing; the request stays submitted. Each
+role or group is reported on its own, so one that fails or times out never stops the next.
 
 ---
 

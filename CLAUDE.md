@@ -231,7 +231,7 @@ and `testhygiene`, `sourcehygiene`, `dochygiene` and `docsync` read files static
 
 # Full test suite -- the authoritative gate, and the command every CI leg runs.
 # QA tests + unit tests + per-function PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-08: 2,382 passed, 0 failed, 0 skipped; coverage 94.16% over 2,879 analysed
+# (measured 2026-10-08: 2,385 passed, 0 failed, 0 skipped; coverage 94.16% over 2,879 analysed
 #  commands; Pester 6.2.0)
 ./build.ps1 -Tasks test
 
@@ -515,7 +515,7 @@ pre-authentication shortcut, since every pillar cmdlet authenticates on first us
 first `Connect-OPIM` for Microsoft Graph, then -- only when an Azure pillar runs (an `-All*` Azure
 switch, a hashtable alias that lists `AzureRoles`, or the plain string form of an alias) --
 `Connect-OPIM -IncludeARM` for the same tenant, and only then the pillar cmdlets
-(`Enable-OPIMMyRole.ps1:164-185`, `Disable-OPIMMyRole.ps1:144-165`). Each sign-in runs with
+(`Enable-OPIMMyRole.ps1:167-188`, `Disable-OPIMMyRole.ps1:151-172`). Each sign-in runs with
 `-ErrorAction Stop` in a `try` whose catch scrubs first and writes the record. A failed Graph
 sign-in stops the command before anything is listed or changed. A failed Azure sign-in is written
 as a non-terminating error and skips the Azure pillar only -- except under the `Stop` error
@@ -847,10 +847,10 @@ Terminology differs from the PIM portal. Every Graph path is `v1.0`.
 Reads use `filterByCurrentUser(on='principal')` and `$expand=principal,roledefinition`. Graph
 `v1.0` cannot expand `directoryScope`, so `Get-OPIMDirectoryRole` fetches
 `v1.0/directory<directoryScopeId>` through the wrapper for every item not at the root scope `/`
-(`Get-OPIMDirectoryRole.ps1:142`, `:180-184`). A `SelfDeactivate` request is built from the ACTIVE
+(`Get-OPIMDirectoryRole.ps1:151`, `:196-200`). A `SelfDeactivate` request is built from the ACTIVE
 instance, never from an eligibility schedule: it sends the instance's `roleDefinitionId`,
 `directoryScopeId` and `principalId`, and its `roleAssignmentScheduleId` as `targetScheduleId`
-(`Disable-OPIMDirectoryRole.ps1:106-112`). After a request, `Restore-GraphProperty` copies
+(`Disable-OPIMDirectoryRole.ps1:112-118`). After a request, `Restore-GraphProperty` copies
 `roleDefinition`, `principal` and `directoryScope` from the source object into the response; it
 makes no Graph call.
 
@@ -874,7 +874,7 @@ found among the listed posts and never requested by itself, which a normal user 
 (OPIM-23). The `-Scope` of `Enable-` and `Disable-OPIMAzureRole` does the same: it selects among the
 posts of the root listing and changes what is read in no way. An Azure schedule's id is its `Name`,
 not `id`; an activation sends `LinkedRoleEligibilityScheduleId = $Role.Name`
-(`Enable-OPIMAzureRole.ps1:168-192`), `ScheduleInfoStartDateTime` (UTC) when `-NotBefore` is given
+(`Enable-OPIMAzureRole.ps1:208-232`), `ScheduleInfoStartDateTime` (UTC) when `-NotBefore` is given
 (without it Azure starts the activation now), and `ExpirationEndDateTime` in UTC (OPIM-15). A
 deactivation sends no `LinkedRoleEligibilityScheduleId` (OPIM-24; `Disable-OPIMAzureRole.ps1:109-117`):
 ARM documents the field for an activation only, and the request names the active instance by its
@@ -946,8 +946,8 @@ expand `group,principal`.
   `ScopeId`, compared with `OrdinalIgnoreCase`. A failed read of the active list is written as
   itself once and the command sends nothing more, for every later name or piped post: a list that
   cannot be read is no proof that nothing is active. A permanent assignment is not in that list, so
-  Graph still refuses it (`RoleAssignmentExists`), and an activation the listing does not show yet
-  (about 30 seconds for a group, OPIM-50) is requested again by a later command.
+  Graph or ARM still refuses it (`RoleAssignmentExists`), and an activation the listing does not
+  show yet (about 30 seconds for a group, OPIM-50) is requested again by a later command.
 - The same post is requested at most once per command (OPIM-39): a `HashSet[string]`
   (`OrdinalIgnoreCase`, created in `begin`) holds the key pair above of every post the command has
   requested, added as soon as `ShouldProcess` returns true and BEFORE the request is sent, so a
@@ -1146,9 +1146,8 @@ called by `Install`, `Set` and `Remove`; never inline it.
   `New-OPIMTenantMismatchError`, `New-OPIMGraphSessionChangedError`, `New-OPIMSignInRefusedError`,
   `New-OPIMScheduleNameError` and `New-OPIMRequestError` each suppress
   `PSUseShouldProcessForStateChangingFunctions` (a pure record builder that the `New-` verb draws
-  the rule onto). The six completer classes carry
-  two each (`PSAvoidUsingWriteHost` and `PSUseDeclaredVarsMoreThanAssignments`). Each suppression
-  carries a `Justification`.
+  the rule onto). The six completer classes carry two each (`PSAvoidUsingWriteHost` and
+  `PSUseDeclaredVarsMoreThanAssignments`). Each suppression carries a `Justification`.
 
 ---
 
