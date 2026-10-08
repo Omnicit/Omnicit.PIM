@@ -1,54 +1,73 @@
 function Get-OPIMCurrentTenantInfo {
     <#
     .SYNOPSIS
-    Returns the TenantId and display name for the currently connected Graph tenant.
+    Returns the tenant Omnicit.PIM is signed in to, and its display name when it can be read.
 
     .DESCRIPTION
-    Reads the active Microsoft Graph context via Get-MgContext and performs a best-effort
-    call to the v1.0/organization endpoint to retrieve the tenant display name.
+    Returns the tenant of the module's own sign-in: TokenTenantId in the auth state, the tenant
+    (a GUID) that the module's Microsoft Graph token was issued for. It is returned whatever
+    Get-OPIMGraphSessionState says -- Own, Absent, Changed or Untracked -- since an alias gets the
+    tenant the module signed in to. The tenant of a Microsoft Graph session that another
+    Connect-MgGraph started is never used (OPIM-45), and this function does not call Get-MgContext
+    itself. TenantId is $null while the module holds no sign-in: no auth state, a state that is not
+    a dictionary, or a state without TokenTenantId, such as the one that holds only the device code
+    mode before the first sign-in.
 
-    The display name call silently fails when the Organization.Read.All scope is absent -- in
-    that case DisplayName is returned as an empty string. Both fields are null when no active
-    Graph session exists.
+    The display name is read, best-effort, from v1.0/organization, and only when
+    Get-OPIMGraphSessionState is Own -- the process still holds the Graph session the module
+    connected -- and the organization's id is that tenant. Otherwise DisplayName is an empty string,
+    and so it is when the call fails, for example without the scope to read the organization. A
+    failed call is scrubbed with Remove-OPIMErrorRecord and not reported.
 
-    This helper is used by Install-, Set-, and Remove-OPIMConfiguration to enrich the
-    ShouldProcess confirmation prompt and to auto-resolve TenantId when not supplied.
+    Install-OPIMConfiguration calls this to take the tenant of a new alias when -TenantId is
+    omitted, and Install-OPIMConfiguration and Set-OPIMConfiguration call it for the display name in
+    their confirmation prompt, which they show only for the tenant they write.
 
     .OUTPUTS
     PSCustomObject with:
-      TenantId    [string] -- the Entra ID tenant GUID, or $null if not connected.
-      DisplayName [string] -- the tenant display name, or empty string if unavailable.
+      TenantId    [string] -- the tenant GUID of the module's sign-in, or $null without one.
+      DisplayName [string] -- the display name of that tenant, or an empty string.
 
     .EXAMPLE
     $Info = Get-OPIMCurrentTenantInfo
-    # Returns e.g. @{ TenantId = 'aaaabbbb-...'; DisplayName = 'Contoso Ltd' }
-    # TenantId and DisplayName are both $null when no active Graph session exists.
+    if (-not $Info.TenantId) { Write-Warning 'Omnicit.PIM holds no sign-in.' }
+
+    TenantId is the tenant of the module's sign-in, and DisplayName its name, such as 'Contoso Ltd',
+    while the module's own Graph session is active.
     #>
     [OutputType([PSCustomObject])]
     param()
 
-    $Context = Get-MgContext -ErrorAction SilentlyContinue
-    if (-not $Context) {
+    # OPIM-45: the tenant of the module's own sign-in only, never that of a Graph context another
+    # Connect-MgGraph started. A state without TokenTenantId -- none, not a dictionary, or the
+    # device-code-only state -- is no sign-in, and nothing is read.
+    $State = $script:_OPIMAuthState
+    if (-not ($State -is [System.Collections.IDictionary]) -or -not $State['TokenTenantId']) {
         return [PSCustomObject]@{
             TenantId    = $null
-            DisplayName = $null
+            DisplayName = ''
         }
     }
 
-    [string]$TenantId    = $Context.TenantId
+    [string]$TenantId    = $State['TokenTenantId']
     [string]$DisplayName = ''
 
-    # Best-effort: retrieve tenant display name from the organization endpoint.
-    # Requires Organization.Read.All -- silently falls back to empty string on any failure.
-    try {
-        $OrgResponse = Invoke-MgGraphRequest -Uri 'v1.0/organization?$select=displayName,id' -Method GET -Verbose:$false -ErrorAction Stop
-        if ($OrgResponse.value.Count -gt 0) {
-            $DisplayName = [string]$OrgResponse.value[0].displayName
+    # The display name only under the module's own Graph session, and only of that tenant: under
+    # another session the call would answer for that session's tenant.
+    if ((Get-OPIMGraphSessionState) -eq 'Own') {
+        # Best-effort: without the scope to read the organization the call fails and the name stays empty.
+        try {
+            $OrgResponse = Invoke-MgGraphRequest -Uri 'v1.0/organization?$select=displayName,id' -Method GET -Verbose:$false -ErrorAction Stop
+            $Organization = @($OrgResponse.value)[0]
+            if ($null -ne $Organization -and
+                [string]::Equals([string]$Organization.id, $TenantId, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $DisplayName = [string]$Organization.displayName
+            }
+        } catch {
+            # The raw record points at the HttpRequestMessage whose Authorization header carries the
+            # bearer token in plain text -- scrub it and drop the record first, per module security policy.
+            Remove-OPIMErrorRecord -Record $PSItem
         }
-    } catch {
-        # The raw record points at the HttpRequestMessage whose Authorization header carries the
-        # bearer token in plain text -- scrub it and drop the record first, per module security policy.
-        Remove-OPIMErrorRecord -Record $PSItem
     }
 
     return [PSCustomObject]@{

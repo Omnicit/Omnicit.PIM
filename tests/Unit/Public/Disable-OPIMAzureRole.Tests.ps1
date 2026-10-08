@@ -775,7 +775,7 @@ Describe 'Disable-OPIMAzureRole' {
             $Caught.Exception.Message | Should -BeExactly 'report failed'
         }
 
-        It 'still gives a request that Azure refuses to the catch around it' {
+        It 'gives a request that Azure refuses to the catch around it all the same' {
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
                 $PSCmdlet.ThrowTerminatingError(
                     [System.Management.Automation.ErrorRecord]::new(

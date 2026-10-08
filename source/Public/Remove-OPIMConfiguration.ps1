@@ -22,7 +22,8 @@ function Remove-OPIMConfiguration {
     .PARAMETER TenantAlias
     Short alias to remove. Must already exist in the TenantMap file.
     .PARAMETER TenantMapPath
-    Path to the TenantMap.psd1 configuration file. Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
+    Path to the TenantMap.psd1 configuration file. Defaults to .config/Omnicit.PIM/TenantMap.psd1
+    under your home folder ($HOME; on Windows the same file as before, under $env:USERPROFILE).
     #>
     [Alias('Remove-PIMConfig')]
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
@@ -31,7 +32,7 @@ function Remove-OPIMConfiguration {
         [Parameter(Mandatory)]
         [string]$TenantAlias,
 
-        [string]$TenantMapPath = "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1"
+        [string]$TenantMapPath = (Join-Path $HOME '.config/Omnicit.PIM/TenantMap.psd1')
     )
 
     if (-not (Test-Path $TenantMapPath)) {

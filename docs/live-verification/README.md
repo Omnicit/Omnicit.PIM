@@ -78,7 +78,7 @@ Naming the object in clear text would rebuild the mapping this file just forbade
 | Placeholder | Slot (generic) | Status |
 |---|---|---|
 | `...000` | the conventional "any id" stand-in in help examples and README | taken |
-| `...001` - `...005` | fixture ids in the unit tests: tenant ids and user object ids in the tenant-map, configuration, sign-in and `Get-MyId` tests | taken |
+| `...001` - `...005` | fixture ids in the unit tests: tenant ids in the tenant-map, configuration and sign-in tests | taken |
 | `...006` | a group id in README's tenant-map example | taken |
 | `...007` and up | -- | **FREE. Allocate from here.** |
 | `...099` | a deliberately different tenant id in the configuration tests | taken |

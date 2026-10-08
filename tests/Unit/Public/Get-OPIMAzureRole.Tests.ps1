@@ -219,7 +219,7 @@ Describe 'Get-OPIMAzureRole' {
                 }
             }
 
-            It 'never hands a Name to Az.Resources' {
+            It 'hands no Name to Az.Resources' {
                 $null = Get-OPIMAzureRole -Identity 'azure-002'
                 Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It -ParameterFilter { $Name }
                 Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 0 -Scope It -ParameterFilter { $Name }
@@ -302,7 +302,7 @@ Describe 'Get-OPIMAzureRole' {
                 $Result | Should -HaveCount 0
             }
 
-            It 'still lists at the root scope, whatever scope -Scope names' {
+            It 'lists at the root scope all the same, whatever scope -Scope names' {
                 $null = Get-OPIMAzureRole -Identity 'azure-001' -Scope '/subscriptions/sub-001/resourceGroups/rg-one'
                 Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Exactly -Scope It -ParameterFilter {
                     $Filter -eq 'asTarget()' -and $Scope -eq '/'

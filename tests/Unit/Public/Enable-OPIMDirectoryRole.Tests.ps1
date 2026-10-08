@@ -604,10 +604,11 @@ Describe 'Enable-OPIMDirectoryRole' {
             $Errors.Count | Should -BeGreaterThan 0
         }
 
-        It 'sets error details with a hint to use the -NotAfter parameter' {
+        It 'sets error details with a hint to use -Hours or -Until' {
             $Errors = @()
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -ErrorVariable Errors -ErrorAction SilentlyContinue
-            $Errors[-1].Exception.Message | Should -BeLike '*-NotAfter*'
+            $Errors[-1].Exception.Message | Should -BeLike '*Use -Hours, or -Until on the Enable-OPIM`* cmdlets, to ask for a shorter activation.'
+            $Errors[-1].Exception.Message | Should -Not -BeLike '*-NotAfter*'
         }
     }
 
@@ -1272,7 +1273,7 @@ Describe 'Enable-OPIMDirectoryRole' {
             @($Result).Count | Should -Be 0
         }
 
-        It 'still hands a request that waits for a decision to Wait-OPIMDirectoryRole' {
+        It 'hands a request that waits for a decision to Wait-OPIMDirectoryRole as well' {
             $Answer.Status = 'PendingApproval'
             $null = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' -Wait -ErrorVariable Errs -ErrorAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole -Times 1 -Exactly -Scope It

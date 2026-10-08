@@ -53,9 +53,10 @@ reaches `main` through a pull request.
 | Build / CI pipeline | `ci/` | `ci/publish-on-merge` |
 
 The prefix is not cosmetic: `GitVersion.yml` reads it. A `feat/` (or `feature/`) branch builds a
-Minor increment and a `fix/` (or `hotfix/`) branch a Patch increment on the branch itself; every
-other prefix in the table matches no branch configuration and falls back to the defaults. No branch
-publishes anything -- only `main` and a version tag do. See **CHANGELOG and Version**.
+Minor increment and a `fix/` (or `hotfix/`) branch a Patch increment on the branch itself (from a
+stable base; see **How the version is computed**); every other prefix in the table matches no
+branch configuration and falls back to the defaults. No branch publishes anything -- only `main`
+and a version tag do. See **CHANGELOG and Version**.
 
 ---
 
@@ -231,7 +232,7 @@ and `testhygiene`, `sourcehygiene`, `dochygiene` and `docsync` read files static
 
 # Full test suite -- the authoritative gate, and the command every CI leg runs.
 # QA tests + unit tests + per-function PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-08: 2,385 passed, 0 failed, 0 skipped; coverage 94.16% over 2,879 analysed
+# (measured 2026-10-08: 2,533 passed, 0 failed, 0 skipped; coverage 94.72% over 2,992 analysed
 #  commands; Pester 6.2.0)
 ./build.ps1 -Tasks test
 
@@ -248,7 +249,7 @@ The Sampler test task measures coverage against the **built** module output, not
 `build.yaml`'s `test` workflow does not include `build` (`build.yaml:63-70`; only the default
 workflow, `./build.ps1` with no `-Tasks`, runs both). Always run `-Tasks build` before `-Tasks test`
 after changing source files -- and never build while the tests are running. The coverage threshold
-is 80 % (`build.yaml:152`): measured on 2026-10-08, 2,711 of 2,879 commands are covered, 407 more
+is 80 % (`build.yaml:152`): measured on 2026-10-08, 2,834 of 2,992 commands are covered, 440 more
 than 80 % requires. The margin has been thin before. The MSAL reflection lines in
 `Get-OPIMMsalApplication` are no longer run by any unit test, since reaching them builds a real
 MSAL client (see **Testing Conventions**), and that took coverage from 83.7 % to 80.28 % -- four
@@ -442,16 +443,26 @@ never raise it just to make a build pass. A build that falls back to the source 
 placeholder `1.0.0` (no GitVersion, see **Build and Test Commands**) fails the cap too, by design.
 
 **How the version is computed.** `GitVersion.yml` uses the GitVersion 5 schema with
-`mode: ContinuousDelivery`. The base is the newest reachable version tag -- `v0.5.1` today, on
-`5e06243`; `next-version: 0.0.1` sits below every tag and never wins. A tag sitting on HEAD is
-returned verbatim. From the base comes **at most ONE increment**, never one per commit: the
-branch's default -- Patch on `main`, Minor on a branch matching `^feat(ure)?s?[\/-]`, Patch on one
-matching `^(hot)?fix(es)?[\/-]`, and the fallback defaults on every other branch -- unless a bump
-message in the commits since that tag names a higher level. `main` carries the `preview` label, so
-a merge after `v0.5.1` builds `0.5.2-preview<NNNN>`; measured on 2026-10-05, `feat/x` builds
-`0.6.0-x0001`, a `fix/` branch `0.5.2-fix...`, and a `chore/` branch `0.5.2-chore...`. GitVersion
-5.12 also needs a resolvable `main` ref to compute anything on a branch that matches no
-configuration, so a clone without one cannot build such a branch.
+`mode: ContinuousDelivery`. The base is the newest reachable version tag. Every publish from `main`
+tags its preview (see **Publishing**), so the base is normally the newest PREVIEW tag, not the
+newest stable one: measured on 2026-10-08, `git describe --tags --abbrev=0 origin/main` gives
+`v0.6.0-preview0004`, on `2c1e5ae`, while `v0.5.1`, on `5e06243`, is still the newest stable tag.
+`next-version: 0.0.1` sits below every tag and never wins. A tag sitting on HEAD is returned
+verbatim. From the base comes **at most ONE increment**, never one per commit: the branch's
+default -- Patch on `main`, Minor on a branch matching `^feat(ure)?s?[\/-]`, Patch on one matching
+`^(hot)?fix(es)?[\/-]`, and the fallback defaults on every other branch -- unless a bump message in
+the commits since that tag names a higher level. `main` carries the `preview` label.
+
+On a preview base the Patch default does not move the version numbers, only the preview number:
+measured on 2026-10-08 with GitVersion 5.12.0, the `fix/` branch `fix/tenant-map-keys-and-paths`
+on the base `v0.6.0-preview0004` computes `0.6.0-fix.1` (`NuGetVersionV2` `0.6.0-fix0001`, which
+the build stamps as `ModuleVersion` `0.6.0` with `Prerelease` `fix0001`), not `0.6.1`, and on `main`
+the three merges after `v0.6.0-preview0001` built `0.6.0-preview0002`, `0003` and `0004`, one
+preview number each. A bump message does move it: the minor bump token in the body of `38cface`
+took the base `v0.5.2-preview0002` to `0.6.0-preview0001`. From the stable base `v0.5.1`, measured
+on 2026-10-05, `feat/x` built `0.6.0-x0001`, a `fix/` branch `0.5.2-fix...` and a `chore/` branch
+`0.5.2-chore...`. GitVersion 5.12 also needs a resolvable `main` ref to compute anything on a
+branch that matches no configuration, so a clone without one cannot build such a branch.
 
 **Do not create a version tag, or a `release/x.y.z` branch, outside a deliberate release.** Any
 newer tag becomes the base, and one sitting on HEAD ships verbatim whatever its value. GitVersion's
@@ -483,7 +494,7 @@ one of those shapes does splits by level, and only one level is caught:
   and `publish` never run, and nothing is published. The repair then happens on `main` under a
   broken required check instead of in an open PR, which is bad enough on its own.
 - **Minor.** Nothing caps it. `main` carries `tag: preview`, so the merge publishes, for example,
-  `0.6.0-preview0001` in place of `0.5.2-preview0001` -- a real version, on the public Gallery,
+  the next minor's preview in place of the next patch's -- a real version, on the public Gallery,
   that cannot be deleted, and a version line that was never chosen. There is no gate behind this
   one: the rule about what you type IS the control.
 
@@ -515,7 +526,7 @@ pre-authentication shortcut, since every pillar cmdlet authenticates on first us
 first `Connect-OPIM` for Microsoft Graph, then -- only when an Azure pillar runs (an `-All*` Azure
 switch, a hashtable alias that lists `AzureRoles`, or the plain string form of an alias) --
 `Connect-OPIM -IncludeARM` for the same tenant, and only then the pillar cmdlets
-(`Enable-OPIMMyRole.ps1:167-188`, `Disable-OPIMMyRole.ps1:151-172`). Each sign-in runs with
+(`Enable-OPIMMyRole.ps1:176-197`, `Disable-OPIMMyRole.ps1:159-180`). Each sign-in runs with
 `-ErrorAction Stop` in a `try` whose catch scrubs first and writes the record. A failed Graph
 sign-in stops the command before anything is listed or changed. A failed Azure sign-in is written
 as a non-terminating error and skips the Azure pillar only -- except under the `Stop` error
@@ -551,11 +562,17 @@ retry. `Changed` is the terminating `GraphSessionChanged`, raised before any cac
 other session's calls to this module's tenant -- so the user runs `Disconnect-OPIM`, which
 disconnects that session too, and signs in again. `Absent` (no session at all, for example after
 `Disconnect-MgGraph`) means the cached token does not count: the function signs in and connects
-again. The configuration cmdlets are outside the gate by design: `Install-OPIMConfiguration` and
-`Set-OPIMConfiguration` do not authenticate and read the ACTIVE Graph context through
-`Get-OPIMCurrentTenantInfo` (raw `Get-MgContext`, and `Invoke-MgGraphRequest` for
-`v1.0/organization`) -- `Install` to take its tenant when `-TenantId` is omitted, both for the
-display name in the confirmation prompt -- so they run under whatever session is active.
+again. The configuration cmdlets do not authenticate and stand outside the gate, but they take a
+tenant only from the module's own sign-in, never from a Graph context another `Connect-MgGraph`
+started (OPIM-45). `Get-OPIMCurrentTenantInfo` returns the auth state's `TokenTenantId` whatever
+`Get-OPIMGraphSessionState` says -- `$null` while the module holds no sign-in: no state, a state
+that is not a dictionary, or the device-code-only state -- and calls no `Get-MgContext` itself. It
+reads the tenant's display name (a raw `Invoke-MgGraphRequest` for `v1.0/organization`) only when
+the session state is `Own` and the organization's `id` is that tenant, else returns `''`.
+`Install-OPIMConfiguration` without `-TenantId` takes that tenant, and without one writes
+`TenantIdNotResolvable` and stores nothing; `Set-OPIMConfiguration` keeps the stored tenant and
+needs no sign-in. Both show the display name in the confirmation prompt only for the tenant they
+write, and `N/A` for any other.
 
 **A refused sign-in closes the transport for its command (EntraRBAC A19).** Outside any `try` a
 cmdlet carries on past a terminating error `Initialize-OPIMAuth` raises, and would then send under
@@ -752,11 +769,11 @@ a state without the key is `Untracked` and is never compared. The sign-in latch 
 `$script:_OPIMSignInLatch`. The tokens themselves live in the MSAL application's in-memory cache
 (`$script:_OPIMMsalApp`) and in the Graph SDK's context; see **SECURITY**.
 
-**`Disconnect-OPIM`** sets `$script:_OPIMAuthState`, `$script:_OPIMMsalApp`,
-`$script:_OPIMMsalAppTenantId` and `$script:_MyIDCache` to `$null` -- which forgets a device code
-mode with the rest of the state -- then calls `Disconnect-MgGraph` and `Disconnect-AzAccount`, each
-with `-ErrorAction SilentlyContinue` inside a `try` whose `catch` discards the error
-(`Disconnect-OPIM.ps1:26-32`). `Disconnect-MgGraph` ends whatever Graph session the process holds,
+**`Disconnect-OPIM`** sets `$script:_OPIMAuthState`, `$script:_OPIMMsalApp` and
+`$script:_OPIMMsalAppTenantId` to `$null` -- which forgets a device code mode with the rest of the
+state -- then calls `Disconnect-MgGraph` and `Disconnect-AzAccount`, each with
+`-ErrorAction SilentlyContinue` inside a `try` whose `catch` discards the error
+(`Disconnect-OPIM.ps1:26-31`). `Disconnect-MgGraph` ends whatever Graph session the process holds,
 which is why it is the way out of `GraphSessionChanged`; `Disconnect-AzAccount` likewise acts on the
 current Az context, whether or not the module established it.
 
@@ -814,18 +831,20 @@ over `source/` on 2026-10-08, listed as they are:
 | File:line (under `source/`) | Call |
 |---|---|
 | `Private/Invoke-OPIMGraphRequest.ps1:198, 236, 273` | `Invoke-MgGraphRequest` -- the wrapper itself |
-| `Private/Get-OPIMCurrentTenantInfo.ps1:44` | `Invoke-MgGraphRequest` for `v1.0/organization` (best-effort tenant display name) |
+| `Private/Get-OPIMCurrentTenantInfo.ps1:60` | `Invoke-MgGraphRequest` for `v1.0/organization` (tenant display name) |
 | `Private/Initialize-OPIMAuth.ps1:441` | `Connect-MgGraph -AccessToken` |
 | `Private/Initialize-OPIMAuth.ps1:498` | `Get-AzAccessToken` (silent validation; the token is discarded) |
 | `Private/Initialize-OPIMAuth.ps1:553` | `Connect-AzAccount` (with `-UseDeviceAuthentication` in device code mode) |
-| `Public/Disconnect-OPIM.ps1:31, 32` | `Disconnect-MgGraph`, `Disconnect-AzAccount` |
+| `Public/Disconnect-OPIM.ps1:30, 31` | `Disconnect-MgGraph`, `Disconnect-AzAccount` |
 
-`Wait-OPIMDirectoryRole` is not in it: it polls in sequence through `Invoke-OPIMGraphRequest`.
+`Get-OPIMCurrentTenantInfo` makes its call best-effort, and only under the module's own Graph
+session. `Wait-OPIMDirectoryRole` is not in the table: it polls in sequence through
+`Invoke-OPIMGraphRequest`.
 `Invoke-OPIMDeviceCodeAuth` is not in it either: it reaches MSAL through the application object it
 is handed, not through the Graph SDK or an Az cmdlet.
 
-Beside these, the module reads `Get-MgContext` (`Get-OPIMMsalApplication.ps1:46`, `Get-MyId.ps1:26`,
-`Get-OPIMCurrentTenantInfo.ps1:30`, `Get-OPIMGraphSessionFingerprint.ps1:47`), reads `Get-AzContext`
+Beside these, the module reads `Get-MgContext` (`Get-OPIMMsalApplication.ps1:46`,
+`Get-OPIMGraphSessionFingerprint.ps1:47`), reads `Get-AzContext`
 (`Initialize-OPIMAuth.ps1:492, 574`, and `Get-OPIMArmRefusal.ps1:64` before every `Az.Resources`
 call), calls `Update-AzConfig` (`Initialize-OPIMAuth.ps1:522, 533`), and calls the `Az.Resources`
 cmdlets listed under **API Mapping**.
@@ -847,7 +866,10 @@ Terminology differs from the PIM portal. Every Graph path is `v1.0`.
 Reads use `filterByCurrentUser(on='principal')` and `$expand=principal,roledefinition`. Graph
 `v1.0` cannot expand `directoryScope`, so `Get-OPIMDirectoryRole` fetches
 `v1.0/directory<directoryScopeId>` through the wrapper for every item not at the root scope `/`
-(`Get-OPIMDirectoryRole.ps1:151`, `:196-200`). A `SelfDeactivate` request is built from the ACTIVE
+(`Get-OPIMDirectoryRole.ps1:156`, `:212`), and a lookup that fails (OPIM-19) never ends the listing:
+its catch scrubs first, the post keeps its scope id as the scope's name, and a WARNING carries the
+caught message and id -- not an error record, which would end `pim`, since it lists with
+`-ErrorAction Stop`. A `SelfDeactivate` request is built from the ACTIVE
 instance, never from an eligibility schedule: it sends the instance's `roleDefinitionId`,
 `directoryScopeId` and `principalId`, and its `roleAssignmentScheduleId` as `targetScheduleId`
 (`Disable-OPIMDirectoryRole.ps1:112-118`). After a request, `Restore-GraphProperty` copies
@@ -1067,14 +1089,16 @@ parentheses, in a different format per pillar:
 
 The completers call the `Get-OPIM*` cmdlets through `& ([scriptblock]::Create('Get-OPIM...'))`, so a
 completion authenticates and calls Graph or ARM on the prompt path. Keep that call form -- see
-**Testing Conventions**.
+**Testing Conventions**. The two directory completers pass `-WarningAction SilentlyContinue` in
+that string, since `Get-OPIMDirectoryRole` warns about an administrative unit it cannot read, and
+a completion must not print a warning into the prompt.
 
 **Configuration CRUD.** The four `*-OPIMConfiguration` cmdlets manage `TenantMap.psd1`, which
 `Connect-OPIM -TenantAlias` and `pim`/`unpim` read:
 
 | Cmdlet | Operation | Notes |
 |---|---|---|
-| `Install-OPIMConfiguration` | Create | Mandatory `-TenantAlias`; `-TenantId` (resolved from the active Graph context when omitted); accepts pipeline input from `Get-OPIM*`. Error if the alias exists. `ConfirmImpact = 'High'`. |
+| `Install-OPIMConfiguration` | Create | Mandatory `-TenantAlias`; `-TenantId` (the tenant of the module's own sign-in when omitted, never a Graph context started outside the module; `TenantIdNotResolvable` without a sign-in); accepts pipeline input from `Get-OPIM*`. Error if the alias exists. `ConfirmImpact = 'High'`. |
 | `Get-OPIMConfiguration` | Read | Optional `-TenantAlias` filter. Returns `Omnicit.PIM.TenantConfiguration` objects. |
 | `Set-OPIMConfiguration` | Update | Mandatory `-TenantAlias`; optional `-TenantId`; accepts pipeline input from `Get-OPIM*`. Error if the alias is missing. `ConfirmImpact = 'High'`. |
 | `Remove-OPIMConfiguration` | Delete | Mandatory `-TenantAlias`. Error if the alias or the file is missing. `ConfirmImpact = 'High'`. |
@@ -1082,6 +1106,33 @@ completion authenticates and calls Graph or ARM on the prompt path. Keep that ca
 `Install-OPIMConfiguration` is create-only and has no `-Force`; an existing alias is changed with
 `Set-OPIMConfiguration`. The private `Export-OPIMTenantMap` owns the PSD1 serialization and is
 called by `Install`, `Set` and `Remove`; never inline it.
+
+**The stored keys (OPIM-10, A13, OPIM-22).** `DirectoryRoles` holds
+`roleDefinitionId|directoryScopeId`, `EntraIDGroups` holds `groupId_accessId`, and `AzureRoles` the
+eligibility schedule's `Name` -- or, for an active Azure role piped from `-Activated` (or an active
+row of `-All`), `Name|ScopeId`: the eligibility it was activated from (the last segment of its
+`LinkedRoleEligibilityScheduleId`, which ARM returned as a full ARM id at the role's own scope when
+measured live on 2026-10-08, while Microsoft's reference sample shows a bare name; both are read)
+and the instance's OWN `ScopeId`. A role can be activated at a narrower scope than its eligibility, and `pim` activates an
+eligibility at the eligibility's own scope, so an eligible post matches an Azure entry only when the
+entry equals its `Name` or its `-WithScope` key `Name|ScopeId`: an entry from a narrower activation
+matches nothing and activates nothing, never the wider eligibility (SECURITY 4). The private
+`ConvertTo-OPIMTenantMapKey` is the single owner of these formats and of how a stored entry is
+read: `-InputObject` returns a post's key, `-InputObject -WithScope` an Azure eligibility's
+`Name|ScopeId` (any other post's key unchanged), and `-Entry` an entry as the key to compare with,
+where a directory entry without `|` -- the form 0.5.x wrote -- means the role at `/` only, never
+every scope of the role, and a blank entry returns nothing and matches no post. Build or read a key
+nowhere else: `Enable-OPIMMyRole` and `Disable-OPIMMyRole` read every configured entry of all three
+lists through `-Entry` and every listed post through `-InputObject` (an Azure post with and without
+`-WithScope`). `Install` and `Set` store each key once (`OrdinalIgnoreCase`, in the order first
+piped), comparing by the `-WithScope` key, so an eligible Azure role and its activation at its own
+scope are stored once; `Enable-OPIMMyRole` keeps only the eligible posts whose key is configured,
+and `Disable-OPIMMyRole` reads each distinct directory key once, in the order configured, and
+matches the active posts by key -- a group entry is matched the same way, entry by entry, and an
+Azure entry selects the eligible schedules whose active instances it then finds by
+`RoleDefinitionId` and `ScopeId`; keys compare `OrdinalIgnoreCase`. So a configured directory role
+is activated and deactivated only at the scope its entry names, and an Azure role only at its
+eligibility's scope.
 
 ---
 
@@ -1091,7 +1142,7 @@ called by `Install`, `Set` and `Remove`; never inline it.
   `$FakeRole`, `$ScheduleId`. Exceptions: automatic variables (`$PSCmdlet`, `$PSItem`, `$_`),
   preference variables (`$ErrorActionPreference`), boolean/null literals (`$null`, `$true`,
   `$false`), and the module-scope caches (`$script:_OPIMAuthState`, `$script:_OPIMMsalApp`,
-  `$script:_OPIMMsalAppTenantId`, `$script:_MyIDCache`, `$script:_OPIMSignInLatch`). Older code --
+  `$script:_OPIMMsalAppTenantId`, `$script:_OPIMSignInLatch`). Older code --
   `Wait-OPIMDirectoryRole` in particular -- still has camelCase locals; new and edited lines follow
   the rule.
 - **One function per file; filename must equal function name.**
@@ -1139,9 +1190,6 @@ called by `Install`, `Set` and `Remove`; never inline it.
   `$Filter` shadows the parameter; name the local variable `$OdataFilter`.
 - **ISO 8601 durations:** `[System.Xml.XmlConvert]::ToString([TimeSpan]::FromHours($Hours))`, which
   gives `PT1H`, as the three `Enable-OPIM*` cmdlets do.
-- **The current user's object id:** `Get-MyId` (private) resolves it through `v1.0/me` and caches
-  it in `$script:_MyIDCache`, keyed by user principal name. Use it rather than a new lookup. No
-  module function calls it today.
 - **PSScriptAnalyzer:** the QA gate requires zero findings, with the default rules, for every
   function's source file. A targeted suppression is acceptable only for a known false positive and
   only with a `Justification` string; **never suppress a rule that hides a real bug.** Six
@@ -1195,9 +1243,12 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `ActivationRequestFailed` (through `Write-OPIMRequestOutcome`), a request still in progress at its
   deadline is `ActivationWaitTimedOut` (Ruling P3: the timeout used to end the command; one slow
   request no longer ends the wait for the others, though under `-ErrorAction Stop` it still ends the
-  command), and a failed poll is written as itself. The expiry error in its `process` block is
-  unchanged: `Write-CmdletError` without an `-ErrorId`.
-- **Private helpers** such as `Resolve-OPIMSchedule`, `Restore-GraphProperty` and `Get-MyId` may
+  command), and a failed poll is written as itself. The expiry error in its `process` block -- a
+  request whose end date has already passed, which is not polled -- is `ActivationAlreadyExpired`
+  (Ruling R-P5: no existing id says "nothing to wait for"), category `InvalidArgument`, with the
+  request as its target, written through `Write-CmdletError -Cmdlet $PSCmdlet` so the record
+  carries the command's own name (`ActivationAlreadyExpired,Wait-OPIMDirectoryRole`).
+- **Private helpers** such as `Resolve-OPIMSchedule` and `Restore-GraphProperty` may
   `throw` on caller error, and `Invoke-OPIMGraphRequest` throws the converted Graph error by
   design: the caller is responsible for catching and routing it.
 - **Name errors have one owner.** `New-OPIMScheduleNameError` builds `AmbiguousName` (category
@@ -1210,6 +1261,19 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `AmbiguousName` (the message says "identity"), and the cmdlet returns without acting. An entry of
   a tenant alias that matches several active posts is written by `Disable-OPIMMyRole` as the same
   `AmbiguousName`, built with `-Configuration` (the message says "configured entry").
+- **`LinkedEligibilityNotFound` has one owner.** `ConvertTo-OPIMTenantMapKey` builds it (category
+  `ObjectNotFound`, the instance as its target) and throws it with `ThrowTerminatingError` when an
+  active Azure role cannot be stored in the tenant map (OPIM-22): its
+  `LinkedRoleEligibilityScheduleId` names no eligibility (empty, missing, or ending in `/`), or it is
+  a full ARM id whose scope (the text before
+  `/providers/Microsoft.Authorization/roleEligibilitySchedules/`, found and compared
+  `OrdinalIgnoreCase`) differs from the instance's `ScopeId` -- an activation at a narrower scope. A
+  bare link, or the provider-only form, is not refused: it is stored with the instance's scope, and
+  the scope is proven when the entry is read (see **The stored keys** under **Configuration CRUD**).
+  The two cases carry messages of their own; build the record nowhere else.
+  `Install-OPIMConfiguration` and `Set-OPIMConfiguration` call the helper with `-ErrorAction Stop`
+  in a `try` whose catch scrubs first, writes the record (non-terminating) and skips only that piped
+  object; the others are still stored.
 - **Request status has one owner.** `Get-OPIMRequestOutcome` classifies a status (Succeeded,
   InProgress, AwaitingDecision, Failed; table in its help; `-Deactivate` for SelfDeactivate, whose
   success is `Revoked`); `Write-OPIMRequestOutcome` writes the status back onto the request and
@@ -1316,7 +1380,7 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   scenarios (happy path, error cases, parameter sets) in `Context` blocks, with a `BeforeAll`
   inside each `Context` for shared arrangement; use `BeforeEach` only for state that must reset
   per `It`. `It` names start with a third-person singular verb: "calls", "returns", "writes",
-  "throws". Write the scope prefix in lower case, `$script:_MyIDCache`, never `$SCRIPT:`.
+  "throws". Write the scope prefix in lower case, `$script:_OPIMAuthState`, never `$SCRIPT:`.
 - **Every unit test file opens with the root form**, at the top of the file and outside every
   `Describe`. It imports the module BY NAME, never by path -- importing by path breaks the Sampler
   coverage measurement, which targets the built module -- and installs the transport tripwire
@@ -1413,9 +1477,9 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `Initialize-OPIMAuth` step-up and refresh calls, its error conversion -- instead of testing the
   function at the module boundary. Mock the raw SDK only where the test is about that layer itself
   or the function calls it directly: `Invoke-OPIMGraphRequest.Tests.ps1` (the wrapper, mocked
-  inside `InModuleScope`), `Get-OPIMCurrentTenantInfo.Tests.ps1` (`Invoke-MgGraphRequest` and
-  `Get-MgContext`), `Get-MyId.Tests.ps1` and `Get-OPIMMsalApplication.Tests.ps1` (`Get-MgContext`,
-  which must THROW in the latter -- see below), `Get-OPIMGraphSessionFingerprint.Tests.ps1` and
+  inside `InModuleScope`), `Get-OPIMCurrentTenantInfo.Tests.ps1` (`Invoke-MgGraphRequest`, and
+  `Get-MgContext` to prove it is not read), `Get-OPIMMsalApplication.Tests.ps1` (`Get-MgContext`,
+  which must THROW there -- see below), `Get-OPIMGraphSessionFingerprint.Tests.ps1` and
   `Get-OPIMGraphSessionState.Tests.ps1` (`Get-MgContext`), `Get-OPIMArmRefusal.Tests.ps1` and the
   ARM-gate contexts of the three `*-OPIMAzureRole` test files (`Get-AzContext`),
   `Initialize-OPIMAuth.Tests.ps1` (`Connect-MgGraph`, `Connect-AzAccount`, `Get-AzContext`,
@@ -1474,7 +1538,6 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
       InModuleScope Omnicit.PIM {
           $script:_OPIMAuthState = $null
           $script:_OPIMMsalApp   = $null
-          $script:_MyIDCache     = $null
       }
   }
   ```
@@ -1636,9 +1699,10 @@ version drift.
 ## Checklist: Adding a New Function
 
 1. **Create the file:** `source/Public/Verb-OPIMNoun.ps1` for a public function, or
-   `source/Private/<FunctionName>.ps1` for a private helper (several, such as `Get-MyId` and
-   `Write-CmdletError`, carry no OPIM prefix). Either way the filename must match the function
-   name exactly. Declare it with `function`, not `filter` (see **Common Pitfalls**).
+   `source/Private/<FunctionName>.ps1` for a private helper (several, such as
+   `Convert-GraphHttpException` and `Write-CmdletError`, carry no OPIM prefix). Either way the
+   filename must match the function name exactly. Declare it with `function`, not `filter` (see
+   **Common Pitfalls**).
 2. **If public:** add it to `FunctionsToExport` in `source/Omnicit.PIM.psd1`, declare its
    `[OutputType()]`, declare any alias with `[Alias()]` on the function, and add the alias to
    `AliasesToExport` there.
@@ -1705,9 +1769,13 @@ version drift.
   An existing alias is updated with `Set-OPIMConfiguration`.
 - **`Export-OPIMTenantMap` (private) owns the PSD1 serialization** -- call it from `Install`, `Set`
   and `Remove` instead of inlining the StringBuilder block.
-- **The `-TenantMapPath` default is built from `$env:USERPROFILE`** in `Connect-OPIM`, the four
-  `*-OPIMConfiguration` cmdlets and `Enable`/`Disable-OPIMMyRole`. That variable is set on Windows
-  only, and this module is Core-only and cross-platform: never build a new path from it.
+- **The `-TenantMapPath` default is built from `$HOME`**, written exactly
+  `(Join-Path $HOME '.config/Omnicit.PIM/TenantMap.psd1')` (OPIM-21) in `Connect-OPIM`, the four
+  `*-OPIMConfiguration` cmdlets and `Enable`/`Disable-OPIMMyRole`; each cmdlet's unit test reads the
+  parameter's default text from the AST, so the parentheses and the forward slashes are part of the
+  contract. On Windows `Join-Path` turns the `/` into `\`, so the path is byte-identical to the old
+  `"$env:USERPROFILE\.config\..."` one. Never build a path from `$env:USERPROFILE`: it is set on
+  Windows only, and this module is Core-only and cross-platform.
 - **`Restore-GraphProperty` is a `filter`, not a `function`.** The QA gate enumerates commands with
   `-CommandType Function`, so a filter gets no unit-test-file or PSScriptAnalyzer check from it.
   Declare new commands with `function`.

@@ -20,7 +20,8 @@ function Get-OPIMConfiguration {
     .PARAMETER TenantAlias
     Optional. Short alias to filter the output to a single entry.
     .PARAMETER TenantMapPath
-    Path to the TenantMap.psd1 configuration file. Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
+    Path to the TenantMap.psd1 configuration file. Defaults to .config/Omnicit.PIM/TenantMap.psd1
+    under your home folder ($HOME; on Windows the same file as before, under $env:USERPROFILE).
     #>
     [Alias('Get-PIMConfig')]
     [CmdletBinding()]
@@ -28,7 +29,7 @@ function Get-OPIMConfiguration {
     param(
         [string]$TenantAlias,
 
-        [string]$TenantMapPath = "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1"
+        [string]$TenantMapPath = (Join-Path $HOME '.config/Omnicit.PIM/TenantMap.psd1')
     )
 
     if (-not (Test-Path $TenantMapPath)) {

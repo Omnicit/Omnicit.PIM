@@ -6,7 +6,10 @@ function Export-OPIMTenantMap {
     .DESCRIPTION
     Shared internal helper used by Install-OPIMConfiguration, Set-OPIMConfiguration, and
     Remove-OPIMConfiguration to serialize the in-memory TenantMap to a PowerShell data file.
-    All entries are sorted alphabetically by alias key.
+    All entries are sorted alphabetically by alias key. The alias, the TenantId and every role or
+    group value are written between single quotes with each single-quote character doubled
+    (the straight apostrophe and U+2018, U+2019, U+201A and U+201B), so the file reads back
+    whatever they hold.
 
     .PARAMETER MapData
     The full TenantMap hashtable to serialize. Each value must be a hashtable with at minimum
@@ -16,7 +19,7 @@ function Export-OPIMTenantMap {
     Absolute path to the target .psd1 file.
 
     .EXAMPLE
-    Export-OPIMTenantMap -MapData $MapData -Path "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1"
+    Export-OPIMTenantMap -MapData $MapData -Path (Join-Path $HOME '.config/Omnicit.PIM/TenantMap.psd1')
     Serialize the in-memory tenant map hashtable to the default PSD1 configuration file.
     #>
     [CmdletBinding()]
@@ -29,18 +32,26 @@ function Export-OPIMTenantMap {
         [string]$Path
     )
 
+    # OPIM-26: every value is written between single quotes, and the tokenizer ends such a string on
+    # the straight apostrophe and on U+2018, U+2019, U+201A and U+201B. EscapeSingleQuotedStringContent
+    # doubles all five, so the file reads back whatever the alias, the TenantId or a value holds. A
+    # missing TenantId ($null) is still written as an empty string.
     $StringBuilder = [System.Text.StringBuilder]::new()
     [void]$StringBuilder.AppendLine('@{')
     foreach ($Kv in $MapData.GetEnumerator() | Sort-Object Key) {
         $ConfigValue = $Kv.Value
-        [void]$StringBuilder.AppendLine("    '$($Kv.Key)' = @{")
+        $AliasText = [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$Kv.Key)
+        [void]$StringBuilder.AppendLine("    '$AliasText' = @{")
         # Support both legacy flat-string format and current nested hashtable/OrderedDictionary
         $TenantIdVal = if ($ConfigValue -is [System.Collections.IDictionary]) { $ConfigValue.TenantId } else { $ConfigValue }
-        [void]$StringBuilder.AppendLine("        TenantId       = '$TenantIdVal'")
+        $TenantIdText = [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$TenantIdVal)
+        [void]$StringBuilder.AppendLine("        TenantId       = '$TenantIdText'")
         if ($ConfigValue -is [System.Collections.IDictionary]) {
             foreach ($RoleKey in 'DirectoryRoles', 'EntraIDGroups', 'AzureRoles') {
                 if ($ConfigValue[$RoleKey]) {
-                    $RoleValues = ($ConfigValue[$RoleKey] | ForEach-Object { "'$_'" }) -join ', '
+                    $RoleValues = ($ConfigValue[$RoleKey] | ForEach-Object {
+                            "'" + [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$_) + "'"
+                        }) -join ', '
                     [void]$StringBuilder.AppendLine("        $(($RoleKey).PadRight(14)) = @($RoleValues)")
                 }
             }

@@ -616,7 +616,7 @@ Describe 'Resolve-OPIMSchedule' {
             Should -Invoke -CommandName $Lister -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It -ParameterFilter { -not $Activated -and $ErrorAction -eq 'Stop' }
         }
 
-        It 'still throws the active listing own error as itself (<Pillar>)' {
+        It 'throws the active listing own error as itself all the same (<Pillar>)' {
             # The hint is best effort; the active list is not. A failed active read is never ActiveRoleNotFound.
             Mock -ModuleName Omnicit.PIM $Lister { $Eligible }
             Mock -ModuleName Omnicit.PIM $Lister {
@@ -771,7 +771,7 @@ Describe 'Resolve-OPIMSchedule' {
     }
 
     Context 'When the group is eligible as member and active only as owner (OPIM-40 guard)' {
-        It 'still says the membership is already deactivated and names -AccessType Owner' {
+        It 'says the membership is already deactivated all the same, and names -AccessType Owner' {
             $Eligible = $Sets.Group.Eligible
             $Active = $Sets.Group.ActiveOwner
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Eligible }

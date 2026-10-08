@@ -94,6 +94,145 @@ Describe 'Get-OPIMDirectoryRole' {
         }
     }
 
+    Context 'When the scope of a post cannot be read (OPIM-19), <Mode>' -ForEach @(
+        @{ Mode = 'by default'; Params = @{} }
+        @{ Mode = 'with -All'; Params = @{ All = $true } }
+    ) {
+        # Graph refuses the lookup of one administrative unit the user may not read. That post is
+        # listed with its scope id as the scope's name and a warning, and the next post is still
+        # looked up. The failure is reported as itself in the warning, never as "not found" and never
+        # as an error that would end a caller running under -ErrorAction Stop, such as pim.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            # A spy: the scrub itself is covered by the bearer scrub contexts below; here it is only
+            # counted, and asked what record it was given.
+            Mock -ModuleName Omnicit.PIM Remove-OPIMErrorRecord {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                @{
+                    value = @(
+                        @{ id = 'elig-au-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/administrativeUnits/au-001'; roleDefinition = @{ displayName = 'User Administrator' }; principal = @{ displayName = 'Jane Doe' } }
+                        @{ id = 'elig-au-002'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/administrativeUnits/au-002'; roleDefinition = @{ displayName = 'User Administrator' }; principal = @{ displayName = 'Jane Doe' } }
+                    )
+                }
+            } -ParameterFilter { $Uri -like '*roleEligibilitySchedules*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                @{ value = @() }
+            } -ParameterFilter { $Uri -like '*roleAssignmentScheduleInstances*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                $PSCmdlet.ThrowTerminatingError(
+                    [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                        'Authorization_RequestDenied',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied,
+                        $null
+                    )
+                )
+            } -ParameterFilter { $Uri -eq 'v1.0/directory/administrativeUnits/au-001' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                @{ id = 'au-002'; displayName = 'Sales AU' }
+            } -ParameterFilter { $Uri -eq 'v1.0/directory/administrativeUnits/au-002' }
+        }
+
+        It 'returns every post, the unreadable one with its scope id as the scope''s name' {
+            $Out = @(Get-OPIMDirectoryRole @Params -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+            $Out.Count | Should -Be 2
+            $Failed =@($Out | Where-Object directoryScopeId -EQ '/administrativeUnits/au-001')
+            $Failed.Count | Should -Be 1
+            $Failed[0].id | Should -BeExactly 'elig-au-001'
+            $Failed[0].roleDefinition.displayName | Should -BeExactly 'User Administrator'
+            $Failed[0].directoryScope.id | Should -BeExactly '/administrativeUnits/au-001'
+            $Failed[0].directoryScope.displayName | Should -BeExactly '/administrativeUnits/au-001'
+            $Read = @($Out | Where-Object directoryScopeId -EQ '/administrativeUnits/au-002')
+            $Read.Count | Should -Be 1
+            $Read[0].directoryScope.displayName | Should -BeExactly 'Sales AU'
+        }
+
+        It 'looks up the next scope after the one that failed' {
+            $null = Get-OPIMDirectoryRole @Params -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Uri -eq 'v1.0/directory/administrativeUnits/au-001'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Uri -eq 'v1.0/directory/administrativeUnits/au-002'
+            }
+        }
+
+        It 'writes one warning that names the scope and the error as itself, and no error' {
+            # The error stream is read through 2>&1, so only a record the cmdlet writes is counted;
+            # -ErrorVariable would also hold every nested frame's copy of the record the mock threw.
+            $Output = @(Get-OPIMDirectoryRole @Params -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction Continue 2>&1)
+            @($Warns).Count | Should -Be 1
+            $Warns[0].Message | Should -BeLike "*'/administrativeUnits/au-001'*"
+            $Warns[0].Message | Should -BeLike "*'User Administrator'*"
+            $Warns[0].Message | Should -BeLike '*Authorization_RequestDenied*'
+            $Warns[0].Message | Should -BeLike '*Insufficient privileges to complete the operation.*'
+            $Warns[0].Message | Should -BeLike '*(error id Authorization_RequestDenied*' -Because 'the id is reported beside the message'
+            $Warns[0].Message | Should -Not -BeLike '*au-002*'
+            @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+            @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }).Count | Should -Be 2 -Because 'both posts are listed'
+        }
+
+        It 'lists under -ErrorAction Stop as well, as pim calls it' {
+            { $script:Out = @(Get-OPIMDirectoryRole @Params -ErrorAction Stop -WarningAction SilentlyContinue) } | Should -Not -Throw
+            $script:Out.Count | Should -Be 2
+            # The catch point was reached: the failed lookup was scrubbed once, and then warned about.
+            Should -Invoke -ModuleName Omnicit.PIM Remove-OPIMErrorRecord -Times 1 -Exactly -Scope It
+        }
+
+        It 'scrubs the caught record first' {
+            $null = Get-OPIMDirectoryRole @Params -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Remove-OPIMErrorRecord -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Remove-OPIMErrorRecord -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Record.FullyQualifiedErrorId -like 'Authorization_RequestDenied*'
+            }
+        }
+    }
+
+    Context 'When the scope of an activation cannot be read (OPIM-19), <Mode>' -ForEach @(
+        @{ Mode = 'with -Activated'; Params = @{ Activated = $true }; Status = $null }
+        @{ Mode = 'in the Active rows of -All'; Params = @{ All = $true }; Status = 'Active' }
+    ) {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Remove-OPIMErrorRecord {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                @{ value = @() }
+            } -ParameterFilter { $Uri -like '*roleEligibilitySchedules*' }
+            # A typed fake carries memberType and endDateTime, which the ScriptProperties of an
+            # assignment instance read from the object itself.
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                @{
+                    value = @(
+                        @{ id = 'active-au-001'; assignmentType = 'Activated'; memberType = 'Direct'; endDateTime = '2026-10-08T12:00:00Z'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/administrativeUnits/au-001'; roleDefinition = @{ displayName = 'User Administrator' }; principal = @{ displayName = 'Jane Doe' } }
+                    )
+                }
+            } -ParameterFilter { $Uri -like '*roleAssignmentScheduleInstances*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                $PSCmdlet.ThrowTerminatingError(
+                    [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                        'Authorization_RequestDenied',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied,
+                        $null
+                    )
+                )
+            } -ParameterFilter { $Uri -eq 'v1.0/directory/administrativeUnits/au-001' }
+        }
+
+        It 'returns the activation with its scope id as the scope''s name and one warning' {
+            $Output = @(Get-OPIMDirectoryRole @Params -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction Continue 2>&1)
+            @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+            $Out = @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })
+            $Out.Count | Should -Be 1
+            $Out[0].id | Should -BeExactly 'active-au-001'
+            $Out[0].directoryScope.displayName | Should -BeExactly '/administrativeUnits/au-001'
+            if ($Status) { $Out[0].Status | Should -BeExactly $Status }
+            @($Warns).Count | Should -Be 1
+            $Warns[0].Message | Should -BeLike '*Authorization_RequestDenied*'
+            Should -Invoke -ModuleName Omnicit.PIM Remove-OPIMErrorRecord -Times 1 -Exactly -Scope It
+        }
+    }
+
     Context 'When -Activated is specified' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

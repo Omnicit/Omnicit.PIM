@@ -16,7 +16,9 @@ class DirectoryActivatedRoleCompleter : IArgumentCompleter {
         $ErrorActionPreference = 'Stop'
         try {
             Write-Progress -Id 51806 -Activity 'Get Activated Directory Roles' -Status 'Fetching from Azure' -PercentComplete 1
-            $Listed = @(& ([scriptblock]::Create('Get-OPIMDirectoryRole -Activated')))
+            # -WarningAction SilentlyContinue: a scope that cannot be read is a warning of the listing,
+            # which tab completion must not print into the prompt.
+            $Listed = @(& ([scriptblock]::Create('Get-OPIMDirectoryRole -Activated -WarningAction SilentlyContinue')))
             [List[CompletionResult]]$Result = @(
                 Get-OPIMCompletionText -Pillar Directory -InputObject $Listed -WordToComplete $WordToComplete `
                     -FakeBoundParameters $FakeBoundParameters -CommandName $CommandName

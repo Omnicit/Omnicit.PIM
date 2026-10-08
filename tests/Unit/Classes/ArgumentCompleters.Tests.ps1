@@ -330,6 +330,30 @@ Describe 'DirectoryActivatedRoleCompleter' {
         }
     }
 
+    Context 'When Get-OPIMDirectoryRole writes a warning' {
+        It 'calls Get-OPIMDirectoryRole with -WarningAction SilentlyContinue, so the completion prints no warning' {
+            # Get-OPIMDirectoryRole warns about a scope it cannot read. The mock body runs in the test
+            # scope, so it takes the preference the completer passed from $PesterBoundParameters. The
+            # cmdlet is named with its module, since the build's own Write-Warning would count it.
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole {
+                $WarningPreference = if ($PesterBoundParameters.ContainsKey('WarningAction')) {
+                    $PesterBoundParameters['WarningAction']
+                } else { 'Continue' }
+                Microsoft.PowerShell.Utility\Write-Warning 'The scope of the role could not be read.'
+                [PSCustomObject]@{ roleDefinition = [PSCustomObject]@{ displayName = 'Global Reader' }; directoryScopeId = '/administrativeUnits/au-001'; id = 'inst-001' }
+            }
+            $Output = InModuleScope Omnicit.PIM {
+                $Completer = [DirectoryActivatedRoleCompleter]::new()
+                $Completer.CompleteArgument('Disable-OPIMDirectoryRole', 'RoleName', '', $null, @{})
+            } 3>&1
+            @($Output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }).Count | Should -Be 0
+            (@($Output | Where-Object { $_ -is [System.Management.Automation.CompletionResult] }).CompletionText -join '|') | Should -Be "'Global Reader'"
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Activated -and $PesterBoundParameters['WarningAction'] -eq 'SilentlyContinue'
+            }
+        }
+    }
+
     Context 'When Get-OPIMDirectoryRole throws' {
         It 'returns null without propagating the exception' {
             Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { throw 'API unavailable' }
@@ -455,6 +479,30 @@ Describe 'DirectoryEligibleRoleCompleter' {
                 $Completer = [DirectoryEligibleRoleCompleter]::new()
                 $Result = $Completer.CompleteArgument('Enable-OPIMDirectoryRole', 'RoleName', 'Reader*', $null, @{})
                 @($Result).Count | Should -Be 0
+            }
+        }
+    }
+
+    Context 'When Get-OPIMDirectoryRole writes a warning' {
+        It 'calls Get-OPIMDirectoryRole with -WarningAction SilentlyContinue, so the completion prints no warning' {
+            # Get-OPIMDirectoryRole warns about a scope it cannot read. The mock body runs in the test
+            # scope, so it takes the preference the completer passed from $PesterBoundParameters. The
+            # cmdlet is named with its module, since the build's own Write-Warning would count it.
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole {
+                $WarningPreference = if ($PesterBoundParameters.ContainsKey('WarningAction')) {
+                    $PesterBoundParameters['WarningAction']
+                } else { 'Continue' }
+                Microsoft.PowerShell.Utility\Write-Warning 'The scope of the role could not be read.'
+                [PSCustomObject]@{ roleDefinition = [PSCustomObject]@{ displayName = 'Global Reader' }; directoryScopeId = '/administrativeUnits/au-001'; id = 'elig-001' }
+            }
+            $Output = InModuleScope Omnicit.PIM {
+                $Completer = [DirectoryEligibleRoleCompleter]::new()
+                $Completer.CompleteArgument('Enable-OPIMDirectoryRole', 'RoleName', '', $null, @{})
+            } 3>&1
+            @($Output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }).Count | Should -Be 0
+            (@($Output | Where-Object { $_ -is [System.Management.Automation.CompletionResult] }).CompletionText -join '|') | Should -Be "'Global Reader'"
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                -not $Activated -and $PesterBoundParameters['WarningAction'] -eq 'SilentlyContinue'
             }
         }
     }

@@ -46,13 +46,15 @@ LONG DESCRIPTION
     same process replaces the module's Microsoft Graph session, the role, group and sign-in
     commands refuse their calls with GraphSessionChanged instead of switching the session
     back: run Disconnect-OPIM, which also disconnects that session, and sign in again. The
-    configuration commands are the exception, by design: Install-OPIMConfiguration and
-    Set-OPIMConfiguration read whatever Graph session is active. A command whose sign-in at
-    its start was refused sends nothing more (SignInRefused); a sign-in refused while a
-    failed request is retried fails only that request. Azure signs in to the same tenant,
-    reuses an earlier Azure sign-in only for the same account, and asks for no subscription;
-    after a failed Azure sign-in (AzureConnectFailed) nothing is sent to Azure under an
-    earlier one.
+    configuration commands do not sign in, and take a tenant only from the module's own
+    sign-in, never from another Connect-MgGraph: Install-OPIMConfiguration without -TenantId
+    stores the tenant the module is signed in to, and without such a sign-in refuses with
+    TenantIdNotResolvable. Set-OPIMConfiguration keeps the stored tenant. A command whose
+    sign-in at its start was refused sends nothing more (SignInRefused); a sign-in refused
+    while a failed request is retried fails only that request. Azure signs in to the same
+    tenant, reuses an earlier Azure sign-in only for the same account, and asks for no
+    subscription; after a failed Azure sign-in (AzureConnectFailed) nothing is sent to Azure
+    under an earlier one.
     Enable-OPIMMyRole and Disable-OPIMMyRole stop when the Microsoft Graph sign-in fails;
     when only the Azure sign-in fails they write the error and skip the Azure roles, unless
     the error preference is Stop, which ends the command.
@@ -91,6 +93,9 @@ LONG DESCRIPTION
 
     The *-OPIMConfiguration cmdlets manage a TenantMap.psd1 file that maps
     short tenant aliases to Azure Tenant IDs and optional default role lists.
+    A directory role is stored with its scope (roleDefinitionId|directoryScopeId), and
+    Enable-OPIMMyRole and Disable-OPIMMyRole activate and deactivate it only at that scope; an
+    entry written by 0.5.x holds the roleDefinitionId alone and means the role at '/' only.
 
       Install-OPIMConfiguration  Create a new alias
       Get-OPIMConfiguration      Read current configuration
@@ -98,7 +103,11 @@ LONG DESCRIPTION
       Remove-OPIMConfiguration   Delete an alias
 
     The TenantMap is stored at:
-      $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1
+      $HOME/.config/Omnicit.PIM/TenantMap.psd1
+
+    On Windows, $HOME is your user profile, so this is the same file as before,
+    $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1. On Linux and macOS it is under your home
+    folder. Every cmdlet that reads the map takes -TenantMapPath to use another file.
 
     NAMING A ROLE OR GROUP
 
@@ -124,6 +133,11 @@ LONG DESCRIPTION
     out everywhere else. An -Identity that matches more than one schedule is refused the same way,
     and so is an entry of a tenant alias that matches more than one active role or group when
     Disable-OPIMMyRole (unpim) reads it: that entry deactivates none of them.
+
+    Activate an ownership (-AccessType Owner) only of a group that has another owner. When you
+    are the group's only owner, PIM for Groups refuses to deactivate the ownership (Graph answers
+    CannotDeleteLastAdminAssignment) and the ownership does not end at its end time. Adding a
+    service principal as a direct owner of the group did not change this in testing.
 
     -Activated lists your activations only: the active, time-bound assignments. A permanent
     assignment is no activation and cannot be deactivated by you, so it is not listed.

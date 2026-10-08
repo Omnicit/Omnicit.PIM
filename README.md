@@ -26,12 +26,15 @@ Import-Module Omnicit.PIM
 
 ## Authentication
 
-All `Get-/Enable-/Disable-OPIM*` cmdlets authenticate automatically on first use — a browser
-window opens once, the token is cached via MSAL for the session, and subsequent calls are
-idempotent. You never need to call `Connect-MgGraph` or `Connect-AzAccount` manually.
+All `Get-/Enable-/Disable-OPIM*` cmdlets authenticate automatically on first use. The first
+Microsoft Graph sign-in opens the system browser, or shows a device code with `-DeviceCode` (see
+below); the token is cached via MSAL for the session, and later calls reuse it without a new prompt
+while it can be refreshed silently. The Azure role cmdlets also need Azure's own sign-in, through
+the Az module, which prompts separately the first time (see below). You never need to call
+`Connect-MgGraph` or `Connect-AzAccount` manually.
 
 `Connect-OPIM` is the module's optional pre-authentication command. Use it when you want the
-browser prompt at a predictable time or need to target a specific tenant:
+sign-in prompt at a predictable time or need to target a specific tenant:
 
 ```powershell
 Connect-OPIM                                          # home tenant at the first sign-in, then the session's tenant
@@ -49,10 +52,13 @@ The Microsoft Graph PowerShell SDK keeps one session per PowerShell process. If 
 the same process runs `Connect-MgGraph` after Omnicit.PIM signed in, the role, group and sign-in
 commands refuse to send their calls under that session (`GraphSessionChanged`) instead of
 switching it back. Run `Disconnect-OPIM`, which also disconnects that other session, and sign in
-again -- or use a new PowerShell window. The configuration commands are the exception, by design:
-`Install-OPIMConfiguration` and `Set-OPIMConfiguration` read whatever Graph session is active --
-`Install-OPIMConfiguration` takes its tenant when you omit `-TenantId`, and both read the tenant's
-display name for the confirmation prompt.
+again -- or use a new PowerShell window. The configuration commands do not sign in, and they take a
+tenant only from Omnicit.PIM's own sign-in, never from a session started with `Connect-MgGraph`
+outside the module: `Install-OPIMConfiguration` without `-TenantId` stores the tenant Omnicit.PIM is
+signed in to, and without such a sign-in refuses with `TenantIdNotResolvable` and stores nothing.
+`Set-OPIMConfiguration` keeps the tenant stored for the alias. Both show the tenant's display name
+in the confirmation prompt only for the tenant they write, and only while Omnicit.PIM's own Graph
+session is active; otherwise it reads `N/A`.
 
 A command whose sign-in at its start was refused sends nothing more, even when it carries on past
 the error: every request it would still make is refused with `SignInRefused`. A sign-in refused
@@ -236,7 +242,10 @@ Get-OPIMEntraIDGroup 'Finance Team'
 Enable-OPIMEntraIDGroup 'Finance Team' -Justification 'Project work'
 Enable-OPIMEntraIDGroup <tab>
 
-# Activate the ownership instead
+# Activate the ownership instead -- only of a group that has another owner. If you are the group's
+# only owner, PIM for Groups refuses to deactivate the ownership (CannotDeleteLastAdminAssignment)
+# and it does not end at its end time; adding a service principal as a direct owner of the group
+# did not change this in testing
 Enable-OPIMEntraIDGroup 'Finance Team' -AccessType Owner
 
 # Activate using positional params: Group (pos 0), Justification (pos 1), Hours (pos 2)
@@ -266,8 +275,13 @@ Get-OPIMEntraIDGroup -Activated | Disable-OPIMEntraIDGroup
 `Enable-OPIMMyRole` (aliases: `pim`, `Enable-OPIMMyRoles`) is the all-in-one activation command.
 `Disable-OPIMMyRole` (aliases: `unpim`, `Disable-OPIMMyRoles`) is its counterpart for deactivation.
 
-Both commands reuse an existing authenticated session — if you have already called `Connect-OPIM`
-or run any `Get-OPIM*` cmdlet, no additional browser prompt is shown.
+Both commands reuse an existing sign-in: after `Connect-OPIM` or any role or group cmdlet, they
+start no new Microsoft Graph sign-in for the same tenant while its token can still be used or
+refreshed silently. When Azure roles are part of the run, Azure needs its own sign-in, which is
+reused only when it was already made for the same tenant and account (`Connect-OPIM -IncludeARM`,
+or an earlier Azure role cmdlet). With `-DeviceCode`, a sign-in that needs a prompt shows a
+device code instead of opening the browser -- one for Microsoft Graph and, when Azure signs in, a
+second one for Azure.
 
 Output is a unified table across all three role types:
 
@@ -416,24 +430,34 @@ activates what you actually need rather than everything eligible.
 ### Default location
 
 ```
-$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1
+$HOME/.config/Omnicit.PIM/TenantMap.psd1
 ```
+
+On Windows `$HOME` is your user profile, so this is the file where it has always been,
+`$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1`. On Linux and macOS it sits under your home
+folder, where `$env:USERPROFILE` does not exist. Every cmdlet that reads the map takes
+`-TenantMapPath` to use another file.
 
 ### File format
 
-Each entry is a nested hashtable under the alias key. The only required field is `TenantId`;
-the role/group arrays are optional — omit them and `pim` will activate **all** eligible items:
+Each entry is a nested hashtable under the alias key. The only required field is `TenantId`.
+The role/group arrays are optional, and `pim` and `unpim` act only on what they list: a category
+whose array is missing is skipped, with a verbose message, so an entry with no arrays activates
+**nothing**. To activate everything eligible, use the `-AllEligible*` switches of `pim`
+(`Enable-OPIMMyRole`) instead. The exception is an alias written in the old string form,
+`'alias' = '<tenant id>'`: `pim` activates everything eligible for it and `unpim` deactivates
+everything active, until `Set-OPIMConfiguration` rewrites it in the table form.
 
 ```powershell
 @{
-    # Alias 'corp' — activates only the two stored directory roles and one group
+    # Alias 'corp' — activates only the stored directory role, at '/', and one group
     'corp' = @{
         TenantId       = 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
-        DirectoryRoles = @('e8611ab8-c189-46e8-94e1-60213ab1f814')   # roleDefinitionId
+        DirectoryRoles = @('e8611ab8-c189-46e8-94e1-60213ab1f814|/')   # roleDefinitionId|directoryScopeId
         EntraIDGroups  = @('00000000-0000-0000-0000-000000000006_member')  # groupId_accessId
         AzureRoles     = @('schedule-name-from-get-opimazurerole')
     }
-    # Alias 'partner' — no role list: activates ALL eligible items at login
+    # Alias 'partner' -- no role lists: pim and unpim skip every category (nothing is activated)
     'partner' = @{
         TenantId = 'yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy'
     }
@@ -446,18 +470,28 @@ The file is safe to edit manually — it is standard PowerShell data file syntax
 
 | Type | Stored value | Field on Get-OPIM* object |
 |---|---|---|
-| Directory Role | `roleDefinitionId` | `$_.roleDefinitionId` |
+| Directory Role | `"{roleDefinitionId}\|{directoryScopeId}"` | `"$($_.roleDefinitionId)\|$($_.directoryScopeId)"` |
 | Entra ID Group | `"{groupId}_{accessId}"` | `"$($_.groupId)_$($_.accessId)"` |
-| Azure Role | Schedule name | `$_.Name` |
+| Azure Role | Eligibility schedule name; for an active role, `"{name}\|{ScopeId}"` | `$_.Name`; for an active role from `-Activated`, the eligibility it was activated from (the last segment of `$_.LinkedRoleEligibilityScheduleId`) and the role's own `$_.ScopeId` |
 
 These identifiers are stable across eligibility renewals. The `accessId` in the group key is
 either `member` or `owner`, so you can store member and owner eligibility for the same group
 independently.
 
+A directory role is stored with its scope -- `/` for the whole directory, or
+`/administrativeUnits/{id}` for an administrative unit -- and `pim` and `unpim` activate and
+deactivate it only at that scope. An entry written by 0.5.x holds only the `roleDefinitionId` and
+now means the role at the root scope `/` only; for a role eligible only below the root, pipe all
+the directory roles the alias should hold to `Set-OPIMConfiguration` again, which stores them with
+their scopes (Set replaces the alias's whole `DirectoryRoles` list). An older module version (0.5.x) reading
+an entry with a scope matches nothing for it: it activates and deactivates no directory role, and
+no Azure role stored from `-Activated`, for that entry. Keys are compared without regard to letter
+case, and each key is stored once.
+
 ### Creating and managing entries
 
 ```powershell
-# Add a new tenant alias with no role defaults (activates all eligible at runtime)
+# Add a new tenant alias with no role lists yet (pim activates nothing for it until you add some)
 Install-OPIMConfiguration -TenantAlias contoso -TenantId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
 
 # Add a second tenant
@@ -481,7 +515,19 @@ Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>' -WhatIf
 Pipe `Get-OPIM*` output (optionally filtered with `Where-Object`) to store exactly which
 roles/groups `pim` should activate for a tenant. Both eligible (`default`) and activated
 (`-Activated`) objects are accepted — useful for piping your currently active roles as the
-default set. `-TenantMap` is implied; `-TenantAlias` and `-TenantId` are required.
+default set. `-TenantAlias` is required. `-TenantId` is optional on `Install-OPIMConfiguration`:
+without it the tenant Omnicit.PIM is signed in to is stored, and without such a sign-in nothing is
+stored (`TenantIdNotResolvable`). The file written is the default tenant map unless
+`-TenantMapPath` names another.
+
+An active Azure role is stored as the eligibility it was activated from plus its own scope
+(`{name}|{ScopeId}`), and `pim` and `unpim` act on it only while that eligibility is at that
+scope. One activated at another scope than its eligibility (a narrower scope chosen when it was
+activated) never stands for the wider eligibility: when Azure names the eligibility's scope, it is
+refused with the error `LinkedEligibilityNotFound` and not stored, and otherwise the stored entry
+matches no eligible role, so `pim` activates nothing for it. An active Azure role that names no
+eligibility is refused the same way. To activate the eligibility at its own scope, pipe the
+eligible role from `Get-OPIMAzureRole` instead. The other piped objects are still stored.
 
 ```powershell
 # Store all eligible directory roles for this tenant
@@ -505,6 +551,12 @@ Get-OPIMEntraIDGroup -AccessType member |
 Get-OPIMAzureRole |
     Where-Object { $_.RoleDefinitionDisplayName -like 'Contributor*' } |
     Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>'
+
+# Store your currently active Azure roles as the eligibilities they were activated from, each
+# with its own scope (a role activated at a narrower scope than its eligibility is refused, or
+# stored as an entry that activates nothing)
+Get-OPIMAzureRole -Activated |
+    Install-OPIMConfiguration -TenantAlias fabrikam -TenantId '<guid>'
 
 # Update directory roles and groups incrementally using Set-OPIMConfiguration
 Get-OPIMDirectoryRole |
@@ -559,8 +611,10 @@ Get-OPIMEntraIDGroup -AccessType member |
 # Activate only the stored roles in corp tenant
 pim -TenantAlias corp -Hours 8 -Justification 'Daily operations'
 
-# Activate everything eligible in partner tenant (no stored role list)
-pim -TenantAlias partner -Hours 2 -Justification 'Partner review'
+# Activate everything eligible in the partner tenant (it has no stored role lists, so use the
+# -AllEligible switch; an alias without role lists activates nothing)
+Connect-OPIM -TenantAlias partner
+pim -AllEligible -Hours 2 -Justification 'Partner review'
 ```
 
 ---
@@ -720,8 +774,10 @@ when that list cannot be read they write that error and send nothing. A role or 
 twice in one command is requested once, with a warning for the second.
 
 With `-Wait`, the `Enable-OPIM*` role and group cmdlets wait for at most `-TimeoutSeconds` (default
-300) and then report the request by its last status, written back onto the request (a directory
-role returns its role assignment once that appears). Groups and Azure roles read the status
+300) and then report the request by its last status. For a directory role or a group that status is
+written back onto the request (a directory role returns its role assignment once that appears); an
+Azure role returns the request as Azure last gave it, since the `Status` of an Az request object is
+read-only. Groups and Azure roles read the status
 again, with a pause between reads, only while the request is still being worked on, counting from
 the start of the wait. Directory roles hand every request that has not failed to
 `Wait-OPIMDirectoryRole`, which reads each one at least once, waits for the role assignment to
@@ -748,6 +804,9 @@ The same applies to `Get-OPIMEntraIDGroup` and `Get-OPIMAzureRole`.
 > users' roles. Both result types are returned with their correct TypeNames so Format views apply.
 > A permanent assignment is no activation and cannot be deactivated by you, so it is listed in
 > neither `-Activated` nor the active rows of `-All`.
+>
+> A directory role at an administrative unit that cannot be read is still listed, with the unit's id in
+> place of its name, and a warning reports the error.
 
 ---
 

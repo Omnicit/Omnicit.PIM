@@ -13,6 +13,11 @@ function Set-OPIMConfiguration {
     list for a category, use Remove-OPIMConfiguration followed by Install-OPIMConfiguration, or
     edit the TenantMap.psd1 file directly.
 
+    An alias in the old string form ('alias' = 'tenant id') is rewritten in the table form, with
+    its tenant kept. From then on pim and unpim act only on the categories it lists, no longer on
+    everything eligible or active, so an alias updated without piped roles or groups activates
+    nothing.
+
     All file operations support -WhatIf and -Confirm.
 
     Use Install-OPIMConfiguration to create a new alias. Set-OPIMConfiguration requires the alias
@@ -35,11 +40,23 @@ function Set-OPIMConfiguration {
     .PARAMETER TenantId
     New Azure Tenant ID (GUID) to store for this alias. When omitted the existing TenantId is preserved.
     .PARAMETER TenantMapPath
-    Path to the TenantMap.psd1 configuration file. Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
+    Path to the TenantMap.psd1 configuration file. Defaults to .config/Omnicit.PIM/TenantMap.psd1
+    under your home folder ($HOME; on Windows the same file as before, under $env:USERPROFILE).
     .PARAMETER InputObject
     Role, group, or Azure role eligibility objects piped from Get-OPIMDirectoryRole, Get-OPIMEntraIDGroup,
     or Get-OPIMAzureRole. The piped category replaces the stored list; categories not supplied via pipeline
-    retain their existing values. Objects not matching a known Omnicit.PIM type are silently ignored.
+    retain their existing values. A directory role is stored with its scope, as
+    roleDefinitionId|directoryScopeId, so pim and unpim act on it only at that scope; a group is stored as
+    groupId_accessId, and an Azure role as the Name of its eligibility schedule. An active Azure role (from
+    Get-OPIMAzureRole -Activated, or an active row of -All) is stored as the eligibility schedule it was
+    activated from plus its own scope (Name|ScopeId), and pim activates it only while that eligibility is
+    at that scope. One activated at another scope than its eligibility is refused when its link names the
+    eligibility's scope -- the error LinkedEligibilityNotFound, and nothing stored -- and otherwise matches
+    no eligible role, so pim activates nothing for it; one that names no eligibility is refused the same
+    way. Pipe the eligible role to activate it at its own scope. The other piped objects still are stored.
+    Each key is stored once, without regard to letter case, in the order first piped; an eligible role and
+    its activation at its own scope are one key. Objects not matching a known Omnicit.PIM type are
+    silently ignored.
     #>
     [Alias('Set-PIMConfig')]
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
@@ -52,32 +69,56 @@ function Set-OPIMConfiguration {
             ErrorMessage = "'{0}' does not look like a valid GUID.")]
         [string]$TenantId,
 
-        [string]$TenantMapPath = "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1",
+        [string]$TenantMapPath = (Join-Path $HOME '.config/Omnicit.PIM/TenantMap.psd1'),
 
         [Parameter(ValueFromPipeline)]
         $InputObject
     )
 
     begin {
-        [List[string]]$_directoryRoleIds = [List[string]]::new()
-        [List[string]]$_groupIds         = [List[string]]::new()
-        [List[string]]$_azureRoleNames   = [List[string]]::new()
+        # One ordered list per pillar, and a case-insensitive set beside it so that each key is stored
+        # once (Get-OPIM* -All returns the eligible and the active post of one role).
+        $StoredKeys = @{
+            Directory = [List[string]]::new()
+            Group     = [List[string]]::new()
+            Azure     = [List[string]]::new()
+        }
+        $SeenKeys = @{
+            Directory = [HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            Group     = [HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            Azure     = [HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        }
     }
     process {
         if ($null -eq $InputObject) { return }
-        switch ($true) {
+        $Pillar = switch ($true) {
             { $InputObject.PSTypeNames -contains 'Omnicit.PIM.DirectoryEligibilitySchedule' -or
               $InputObject.PSTypeNames -contains 'Omnicit.PIM.DirectoryAssignmentScheduleInstance' } {
-                [void]$_directoryRoleIds.Add($InputObject.roleDefinitionId); break
+                'Directory'; break
             }
             { $InputObject.PSTypeNames -contains 'Omnicit.PIM.GroupEligibilitySchedule' -or
               $InputObject.PSTypeNames -contains 'Omnicit.PIM.GroupAssignmentScheduleInstance' } {
-                [void]$_groupIds.Add("$($InputObject.groupId)_$($InputObject.accessId)"); break
+                'Group'; break
             }
             { $null -ne $InputObject.RoleDefinitionId -and $null -ne $InputObject.ScopeId } {
-                [void]$_azureRoleNames.Add($InputObject.Name); break
+                'Azure'; break
             }
         }
+        if (-not $Pillar) { return }
+        # OPIM-22: an active Azure role that names no eligibility, or names it at another scope, is refused
+        # by the key helper with LinkedEligibilityNotFound; it is written and skipped, and the other piped
+        # objects are stored.
+        try {
+            $Key = ConvertTo-OPIMTenantMapKey -Pillar $Pillar -InputObject $InputObject -ErrorAction Stop
+            # An Azure eligibility (stored as its Name) and an active role of it at its own scope (stored as
+            # Name|ScopeId) are one post, so both are seen under the scoped key and the first piped is stored.
+            $SeenKey = ConvertTo-OPIMTenantMapKey -Pillar $Pillar -InputObject $InputObject -WithScope -ErrorAction Stop
+        } catch {
+            Remove-OPIMErrorRecord -Record $PSItem
+            $PSCmdlet.WriteError($PSItem)
+            return
+        }
+        if ($SeenKeys[$Pillar].Add($SeenKey)) { $StoredKeys[$Pillar].Add($Key) }
     }
     end {
         if (-not (Test-Path $TenantMapPath)) {
@@ -107,12 +148,16 @@ function Set-OPIMConfiguration {
             return
         }
 
-        $ExistingEntry = if ($MapData[$TenantAlias] -is [hashtable]) { $MapData[$TenantAlias] } else { @{} }
+        # OPIM-20: an alias stored in the 0.4-era string form (contoso = '<tenant id>') is not a dictionary;
+        # its value IS the tenant id, so carry it over instead of starting from an empty entry (which wrote
+        # TenantId = '' and sent pim -TenantAlias to 'organizations').
+        $Stored = $MapData[$TenantAlias]
+        $ExistingEntry = if ($Stored -is [System.Collections.IDictionary]) { $Stored } else { @{ TenantId = [string]$Stored } }
 
         $ResolvedTenantId  = if ($TenantId)                  { $TenantId                  } else { $ExistingEntry.TenantId }
-        $ResolvedDirRoles  = if ($_directoryRoleIds.Count)   { @($_directoryRoleIds)       } elseif ($ExistingEntry.DirectoryRoles) { @($ExistingEntry.DirectoryRoles) }
-        $ResolvedGroups    = if ($_groupIds.Count)            { @($_groupIds)               } elseif ($ExistingEntry.EntraIDGroups)  { @($ExistingEntry.EntraIDGroups)  }
-        $ResolvedAzureRole = if ($_azureRoleNames.Count)      { @($_azureRoleNames)         } elseif ($ExistingEntry.AzureRoles)     { @($ExistingEntry.AzureRoles)     }
+        $ResolvedDirRoles  = if ($StoredKeys.Directory.Count) { @($StoredKeys.Directory) } elseif ($ExistingEntry.DirectoryRoles) { @($ExistingEntry.DirectoryRoles) }
+        $ResolvedGroups    = if ($StoredKeys.Group.Count)     { @($StoredKeys.Group)     } elseif ($ExistingEntry.EntraIDGroups)  { @($ExistingEntry.EntraIDGroups)  }
+        $ResolvedAzureRole = if ($StoredKeys.Azure.Count)     { @($StoredKeys.Azure)     } elseif ($ExistingEntry.AzureRoles)     { @($ExistingEntry.AzureRoles)     }
 
         $Entry = [ordered]@{ TenantId = $ResolvedTenantId }
         if ($ResolvedDirRoles)  { $Entry.DirectoryRoles = $ResolvedDirRoles  }
@@ -122,8 +167,16 @@ function Set-OPIMConfiguration {
         Write-Verbose "Updating tenant alias '$TenantAlias' in $TenantMapPath"
 
         # -- Get tenant display name for the confirmation prompt (best-effort) ---
+        # OPIM-45: the display name of the module's sign-in tenant, shown only when that is the tenant
+        # this alias is written with. Set needs no sign-in: it keeps the stored tenant (OPIM-20).
         $TenantInfo = Get-OPIMCurrentTenantInfo
-        $TenantDisplayName = if ($TenantInfo.DisplayName) { $TenantInfo.DisplayName } else { 'N/A' }
+        [string]$SessionTenantId = $TenantInfo.TenantId
+        $TenantDisplayName = if ($TenantInfo.DisplayName -and $SessionTenantId -and
+            [string]::Equals([string]$ResolvedTenantId, $SessionTenantId, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $TenantInfo.DisplayName
+        } else {
+            'N/A'
+        }
 
         $MapData[$TenantAlias] = $Entry
 

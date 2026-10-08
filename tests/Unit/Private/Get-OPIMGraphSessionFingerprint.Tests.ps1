@@ -193,7 +193,7 @@ Describe 'Get-OPIMGraphSessionFingerprint' {
     }
 
     Context 'When the context carries a secret' {
-        It 'never reads the client secret or the certificate' {
+        It 'reads neither the client secret nor the certificate' {
             # Each getter RECORDS that it ran. A getter that throws proves nothing: PowerShell swallows
             # an exception raised by a ScriptProperty getter on member access and returns null, inside a
             # try as well (measured 2026-10-07, PowerShell 7.6.6), so a throwing getter passes with the

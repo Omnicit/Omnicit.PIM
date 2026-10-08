@@ -16,6 +16,16 @@ Describe 'Set-OPIMConfiguration' {
             return [PSCustomObject]@{ TenantId = '00000000-0000-0000-0000-000000000001'; DisplayName = 'Mock Tenant' }
         }
         $PSDefaultParameterValues['Set-OPIMConfiguration:Confirm'] = $false
+
+        # The "What if:" text of ShouldProcess goes to the host, not to a stream, so it is read back from
+        # a transcript of the call.
+        function Get-WhatIfText {
+            param([scriptblock]$Command)
+            $Path = Join-Path $TestDrive 'whatif-transcript.txt'
+            $null = Start-Transcript -LiteralPath $Path -Force
+            try { $null = & $Command } finally { $null = Stop-Transcript }
+            [System.IO.File]::ReadAllText($Path)
+        }
     }
     AfterAll {
         $null = $PSDefaultParameterValues.Remove('Set-OPIMConfiguration:Confirm')
@@ -114,14 +124,40 @@ Describe 'Set-OPIMConfiguration' {
             $script:writtenContent = $null
         }
 
-        It 'replaces the DirectoryRoles list with the piped roleDefinitionId' {
+        It 'writes roleDefinitionId|directoryScopeId into the DirectoryRoles list' {
             $script:dirRole | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            $script:writtenContent | Should -Match 'new-role-def-001'
+            $script:writtenContent | Should -Match ([regex]::Escape("'new-role-def-001|/'"))
         }
 
         It 'removes the old roleDefinitionId from the content' {
             $script:dirRole | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
             $script:writtenContent | Should -Not -Match 'old-role-def-001'
+        }
+
+        It 'writes the administrative unit of a post at an administrative unit' {
+            $AuRole = [PSCustomObject]@{ id = 'elig-002'; roleDefinitionId = 'new-role-def-001'; directoryScopeId = '/administrativeUnits/au-001' }
+            $AuRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
+            $AuRole | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Match ([regex]::Escape("'new-role-def-001|/administrativeUnits/au-001'"))
+            $script:writtenContent | Should -Not -Match ([regex]::Escape("'new-role-def-001|/'"))
+        }
+
+        It 'stores a key once when the same post is piped twice' {
+            # Get-OPIMDirectoryRole -All returns the eligible and the active post of one role at one scope.
+            $ActiveRole = [PSCustomObject]@{ id = 'active-001'; roleDefinitionId = 'new-role-def-001'; directoryScopeId = '/' }
+            $ActiveRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleInstance')
+            $script:dirRole, $ActiveRole | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Not -BeNullOrEmpty
+            [regex]::Matches($script:writtenContent, [regex]::Escape("'new-role-def-001|/'")).Count | Should -Be 1
+        }
+
+        It 'stores a key once when two posts differ only in letter case, and keeps the first' {
+            $Lower = [PSCustomObject]@{ id = 'elig-003'; roleDefinitionId = 'new-role-def-001'; directoryScopeId = '/administrativeUnits/au-001' }
+            $Upper = [PSCustomObject]@{ id = 'elig-004'; roleDefinitionId = 'NEW-ROLE-DEF-001'; directoryScopeId = '/administrativeUnits/AU-001' }
+            $Other = [PSCustomObject]@{ id = 'elig-005'; roleDefinitionId = 'new-role-def-002'; directoryScopeId = '/' }
+            foreach ($Post in @($Lower, $Upper, $Other)) { $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule') }
+            $Lower, $Upper, $Other | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Match ([regex]::Escape("DirectoryRoles = @('new-role-def-001|/administrativeUnits/au-001', 'new-role-def-002|/')"))
         }
     }
 
@@ -186,6 +222,153 @@ Describe 'Set-OPIMConfiguration' {
         }
     }
 
+    Context 'When an active Azure role is piped (OPIM-22)' {
+        # An active instance from Get-OPIMAzureRole -Activated (or an active row of -All) is stored by
+        # the eligibility schedule it was activated from and its own scope, '<Name>|<ScopeId>', which pim
+        # matches only with that eligibility at that scope -- or refused when its link names no
+        # eligibility, or names one at another scope.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    contoso = @{
+                        TenantId      = '00000000-0000-0000-0000-000000000001'
+                        EntraIDGroups = @('old-group-001_member')
+                        AzureRoles    = @('old-azure-elig-001')
+                    }
+                }
+            }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+
+            $script:azEligible = [PSCustomObject]@{
+                Name             = 'elig-az-001'
+                RoleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/role-def-az-001'
+                ScopeId          = '/subscriptions/sub-001'
+            }
+            $script:azEligible.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
+            $script:azActive = [PSCustomObject]@{
+                Name                            = 'az-active-001'
+                LinkedRoleEligibilityScheduleId = '/subscriptions/sub-001/providers/Microsoft.Authorization/roleEligibilitySchedules/elig-az-001'
+                RoleDefinitionId                = '/providers/Microsoft.Authorization/roleDefinitions/role-def-az-001'
+                RoleDefinitionDisplayName       = 'Contributor'
+                ScopeId                         = '/subscriptions/sub-001'
+                ScopeDisplayName                = 'ProdSub'
+            }
+            $script:azActive.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+            $script:azUnlinked = [PSCustomObject]@{
+                Name                            = 'az-active-002'
+                LinkedRoleEligibilityScheduleId = $null
+                RoleDefinitionId                = '/providers/Microsoft.Authorization/roleDefinitions/role-def-az-002'
+                RoleDefinitionDisplayName       = 'Reader'
+                ScopeId                         = '/subscriptions/sub-001'
+                ScopeDisplayName                = 'ProdSub'
+            }
+            $script:azUnlinked.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+            $script:azOther = [PSCustomObject]@{
+                Name             = 'elig-az-003'
+                RoleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/role-def-az-003'
+                ScopeId          = '/subscriptions/sub-001'
+            }
+            $script:azOther.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
+            $script:grpForAz = [PSCustomObject]@{ id = 'elig-grp-az-001'; groupId = 'group-001'; accessId = 'member' }
+            $script:grpForAz.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupEligibilitySchedule')
+            # Activated at one resource group from a subscription eligibility (the portal's Scope tab).
+            $script:azNarrow = [PSCustomObject]@{
+                Name                            = 'az-active-004'
+                LinkedRoleEligibilityScheduleId = '/subscriptions/sub-001/providers/Microsoft.Authorization/roleEligibilitySchedules/elig-az-004'
+                RoleDefinitionId                = '/providers/Microsoft.Authorization/roleDefinitions/role-def-az-004'
+                RoleDefinitionDisplayName       = 'Contributor'
+                ScopeId                         = '/subscriptions/sub-001/resourceGroups/rg-001'
+                ScopeDisplayName                = 'rg-001'
+            }
+            $script:azNarrow.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+            # The link as ARM returns it and as Enable-OPIMAzureRole sends it: the bare Name.
+            $script:azBare = [PSCustomObject]@{
+                Name                            = 'az-active-005'
+                LinkedRoleEligibilityScheduleId = 'elig-az-005'
+                RoleDefinitionId                = '/providers/Microsoft.Authorization/roleDefinitions/role-def-az-005'
+                ScopeId                         = '/subscriptions/sub-001'
+            }
+            $script:azBare.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+            $script:azProviderOnly = [PSCustomObject]@{
+                Name                            = 'az-active-006'
+                LinkedRoleEligibilityScheduleId = '/providers/Microsoft.Authorization/roleEligibilitySchedules/elig-az-006'
+                RoleDefinitionId                = '/providers/Microsoft.Authorization/roleDefinitions/role-def-az-006'
+                ScopeId                         = '/subscriptions/sub-002'
+            }
+            $script:azProviderOnly.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'stores the eligibility the active role was activated from with its own scope, not the instance Name' {
+            $script:azActive | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:writtenContent | Should -Match ("AzureRoles\s+=\s+@\(" + [regex]::Escape("'elig-az-001|/subscriptions/sub-001'") + "\)")
+            $script:writtenContent | Should -Not -Match 'az-active-001'
+        }
+
+        It 'stores an active role whose link is <Label> as its eligibility and its own scope' -ForEach @(
+            @{ Label = 'a bare name'; Fixture = 'azBare'; Expected = 'elig-az-005|/subscriptions/sub-001' }
+            @{ Label = 'the provider-only form'; Fixture = 'azProviderOnly'; Expected = 'elig-az-006|/subscriptions/sub-002' }
+        ) {
+            $Fixtures = @{ azBare = $script:azBare; azProviderOnly = $script:azProviderOnly }
+            $Fixtures[$Fixture] | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:writtenContent | Should -Match ("AzureRoles\s+=\s+@\(" + [regex]::Escape("'$Expected'") + "\)")
+        }
+
+        It 'stores the key once when the eligible role and its active instance are piped' {
+            $script:azEligible, $script:azActive | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:writtenContent | Should -Match "AzureRoles\s+=\s+@\('elig-az-001'\)"
+            $script:writtenContent | Should -Not -Match 'az-active-001'
+        }
+
+        It 'stores the key once, in the form first piped, when the active instance comes before its eligible role' {
+            $script:azActive, $script:azEligible | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:writtenContent | Should -Match ("AzureRoles\s+=\s+@\(" + [regex]::Escape("'elig-az-001|/subscriptions/sub-001'") + "\)")
+        }
+
+        It 'writes LinkedEligibilityNotFound for an active role that names no eligibility, and stores the other piped objects' {
+            $script:azUnlinked, $script:azOther, $script:grpForAz | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'LinkedEligibilityNotFound*' }).Count | Should -BeGreaterThan 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeLike 'LinkedEligibilityNotFound*'
+            $Errs[-1].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+            $Errs[-1].Exception.Message | Should -BeLike "The active Azure role 'Reader' at scope 'ProdSub' names no eligibility*"
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
+            $script:writtenContent | Should -Match "AzureRoles\s+=\s+@\('elig-az-003'\)"
+            $script:writtenContent | Should -Match "EntraIDGroups\s+=\s+@\('group-001_member'\)"
+            $script:writtenContent | Should -Not -Match 'az-active-002'
+        }
+
+        It 'writes the refusal once to the error stream' {
+            $Out = $script:azOther, $script:azUnlinked | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeLike 'LinkedEligibilityNotFound*'
+            $script:writtenContent | Should -Match "AzureRoles\s+=\s+@\('elig-az-003'\)"
+        }
+
+        It 'writes LinkedEligibilityNotFound for an active role at a narrower scope than its eligibility, and stores neither' {
+            $script:azNarrow, $script:azOther | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[-1].FullyQualifiedErrorId | Should -BeLike 'LinkedEligibilityNotFound*'
+            $Errs[-1].Exception.Message | Should -BeLike "The active Azure role 'Contributor' at scope 'rg-001' cannot be shown to be active at the scope of the eligibility*"
+            $script:writtenContent | Should -Match "AzureRoles\s+=\s+@\('elig-az-003'\)"
+            $script:writtenContent | Should -Not -Match 'elig-az-004'
+            $script:writtenContent | Should -Not -Match 'az-active-004'
+        }
+
+        It 'keeps the stored AzureRoles when the only piped Azure role is refused' {
+            $script:azUnlinked | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[-1].FullyQualifiedErrorId | Should -BeLike 'LinkedEligibilityNotFound*'
+            $script:writtenContent | Should -Match "AzureRoles\s+=\s+@\('old-azure-elig-001'\)"
+        }
+    }
+
     Context 'When no pipeline input is provided and only TenantId is changed' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
@@ -222,6 +405,147 @@ Describe 'Set-OPIMConfiguration' {
         }
     }
 
+    Context 'When the alias is in the string form (OPIM-20)' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }
+            # The 0.4-era form: the alias maps straight to the tenant id, not to a hashtable.
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{ contoso = '00000000-0000-0000-0000-000000000001' }
+            }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+
+            $script:stringFormRole = [PSCustomObject]@{
+                id               = 'elig-001'
+                roleDefinitionId = 'role-def-001'
+                directoryScopeId = '/'
+            }
+            $script:stringFormRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'keeps the TenantId of the string form when -TenantId is not given' {
+            $script:stringFormRole | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000001'"
+            $script:writtenContent | Should -Match ([regex]::Escape("'role-def-001|/'"))
+        }
+
+        It 'writes the given TenantId over the string form' {
+            Set-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000099' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000099'"
+            $script:writtenContent | Should -Not -Match '00000000-0000-0000-0000-000000000001'
+        }
+
+        It 'keeps the TenantId when nothing is piped and no -TenantId is given' {
+            Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000001'"
+        }
+    }
+
+    Context 'When the alias entry is an ordered dictionary' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    contoso = [ordered]@{
+                        TenantId   = '00000000-0000-0000-0000-000000000001'
+                        AzureRoles = @('kept-azure-001')
+                    }
+                }
+            }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'keeps the TenantId and the stored lists of the entry' {
+            Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000001'"
+            $script:writtenContent | Should -Match 'kept-azure-001'
+        }
+    }
+
+    Context 'The display name in the confirmation (OPIM-45)' {
+        # The Describe mock of Get-OPIMCurrentTenantInfo returns the tenant of the module's sign-in,
+        # ...001, with the display name 'Mock Tenant'. Set shows that name only for the tenant it writes.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    contoso  = @{ TenantId = '00000000-0000-0000-0000-000000000001' }
+                    fabrikam = @{ TenantId = '00000000-0000-0000-0000-000000000002' }
+                }
+            }
+        }
+
+        It 'shows the display name when the alias keeps the tenant of the module sign-in' {
+            $Text = Get-WhatIfText { Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Text | Should -Match ([regex]::Escape("Update alias 'contoso' -> tenant 'Mock Tenant' (00000000-0000-0000-0000-000000000001)"))
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
+        }
+
+        It 'shows N/A when -TenantId names another tenant than the module sign-in' {
+            $Text = Get-WhatIfText { Set-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000099' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Text | Should -Match ([regex]::Escape("Update alias 'contoso' -> tenant 'N/A' (00000000-0000-0000-0000-000000000099)"))
+            $Text | Should -Not -Match 'Mock Tenant'
+        }
+
+        It 'shows N/A when the alias keeps another tenant than the module sign-in' {
+            $Text = Get-WhatIfText { Set-OPIMConfiguration -TenantAlias 'fabrikam' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Text | Should -Match ([regex]::Escape("Update alias 'fabrikam' -> tenant 'N/A' (00000000-0000-0000-0000-000000000002)"))
+            $Text | Should -Not -Match 'Mock Tenant'
+        }
+    }
+
+    Context 'When the module holds no sign-in (OPIM-45)' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMCurrentTenantInfo {
+                return [PSCustomObject]@{ TenantId = $null; DisplayName = '' }
+            }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    contoso = @{
+                        TenantId       = '00000000-0000-0000-0000-000000000001'
+                        DirectoryRoles = @('old-role-def-001|/')
+                    }
+                }
+            }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+
+            $script:noSessionRole = [PSCustomObject]@{
+                id               = 'elig-001'
+                roleDefinitionId = 'role-def-001'
+                directoryScopeId = '/'
+            }
+            $script:noSessionRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'writes the piped objects and keeps the stored tenant' {
+            $script:noSessionRole | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errors -WarningVariable Warns -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+            $Errors.Count | Should -Be 0
+            $Warns.Count | Should -Be 0
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000001'"
+            $script:writtenContent | Should -Match ([regex]::Escape("DirectoryRoles = @('role-def-001|/')"))
+        }
+
+        It 'shows N/A in the confirmation' {
+            $Text = Get-WhatIfText { $script:noSessionRole | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Text | Should -Match ([regex]::Escape("Update alias 'contoso' -> tenant 'N/A' (00000000-0000-0000-0000-000000000001)"))
+        }
+    }
+
     Context 'When -WhatIf is specified' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
@@ -235,6 +559,41 @@ Describe 'Set-OPIMConfiguration' {
 
         It 'does not call Set-Content' {
             Set-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000099' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
+        }
+    }
+
+    Context 'The default -TenantMapPath (OPIM-21)' {
+        BeforeAll {
+            $Param = (Get-Command Set-OPIMConfiguration).ScriptBlock.Ast.Body.ParamBlock.Parameters |
+                Where-Object { $_.Name.VariablePath.UserPath -eq 'TenantMapPath' }
+            $DefaultText = $Param.DefaultValue.Extent.Text
+            $ExpectedPath = if ($IsWindows) {
+                "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1"
+            } else {
+                "$HOME/.config/Omnicit.PIM/TenantMap.psd1"
+            }
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Test-Path { $script:SeenPaths.Add($Path); $false }
+        }
+        BeforeEach {
+            $script:SeenPaths = [System.Collections.Generic.List[string]]::new()
+        }
+
+        It 'builds the default from $HOME' {
+            $Param | Should -Not -BeNullOrEmpty
+            $DefaultText | Should -BeExactly "(Join-Path `$HOME '.config/Omnicit.PIM/TenantMap.psd1')"
+        }
+
+        It 'gives the same path as before on Windows and a path under $HOME elsewhere' {
+            $Actual = & ([scriptblock]::Create($DefaultText))
+            $Actual | Should -BeExactly $ExpectedPath
+        }
+
+        It 'reads that path when -TenantMapPath is not given' {
+            Set-OPIMConfiguration -TenantAlias 'contoso' -WhatIf -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $script:SeenPaths | Should -Contain $ExpectedPath
+            $Errs[-1].FullyQualifiedErrorId | Should -BeLike 'TenantMapNotFound*'
             Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
         }
     }

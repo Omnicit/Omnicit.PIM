@@ -578,10 +578,11 @@ Describe 'Enable-OPIMEntraIDGroup' {
             $Errors.Count | Should -BeGreaterThan 0
         }
 
-        It 'sets error details with a hint to use the -NotAfter parameter' {
+        It 'sets error details with a hint to use -Hours or -Until' {
             $Errors = @()
             Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -ErrorVariable Errors -ErrorAction SilentlyContinue
-            $Errors[-1].Exception.Message | Should -BeLike '*-NotAfter*'
+            $Errors[-1].Exception.Message | Should -BeLike '*Use -Hours, or -Until on the Enable-OPIM`* cmdlets, to ask for a shorter activation.'
+            $Errors[-1].Exception.Message | Should -Not -BeLike '*-NotAfter*'
         }
     }
 
@@ -737,7 +738,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
             @($Warns).Count | Should -Be 0
         }
 
-        It 'still waits for the next group after one times out' {
+        It 'goes on to wait for the next group after one times out' {
             $Clock.Step = 30
             $Plan.Poll['g-1'] = @('PendingProvisioning')
             $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp', 'opim-s1-other' -Wait -TimeoutSeconds 60 `
@@ -1607,6 +1608,28 @@ Describe 'Enable-OPIMEntraIDGroup' {
             $Outputs | Should -Match 'PSCustomObject'
             $Outputs | Should -Match 'Omnicit\.PIM\.GroupAssignmentScheduleRequest'
             $Outputs | Should -Not -Match 'Hashtable'
+        }
+    }
+
+    Context 'When the help of -AccessType is read (OPIM-49)' {
+        BeforeAll {
+            $AccessTypeHelp = (@((Get-Help Enable-OPIMEntraIDGroup -Parameter AccessType).Description.Text) -join ' ') -replace '\s+', ' '
+        }
+
+        It 'names the Graph error that refuses to deactivate an ownership held as the only owner' {
+            $AccessTypeHelp | Should -Match 'CannotDeleteLastAdminAssignment'
+            $AccessTypeHelp | Should -Match 'only owner'
+        }
+
+        It 'says the ownership does not end at its end time and what to do instead' {
+            $AccessTypeHelp | Should -Match 'does not end at its end time'
+            $AccessTypeHelp | Should -Match 'Activate an ownership only of a group that has another owner'
+        }
+
+        It 'says only what was seen about a service principal as an owner and promises no remedy' {
+            $AccessTypeHelp | Should -Match 'Adding a service principal as a direct owner of the group did not change this in testing'
+            $AccessTypeHelp | Should -Not -Match 'until another owner exists'
+            $AccessTypeHelp | Should -Not -Match 'does not count'
         }
     }
 }

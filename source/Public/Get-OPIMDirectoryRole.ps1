@@ -16,6 +16,10 @@ function Get-OPIMDirectoryRole {
     the tab-completed form, as its eligible and its active post.
 
     -All and -Activated are mutually exclusive.
+
+    A role at an administrative unit is listed with the unit's display name; when the unit cannot be
+    read, the role is still listed, with the unit's id in place of its name, and a warning reports the
+    error.
     .EXAMPLE
     Get-OPIMDirectoryRole
     List all eligible (inactive) directory roles for yourself.
@@ -148,7 +152,15 @@ function Get-OPIMDirectoryRole {
                     if ($Item.directoryScopeId -eq '/') {
                         $Item['directoryScope'] = @{ id = '/' }
                     } else {
-                        $Item['directoryScope'] = Invoke-OPIMGraphRequest -Method Get -Uri "v1.0/directory$($Item.directoryScopeId)"
+                        try {
+                            $Item['directoryScope'] = Invoke-OPIMGraphRequest -Method Get -Uri "v1.0/directory$($Item.directoryScopeId)"
+                        } catch {
+                            Remove-OPIMErrorRecord -Record $PSItem
+                            # OPIM-19: a scope that cannot be read never ends the listing. The post keeps
+                            # its scope id as the scope's name, and the error is reported as itself.
+                            $Item['directoryScope'] = @{ id = $Item.directoryScopeId; displayName = $Item.directoryScopeId }
+                            Write-Warning "The scope '$($Item.directoryScopeId)' of the role '$($Item.roleDefinition.displayName)' could not be read, so the role is listed with its scope id in place of the scope's name: $($PSItem.Exception.Message) (error id $($PSItem.FullyQualifiedErrorId))"
+                        }
                     }
                     $Obj = [PSCustomObject]$Item
                     $Obj | Add-Member -NotePropertyName Status -NotePropertyValue $TypeConfig.Status -Force
@@ -196,7 +208,15 @@ function Get-OPIMDirectoryRole {
             if ($Item.directoryScopeId -eq '/') {
                 $Item['directoryScope'] = @{ id = '/' }
             } else {
-                $Item['directoryScope'] = Invoke-OPIMGraphRequest -Method Get -Uri "v1.0/directory$($Item.directoryScopeId)"
+                try {
+                    $Item['directoryScope'] = Invoke-OPIMGraphRequest -Method Get -Uri "v1.0/directory$($Item.directoryScopeId)"
+                } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
+                    # OPIM-19: a scope that cannot be read never ends the listing. The post keeps
+                    # its scope id as the scope's name, and the error is reported as itself.
+                    $Item['directoryScope'] = @{ id = $Item.directoryScopeId; displayName = $Item.directoryScopeId }
+                    Write-Warning "The scope '$($Item.directoryScopeId)' of the role '$($Item.roleDefinition.displayName)' could not be read, so the role is listed with its scope id in place of the scope's name: $($PSItem.Exception.Message) (error id $($PSItem.FullyQualifiedErrorId))"
+                }
             }
             # Cast to PSCustomObject so custom Format views are used instead of the
             # built-in hashtable Key/Value formatter.

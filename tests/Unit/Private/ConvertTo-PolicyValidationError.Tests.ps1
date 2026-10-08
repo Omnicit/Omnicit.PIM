@@ -191,7 +191,7 @@ Describe 'ConvertTo-PolicyValidationError' {
                 -ParameterFilter { $ErrorId -eq 'RoleAssignmentRequestPolicyValidationFailed' }
         }
 
-        It 'mentions -NotAfter in the error message' {
+        It 'points to -Hours, and to -Until on the Enable-OPIM* cmdlets, instead of -NotAfter, which pim lacks' {
             Mock -ModuleName Omnicit.PIM Write-CmdletError {}
             InModuleScope Omnicit.PIM {
                 $FakeRecord = [System.Management.Automation.ErrorRecord]::new(
@@ -204,8 +204,11 @@ Describe 'ConvertTo-PolicyValidationError' {
                 Add-Member -InputObject $FakeCmdlet -MemberType ScriptMethod -Name WriteError -Value { param($E) }
                 $null = ConvertTo-PolicyValidationError -CaughtError $FakeRecord -ResourceType 'role' -Cmdlet $FakeCmdlet
             }
-            Should -Invoke Write-CmdletError -ModuleName Omnicit.PIM -Times 1 -Scope It `
-                -ParameterFilter { $Message.Message -match '-NotAfter' }
+            Should -Invoke Write-CmdletError -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It `
+                -ParameterFilter {
+                    $Message.Message -ceq ('Your PIM policy requires a shorter expiration. ' +
+                        'Use -Hours, or -Until on the Enable-OPIM* cmdlets, to ask for a shorter activation.')
+                }
         }
     }
 

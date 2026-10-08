@@ -8,8 +8,13 @@ function Enable-OPIMMyRole {
     Install-OPIMConfiguration) or an explicit -AllEligible* switch.
 
     When -TenantAlias is used, only roles and groups explicitly defined in the tenant configuration
-    are activated. Categories not listed in the configuration are skipped with a warning. Use
-    Set-OPIMConfiguration to add roles to a tenant alias.
+    are activated -- except for an alias in the old string form ('alias' = 'tenant id'), which
+    lists no categories and activates every eligible directory role, group and Azure role.
+    Categories not listed in the configuration are skipped with a verbose message, so an entry
+    that lists none activates nothing. Use Set-OPIMConfiguration to add roles to a tenant alias. A
+    directory role is activated only at the scope its entry names
+    (roleDefinitionId|directoryScopeId); an entry written by 0.5.x holds the roleDefinitionId alone
+    and means the role at the root scope '/' only.
 
     When an -AllEligible* switch is used without -TenantAlias, all eligible assignments in the
     selected categories are activated. Confirmation is required -- use -WhatIf to preview or
@@ -55,7 +60,10 @@ function Enable-OPIMMyRole {
     .PARAMETER TenantAlias
     Short alias for the target tenant matched against TenantMap.psd1. Run Install-OPIMConfiguration
     to create or update tenant aliases. Only categories explicitly listed in the configuration are
-    activated; categories without configuration are skipped with a warning.
+    activated; categories without configuration are skipped with a verbose message. An alias in the
+    old string form ('alias' = 'tenant id') is the exception and activates everything eligible. A
+    directory role is activated only at its configured scope, and an entry without a scope means
+    the role at '/' only.
     .PARAMETER AllEligible
     Activate all eligible directory roles, Entra ID group assignments, and Azure RBAC roles.
     Requires confirmation per category. Use -Confirm:$false to suppress prompts.
@@ -79,7 +87,8 @@ function Enable-OPIMMyRole {
     Name of the ticket system that issued the above ticket number, e.g. ServiceNow or Jira.
     .PARAMETER TenantMapPath
     Path to the TenantMap.psd1 file managed by Install-OPIMConfiguration.
-    Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
+    Defaults to .config/Omnicit.PIM/TenantMap.psd1 under your home folder ($HOME; on Windows the
+    same file as before, under $env:USERPROFILE).
     .PARAMETER Wait
     Wait until all directory role activations are fully provisioned before returning.
     .PARAMETER TimeoutSeconds
@@ -101,7 +110,7 @@ function Enable-OPIMMyRole {
         [string]$Justification,
         [string]$TicketNumber,
         [string]$TicketSystem,
-        [string]$TenantMapPath = "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1",
+        [string]$TenantMapPath = (Join-Path $HOME '.config/Omnicit.PIM/TenantMap.psd1'),
         [Switch]$Wait,
         [ValidateRange(1, 86400)][int]$TimeoutSeconds = 300,
         [Switch]$DeviceCode
@@ -214,7 +223,15 @@ function Enable-OPIMMyRole {
                 }
                 if ($ListRead) {
                     if ($Config -is [hashtable] -and $Config.DirectoryRoles) {
-                        $DirectoryRoles = $DirectoryRoles | Where-Object { $_.roleDefinitionId -in $Config.DirectoryRoles }
+                        # OPIM-10 (A13): a role is activated only at the scope its entry names; an entry from before
+                        # 0.6.0 names no scope and means the role at '/' only.
+                        $ConfiguredKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                        foreach ($Entry in $Config.DirectoryRoles) {
+                            $Key = ConvertTo-OPIMTenantMapKey -Pillar Directory -Entry $Entry
+                            if (-not $Key) { continue }
+                            [void]$ConfiguredKeys.Add($Key)
+                        }
+                        $DirectoryRoles = $DirectoryRoles | Where-Object { $ConfiguredKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Directory -InputObject $PSItem)) }
                     }
                     if ($DirectoryRoles) {
                         Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($DirectoryRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
@@ -263,7 +280,15 @@ function Enable-OPIMMyRole {
                 }
                 if ($ListRead) {
                     if ($Config -is [hashtable] -and $Config.EntraIDGroups) {
-                        $Groups = $Groups | Where-Object { "$($_.groupId)_$($_.accessId)" -in $Config.EntraIDGroups }
+                        # groupId_accessId, read through the tenant map's key helper; a blank entry yields no key and
+                        # is skipped, so it matches nothing.
+                        $ConfiguredGroupKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                        foreach ($Entry in $Config.EntraIDGroups) {
+                            $Key = ConvertTo-OPIMTenantMapKey -Pillar Group -Entry $Entry
+                            if (-not $Key) { continue }
+                            [void]$ConfiguredGroupKeys.Add($Key)
+                        }
+                        $Groups = $Groups | Where-Object { $ConfiguredGroupKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Group -InputObject $PSItem)) }
                     }
                     if ($Groups) {
                         Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($Groups.Count) group(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
@@ -314,7 +339,20 @@ function Enable-OPIMMyRole {
                 }
                 if ($ListRead) {
                     if ($Config -is [hashtable] -and $Config.AzureRoles) {
-                        $AzureRoles = $AzureRoles | Where-Object { $_.Name -in $Config.AzureRoles }
+                        # The eligibility schedule Name, read through the tenant map's key helper; a blank entry
+                        # yields no key and is skipped, as above. OPIM-22: an entry stored from an active role
+                        # is Name|ScopeId and matches the eligibility only at that scope -- an activation at a
+                        # narrower scope than its eligibility matches nothing, never the wider eligibility.
+                        $ConfiguredAzureKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                        foreach ($Entry in $Config.AzureRoles) {
+                            $Key = ConvertTo-OPIMTenantMapKey -Pillar Azure -Entry $Entry
+                            if (-not $Key) { continue }
+                            [void]$ConfiguredAzureKeys.Add($Key)
+                        }
+                        $AzureRoles = $AzureRoles | Where-Object {
+                            $ConfiguredAzureKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem)) -or
+                            $ConfiguredAzureKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem -WithScope))
+                        }
                     }
                     if ($AzureRoles) {
                         Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($AzureRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))

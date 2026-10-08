@@ -56,7 +56,8 @@ function Connect-OPIM {
     prompt appear now.
 
     .PARAMETER TenantMapPath
-    Path to TenantMap.psd1. Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
+    Path to TenantMap.psd1. Defaults to .config/Omnicit.PIM/TenantMap.psd1 under your home
+    folder ($HOME; on Windows the same file as before, under $env:USERPROFILE).
 
     .PARAMETER DeviceCode
     Sign in with a device code instead of the system browser, for a machine without one, such as a
@@ -82,7 +83,7 @@ function Connect-OPIM {
 
         [switch]$IncludeARM,
 
-        [string]$TenantMapPath = "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1",
+        [string]$TenantMapPath = (Join-Path $HOME '.config/Omnicit.PIM/TenantMap.psd1'),
 
         [switch]$DeviceCode
     )

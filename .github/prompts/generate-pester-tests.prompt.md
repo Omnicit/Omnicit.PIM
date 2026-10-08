@@ -22,7 +22,6 @@ source/Public/${input:functionName}.ps1
 Also read the private helpers it may call:
 
 - `source/Private/Invoke-OPIMGraphRequest.ps1`
-- `source/Private/Get-MyId.ps1`
 - `source/Private/Resolve-OPIMSchedule.ps1`
 - `source/Private/Convert-GraphHttpException.ps1`
 
@@ -145,7 +144,6 @@ Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest  { }
 Private helpers live in module scope; always use `-ModuleName Omnicit.PIM`:
 
 ```powershell
-Mock -ModuleName Omnicit.PIM Get-MyId              { return 'user-object-id-001' }
 Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule  { return $FakeRoleObject }
 Mock -ModuleName Omnicit.PIM Restore-GraphProperty { return $InputObject }
 ```
