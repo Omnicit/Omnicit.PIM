@@ -773,4 +773,20 @@ Describe 'Disable-OPIMEntraIDGroup' {
             $Outputs | Should -Not -Match 'Hashtable'
         }
     }
+
+    Context 'When the help of -AccessType is read (OPIM-49)' {
+        BeforeAll {
+            $AccessTypeHelp = (@((Get-Help Disable-OPIMEntraIDGroup -Parameter AccessType).Description.Text) -join ' ') -replace '\s+', ' '
+        }
+
+        It 'names the Graph error that refuses to deactivate an ownership held as the only owner' {
+            $AccessTypeHelp | Should -Match 'CannotDeleteLastAdminAssignment'
+            $AccessTypeHelp | Should -Match 'only owner'
+        }
+
+        It 'says the ownership does not end at its end time and what to do instead' {
+            $AccessTypeHelp | Should -Match 'does not end at its end time'
+            $AccessTypeHelp | Should -Match 'Activate an ownership only of a group that has another owner'
+        }
+    }
 }

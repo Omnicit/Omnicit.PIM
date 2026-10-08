@@ -134,6 +134,12 @@ LONG DESCRIPTION
     and so is an entry of a tenant alias that matches more than one active role or group when
     Disable-OPIMMyRole (unpim) reads it: that entry deactivates none of them.
 
+    Activate an ownership (-AccessType Owner) only of a group that has another owner. When you
+    are the group's only owner, PIM for Groups refuses to deactivate the ownership (Graph answers
+    CannotDeleteLastAdminAssignment) and the ownership does not end at its end time: it stays
+    active until another owner exists and the ownership is removed. A service principal added as
+    a direct owner does not count, since Graph still counts you as the last owner.
+
     -Activated lists your activations only: the active, time-bound assignments. A permanent
     assignment is no activation and cannot be deactivated by you, so it is not listed.
 
