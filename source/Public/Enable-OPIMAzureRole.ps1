@@ -12,6 +12,9 @@ function Enable-OPIMAzureRole {
     refused with AmbiguousName and nothing is activated: add -Scope to pick one. A name that matches
     no eligible role is written as an EligibleRoleNotFound error. Several names are resolved one by
     one, each on its own, so a name that fails does not stop the next one.
+    The request is reported by the status Azure gives it: a request that failed, was denied or was
+    canceled is written as an ActivationRequestFailed error, and one that waits for approval or is
+    still being provisioned is returned with a warning.
     .NOTES
     The default activation period is 1 hour. Override with -Hours. Make it persistent in your profile:
 
@@ -206,7 +209,8 @@ function Enable-OPIMAzureRole {
                 }
 
                 $Response.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleRequest')
-                $Response
+                $Label = (Get-OPIMScheduleName -Pillar Azure -InputObject $Role).Label
+                Write-OPIMRequestOutcome -Request $Response -Status $Response.Status -Name $Label -Cmdlet $PSCmdlet
             }
         }
     }

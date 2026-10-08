@@ -10,6 +10,9 @@ function Enable-OPIMDirectoryRole {
     add -Scope to pick one. A name that matches no eligible role is written as an EligibleRoleNotFound
     error. Several names are resolved one by one, each on its own, so a name that fails does not stop
     the next one.
+    The request is reported by the status Graph gives it: a request that failed, was denied or was
+    canceled is written as an ActivationRequestFailed error, and one that waits for approval or is
+    still being provisioned is returned with a warning.
     .NOTES
     The default activation period is 1 hour. Override with -Hours. Make it persistent in your profile:
 
@@ -207,10 +210,13 @@ function Enable-OPIMDirectoryRole {
                 $Out = [PSCustomObject]$Response
                 $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleRequest')
 
-                if ($Wait) {
+                $Label = (Get-OPIMScheduleName -Pillar Directory -InputObject $Role).Label
+                if ($Wait -and (Get-OPIMRequestOutcome -Status $Out.status) -ne 'Failed') {
+                    # Wait-OPIMDirectoryRole reads the status again and reports it. A request Graph has
+                    # already refused is reported here and never waited for.
                     $_pendingWait.Add($Out)
                 } else {
-                    $Out
+                    Write-OPIMRequestOutcome -Request $Out -Status $Out.status -Name $Label -Cmdlet $PSCmdlet
                 }
             }
         }

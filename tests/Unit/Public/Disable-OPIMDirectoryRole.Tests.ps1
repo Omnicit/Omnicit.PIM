@@ -56,7 +56,7 @@ Describe 'Disable-OPIMDirectoryRole' {
                 return @{
                     id              = 'deact-req-001'
                     action          = 'SelfDeactivate'
-                    status          = 'Provisioned'
+                    status          = 'Revoked'
                     createdDateTime = '2024-01-01T12:00:00Z'
                 }
             } -ParameterFilter { $Method -eq 'POST' }
@@ -112,7 +112,7 @@ Describe 'Disable-OPIMDirectoryRole' {
                 return @{
                     id              = 'deact-req-002'
                     action          = 'SelfDeactivate'
-                    status          = 'Provisioned'
+                    status          = 'Revoked'
                     createdDateTime = '2024-01-01T12:00:00Z'
                 }
             } -ParameterFilter { $Method -eq 'POST' }
@@ -245,7 +245,7 @@ Describe 'Disable-OPIMDirectoryRole' {
                 return @{
                     id              = 'deact-req-002'
                     action          = 'SelfDeactivate'
-                    status          = 'Provisioned'
+                    status          = 'Revoked'
                     createdDateTime = '2024-01-01T12:00:00Z'
                 }
             } -ParameterFilter { $Method -eq 'POST' }
@@ -394,7 +394,7 @@ Describe 'Disable-OPIMDirectoryRole' {
             Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { $Eligible }
             Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { $Active } -ParameterFilter { $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
-                @{ id = 'deact-req-001'; action = 'SelfDeactivate'; status = 'Provisioned'; createdDateTime = '2024-01-01T12:00:00Z' }
+                @{ id = 'deact-req-001'; action = 'SelfDeactivate'; status = 'Revoked'; createdDateTime = '2024-01-01T12:00:00Z' }
             } -ParameterFilter { $Method -eq 'POST' }
             Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
         }
@@ -457,7 +457,7 @@ Describe 'Disable-OPIMDirectoryRole' {
             )
             Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { $Listing }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
-                @{ id = 'deact-req-001'; action = 'SelfDeactivate'; status = 'Provisioned'; createdDateTime = '2024-01-01T12:00:00Z' }
+                @{ id = 'deact-req-001'; action = 'SelfDeactivate'; status = 'Revoked'; createdDateTime = '2024-01-01T12:00:00Z' }
             } -ParameterFilter { $Method -eq 'POST' }
             Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
         }
@@ -517,7 +517,7 @@ Describe 'Disable-OPIMDirectoryRole' {
             Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { $EligiblePost }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 $Held.IsActive = $false
-                @{ id = 'deact-req-001'; action = 'SelfDeactivate'; status = 'Provisioned'; createdDateTime = '2024-01-01T12:00:00Z' }
+                @{ id = 'deact-req-001'; action = 'SelfDeactivate'; status = 'Revoked'; createdDateTime = '2024-01-01T12:00:00Z' }
             } -ParameterFilter { $Method -eq 'POST' }
             Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
         }
@@ -584,6 +584,77 @@ Describe 'Disable-OPIMDirectoryRole' {
             @($Written | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Disable-OPIMDirectoryRole' }).Count | Should -Be 1
             Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+    }
+
+    Context 'When Graph answers the deactivation with a status' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $Active = New-DirectoryPost -Id 'inst-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader' -Active
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { $Active }
+            Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
+            # The answer is read when the POST is made, so each test sets the status it wants.
+            $Answer = @{ Status = 'Revoked' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                $Response = @{ id = 'deact-req-001'; action = 'SelfDeactivate'; createdDateTime = '2024-01-01T12:00:00Z' }
+                if ($null -ne $Answer.Status) { $Response.status = $Answer.Status }
+                $Response
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'returns the request and writes neither a warning nor an error for <Status>' -ForEach @(
+            @{ Status = 'Revoked' }
+            @{ Status = 'revoked' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Disable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryAssignmentScheduleRequest'
+            $Result.status | Should -BeExactly $Status
+            @($Warns).Count | Should -Be 0
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'returns the request with one warning that names <Status>' -ForEach @(
+            @{ Status = 'PendingRevocation'; Message = 'Usage Summary Reports Reader: the deactivation request is PendingRevocation and has not taken effect yet.' }
+            @{ Status = 'PendingApproval'; Message = 'Usage Summary Reports Reader: the deactivation request is PendingApproval. It waits for a decision and has not taken effect yet.' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Disable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
+            $Result.status | Should -BeExactly $Status
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Message
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'writes ActivationRequestFailed and returns nothing for <Status>' -ForEach @(
+            @{ Status = 'Failed' }
+            @{ Status = 'Provisioned' }
+            @{ Status = 'Granted' }
+            @{ Status = 'ScheduleCreated' }
+            @{ Status = 'Denied' }
+            @{ Status = 'Canceled' }
+            @{ Status = 'SomethingNew' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Disable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Disable-OPIMDirectoryRole'
+            $Errs[-1].Exception.Message | Should -BeExactly "Usage Summary Reports Reader: the deactivation request ended with status '$Status' and did not take effect."
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'ActivationRequestFailed*' }).Count | Should -Be 1
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'writes ActivationRequestFailed for an answer that carries no status' {
+            $Answer.Status = $null
+            $Result = Disable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Disable-OPIMDirectoryRole'
+            $Errs[-1].Exception.Message | Should -BeLike '*ended with no status*'
         }
     }
 }

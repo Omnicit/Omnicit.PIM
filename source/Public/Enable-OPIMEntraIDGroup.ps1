@@ -10,6 +10,9 @@ function Enable-OPIMEntraIDGroup {
     is activated; give the tab-completed form of the one you mean. A name that matches no eligible
     assignment is written as an EligibleRoleNotFound error. Several names are resolved one by one,
     each on its own, so a name that fails does not stop the next one.
+    The request is reported by the status Graph gives it: a request that failed, was denied or was
+    canceled is written as an ActivationRequestFailed error, and one that waits for approval or is
+    still being provisioned is returned with a warning.
     .EXAMPLE
     Get-OPIMEntraIDGroup | Enable-OPIMEntraIDGroup
     Activate all eligible PIM group assignments for 1 hour.
@@ -202,7 +205,8 @@ function Enable-OPIMEntraIDGroup {
                 # Convert to PSCustomObject so custom Format views apply (hashtable uses Key/Value formatter).
                 $Out = [PSCustomObject]$Response
                 $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleRequest')
-                $Out
+                $Label = (Get-OPIMScheduleName -Pillar Group -InputObject $Group).Label
+                Write-OPIMRequestOutcome -Request $Out -Status $Out.status -Name $Label -Cmdlet $PSCmdlet
             }
         }
     }

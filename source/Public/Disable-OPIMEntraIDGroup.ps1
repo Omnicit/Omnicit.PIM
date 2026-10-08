@@ -10,6 +10,9 @@ function Disable-OPIMEntraIDGroup {
     AmbiguousName and nothing is deactivated. A name that matches no active assignment is written as
     a (non-terminating) ActiveRoleNotFound error; when the assignment is eligible but not active, the
     message says it is already deactivated.
+    The request is reported by the status Graph gives it: a deactivation that does not end Revoked
+    is written as an ActivationRequestFailed error, and one that waits for approval or is still
+    being processed is returned with a warning.
     .EXAMPLE
     Get-OPIMEntraIDGroup -Activated | Disable-OPIMEntraIDGroup
     Deactivate all currently active PIM group assignments.
@@ -132,7 +135,9 @@ function Disable-OPIMEntraIDGroup {
             # Convert to PSCustomObject so custom Format views apply (hashtable uses Key/Value formatter).
             $Out = [PSCustomObject]$Response
             $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleRequest')
-            return $Out
+            $Label = (Get-OPIMScheduleName -Pillar Group -InputObject $Group).Label
+            Write-OPIMRequestOutcome -Request $Out -Status $Out.status -Name $Label -Deactivate -Cmdlet $PSCmdlet
+            return
         }
     }
 }

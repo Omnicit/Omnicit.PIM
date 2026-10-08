@@ -983,4 +983,101 @@ Describe 'Enable-OPIMEntraIDGroup' {
             }
         }
     }
+
+    Context 'When Graph answers the request with a status' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $Post = New-GroupPost -Id 'grp-elig-001' -GroupId 'g-1' -Name 'opim-s1-grp' -AccessId 'member'
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { $Post }
+            # The answer is read when the POST is made, so each test sets the status it wants.
+            $Answer = @{ Status = 'Provisioned' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                $Response = @{ id = 'req-001'; action = 'selfActivate'; accessId = 'member'; groupId = 'g-1'; principalId = 'principal-001' }
+                if ($null -ne $Answer.Status) { $Response.status = $Answer.Status }
+                $Response
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'returns the request and writes neither a warning nor an error for <Status>' -ForEach @(
+            @{ Status = 'Provisioned' }
+            @{ Status = 'Granted' }
+            @{ Status = 'ScheduleCreated' }
+            @{ Status = 'provisioned' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.GroupAssignmentScheduleRequest'
+            $Result.status | Should -BeExactly $Status
+            @($Warns).Count | Should -Be 0
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'returns the request with one warning that names <Status>' -ForEach @(
+            @{ Status = 'PendingApproval'; Message = 'opim-s1-grp - member: the activation request is PendingApproval. It waits for a decision and has not taken effect yet.' }
+            @{ Status = 'PendingAdminDecision'; Message = 'opim-s1-grp - member: the activation request is PendingAdminDecision. It waits for a decision and has not taken effect yet.' }
+            @{ Status = 'PendingProvisioning'; Message = 'opim-s1-grp - member: the activation request is PendingProvisioning and has not taken effect yet.' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
+            $Result.status | Should -BeExactly $Status
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Message
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'writes ActivationRequestFailed and returns nothing for <Status>' -ForEach @(
+            @{ Status = 'Failed' }
+            @{ Status = 'Denied' }
+            @{ Status = 'Canceled' }
+            @{ Status = 'Revoked' }
+            @{ Status = 'AdminDenied' }
+            @{ Status = 'SomethingNew' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Enable-OPIMEntraIDGroup'
+            $Errs[-1].Exception.Message | Should -BeExactly "opim-s1-grp - member: the activation request ended with status '$Status' and did not take effect."
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'ActivationRequestFailed*' }).Count | Should -Be 1
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'writes ActivationRequestFailed for an answer that carries no status' {
+            $Answer.Status = $null
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Enable-OPIMEntraIDGroup'
+            $Errs[-1].Exception.Message | Should -BeLike '*ended with no status*'
+        }
+    }
+
+    Context 'When the first of two requests comes back Failed' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $PostA = New-GroupPost -Id 'grp-elig-001' -GroupId 'g-1' -Name 'opim-s1-grp' -AccessId 'member'
+            $PostB = New-GroupPost -Id 'grp-elig-002' -GroupId 'g-2' -Name 'opim-s1-other' -AccessId 'member'
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule {
+                if ($Name -like '*grp') { $PostA } else { $PostB }
+            }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                $State = if ($Body.groupId -eq 'g-1') { 'Failed' } else { 'Provisioned' }
+                @{ id = "req-$($Body.groupId)"; action = 'selfActivate'; accessId = 'member'; groupId = $Body.groupId; status = $State }
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'writes one error and still requests and returns the second group' {
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp', 'opim-s1-other' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'ActivationRequestFailed,Enable-OPIMEntraIDGroup' }).Count | Should -Be 1
+            $Errs[-1].Exception.Message | Should -BeLike 'opim-s1-grp - member: *'
+            @($Result).Count | Should -Be 1
+            $Result.groupId | Should -BeExactly 'g-2'
+            $Result.status | Should -BeExactly 'Provisioned'
+        }
+    }
 }

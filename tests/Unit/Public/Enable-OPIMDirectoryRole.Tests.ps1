@@ -965,4 +965,134 @@ Describe 'Enable-OPIMDirectoryRole' {
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
         }
     }
+
+    Context 'When Graph answers the request with a status' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $Post = New-DirectoryPost -Id 'elig-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader'
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { $Post }
+            Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
+            # The answer is read when the POST is made, so each test sets the status it wants.
+            $Answer = @{ Status = 'Provisioned' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                $Response = @{ id = 'req-001'; action = 'SelfActivate'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'; principalId = 'principal-001' }
+                if ($null -ne $Answer.Status) { $Response.status = $Answer.Status }
+                $Response
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'returns the request and writes neither a warning nor an error for <Status>' -ForEach @(
+            @{ Status = 'Provisioned' }
+            @{ Status = 'Granted' }
+            @{ Status = 'ScheduleCreated' }
+            @{ Status = 'provisioned' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryAssignmentScheduleRequest'
+            $Result.status | Should -BeExactly $Status
+            @($Warns).Count | Should -Be 0
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'returns the request with one warning that names <Status>' -ForEach @(
+            @{ Status = 'PendingApproval'; Message = 'Usage Summary Reports Reader: the activation request is PendingApproval. It waits for a decision and has not taken effect yet.' }
+            @{ Status = 'PendingAdminDecision'; Message = 'Usage Summary Reports Reader: the activation request is PendingAdminDecision. It waits for a decision and has not taken effect yet.' }
+            @{ Status = 'PendingProvisioning'; Message = 'Usage Summary Reports Reader: the activation request is PendingProvisioning and has not taken effect yet.' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
+            $Result.status | Should -BeExactly $Status
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Message
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'writes ActivationRequestFailed and returns nothing for <Status>' -ForEach @(
+            @{ Status = 'Failed' }
+            @{ Status = 'Denied' }
+            @{ Status = 'Canceled' }
+            @{ Status = 'Revoked' }
+            @{ Status = 'AdminDenied' }
+            @{ Status = 'SomethingNew' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Enable-OPIMDirectoryRole'
+            $Errs[-1].Exception.Message | Should -BeExactly "Usage Summary Reports Reader: the activation request ended with status '$Status' and did not take effect."
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'ActivationRequestFailed*' }).Count | Should -Be 1
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'writes ActivationRequestFailed for an answer that carries no status' {
+            $Answer.Status = $null
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' `
+                -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Enable-OPIMDirectoryRole'
+            $Errs[-1].Exception.Message | Should -BeLike '*ended with no status*'
+        }
+    }
+
+    Context 'When the first of two requests comes back Failed' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $PostA = New-DirectoryPost -Id 'elig-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader'
+            $PostB = New-DirectoryPost -Id 'elig-003' -DefinitionId 'role-def-003' -RoleName 'Message Center Privacy Reader'
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule {
+                if ($Name -like 'Usage*') { $PostA } else { $PostB }
+            }
+            Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                $State = if ($Body.roleDefinitionId -eq 'role-def-001') { 'Failed' } else { 'Provisioned' }
+                @{ id = "req-$($Body.roleDefinitionId)"; action = 'SelfActivate'; roleDefinitionId = $Body.roleDefinitionId; status = $State }
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'writes one error and still requests and returns the second role' {
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader', 'Message Center Privacy Reader' `
+                -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'ActivationRequestFailed,Enable-OPIMDirectoryRole' }).Count | Should -Be 1
+            $Errs[-1].Exception.Message | Should -BeLike 'Usage Summary Reports Reader: *'
+            @($Result).Count | Should -Be 1
+            $Result.roleDefinitionId | Should -BeExactly 'role-def-003'
+            $Result.status | Should -BeExactly 'Provisioned'
+        }
+    }
+
+    Context 'When -Wait is given and the request comes back Failed' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $Post = New-DirectoryPost -Id 'elig-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader'
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { $Post }
+            Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
+            $Answer = @{ Status = 'Failed' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                @{ id = 'req-001'; action = 'SelfActivate'; roleDefinitionId = 'role-def-001'; status = $Answer.Status }
+            } -ParameterFilter { $Method -eq 'POST' }
+            Mock -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole { }
+        }
+
+        It 'reports it as ActivationRequestFailed and never waits for it' {
+            $Answer.Status = 'Failed'
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' -Wait -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole -Times 0 -Exactly -Scope It
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'ActivationRequestFailed,Enable-OPIMDirectoryRole' }).Count | Should -Be 1
+            @($Result).Count | Should -Be 0
+        }
+
+        It 'still hands a request that waits for a decision to Wait-OPIMDirectoryRole' {
+            $Answer.Status = 'PendingApproval'
+            $null = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' -Wait -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole -Times 1 -Exactly -Scope It
+            @($Errs).Count | Should -Be 0
+        }
+    }
 }

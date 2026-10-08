@@ -57,7 +57,7 @@ Describe 'Disable-OPIMEntraIDGroup' {
                     accessId    = 'member'
                     groupId     = 'group-001'
                     principalId = 'principal-001'
-                    status      = 'Provisioned'
+                    status      = 'Revoked'
                     group       = @{ displayName = 'Finance Team' }
                 }
             } -ParameterFilter { $Method -eq 'POST' }
@@ -113,7 +113,7 @@ Describe 'Disable-OPIMEntraIDGroup' {
                     accessId    = 'owner'
                     groupId     = 'group-002'
                     principalId = 'principal-002'
-                    status      = 'Provisioned'
+                    status      = 'Revoked'
                     group       = @{ displayName = 'DevOps Team' }
                 }
             } -ParameterFilter { $Method -eq 'POST' }
@@ -239,7 +239,7 @@ Describe 'Disable-OPIMEntraIDGroup' {
                     accessId    = 'member'
                     groupId     = 'group-004'
                     principalId = 'principal-004'
-                    status      = 'Provisioned'
+                    status      = 'Revoked'
                     # 'group' key intentionally omitted to exercise the restore branch
                 }
             } -ParameterFilter { $Method -eq 'POST' }
@@ -275,7 +275,7 @@ Describe 'Disable-OPIMEntraIDGroup' {
                     accessId    = 'member'
                     groupId     = 'group-002'
                     principalId = 'principal-001'
-                    status      = 'Provisioned'
+                    status      = 'Revoked'
                     group       = @{ displayName = 'Security Team' }
                 }
             } -ParameterFilter { $Method -eq 'POST' }
@@ -424,7 +424,7 @@ Describe 'Disable-OPIMEntraIDGroup' {
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Eligible }
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Active } -ParameterFilter { $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
-                @{ id = 'deact-req-001'; action = 'selfDeactivate'; status = 'Provisioned' }
+                @{ id = 'deact-req-001'; action = 'selfDeactivate'; status = 'Revoked' }
             } -ParameterFilter { $Method -eq 'POST' }
         }
 
@@ -470,7 +470,7 @@ Describe 'Disable-OPIMEntraIDGroup' {
             )
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Active }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
-                @{ id = 'deact-req-001'; action = 'selfDeactivate'; status = 'Provisioned' }
+                @{ id = 'deact-req-001'; action = 'selfDeactivate'; status = 'Revoked' }
             } -ParameterFilter { $Method -eq 'POST' }
         }
 
@@ -519,7 +519,7 @@ Describe 'Disable-OPIMEntraIDGroup' {
             )
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Listing }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
-                @{ id = 'deact-req-001'; action = 'selfDeactivate'; status = 'Provisioned' }
+                @{ id = 'deact-req-001'; action = 'selfDeactivate'; status = 'Revoked' }
             } -ParameterFilter { $Method -eq 'POST' }
         }
 
@@ -572,7 +572,7 @@ Describe 'Disable-OPIMEntraIDGroup' {
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $EligiblePost }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 $Held.IsActive = $false
-                @{ id = 'deact-req-001'; action = 'selfDeactivate'; status = 'Provisioned' }
+                @{ id = 'deact-req-001'; action = 'selfDeactivate'; status = 'Revoked' }
             } -ParameterFilter { $Method -eq 'POST' }
         }
 
@@ -649,7 +649,7 @@ Describe 'Disable-OPIMEntraIDGroup' {
             )
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Listing }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
-                @{ id = 'deact-req-001'; action = 'selfDeactivate'; status = 'Provisioned' }
+                @{ id = 'deact-req-001'; action = 'selfDeactivate'; status = 'Revoked' }
             } -ParameterFilter { $Method -eq 'POST' }
         }
 
@@ -676,7 +676,7 @@ Describe 'Disable-OPIMEntraIDGroup' {
             $Resolved = New-GroupPost -Id 'grp-act-001' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'owner' -Active
             Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { $Resolved }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
-                @{ id = 'deact-req-001'; action = 'selfDeactivate'; status = 'Provisioned' }
+                @{ id = 'deact-req-001'; action = 'selfDeactivate'; status = 'Revoked' }
             } -ParameterFilter { $Method -eq 'POST' }
         }
 
@@ -692,6 +692,76 @@ Describe 'Disable-OPIMEntraIDGroup' {
             Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Pillar -eq 'Group' -and -not $AccessType
             }
+        }
+    }
+
+    Context 'When Graph answers the deactivation with a status' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $Active = New-GroupPost -Id 'grp-act-001' -GroupId 'g-1' -Name 'opim-s1-grp' -AccessId 'member' -Active
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { $Active }
+            # The answer is read when the POST is made, so each test sets the status it wants.
+            $Answer = @{ Status = 'Revoked' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                $Response = @{ id = 'deact-req-001'; action = 'selfDeactivate'; accessId = 'member'; groupId = 'g-1'; principalId = 'principal-001' }
+                if ($null -ne $Answer.Status) { $Response.status = $Answer.Status }
+                $Response
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'returns the request and writes neither a warning nor an error for <Status>' -ForEach @(
+            @{ Status = 'Revoked' }
+            @{ Status = 'revoked' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Disable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.GroupAssignmentScheduleRequest'
+            $Result.status | Should -BeExactly $Status
+            @($Warns).Count | Should -Be 0
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'returns the request with one warning that names <Status>' -ForEach @(
+            @{ Status = 'PendingRevocation'; Message = 'opim-s1-grp - member: the deactivation request is PendingRevocation and has not taken effect yet.' }
+            @{ Status = 'PendingApproval'; Message = 'opim-s1-grp - member: the deactivation request is PendingApproval. It waits for a decision and has not taken effect yet.' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Disable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
+            $Result.status | Should -BeExactly $Status
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Message
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'writes ActivationRequestFailed and returns nothing for <Status>' -ForEach @(
+            @{ Status = 'Failed' }
+            @{ Status = 'Provisioned' }
+            @{ Status = 'Granted' }
+            @{ Status = 'ScheduleCreated' }
+            @{ Status = 'Denied' }
+            @{ Status = 'Canceled' }
+            @{ Status = 'SomethingNew' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Disable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Disable-OPIMEntraIDGroup'
+            $Errs[-1].Exception.Message | Should -BeExactly "opim-s1-grp - member: the deactivation request ended with status '$Status' and did not take effect."
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'ActivationRequestFailed*' }).Count | Should -Be 1
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'writes ActivationRequestFailed for an answer that carries no status' {
+            $Answer.Status = $null
+            $Result = Disable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Disable-OPIMEntraIDGroup'
+            $Errs[-1].Exception.Message | Should -BeLike '*ended with no status*'
         }
     }
 }

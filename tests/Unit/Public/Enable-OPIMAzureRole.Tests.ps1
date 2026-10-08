@@ -44,6 +44,7 @@ Describe 'Enable-OPIMAzureRole' {
                 Name        = [System.Guid]::NewGuid().ToString()
                 Scope       = '/subscriptions/sub-001'
                 RequestType = 'SelfActivate'
+                Status      = 'Provisioned'
             }
             Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeRole }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest { return $fakeResponse }
@@ -111,7 +112,7 @@ Describe 'Enable-OPIMAzureRole' {
                 else { return $fakeRoleB }
             }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
-                return [PSCustomObject]@{ Name = [System.Guid]::NewGuid().ToString(); Scope = $Scope; RequestType = 'SelfActivate' }
+                return [PSCustomObject]@{ Name = [System.Guid]::NewGuid().ToString(); Scope = $Scope; RequestType = 'SelfActivate'; Status = 'Provisioned' }
             }
         }
 
@@ -137,6 +138,7 @@ Describe 'Enable-OPIMAzureRole' {
                 Name        = [System.Guid]::NewGuid().ToString()
                 Scope       = '/subscriptions/sub-002'
                 RequestType = 'SelfActivate'
+                Status      = 'Provisioned'
             }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest { return $fakeResponse }
         }
@@ -176,6 +178,7 @@ Describe 'Enable-OPIMAzureRole' {
                 Name        = [System.Guid]::NewGuid().ToString()
                 Scope       = '/subscriptions/sub-001'
                 RequestType = 'SelfActivate'
+                Status      = 'Provisioned'
             }
             $script:UntilDateTime = [DateTime]::Now.AddHours(3)
             Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeRole }
@@ -219,6 +222,7 @@ Describe 'Enable-OPIMAzureRole' {
                 Name        = [System.Guid]::NewGuid().ToString()
                 Scope       = '/subscriptions/sub-001'
                 RequestType = 'SelfActivate'
+                Status      = 'Provisioned'
             }
             Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeRole }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest { return $fakeResponse }
@@ -254,6 +258,7 @@ Describe 'Enable-OPIMAzureRole' {
                 Name        = [System.Guid]::NewGuid().ToString()
                 Scope       = '/subscriptions/sub-001'
                 RequestType = 'SelfActivate'
+                Status      = 'Provisioned'
             }
             Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeRole }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest { return $fakeResponse }
@@ -289,6 +294,7 @@ Describe 'Enable-OPIMAzureRole' {
                 Name        = [System.Guid]::NewGuid().ToString()
                 Scope       = '/subscriptions/sub-001'
                 RequestType = 'SelfActivate'
+                Status      = 'Provisioned'
             }
             Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeRole }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest { return $fakeResponse }
@@ -434,6 +440,7 @@ Describe 'Enable-OPIMAzureRole' {
                 Name        = $script:fakeResponseName
                 Scope       = '/subscriptions/sub-001'
                 RequestType = 'SelfActivate'
+                Status      = 'Provisioned'
             }
             $fakeActivation = [PSCustomObject]@{
                 Name        = $script:fakeResponseName
@@ -471,6 +478,7 @@ Describe 'Enable-OPIMAzureRole' {
                 Name        = [System.Guid]::NewGuid().ToString()
                 Scope       = '/subscriptions/sub-001'
                 RequestType = 'SelfActivate'
+                Status      = 'Provisioned'
             }
             Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeRole }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest { return $fakeResponse }
@@ -557,6 +565,7 @@ Describe 'Enable-OPIMAzureRole' {
                     Name        = [System.Guid]::NewGuid().ToString()
                     Scope       = '/subscriptions/sub-001'
                     RequestType = 'SelfActivate'
+                    Status      = 'Provisioned'
                 }
             }
         }
@@ -679,6 +688,7 @@ Describe 'Enable-OPIMAzureRole' {
                     Name        = [System.Guid]::NewGuid().ToString()
                     Scope       = '/subscriptions/sub-001'
                     RequestType = 'SelfActivate'
+                    Status      = 'Provisioned'
                 }
             }
         }
@@ -727,7 +737,7 @@ Describe 'Enable-OPIMAzureRole' {
             }
             Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $FakeRole }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
-                [PSCustomObject]@{ Name = 'request-001'; Scope = '/subscriptions/sub-001'; RequestType = 'SelfActivate' }
+                [PSCustomObject]@{ Name = 'request-001'; Scope = '/subscriptions/sub-001'; RequestType = 'SelfActivate'; Status = 'Provisioned' }
             }
             Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleRequest {
                 [PSCustomObject]@{ Name = 'request-001'; Status = 'Provisioned' }
@@ -826,7 +836,7 @@ Describe 'Enable-OPIMAzureRole' {
             )
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Listing }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
-                [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfActivate' }
+                [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfActivate'; Status = 'Provisioned' }
             }
         }
 
@@ -895,7 +905,7 @@ Describe 'Enable-OPIMAzureRole' {
             )
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Listing }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
-                [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfActivate' }
+                [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfActivate'; Status = 'Provisioned' }
             }
         }
 
@@ -919,7 +929,7 @@ Describe 'Enable-OPIMAzureRole' {
             )
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Listing }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
-                [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfActivate' }
+                [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfActivate'; Status = 'Provisioned' }
             }
         }
 
@@ -950,7 +960,7 @@ Describe 'Enable-OPIMAzureRole' {
             )
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Listing }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
-                [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfActivate' }
+                [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfActivate'; Status = 'Provisioned' }
             }
         }
 
@@ -1028,6 +1038,107 @@ Describe 'Enable-OPIMAzureRole' {
             @($Written | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Enable-OPIMAzureRole' }).Count | Should -Be 2
             Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 2 -Exactly -Scope It
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
+        }
+    }
+
+    Context 'When Azure answers the request with a status' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
+            $Post = New-AzurePost -Name 'azure-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one'
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { $Post }
+            # The answer is read when the request is made, so each test sets the status it wants.
+            $Answer = @{ Status = 'Provisioned' }
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
+                $Response = [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfActivate' }
+                if ($null -ne $Answer.Status) { $Response | Add-Member -NotePropertyName Status -NotePropertyValue $Answer.Status }
+                $Response
+            }
+        }
+
+        It 'returns the request and writes neither a warning nor an error for <Status>' -ForEach @(
+            @{ Status = 'Provisioned' }
+            @{ Status = 'Granted' }
+            @{ Status = 'ScheduleCreated' }
+            @{ Status = 'provisioned' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Enable-OPIMAzureRole -RoleName 'Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureAssignmentScheduleRequest'
+            $Result.Status | Should -BeExactly $Status
+            @($Warns).Count | Should -Be 0
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'returns the request with one warning that names <Status>' -ForEach @(
+            @{ Status = 'PendingApproval'; Message = 'Reader -> rg-one: the activation request is PendingApproval. It waits for a decision and has not taken effect yet.' }
+            @{ Status = 'PendingAdminDecision'; Message = 'Reader -> rg-one: the activation request is PendingAdminDecision. It waits for a decision and has not taken effect yet.' }
+            @{ Status = 'PendingProvisioning'; Message = 'Reader -> rg-one: the activation request is PendingProvisioning and has not taken effect yet.' }
+            @{ Status = 'Accepted'; Message = 'Reader -> rg-one: the activation request is Accepted and has not taken effect yet.' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Enable-OPIMAzureRole -RoleName 'Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
+            $Result.Status | Should -BeExactly $Status
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Message
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'writes ActivationRequestFailed and returns nothing for <Status>' -ForEach @(
+            @{ Status = 'Failed' }
+            @{ Status = 'Denied' }
+            @{ Status = 'Canceled' }
+            @{ Status = 'Revoked' }
+            @{ Status = 'AdminDenied' }
+            @{ Status = 'TimedOut' }
+            @{ Status = 'SomethingNew' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Enable-OPIMAzureRole -RoleName 'Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Enable-OPIMAzureRole'
+            $Errs[-1].Exception.Message | Should -BeExactly "Reader -> rg-one: the activation request ended with status '$Status' and did not take effect."
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'ActivationRequestFailed*' }).Count | Should -Be 1
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'writes ActivationRequestFailed for an answer that carries no status' {
+            $Answer.Status = $null
+            $Result = Enable-OPIMAzureRole -RoleName 'Reader' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Enable-OPIMAzureRole'
+            $Errs[-1].Exception.Message | Should -BeLike '*ended with no status*'
+        }
+    }
+
+    Context 'When the first of two requests comes back Failed' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
+            $PostA = New-AzurePost -Name 'azure-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one'
+            $PostB = New-AzurePost -Name 'azure-003' -DefinitionId 'role-def-contributor' -RoleName 'Contributor' -ScopeId '/subscriptions/sub-001' -ScopeName 'sub-001'
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule {
+                if ($Name -eq 'Reader') { $PostA } else { $PostB }
+            }
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
+                $State = if ($LinkedRoleEligibilityScheduleId -eq 'azure-001') { 'Failed' } else { 'Provisioned' }
+                [PSCustomObject]@{ Name = "request-$LinkedRoleEligibilityScheduleId"; Scope = $Scope; RequestType = 'SelfActivate'; Status = $State }
+            }
+        }
+
+        It 'writes one error and still requests and returns the second role' {
+            $Result = Enable-OPIMAzureRole -RoleName 'Reader', 'Contributor' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 2 -Exactly -Scope It
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'ActivationRequestFailed,Enable-OPIMAzureRole' }).Count | Should -Be 1
+            $Errs[-1].Exception.Message | Should -BeLike 'Reader -> rg-one: *'
+            @($Result).Count | Should -Be 1
+            $Result.Name | Should -BeExactly 'request-azure-003'
+            $Result.Status | Should -BeExactly 'Provisioned'
         }
     }
 }
