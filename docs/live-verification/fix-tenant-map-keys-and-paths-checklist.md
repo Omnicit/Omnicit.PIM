@@ -104,7 +104,7 @@ cmdlet inside it writes (measured in this run, 1.3's first attempt).
 
 ### S.1. Find the build under test and tie it to the branch head
 
-- [ ] **S.1** Window B. The newest build in `output/module/Omnicit.PIM/` was made after the branch head was committed, and it holds this step's key helper.
+- [x] **S.1** Window B. The newest build in `output/module/Omnicit.PIM/` was made after the branch head was committed, and it holds this step's key helper.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -121,11 +121,17 @@ $Psm1 = Join-Path $Built.DirectoryName 'Omnicit.PIM.psm1'
 `Tracked changes in the working tree: 0`.
 **Failure looks like:** `False`, or a tracked change -- build again before any check below.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:13 UTC, window B: Branch head: 5f3132b (the checklist commit); Built version folder: 0.6.0; Built after the branch head was committed: True; Tracked changes in the working tree: 0; The built module holds the tenant map key helper: True.
+18:18 UTC, after the block fix 6cd8327 and a new build (no change under source/): the same lines, all True, 0 changes.
+18:20 UTC, after the block fix a478cad and a new build: the same lines, all True, 0 changes.
+```
 
 ### S.2. The harness loads
 
-- [ ] **S.2** Window B. OerLive is 1.0.3, the harness reads the test values through it, and the TOTP implementation reproduces RFC 6238.
+- [x] **S.2** Window B. OerLive is 1.0.3, the harness reads the test values through it, and the TOTP implementation reproduces RFC 6238.
 
 ```powershell
 Import-Module (Join-Path $env:OPIMLIVE_HOME 'OpimLive/OpimLive.psm1') -Force
@@ -140,11 +146,15 @@ $Target = Get-OpimLiveTarget
 **Failure looks like:** `False` on the self-test -- STOP: the harness would enter wrong codes. `False`
 on the host log -- the Azure code cannot be completed; set it before 0.1.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:13 UTC, window B: OerLive version: 1.0.3; Test user and tenant read (values hidden): True; TOTP self-test: True; Host log set and present: True.
+```
 
 ### S.3. The fixture is in place, and this step has no object of its own
 
-- [ ] **S.3** Window A, as `oer-live-cc`. The fixture's user and group exist, and no object carries the prefix `opim-s15b-`.
+- [x] **S.3** Window A, as `oer-live-cc`. The fixture's user and group exist, and no object carries the prefix `opim-s15b-`.
 
 ```powershell
 Import-Module (Join-Path $env:OPIMLIVE_HOME '../../Omnicit Entra RBAC/Live-verifiering/OerLive/OerLive.psm1') -Force
@@ -161,11 +171,15 @@ user and the group; the resource groups are not directory objects).
 STOP: the fixture is not the one this file assumes. A throw on an unread collection is a failed read,
 never a `0`.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:13 UTC, window A as oer-live-cc: every identity check line True (app-only certificate session with the identity's app id, app name, tenant, service principal name, organization name, verified user domain, organization id); the sweep found no user, group, administrative unit, catalog, access package or app registration starting with opim-s15b-; Objects with the prefix opim-s15b-: 0; Objects with the prefix opim-s1- (the fixture): 2.
+```
 
 ### S.4. The run's tenant map folder
 
-- [ ] **S.4** Window B. The run's tenant map goes to the step's raw folder, which git ignores, and not to the user's profile.
+- [x] **S.4** Window B. The run's tenant map goes to the step's raw folder, which git ignores, and not to the user's profile.
 
 ```powershell
 $Map = Join-Path (Get-Location).Path 'docs/live-verification/raw/opim-s15b/TenantMap.psd1'
@@ -180,13 +194,17 @@ git check-ignore -q (Split-Path -Parent $Map)
 **Failure looks like:** `False` on the first line -- STOP: the map would be tracked. `True` on the
 second -- a map from an earlier run; delete it, it belongs to this folder only.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:13 UTC, window B: The map's folder is git-ignored: True; A map file is there already: False; The map is under the profile's .config folder: False.
+```
 
 ### 0. Preparation
 
 ### 0.1. Identity check, Graph and Azure
 
-- [ ] **0.1** Window B. `Connect-OpimLiveUser -IncludeARM` signs the module in to Graph and Azure with one device code each; the account is the test user and the tenant the test tenant.
+- [x] **0.1** Window B. `Connect-OpimLiveUser -IncludeARM` signs the module in to Graph and Azure with one device code each; the account is the test user and the tenant the test tenant.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -207,11 +225,15 @@ prints neither the account nor the tenant id.
 **Failure looks like:** `False` on any line, or a `STOP` -- STOP: run `Disconnect-OPIM`, end window B
 and run no other check.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:13-18:14 UTC, window B (37 s): Disconnect-OPIM, Disconnect-MgGraph and Disconnect-AzAccount ran first; rows Graph Information True ok and Azure Host False ok; signed in to Graph as the test user: True; to the test tenant: True; the module remembers the device code mode: True; Azure context is the test user: True; Azure context is the test tenant: True; Session tenant is the test tenant: True; Az context is the test tenant: True. No line printed the account or the tenant id.
+```
 
 ### 0.2. What is eligible and what is active
 
-- [ ] **0.2** Window B. The fixture's eligibilities are listed, and nothing is active but the ownership from step 4.
+- [x] **0.2** Window B. The fixture's eligibilities are listed, and nothing is active but the ownership from step 4.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -229,13 +251,17 @@ owner), Azure 0`.
 assumes. A directory role or an Azure role already active -- record it; the checks below count
 before and after. A terminating error from a read is a failed read, never a `0`.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:14 UTC, window B: Eligible: directory 2, group 2, Azure 2; Active: directory 0, group 1 (opim-s1-grp owner), Azure 0. The group row is the ownership step 4 activated (A18).
+```
 
 ### 1. A directory role is acted on only at its configured scope (OPIM-10)
 
 ### 1.1. `Install-OPIMConfiguration` stores the role with its scope, and the tenant of the module's own sign-in
 
-- [ ] **1.1** Window B. One role piped from `Get-OPIMDirectoryRole` is stored as `roleDefinitionId|/`, under the tenant of the module's sign-in, without `-TenantId`.
+- [x] **1.1** Window B. One role piped from `Get-OPIMDirectoryRole` is stored as `roleDefinitionId|/`, under the tenant of the module's sign-in, without `-TenantId`.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -256,11 +282,15 @@ $Entry = (Import-PowerShellDataFile -LiteralPath $Map)['s15b-dir']
 **Failure looks like:** the `throw` -- the fixture is not as 0.2 found it. `False` on the entry -- the
 key is not `roleDefinitionId|/` (A13). `False` on the tenant -- OPIM-45 is not as built.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:14 UTC, window B: Stored directory entries: 1; The entry is the role id and the root scope: True; The alias's tenant is the tenant of the module's sign-in: True (Install-OPIMConfiguration ran without -TenantId).
+```
 
 ### 1.2. An entry for the role at another scope activates nothing
 
-- [ ] **1.2** Window B. An entry naming the role at an administrative unit the user is not eligible at makes `pim` activate no directory role, although the role is eligible at `/`.
+- [x] **1.2** Window B. An entry naming the role at an administrative unit the user is not eligible at makes `pim` activate no directory role, although the role is eligible at `/`.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -288,11 +318,17 @@ Version 0.5.1 stored this entry as the role id alone and activated the role at `
 **Failure looks like:** `after` above `before`, or a result -- STOP: `pim` activated a scope the entry
 does not name (G3, SECURITY 4). A terminating error from a count read is a failed read, never a pass.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:14 UTC, window B, the block as first written (no -Justification): pim results: 0; errors: 0; warnings: 0; Active directory roles before: 0; after: 0.
+18:18 UTC, the corrected block (6cd8327: a justification, errors counted from the streams): Install-OPIMConfiguration wrote TenantAliasAlreadyExists for s15b-au (the alias from the first attempt was kept; the command is create-only), then pim results: 0; errors: 0; warnings: 0; Active directory roles before: 0; after: 0.
+An entry for Usage Summary Reports Reader at an administrative unit the user is not eligible at activates nothing, although the role is eligible at the root; 0.5.1 stored that entry as the role id alone and activated the root (OPIM-10).
+```
 
 ### 1.3. `pim` activates exactly the configured role, and a second call sends nothing (G8)
 
-- [ ] **1.3** Window B. `pim -TenantAlias s15b-dir` activates Usage Summary Reports Reader at `/` and nothing else; the same call again sends no request.
+- [x] **1.3** Window B. `pim -TenantAlias s15b-dir` activates Usage Summary Reports Reader at `/` and nothing else; the same call again sends no request.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -322,11 +358,16 @@ warnings 0`; `Active: ... at the root 1; Message Center Privacy Reader 0; all 1`
 entry names was activated. A second request on the second call (a result, or `RoleAssignmentExists`)
 -- record it; the listing may lag (OPIM-50 class).
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:15 UTC, window B, the block as first written: First call: results 0; errors 0; warnings 0; nothing active; Second call: results 0. A read-only diagnostic block at 18:16-18:17 showed why: the key matched (the stored entry equals the eligible post's key), pim handed the role to Enable-OPIMDirectoryRole, and the fixture's PIM policy refused it for a missing justification (RoleAssignmentRequestPolicyValidationFailed, measured in step 2); -ErrorVariable on pim had not collected that error. Checklist fix 6cd8327: every activation passes a justification, and errors and warnings are counted from 2>&1 3>&1.
+18:19 UTC, the corrected block: First call: results 1 (Usage Summary Reports Reader Directory Provisioned); errors 0; warnings 0. Active: Usage Summary Reports Reader at the root 1; Message Center Privacy Reader 0; all 1. Second call: results 0; errors 0; warning says already active: True.
+```
 
 ### 1.4. An entry written before 0.6.0 means the role at `/`
 
-- [ ] **1.4** Window B. An alias written in the 0.5.x form, the role id alone, activates Message Center Privacy Reader at `/`; the same call again sends nothing.
+- [x] **1.4** Window B. An alias written in the 0.5.x form, the role id alone, activates Message Center Privacy Reader at `/`; the same call again sends nothing.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -364,11 +405,17 @@ all 2` (with 1.3's role); second call `results 0; errors 0; warning says already
 **Failure looks like:** `results 0` on the first call -- the old entry no longer reaches the role at
 `/`, which A13 keeps. `all` above 2 -- STOP.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:15 UTC, the block as first written (no justification): results 0, nothing active (the same refusal as 1.3).
+18:19 UTC, the corrected block run a second time added its hand-written alias to the map again; the duplicate key stopped the map from parsing (CouldNotParseAsPowerShellDataFile, then NullArray). The duplicate line was removed from the raw map, and the block now adds its alias only when it is not there (a478cad).
+18:21 UTC: The entry holds no scope: True; First call: results 1 (Message Center Privacy Reader Directory Provisioned); errors 0; warnings 0; Active: Message Center Privacy Reader at the root 1; all 2; Second call: results 0; errors 0; warning says already active: True.
+```
 
 ### 1.5. `Set-OPIMConfiguration` keeps the tenant of a string-form alias (OPIM-20)
 
-- [ ] **1.5** Window B. An alias in the old string form keeps its tenant when a role is piped to `Set-OPIMConfiguration` without `-TenantId`.
+- [x] **1.5** Window B. An alias in the old string form keeps its tenant when a role is piped to `Set-OPIMConfiguration` without `-TenantId`.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -392,11 +439,15 @@ $Entry = (Import-PowerShellDataFile -LiteralPath $Map)['s15b-str']
 **Failure looks like:** `Its tenant is kept: False` -- OPIM-20 is not fixed: a `pim -TenantAlias`
 with that alias would sign in to `organizations`.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:21 UTC, window B: The alias is now a table: True; Its tenant is kept: True; Stored directory entries: 1; with the root scope: 1.
+```
 
 ### 1.6. An apostrophe in an alias reads back (OPIM-26)
 
-- [ ] **1.6** Window B. Aliases with a straight and a typographic apostrophe are written, and the whole file still reads back.
+- [x] **1.6** Window B. Aliases with a straight and a typographic apostrophe are written, and the whole file still reads back.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -418,13 +469,17 @@ $Read = Import-PowerShellDataFile -LiteralPath $Map
 **Failure looks like:** a parse error from `Import-PowerShellDataFile` -- OPIM-26 is not fixed, and
 every later check that reads the map fails too: remove the two lines by hand before going on.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:21 UTC, window B: The file reads back: True; aliases: 6; Both apostrophe aliases are there: True; Get-OPIMConfiguration finds them: 2.
+```
 
 ### 2. Groups and Azure roles from the tenant map
 
 ### 2.1. Group membership and ownership by their keys, twice (G8)
 
-- [ ] **2.1** Window B. The group's two eligibilities are stored as `groupId_member` and `groupId_owner`; `pim` activates the membership and sends nothing for the ownership that is already active; the same call again sends nothing.
+- [x] **2.1** Window B. The group's two eligibilities are stored as `groupId_member` and `groupId_owner`; `pim` activates the membership and sends nothing for the ownership that is already active; the same call again sends nothing.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -458,11 +513,15 @@ saying already active: 2`; `Active for opim-s1-grp: member 1, owner 1`.
 the second call) -- record it; the group listing lags about 30 s (OPIM-50), which the 45 s wait is
 for.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:21-18:22 UTC, window B (56 s): Stored group entries: 2; member 1; owner 1. First call: results 1 (opim-s1-grp member Provisioned); errors 0; warnings 1 (already active -- the ownership from step 4). Second call (45 s later): results 0; errors 0; warnings saying already active: 2. Active for opim-s1-grp: member 1, owner 1.
+```
 
 ### 2.2. An active Azure role is stored by its eligibility (OPIM-22)
 
-- [ ] **2.2** Window B. Reader on `opim-s1-rg` is activated, piped from `Get-OPIMAzureRole -Activated` to `Install-OPIMConfiguration`, and stored as the name of its eligibility schedule with the role's own scope, not as the active instance.
+- [x] **2.2** Window B. Reader on `opim-s1-rg` is activated, piped from `Get-OPIMAzureRole -Activated` to `Install-OPIMConfiguration`, and stored as the name of its eligibility schedule with the role's own scope, not as the active instance.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -498,11 +557,15 @@ eligibility's name and the role's scope: True`; `The entry names the active inst
 eligibility, or names it at another scope: record it. `The entry is the eligibility's name and the
 role's scope: False` -- OPIM-22 is not fixed for the shape ARM returns.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:22 UTC, window B (18 s): Activation: Provisioned; Active Reader on opim-s1-rg listed: 1 after 1 read(s). Measured: The instance's link is a bare name: False; it holds the role's scope: True (ARM returned a full id at the role's own scope, not the bare name of Microsoft's reference sample). Stored Azure entries: 1; errors: 0; The entry is the eligibility's name and the role's scope: True; The entry names the active instance: False.
+```
 
 ### 2.3. `pim` finds the stored Azure role
 
-- [ ] **2.3** Window B. `pim -TenantAlias s15b-az` selects Reader on `opim-s1-rg` (and not on `opim-s1-rg2`) and, since it is active, sends nothing for it.
+- [x] **2.3** Window B. `pim -TenantAlias s15b-az` selects Reader on `opim-s1-rg` (and not on `opim-s1-rg2`) and, since it is active, sends nothing for it.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -527,13 +590,17 @@ roles matched".
 **Failure looks like:** no warning and no result -- the stored key matched nothing. A result for
 `opim-s1-rg2`, or two active Azure roles -- STOP.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:22-18:23 UTC, window B: pim results: 0; errors: 0; Warning names Reader on opim-s1-rg as already active: True; Warning names opim-s1-rg2: False; Active Azure roles: 1 (Reader opim-s1-rg).
+```
 
 ### 3. `unpim` deactivates exactly what the map names
 
 ### 3.1. The five-minute rule
 
-- [ ] **3.1** Window B. Five minutes have passed since the last activation before any deactivation below.
+- [x] **3.1** Window B. Five minutes have passed since the last activation before any deactivation below.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -550,11 +617,15 @@ Start-Sleep -Seconds $Wait
 **Expect:** `True`.
 **Failure looks like:** `False` -- run the block again.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:23-18:28 UTC, window B: Waiting 311 s after the last activation this window sent; Five and a half minutes after the last activation: True at 18:28:25 UTC.
+```
 
 ### 3.2. `unpim` for the scoped and the old directory entries, twice (G8)
 
-- [ ] **3.2** Window B. `unpim -TenantAlias s15b-dir` deactivates Usage Summary Reports Reader only, `unpim -TenantAlias s15b-old` Message Center Privacy Reader only; each again finds nothing to do.
+- [x] **3.2** Window B. `unpim -TenantAlias s15b-dir` deactivates Usage Summary Reports Reader only, `unpim -TenantAlias s15b-old` Message Center Privacy Reader only; each again finds nothing to do.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -584,11 +655,15 @@ after it: empty; second call `results 0; errors 0`.
 **Failure looks like:** the first `unpim` deactivating both roles -- STOP: more than the entry names.
 `ActiveDurationTooShort` -- 3.1 was not waited out; wait and run again.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:28-18:29 UTC, window B: s15b-dir first call: results 1 (Usage Summary Reports Reader Directory Revoked); errors 0; active after it: Message Center Privacy Reader; second call: results 0; errors 0. s15b-old first call: results 1 (Message Center Privacy Reader Directory Revoked); errors 0; active after it: none; second call: results 0; errors 0.
+```
 
 ### 3.3. `unpim` for the group
 
-- [ ] **3.3** Window B. `unpim -TenantAlias s15b-grp` deactivates the membership; the ownership is refused as the group's last owner (OPIM-49).
+- [x] **3.3** Window B. `unpim -TenantAlias s15b-grp` deactivates the membership; the ownership is refused as the group's last owner (OPIM-49).
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -612,11 +687,15 @@ $Active = @(Get-OPIMEntraIDGroup -Activated -ErrorAction Stop | Where-Object { $
 **Failure looks like:** the membership still active after 45 s -- record it, and read again later
 (OPIM-50).
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:29-18:30 UTC, window B: Results: 1 (opim-s1-grp member Revoked); Errors: 1; ids: CannotDeleteLastAdminAssignment (the ownership; the test user is the group's only owner, OPIM-49); Active for opim-s1-grp: member 0, owner 1.
+```
 
 ### 3.4. `unpim` and `pim` for the stored Azure role, twice (G8)
 
-- [ ] **3.4** Window B. `unpim -TenantAlias s15b-az` deactivates Reader on `opim-s1-rg`; then `pim -TenantAlias s15b-az` activates exactly that role, and again sends nothing.
+- [~] **3.4** Window B. `unpim -TenantAlias s15b-az` deactivates Reader on `opim-s1-rg`; then `pim -TenantAlias s15b-az` activates exactly that role, and again sends nothing.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -661,11 +740,17 @@ first call `results 1 (Reader opim-s1-rg Provisioned); errors 0; warnings 0`; `A
 **Failure looks like:** Reader on `opim-s1-rg2` activated -- STOP. A second request on the second
 call -- record it (ARM's listing can lag, as step 5a measured).
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:30-18:33 UTC, window B (171 s): unpim: results 1 (Reader opim-s1-rg Revoked); errors 0; No Reader active: True after 1 read(s). pim first call, seconds after the deactivation: results 0; errors 1 -- read from the window's error list as RoleAssignmentExists,Enable-OPIMAzureRole: ARM still held the assignment it had just revoked, while its listing already showed none (the listing lag step 5a measured). Active Azure roles after 120 s: 0. pim second call: results 1 (it activated the role); warning says already active: False.
+18:33 UTC, the call once more while the role was active: results 0; errors 0; warning says Reader -> opim-s1-rg is already active: True; Active Azure roles: Reader opim-s1-rg.
+Marked [~]: the stored entry activated exactly Reader on opim-s1-rg and a repeated call sent nothing, but the first call met ARM's lag after a deactivation.
+```
 
 ### 3.5. The last `unpim`
 
-- [ ] **3.5** Window B. Five and a half minutes after 3.4's activation, `unpim -TenantAlias s15b-az` deactivates Reader on `opim-s1-rg`, and nothing is active but the ownership.
+- [x] **3.5** Window B. Five and a half minutes after 3.4's activation, `unpim -TenantAlias s15b-az` deactivates Reader on `opim-s1-rg`, and nothing is active but the ownership.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -688,13 +773,17 @@ Azure 0` (the group row is the ownership).
 **Failure looks like:** a role still active -- record it; section 4 removes the eligibilities and the
 user, which ends any activation, but the result is then `[~]`.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:34-18:41 UTC, window B: the window's activation time was set to 18:34:10 UTC first, since 3.4's activation came with its second call. unpim: results 1 (Reader opim-s1-rg Revoked); errors 0; Active: directory 0, group 1, Azure 0 (the group row is the ownership).
+```
 
 ### 4. The fixture's teardown
 
 ### 4.1. Window B signs out
 
-- [ ] **4.1** Window B. The module's session and the Graph and Azure sessions of the test user end before the user is deleted.
+- [x] **4.1** Window B. The module's session and the Graph and Azure sessions of the test user end before the user is deleted.
 
 ```powershell
 Disconnect-OPIM
@@ -708,11 +797,15 @@ try { Disconnect-AzAccount -ErrorAction Stop | Out-Null } catch { $null = $PSIte
 **Expect:** three `True`. Window B is then ended.
 **Failure looks like:** `False` -- end the process; its tokens die with it.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:41 UTC, window B: Module state cleared: True; No Graph context: True; No Az context: True. Window B was then ended (process gone).
+```
 
 ### 4.2. The operator's two tenant changes for the test user (P-8)
 
-- [ ] **4.2** Window A, as `oer-live-cc`. Before the user is deleted, and only with the permission for each: the test user leaves the group `Exclude from CA`, and its assignment to the Microsoft Graph Command Line Tools application is removed.
+- [~] **4.2** Window A, as `oer-live-cc`. Before the user is deleted, and only with the permission for each: the test user leaves the group `Exclude from CA`, and its assignment to the Microsoft Graph Command Line Tools application is removed.
 
 ```powershell
 Import-Module (Join-Path $env:OPIMLIVE_HOME '../../Omnicit Entra RBAC/Live-verifiering/OerLive/OerLive.psm1') -Force
@@ -761,11 +854,16 @@ permission), and the user's deletion in 4.4 ends the membership and the assignme
 **Failure looks like:** a 401 or 403 on a READ -- STOP (G6). A refused removal -- record it and do not
 retry another way; 4.4 still deletes the user.
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:41 UTC, window A as oer-live-cc: every identity line True; oer-live-cc may remove a group member: True; may remove an app role assignment: False. Member of Exclude from CA: 1; it is role-assignable: False. Assignments to Microsoft Graph Command Line Tools: 1; all assignments: 1. Removed from Exclude from CA: True (204). After: member of Exclude from CA 0; assignments to Microsoft Graph Command Line Tools 1.
+Marked [~]: oer-live-cc holds no permission to remove an app role assignment, so that removal was not made (scope 10: only with the permission); the user's deletion in 4.4 ends it. The Conditional Access exclusions and the campaign exclusion stay for the operator (P-8).
+```
 
 ### 4.3. The teardown, planned
 
-- [ ] **4.3** Window A, as `oer-live-cc`. `Initialize-OpimS1Prereq.ps1 -Teardown -WhatIf` plans the fixture's removal, and every target carries the prefix `opim-s1-`.
+- [x] **4.3** Window A, as `oer-live-cc`. `Initialize-OpimS1Prereq.ps1 -Teardown -WhatIf` plans the fixture's removal, and every target carries the prefix `opim-s1-`.
 
 ```powershell
 & (Join-Path $env:OPIMLIVE_HOME 'Initialize-OpimS1Prereq.ps1') -Teardown -WhatIf
@@ -780,11 +878,15 @@ eligibilities, the group, the user and the two secrets, and every target starts 
 `WhatIf: nothing was removed`.
 **Failure looks like:** a target without the prefix -- STOP. A 401 or 403 -- STOP (G6).
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:42 UTC, window A as oer-live-cc: every identity line True; Residue: no rows; Sweep 'opim-s1-': test user 1, test group 1, other prefixed objects 0; prefixed resource groups 2. 14 What if lines name tenant targets, every one starting with opim-s1-: the two Azure eligibilities (opim-s1-rg, opim-s1-rg2), the two resource groups, the two directory role eligibilities, the group's member and owner eligibilities and two owner assignment rows, the group, the user and the two secrets; the fifteenth What if line is the local transcript under raw. WhatIf: nothing was removed.
+```
 
 ### 4.4. The teardown
 
-- [ ] **4.4** Window A, as `oer-live-cc`. `Initialize-OpimS1Prereq.ps1 -Teardown` removes the Azure eligibilities, the resource groups, the directory and group eligibilities, the group (with the step 4 ownership), the user and the two secrets.
+- [~] **4.4** Window A, as `oer-live-cc`. `Initialize-OpimS1Prereq.ps1 -Teardown` removes the Azure eligibilities, the resource groups, the directory and group eligibilities, the group (with the step 4 ownership), the user and the two secrets.
 
 ```powershell
 & (Join-Path $env:OPIMLIVE_HOME 'Initialize-OpimS1Prereq.ps1') -Teardown
@@ -798,11 +900,17 @@ same for `-totp`; `Sweep after the teardown: prefixed directory objects 0, prefi
 **Record:** each residue line exactly as it comes.
 **Failure looks like:** a residue line -- record it; 4.5 decides. A 401 or 403 -- STOP (G6).
 
-Result:
+Result: 2026-10-08 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+18:42-18:43 UTC, window A as oer-live-cc: Removed the Azure eligibility of opim-s1-live-user on opim-s1-rg and on opim-s1-rg2; Deleted the resource groups opim-s1-rg and opim-s1-rg2; Removed the two directory role eligibilities (201 each); Removed the group's member eligibility (201) and one owner assignment row (201); RESIDUE: the owner eligibility and one owner assignment row, 400 CannotDeleteLastAdminAssignment; Deleted group opim-s1-grp (204); DELETE user opim-s1-live-user: 204; Removed opim-s1-live-user-password and opim-s1-live-user-totp from the vault; Remove-OerLiveTestObjects: removed 6, residue 2, unreadable 0; Sweep after the teardown: prefixed directory objects 1 (the group, read moments after its delete), prefixed resource groups 0.
+18:45-18:48 UTC, a second run after a replication wait: Residue: 2 rows tried again -- the owner eligibility answered 404 SubjectNotFound but the group's schedule listing still held the row after 180 s (row kept); the owner assignment answered 403 UnauthorizedAccessException (oer-live-cc holds no PIM for Groups assignment scope, B8; row kept). Sweep: no object starting with opim-s1- is left; prefixed resource groups 0; the two secrets are not in the vault; Sweep after the teardown: prefixed directory objects 0, prefixed resource groups 0.
+Marked [~]: every object is gone; two residue rows about the deleted group's ownership schedules stay in raw\residue.json while Graph still lists them (see 4.5).
+```
 
 ### 4.5. The sweep
 
-- [ ] **4.5** Window A, as `oer-live-cc`. Nothing with the prefix `opim-s1` is left: no directory object, no resource group, no residue row, and no secret in the vault.
+- [~] **4.5** Window A, as `oer-live-cc`. Nothing with the prefix `opim-s1` is left: no directory object, no resource group, no residue row, and no secret in the vault.
 
 ```powershell
 Import-Module (Join-Path $env:OPIMLIVE_HOME '../../Omnicit Entra RBAC/Live-verifiering/OerLive/OerLive.psm1') -Force
@@ -829,7 +937,13 @@ deleted for good, which this file does not do.
 **Failure looks like:** any other count -- record each object by name; a directory object or a
 resource group left is a STOP (G11 #5).
 
-Result:
+Result: 2026-10-08 19:09 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+19:08 UTC, window A as oer-live-cc: every identity line True; Directory objects with the prefix opim-s1-: 0; Directory objects with the prefix opim-s15b-: 0; Deleted users read: True; of them with the prefix opim-s1-: 1 (the test user, in the recycle bin for 30 days; this file does not delete it for good); Residue rows with a prefix opim-s1: 2; Resource groups with the prefix opim-s1-: 0; Secrets left in the vault OpimLive with the prefix opim-s1-: 0.
+19:04-19:07 UTC, Clear-OerLiveResidue as oer-live-cc, 21 minutes after the group was deleted: the owner eligibility row answered 404 SubjectNotFound, but the deleted group's schedule listing still held it after 180 s (row kept); the owner assignment row answered 403 UnauthorizedAccessException (oer-live-cc holds no PIM for Groups assignment scope, B8; row kept). Residue rows left: 2.
+Marked [~]: no object with the prefix is left and the resource groups are gone; the two residue rows describe the ownership schedules of a group and a user that no longer exist, which Graph still lists, and stay in raw\residue.json until a later Clear-OerLiveResidue finds them gone.
+```
 
 ## Teardown
 
@@ -837,7 +951,7 @@ The fixture is removed in section 4 by the prerequisite script. The two checks b
 
 ### T.1. The step's raw folder
 
-- [ ] **T.1** The step's raw folder, with the run's tenant map, the host log and any screenshot, is deleted once the results are written up.
+- [x] **T.1** The step's raw folder, with the run's tenant map, the host log and any screenshot, is deleted once the results are written up.
 
 ```powershell
 $Raw = Join-Path (Get-Location).Path 'docs/live-verification/raw/opim-s15b'
@@ -849,11 +963,15 @@ Remove-Item -LiteralPath $Raw -Recurse -Force -ErrorAction SilentlyContinue
 **Expect:** `True`; `0`.
 **Failure looks like:** `False` -- a process still holds a file; end it and run again.
 
-Result:
+Result: 2026-10-08 19:09 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+19:08 UTC: The step's raw folder is gone: True (the run's tenant map, the host log and the Azure helper's files with it); Untracked files under docs/live-verification: 0. Window B had ended at 18:41.
+```
 
 ### T.2. What is left on purpose
 
-- [ ] **T.2** Nothing of the sprint's fixture is left in the tenant, and the operator's own changes that do not carry the prefix are listed for the operator.
+- [~] **T.2** Nothing of the sprint's fixture is left in the tenant, and the operator's own changes that do not carry the prefix are listed for the operator.
 
 ```powershell
 "Left on purpose by this file: the Conditional Access exclusions of the test account and the registration-campaign exclusion of the group Exclude from CA, which the operator made in step 2 and restores (P-8); the deleted user in the recycle bin (4.5)."
@@ -862,4 +980,8 @@ Result:
 **Expect:** the line.
 **Failure looks like:** --
 
-Result:
+Result: 2026-10-08 19:09 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+19:09 UTC: the line as written. Left as well: the deleted test user in the recycle bin (4.5) and the two residue rows (4.5); the test user's assignment to the Microsoft Graph Command Line Tools application ended with the user (4.2).
+```
