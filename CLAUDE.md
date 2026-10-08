@@ -169,8 +169,8 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   `CHANGELOG.md`, the git diff against `origin/main` and the BUILT manifest (see **CHANGELOG and
   Version**); module import and removal; for every function the module defines -- public and
   private alike, since the cases are enumerated from inside the module with
-  `Get-Command -CommandType Function` (46 on 2026-10-08, counted from the files: the 18 under
-  `source/Public` and 28 functions in the 29 files under `source/Private`, where the filter
+  `Get-Command -CommandType Function` (49 on 2026-10-08, counted from the files: the 18 under
+  `source/Public` and 31 functions in the 32 files under `source/Private`, where the filter
   `Restore-GraphProperty` is the one that does not count) -- a unit test file under `tests/`, a
   clean `Invoke-ScriptAnalyzer` run on its source file, and help quality: `.SYNOPSIS`, a
   `.DESCRIPTION` over 40 characters, at least one `.EXAMPLE`, every parameter described; an
@@ -1138,6 +1138,12 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   that cannot be resolved ends neither the pipeline nor the next name. `IdentityNotFound` stays the
   id for an `-Identity` that matches nothing; an `-Identity` that matches several is written as
   `AmbiguousName` (the message says "identity"), and the cmdlet returns without acting.
+- **Request status has one owner.** `Get-OPIMRequestOutcome` classifies a status (Succeeded,
+  InProgress, AwaitingDecision, Failed; table in its help; `-Deactivate` for SelfDeactivate, whose
+  success is `Revoked`); `Write-OPIMRequestOutcome` writes the status back onto the request and
+  returns it, returns it with a warning, or writes `ActivationRequestFailed`; `New-OPIMRequestError`
+  is the single owner of `ActivationRequestFailed` and `ActivationWaitTimedOut`; build those records
+  nowhere else. An unknown status is a failure, never a success.
 - **A list that cannot be read is reported as itself, never as "not found" (OPIM-12).** A command
   that lists in order to resolve or act calls the `Get-OPIM*` listing with `-ErrorAction Stop` in
   a `try` whose catch scrubs first. `Resolve-OPIMSchedule` rethrows the listing's own record

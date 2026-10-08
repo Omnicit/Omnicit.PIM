@@ -694,6 +694,16 @@ Get-OPIMAzureRole 'Reader' -Scope '/subscriptions/00000000-0000-0000-0000-000000
 
 ---
 
+## What a request reports
+
+The `Enable-OPIM*` and `Disable-OPIM*` role and group cmdlets report a request by the status Graph or
+Azure gives it. A request that failed, was denied or was canceled is an `ActivationRequestFailed`
+error and returns nothing, and one that waits for approval or is still being provisioned is returned
+with a warning, since it has not taken effect yet. A status the module does not know counts as a
+failure, never as a success; a deactivation succeeds only when it ends `Revoked`.
+
+---
+
 ## Using -All, -Activated, and default (eligible only)
 
 All `Get-OPIM*` cmdlets support three modes. `-All` and `-Activated` are mutually exclusive:
