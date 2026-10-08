@@ -724,8 +724,9 @@ Describe 'Disable-OPIMAzureRole' {
 
         It 'throws the failed status once under -ErrorAction Stop and never reaches the catch around the request' {
             # The catch around the request calls ConvertTo-ActiveDurationTooShortError for every record
-            # it takes. A failed status written inside that try would be caught and written a second
-            # time, so the converter standing unused shows the status was written outside it.
+            # it takes. Measured on PowerShell 7.6.6: an error that $PSCmdlet.WriteError raises under the
+            # Stop preference is not caught by a try in the same function, so this holds the contract
+            # (one record thrown, the converter unused) and the next test holds the placement itself.
             Mock -ModuleName Omnicit.PIM ConvertTo-ActiveDurationTooShortError { $false }
             $Answer.Status = 'Failed'
             $Caught = [System.Collections.Generic.List[object]]::new()
@@ -741,6 +742,25 @@ Describe 'Disable-OPIMAzureRole' {
             $Caught[0] | Should -BeOfType [System.Management.Automation.ErrorRecord]
             $Caught[0].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Disable-OPIMAzureRole'
             $Caught[0].Exception.Message | Should -BeLike "*ended with status 'Failed'*"
+        }
+
+        It 'reports the status outside the catch around the request' {
+            # What the report itself throws is not a failure of the request. Inside that try the catch
+            # would take it, call the converter for it and write it as an error of the request.
+            Mock -ModuleName Omnicit.PIM Write-OPIMRequestOutcome { throw [System.InvalidOperationException]::new('report failed') }
+            Mock -ModuleName Omnicit.PIM ConvertTo-ActiveDurationTooShortError { $false }
+            $Answer.Status = 'Revoked'
+            $Caught = $null
+            try {
+                $null = Disable-OPIMAzureRole -RoleName 'Reader' -ErrorAction SilentlyContinue
+            } catch {
+                $Caught = $PSItem
+            }
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Write-OPIMRequestOutcome -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM ConvertTo-ActiveDurationTooShortError -Times 0 -Exactly -Scope It
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.Exception.Message | Should -BeExactly 'report failed'
         }
 
         It 'still gives a request that Azure refuses to the catch around it' {
