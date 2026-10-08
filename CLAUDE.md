@@ -901,8 +901,12 @@ expand `group,principal`.
   `AmbiguousName`, never the first.
 - `-Justification`, `-TicketNumber`, `-TicketSystem` -- the optional PIM policy fields.
 - `-Hours` [int] -- default 1; users override it through `$PSDefaultParameterValues`.
-- `-NotBefore` [DateTime] -- activation start, default now.
-- `-Until` [DateTime] (alias `-NotAfter`) -- explicit end; takes precedence over `-Hours`.
+- `-NotBefore` [DateTime] -- activation start, default now. A time without an offset (such as
+  `'4pm'`, which binds as Kind Unspecified) is local time; it is sent in UTC (OPIM-18). The two Graph
+  cmdlets send `.ToUniversalTime().ToString('o')`, since an Unspecified time rendered with `'o'`
+  carries no offset and Graph refused it (400 `InvalidRoleAssignmentRequest`, measured live).
+- `-Until` [DateTime] (alias `-NotAfter`) -- explicit end; takes precedence over `-Hours`. Sent in UTC
+  the same way: a time without an offset is local time.
 - `-Wait` [switch] and `-TimeoutSeconds` [int] (1-86400, default 300) -- on all three, and on
   `Enable-OPIMMyRole`, which hands both to `Enable-OPIMDirectoryRole`. Groups poll the request every
   2 seconds and Azure roles poll `Get-AzRoleAssignmentScheduleRequest` every 5 seconds; these two

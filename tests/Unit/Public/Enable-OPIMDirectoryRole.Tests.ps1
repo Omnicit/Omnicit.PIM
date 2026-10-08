@@ -232,6 +232,107 @@ Describe 'Enable-OPIMDirectoryRole' {
         }
     }
 
+    Context 'When a time carries no offset (OPIM-18)' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $fakeRole = [PSCustomObject]@{
+                id               = 'elig-001'
+                roleDefinitionId = 'role-def-001'
+                directoryScopeId = '/'
+                principalId      = 'principal-001'
+                roleDefinition   = [PSCustomObject]@{ displayName = 'Global Administrator' }
+                principal        = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeRole }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                return @{
+                    id               = 'req-001'
+                    action           = 'SelfActivate'
+                    roleDefinitionId = 'role-def-001'
+                    directoryScopeId = '/'
+                    principalId      = 'principal-001'
+                    status           = 'Provisioned'
+                }
+            } -ParameterFilter { $Method -eq 'POST' }
+            Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
+            # A time typed without an offset ('4pm') binds as Kind Unspecified and means local time.
+            # Each test asserts the exact string and the trailing Z: on a UTC machine a converted
+            # value equals an unconverted one, so only the Z tells a missing conversion there.
+            $script:StartAsLocal = [datetime]::SpecifyKind([datetime]'4pm', [System.DateTimeKind]::Local).ToUniversalTime().ToString('o')
+            $script:EndAsLocal = [datetime]::SpecifyKind([datetime]'5pm', [System.DateTimeKind]::Local).ToUniversalTime().ToString('o')
+            $script:StartUtc = [datetime]::new(2026, 10, 9, 14, 0, 0, [System.DateTimeKind]::Utc)
+            $script:EndUtc = [datetime]::new(2026, 10, 9, 16, 0, 0, [System.DateTimeKind]::Utc)
+            $script:StartLocal = [datetime]::SpecifyKind([datetime]::new(2026, 10, 9, 16, 0, 0), [System.DateTimeKind]::Local)
+        }
+
+        It 'sends a -NotBefore without an offset as startDateTime, as local time in UTC' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -NotBefore '4pm'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and
+                $Body.scheduleInfo.startDateTime -ceq $script:StartAsLocal -and
+                $Body.scheduleInfo.startDateTime.EndsWith('Z', [System.StringComparison]::Ordinal)
+            }
+        }
+
+        It 'sends a -NotBefore that is already UTC as its own round-trip string' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -NotBefore $script:StartUtc
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and
+                $Body.scheduleInfo.startDateTime -ceq $script:StartUtc.ToString('o') -and
+                $Body.scheduleInfo.startDateTime.EndsWith('Z', [System.StringComparison]::Ordinal)
+            }
+        }
+
+        It 'sends a -NotBefore of Kind Local in UTC' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -NotBefore $script:StartLocal
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and
+                $Body.scheduleInfo.startDateTime -ceq $script:StartLocal.ToUniversalTime().ToString('o') -and
+                $Body.scheduleInfo.startDateTime.EndsWith('Z', [System.StringComparison]::Ordinal)
+            }
+        }
+
+        It 'sends the default start, now, in UTC' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Start = $Body.scheduleInfo.startDateTime
+                $Method -eq 'POST' -and
+                $Start.EndsWith('Z', [System.StringComparison]::Ordinal) -and
+                [math]::Abs(([datetime]::Parse($Start, [cultureinfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind) - [datetime]::UtcNow).TotalMinutes) -lt 5
+            }
+        }
+
+        It 'sends an -Until without an offset as endDateTime, as local time in UTC' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Until '5pm'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and
+                $Body.scheduleInfo.expiration.type -eq 'AfterDateTime' -and
+                $Body.scheduleInfo.expiration.endDateTime -ceq $script:EndAsLocal -and
+                $Body.scheduleInfo.expiration.endDateTime.EndsWith('Z', [System.StringComparison]::Ordinal)
+            }
+        }
+
+        It 'sends an -Until that is already UTC as its own round-trip string' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Until $script:EndUtc
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and
+                $Body.scheduleInfo.expiration.endDateTime -ceq $script:EndUtc.ToString('o') -and
+                $Body.scheduleInfo.expiration.endDateTime.EndsWith('Z', [System.StringComparison]::Ordinal)
+            }
+        }
+
+        It 'sends both times in UTC when -NotBefore and -Until are given together' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -NotBefore '4pm' -Until '5pm'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and
+                $Body.scheduleInfo.startDateTime -ceq $script:StartAsLocal -and
+                $Body.scheduleInfo.expiration.endDateTime -ceq $script:EndAsLocal -and
+                $Body.scheduleInfo.startDateTime.EndsWith('Z', [System.StringComparison]::Ordinal) -and
+                $Body.scheduleInfo.expiration.endDateTime.EndsWith('Z', [System.StringComparison]::Ordinal)
+            }
+        }
+    }
+
     Context 'When -Hours overrides the default duration' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

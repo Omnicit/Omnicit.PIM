@@ -68,9 +68,11 @@ function Enable-OPIMDirectoryRole {
     .PARAMETER Hours
     Activation duration in hours. Defaults to 1. Ignored when -Until is specified.
     .PARAMETER NotBefore
-    Date and time when the role activation begins. Defaults to the current date and time.
+    Date and time when the role activation begins. Defaults to the current date and time. A time
+    without an offset, such as '4pm', is local time; it is sent to Graph in UTC.
     .PARAMETER Until
     Explicit end date and time for the activation. Takes precedence over -Hours when specified.
+    A time without an offset, such as '5pm', is local time; it is sent to Graph in UTC.
     Aliased as -NotAfter.
     .PARAMETER Scope
     Picks one role when the name matches the role at more than one scope: '/' for the directory
@@ -168,15 +170,16 @@ function Enable-OPIMDirectoryRole {
                 Write-Verbose "Skipping already-active directory role: $($Role.roleDefinition.displayName)"
                 continue
             }
+            # OPIM-18: a time without an offset is local time; Graph gets it in UTC.
             $ScheduleInfo = @{
-                startDateTime = $NotBefore.ToString('o')
+                startDateTime = $NotBefore.ToUniversalTime().ToString('o')
                 expiration    = @{}
             }
 
             $Expiration = $ScheduleInfo.expiration
             if ($Until) {
                 $Expiration.type        = 'AfterDateTime'
-                $Expiration.endDateTime = $Until.ToString('o')
+                $Expiration.endDateTime = $Until.ToUniversalTime().ToString('o')
                 [string]$RoleExpireTime = $Until
             } else {
                 $Expiration.type     = 'AfterDuration'
