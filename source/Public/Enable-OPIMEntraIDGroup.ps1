@@ -15,7 +15,8 @@ function Enable-OPIMEntraIDGroup {
     still being provisioned is returned with a warning.
     A membership or ownership that is already active (listed by Get-OPIMEntraIDGroup -Activated) is
     not requested again: a warning is written and nothing is sent for it, and when that list cannot
-    be read, its error is written and nothing more is sent.
+    be read, its error is written and nothing more is sent. The list is read once per command, and a
+    group named or piped twice is requested once, with a warning for the second.
     .EXAMPLE
     Get-OPIMEntraIDGroup | Enable-OPIMEntraIDGroup
     Activate all eligible PIM group assignments for 1 hour.
@@ -110,6 +111,13 @@ function Enable-OPIMEntraIDGroup {
         [Switch]$Wait,
         [ValidateRange(1, 86400)][int]$TimeoutSeconds = 300
     )
+    begin {
+        # OPIM-39: the active list is read at most once per command, at the first group that needs it,
+        # and every post this command has requested is kept, so no post is requested twice.
+        $ActivePosts = $null
+        $ActiveReadFailed = $false
+        $RequestedPosts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    }
     process {
         Initialize-OPIMAuth
         if ($Identity) {
@@ -155,8 +163,6 @@ function Enable-OPIMEntraIDGroup {
             @($Group)
         }
 
-        $ActivePosts = $null
-        $ActiveReadFailed = $false
         foreach ($Group in $ResolvedGroups) {
             # Skip already-active instances piped from Get-OPIMEntraIDGroup -All
             if ($Group.PSObject.TypeNames -contains 'Omnicit.PIM.GroupAssignmentScheduleInstance') {
@@ -165,7 +171,7 @@ function Enable-OPIMEntraIDGroup {
             }
             # OPIM-39: never send a second request for a membership or ownership that is already
             # active -- a repeated request can end the active one. A list that cannot be read is no
-            # proof that nothing is active, so nothing more is sent (G3).
+            # proof that nothing is active, so nothing more is sent by this command (G3).
             if ($ActiveReadFailed) { continue }
             if ($null -eq $ActivePosts) {
                 try {
@@ -183,6 +189,13 @@ function Enable-OPIMEntraIDGroup {
                         [string]::Equals($_.accessId, $Group.accessId, [System.StringComparison]::OrdinalIgnoreCase)
                     }).Count -gt 0) {
                 $PSCmdlet.WriteWarning("$Label is already active, so no new request was sent and the active assignment is left as it is.")
+                continue
+            }
+            # The same post named twice, or piped twice, is requested once (G8): the active list was
+            # read before the first request and does not show it.
+            $PostKey = "$($Group.groupId)|$($Group.accessId)"
+            if ($RequestedPosts.Contains($PostKey)) {
+                $PSCmdlet.WriteWarning("$Label was already requested by this command, so no second request was sent.")
                 continue
             }
             # OPIM-18: a time without an offset is local time; Graph gets it in UTC.
@@ -219,6 +232,8 @@ function Enable-OPIMEntraIDGroup {
                     "$DisplayName ($($Group.accessId))",
                     "Activate PIM Group from $NotBefore to $ExpireTime"
                 )) {
+                # Counted before it is sent, so a request that fails still is not sent again.
+                $null = $RequestedPosts.Add($PostKey)
                 $GraphUri = 'v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests'
                 $Response = try {
                     Invoke-OPIMGraphRequest -Method POST -Uri $GraphUri -Body $Request

@@ -1304,17 +1304,25 @@ Describe 'Enable-OPIMDirectoryRole' {
                 }
                 $Active.List
             } -ParameterFilter { $Activated }
+            # With PostThrows every request fails as Graph refuses one.
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                if ($Active.PostThrows) {
+                    $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('BadRequest: refused'), 'BadRequest',
+                            [System.Management.Automation.ErrorCategory]::InvalidOperation, $null))
+                }
                 @{ id = "req-$($Body.roleDefinitionId)"; action = 'SelfActivate'; roleDefinitionId = $Body.roleDefinitionId; directoryScopeId = $Body.directoryScopeId; status = 'Provisioned' }
             } -ParameterFilter { $Method -eq 'POST' }
             Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
             Mock -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole { }
             $Message = 'Usage Summary Reports Reader is already active, so no new request was sent and the active assignment is left as it is.'
+            $Twice = 'Usage Summary Reports Reader was already requested by this command, so no second request was sent.'
         }
         BeforeEach {
             $Active.List = @()
             $Active.FailFirst = $false
             $Active.Reads = 0
+            $Active.PostThrows = $false
         }
 
         It 'sends no request, writes one warning and returns nothing' {
@@ -1379,11 +1387,11 @@ Describe 'Enable-OPIMDirectoryRole' {
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
         }
 
-        It 'checks every object piped in, reading the active list afresh for each' {
-            # Each piped object is a process call of its own, and each reads the active list.
+        It 'checks every object piped in and reads the active list once for the whole pipeline' {
+            # Each piped object is a process call of its own; the list is read once per command.
             $Active.List = @(New-DirectoryPost -Id 'inst-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader' -Active)
             $Result = $Listing | Enable-OPIMDirectoryRole -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
-            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 2 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.roleDefinitionId -eq 'role-def-003'
             }
@@ -1417,6 +1425,53 @@ Describe 'Enable-OPIMDirectoryRole' {
             $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
             $Written.Count | Should -Be 1
             $Written[0].FullyQualifiedErrorId | Should -BeExactly 'Forbidden,Enable-OPIMDirectoryRole'
+        }
+
+        It 'writes a failed read once for several piped roles and sends nothing' {
+            # The read fails once and would succeed after: a later piped role reads no list again.
+            $Active.FailFirst = $true
+            $Out = $Listing | Enable-OPIMDirectoryRole -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeExactly 'Forbidden,Enable-OPIMDirectoryRole'
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'sends one request for the same role named twice, by its name and its old form' {
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader', 'Usage Summary Reports Reader (elig-001)' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Twice
+            @($Result).Count | Should -Be 1
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'sends one request for the same role piped twice' {
+            $Result = @($Listing[0], $Listing[0]) | Enable-OPIMDirectoryRole -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Twice
+            @($Result).Count | Should -Be 1
+        }
+
+        It 'sends one request for the same role passed twice to -Role' {
+            $null = Enable-OPIMDirectoryRole -Role @($Listing[0], $Listing[0]) -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Twice
+        }
+
+        It 'does not send the role again after its first request failed' {
+            # The post counts as requested before the request is sent, so a failed one is not repeated.
+            $Active.PostThrows = $true
+            $null = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader', 'Usage Summary Reports Reader (elig-001)' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'BadRequest,Enable-OPIMDirectoryRole'
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Twice
         }
 
         It 'hands no request for an active role to Wait-OPIMDirectoryRole' {

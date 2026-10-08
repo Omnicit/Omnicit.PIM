@@ -934,13 +934,21 @@ expand `group,principal`.
 - A post that is already active (by `Get-OPIM* -Activated`) is not requested again (OPIM-39): a
   warning, `"<Label> is already active, so no new request was sent and the active assignment is left
   as it is."`, and no request. The check stands after the skip above and before `ShouldProcess`, and
-  reads the active list lazily, once per `process` call, at the first role or group that reaches it.
-  The keys are `roleDefinitionId` and `directoryScopeId`, `groupId` and `accessId`, and
-  `RoleDefinitionId` and `ScopeId`, compared with `OrdinalIgnoreCase`. A failed read of the active
-  list is written as itself once and sends nothing more in that `process` call: a list that cannot
-  be read is no proof that nothing is active. A permanent assignment is not in that list, so Graph
-  still refuses it (`RoleAssignmentExists`), and an activation the listing does not show yet (about
-  30 seconds for a group, OPIM-50) is requested again.
+  reads the active list lazily, at most once per command invocation (its state is set in `begin`),
+  at the first role or group that reaches it, so a pipeline of N posts reads it once. The keys are
+  `roleDefinitionId` and `directoryScopeId`, `groupId` and `accessId`, and `RoleDefinitionId` and
+  `ScopeId`, compared with `OrdinalIgnoreCase`. A failed read of the active list is written as
+  itself once and the command sends nothing more, for every later name or piped post: a list that
+  cannot be read is no proof that nothing is active. A permanent assignment is not in that list, so
+  Graph still refuses it (`RoleAssignmentExists`), and an activation the listing does not show yet
+  (about 30 seconds for a group, OPIM-50) is requested again by a later command.
+- The same post is requested at most once per command (OPIM-39): a `HashSet[string]`
+  (`OrdinalIgnoreCase`, created in `begin`) holds the key pair above of every post the command has
+  requested, added as soon as `ShouldProcess` returns true and BEFORE the request is sent, so a
+  request that failed still counts. A post named twice (a name and its old form, say), passed twice
+  or piped twice is skipped the second time with the warning `"<Label> was already requested by this
+  command, so no second request was sent."` -- never the "already active" text, which would be false
+  for a request that is pending or failed.
 
 **`Disable-OPIM*`:**
 

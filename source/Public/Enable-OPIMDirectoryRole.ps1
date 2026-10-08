@@ -15,7 +15,8 @@ function Enable-OPIMDirectoryRole {
     still being provisioned is returned with a warning.
     A role that is already active at that scope (listed by Get-OPIMDirectoryRole -Activated) is not
     requested again: a warning is written and nothing is sent for it, and when that list cannot be
-    read, its error is written and nothing more is sent.
+    read, its error is written and nothing more is sent. The list is read once per command, and a
+    role named or piped twice is requested once, with a warning for the second.
     .NOTES
     The default activation period is 1 hour. Override with -Hours. Make it persistent in your profile:
 
@@ -123,6 +124,11 @@ function Enable-OPIMDirectoryRole {
     begin {
         Initialize-OPIMAuth
         [System.Collections.Generic.List[PSObject]]$_pendingWait = [System.Collections.Generic.List[PSObject]]::new()
+        # OPIM-39: the active list is read at most once per command, at the first role that needs it,
+        # and every post this command has requested is kept, so no post is requested twice.
+        $ActivePosts = $null
+        $ActiveReadFailed = $false
+        $RequestedPosts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     }
     process {
         if ($Identity) {
@@ -168,8 +174,6 @@ function Enable-OPIMDirectoryRole {
             @($Role)
         }
 
-        $ActivePosts = $null
-        $ActiveReadFailed = $false
         foreach ($Role in $ResolvedRoles) {
             # Skip already-active instances piped from Get-OPIMDirectoryRole -All
             if ($Role.PSObject.TypeNames -contains 'Omnicit.PIM.DirectoryAssignmentScheduleInstance') {
@@ -178,7 +182,7 @@ function Enable-OPIMDirectoryRole {
             }
             # OPIM-39: never send a second request for a post that is already active -- a repeated
             # request can end the active one. A list that cannot be read is no proof that nothing is
-            # active, so nothing more is sent (G3).
+            # active, so nothing more is sent by this command (G3).
             if ($ActiveReadFailed) { continue }
             if ($null -eq $ActivePosts) {
                 try {
@@ -196,6 +200,13 @@ function Enable-OPIMDirectoryRole {
                         [string]::Equals($_.directoryScopeId, $Role.directoryScopeId, [System.StringComparison]::OrdinalIgnoreCase)
                     }).Count -gt 0) {
                 $PSCmdlet.WriteWarning("$Label is already active, so no new request was sent and the active assignment is left as it is.")
+                continue
+            }
+            # The same post named twice, or piped twice, is requested once (G8): the active list was
+            # read before the first request and does not show it.
+            $PostKey = "$($Role.roleDefinitionId)|$($Role.directoryScopeId)"
+            if ($RequestedPosts.Contains($PostKey)) {
+                $PSCmdlet.WriteWarning("$Label was already requested by this command, so no second request was sent.")
                 continue
             }
             # OPIM-18: a time without an offset is local time; Graph gets it in UTC.
@@ -233,6 +244,8 @@ function Enable-OPIMDirectoryRole {
                     $UserPrincipalName,
                     "Activate $($Role.roleDefinition.displayName) for scope $($Role.directoryScopeId) from $NotBefore to $RoleExpireTime"
                 )) {
+                # Counted before it is sent, so a request that fails still is not sent again.
+                $null = $RequestedPosts.Add($PostKey)
                 $GraphUri = 'v1.0/roleManagement/directory/roleAssignmentScheduleRequests'
                 $Response = try {
                     Invoke-OPIMGraphRequest -Method POST -Uri $GraphUri -Body $Request

@@ -17,7 +17,8 @@ function Enable-OPIMAzureRole {
     still being provisioned is returned with a warning.
     A role that is already active at that scope (listed by Get-OPIMAzureRole -Activated) is not
     requested again: a warning is written and nothing is sent for it, and when that list cannot be
-    read, its error is written and nothing more is sent.
+    read, its error is written and nothing more is sent. The list is read once per command, and a
+    role named or piped twice is requested once, with a warning for the second.
     .NOTES
     The default activation period is 1 hour. Override with -Hours. Make it persistent in your profile:
 
@@ -117,6 +118,13 @@ function Enable-OPIMAzureRole {
         [Switch]$Wait,
         [ValidateRange(1, 86400)][int]$TimeoutSeconds = 300
     )
+    begin {
+        # OPIM-39: the active list is read at most once per command, at the first role that needs it,
+        # and every post this command has requested is kept, so no post is requested twice.
+        $ActivePosts = $null
+        $ActiveReadFailed = $false
+        $RequestedPosts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    }
     process {
         Initialize-OPIMAuth -IncludeARM
         if ($Identity) {
@@ -162,8 +170,6 @@ function Enable-OPIMAzureRole {
             @($Role)
         }
 
-        $ActivePosts = $null
-        $ActiveReadFailed = $false
         foreach ($Role in $ResolvedRoles) {
             # Skip already-active instances piped from Get-OPIMAzureRole -All
             if ($Role.PSObject.TypeNames -contains 'Omnicit.PIM.AzureAssignmentScheduleInstance') {
@@ -172,7 +178,7 @@ function Enable-OPIMAzureRole {
             }
             # OPIM-39: never send a second request for a post that is already active -- a repeated
             # request can end the active one. A list that cannot be read is no proof that nothing is
-            # active, so nothing more is sent (G3).
+            # active, so nothing more is sent by this command (G3).
             if ($ActiveReadFailed) { continue }
             if ($null -eq $ActivePosts) {
                 try {
@@ -190,6 +196,13 @@ function Enable-OPIMAzureRole {
                         [string]::Equals($_.ScopeId, $Role.ScopeId, [System.StringComparison]::OrdinalIgnoreCase)
                     }).Count -gt 0) {
                 $PSCmdlet.WriteWarning("$Label is already active, so no new request was sent and the active assignment is left as it is.")
+                continue
+            }
+            # The same post named twice, or piped twice, is requested once (G8): the active list was
+            # read before the first request and does not show it.
+            $PostKey = "$($Role.RoleDefinitionId)|$($Role.ScopeId)"
+            if ($RequestedPosts.Contains($PostKey)) {
+                $PSCmdlet.WriteWarning("$Label was already requested by this command, so no second request was sent.")
                 continue
             }
             $RoleActivateParams = @{
@@ -225,6 +238,8 @@ function Enable-OPIMAzureRole {
                     "$($Role.RoleDefinitionDisplayName) on $($Role.ScopeDisplayName) ($($Role.ScopeId))",
                     "Activate Azure Role from $NotBefore to $RoleExpireTime"
                 )) {
+                # Counted before it is sent, so a request that fails still is not sent again.
+                $null = $RequestedPosts.Add($PostKey)
                 try {
                     # SEC (EntraRBAC A19): the ARM gate, inside the try so the catch reports a refusal
                     # as itself.

@@ -715,8 +715,9 @@ with a warning, since it has not taken effect yet. A status the module does not 
 failure, never as a success; a deactivation succeeds only when it ends `Revoked`.
 
 The `Enable-OPIM*` cmdlets never request a role or group that is already active (listed by
-`Get-OPIM* -Activated`): they write a warning and send nothing for it, and when that list cannot be
-read they write that error and send nothing.
+`Get-OPIM* -Activated`, read once per command): they write a warning and send nothing for it, and
+when that list cannot be read they write that error and send nothing. A role or group named or piped
+twice in one command is requested once, with a warning for the second.
 
 With `-Wait`, the `Enable-OPIM*` role and group cmdlets wait for at most `-TimeoutSeconds` (default
 300) and then report the request by its last status, written back onto the object they return.
