@@ -231,7 +231,7 @@ and `testhygiene`, `sourcehygiene`, `dochygiene` and `docsync` read files static
 
 # Full test suite -- the authoritative gate, and the command every CI leg runs.
 # QA tests + unit tests + per-function PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-08: 2,385 passed, 0 failed, 0 skipped; coverage 94.16% over 2,879 analysed
+# (measured 2026-10-08: 2,512 passed, 0 failed, 0 skipped; coverage 94.69% over 2,974 analysed
 #  commands; Pester 6.2.0)
 ./build.ps1 -Tasks test
 
@@ -248,7 +248,7 @@ The Sampler test task measures coverage against the **built** module output, not
 `build.yaml`'s `test` workflow does not include `build` (`build.yaml:63-70`; only the default
 workflow, `./build.ps1` with no `-Tasks`, runs both). Always run `-Tasks build` before `-Tasks test`
 after changing source files -- and never build while the tests are running. The coverage threshold
-is 80 % (`build.yaml:152`): measured on 2026-10-08, 2,711 of 2,879 commands are covered, 407 more
+is 80 % (`build.yaml:152`): measured on 2026-10-08, 2,816 of 2,974 commands are covered, 436 more
 than 80 % requires. The margin has been thin before. The MSAL reflection lines in
 `Get-OPIMMsalApplication` are no longer run by any unit test, since reaching them builds a real
 MSAL client (see **Testing Conventions**), and that took coverage from 83.7 % to 80.28 % -- four
@@ -442,16 +442,26 @@ never raise it just to make a build pass. A build that falls back to the source 
 placeholder `1.0.0` (no GitVersion, see **Build and Test Commands**) fails the cap too, by design.
 
 **How the version is computed.** `GitVersion.yml` uses the GitVersion 5 schema with
-`mode: ContinuousDelivery`. The base is the newest reachable version tag -- `v0.5.1` today, on
-`5e06243`; `next-version: 0.0.1` sits below every tag and never wins. A tag sitting on HEAD is
-returned verbatim. From the base comes **at most ONE increment**, never one per commit: the
-branch's default -- Patch on `main`, Minor on a branch matching `^feat(ure)?s?[\/-]`, Patch on one
-matching `^(hot)?fix(es)?[\/-]`, and the fallback defaults on every other branch -- unless a bump
-message in the commits since that tag names a higher level. `main` carries the `preview` label, so
-a merge after `v0.5.1` builds `0.5.2-preview<NNNN>`; measured on 2026-10-05, `feat/x` builds
-`0.6.0-x0001`, a `fix/` branch `0.5.2-fix...`, and a `chore/` branch `0.5.2-chore...`. GitVersion
-5.12 also needs a resolvable `main` ref to compute anything on a branch that matches no
-configuration, so a clone without one cannot build such a branch.
+`mode: ContinuousDelivery`. The base is the newest reachable version tag. Every publish from `main`
+tags its preview (see **Publishing**), so the base is normally the newest PREVIEW tag, not the
+newest stable one: measured on 2026-10-08, `git describe --tags --abbrev=0 origin/main` gives
+`v0.6.0-preview0004`, on `2c1e5ae`, while `v0.5.1`, on `5e06243`, is still the newest stable tag.
+`next-version: 0.0.1` sits below every tag and never wins. A tag sitting on HEAD is returned
+verbatim. From the base comes **at most ONE increment**, never one per commit: the branch's
+default -- Patch on `main`, Minor on a branch matching `^feat(ure)?s?[\/-]`, Patch on one matching
+`^(hot)?fix(es)?[\/-]`, and the fallback defaults on every other branch -- unless a bump message in
+the commits since that tag names a higher level. `main` carries the `preview` label.
+
+On a preview base the Patch default does not move the version numbers, only the preview number:
+measured on 2026-10-08 with GitVersion 5.12.0, the `fix/` branch `fix/tenant-map-keys-and-paths`
+on the base `v0.6.0-preview0004` computes `0.6.0-fix.1` (`NuGetVersionV2` `0.6.0-fix0001`, which
+the build stamps as `ModuleVersion` `0.6.0` with `Prerelease` `fix0001`), not `0.6.1`, and on `main`
+the three merges after `v0.6.0-preview0001` built `0.6.0-preview0002`, `0003` and `0004`, one
+preview number each. A bump message does move it: the minor bump token in the body of `38cface`
+took the base `v0.5.2-preview0002` to `0.6.0-preview0001`. From the stable base `v0.5.1`, measured
+on 2026-10-05, `feat/x` built `0.6.0-x0001`, a `fix/` branch `0.5.2-fix...` and a `chore/` branch
+`0.5.2-chore...`. GitVersion 5.12 also needs a resolvable `main` ref to compute anything on a
+branch that matches no configuration, so a clone without one cannot build such a branch.
 
 **Do not create a version tag, or a `release/x.y.z` branch, outside a deliberate release.** Any
 newer tag becomes the base, and one sitting on HEAD ships verbatim whatever its value. GitVersion's
@@ -483,7 +493,7 @@ one of those shapes does splits by level, and only one level is caught:
   and `publish` never run, and nothing is published. The repair then happens on `main` under a
   broken required check instead of in an open PR, which is bad enough on its own.
 - **Minor.** Nothing caps it. `main` carries `tag: preview`, so the merge publishes, for example,
-  `0.6.0-preview0001` in place of `0.5.2-preview0001` -- a real version, on the public Gallery,
+  the next minor's preview in place of the next patch's -- a real version, on the public Gallery,
   that cannot be deleted, and a version line that was never chosen. There is no gate behind this
   one: the rule about what you type IS the control.
 
