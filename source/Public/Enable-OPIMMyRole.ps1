@@ -223,7 +223,11 @@ function Enable-OPIMMyRole {
                         # OPIM-10 (A13): a role is activated only at the scope its entry names; an entry from before
                         # 0.6.0 names no scope and means the role at '/' only.
                         $ConfiguredKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                        foreach ($Entry in $Config.DirectoryRoles) { [void]$ConfiguredKeys.Add((ConvertTo-OPIMTenantMapKey -Pillar Directory -Entry $Entry)) }
+                        foreach ($Entry in $Config.DirectoryRoles) {
+                            $Key = ConvertTo-OPIMTenantMapKey -Pillar Directory -Entry $Entry
+                            if (-not $Key) { continue }
+                            [void]$ConfiguredKeys.Add($Key)
+                        }
                         $DirectoryRoles = $DirectoryRoles | Where-Object { $ConfiguredKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Directory -InputObject $PSItem)) }
                     }
                     if ($DirectoryRoles) {
@@ -273,10 +277,14 @@ function Enable-OPIMMyRole {
                 }
                 if ($ListRead) {
                     if ($Config -is [hashtable] -and $Config.EntraIDGroups) {
-                        # groupId_accessId, read through the tenant map's key helper. A blank entry yields no key
-                        # (the set then holds a null, which no post's key equals), so it matches nothing.
+                        # groupId_accessId, read through the tenant map's key helper; a blank entry yields no key and
+                        # is skipped, so it matches nothing.
                         $ConfiguredGroupKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                        foreach ($Entry in $Config.EntraIDGroups) { [void]$ConfiguredGroupKeys.Add((ConvertTo-OPIMTenantMapKey -Pillar Group -Entry $Entry)) }
+                        foreach ($Entry in $Config.EntraIDGroups) {
+                            $Key = ConvertTo-OPIMTenantMapKey -Pillar Group -Entry $Entry
+                            if (-not $Key) { continue }
+                            [void]$ConfiguredGroupKeys.Add($Key)
+                        }
                         $Groups = $Groups | Where-Object { $ConfiguredGroupKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Group -InputObject $PSItem)) }
                     }
                     if ($Groups) {
@@ -329,11 +337,15 @@ function Enable-OPIMMyRole {
                 if ($ListRead) {
                     if ($Config -is [hashtable] -and $Config.AzureRoles) {
                         # The eligibility schedule Name, read through the tenant map's key helper; a blank entry
-                        # yields no key and matches nothing, as above. OPIM-22: an entry stored from an active role
+                        # yields no key and is skipped, as above. OPIM-22: an entry stored from an active role
                         # is Name|ScopeId and matches the eligibility only at that scope -- an activation at a
                         # narrower scope than its eligibility matches nothing, never the wider eligibility.
                         $ConfiguredAzureKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                        foreach ($Entry in $Config.AzureRoles) { [void]$ConfiguredAzureKeys.Add((ConvertTo-OPIMTenantMapKey -Pillar Azure -Entry $Entry)) }
+                        foreach ($Entry in $Config.AzureRoles) {
+                            $Key = ConvertTo-OPIMTenantMapKey -Pillar Azure -Entry $Entry
+                            if (-not $Key) { continue }
+                            [void]$ConfiguredAzureKeys.Add($Key)
+                        }
                         $AzureRoles = $AzureRoles | Where-Object {
                             $ConfiguredAzureKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem)) -or
                             $ConfiguredAzureKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem -WithScope))

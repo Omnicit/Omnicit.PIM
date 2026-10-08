@@ -205,7 +205,8 @@ function Disable-OPIMMyRole {
                         $SeenKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
                         foreach ($Entry in $Config.DirectoryRoles) {
                             $Key = ConvertTo-OPIMTenantMapKey -Pillar Directory -Entry $Entry
-                            if ($Key -and $SeenKeys.Add($Key)) { $ConfiguredKeys.Add($Key) }
+                            if (-not $Key) { continue }
+                            if ($SeenKeys.Add($Key)) { $ConfiguredKeys.Add($Key) }
                         }
                         Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ConfiguredKeys.Count) configured role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
                         foreach ($Key in $ConfiguredKeys) {
@@ -273,21 +274,22 @@ function Disable-OPIMMyRole {
                 if ($ListRead) {
                     if ($Config -is [hashtable] -and $Config.EntraIDGroups) {
                         Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($Config.EntraIDGroups.Count) configured group(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                        foreach ($ConfiguredGroupEntry in $Config.EntraIDGroups) {
-                            # groupId_accessId, read through the tenant map's key helper; a blank entry matches nothing.
-                            $ConfiguredGroupKey = ConvertTo-OPIMTenantMapKey -Pillar Group -Entry $ConfiguredGroupEntry
-                            if (-not $ConfiguredGroupKey) { continue }
+                        foreach ($Entry in $Config.EntraIDGroups) {
+                            # groupId_accessId, read through the tenant map's key helper; a blank entry yields no key and
+                            # is skipped, so it matches nothing.
+                            $Key = ConvertTo-OPIMTenantMapKey -Pillar Group -Entry $Entry
+                            if (-not $Key) { continue }
                             $ActiveMatches = @($ActiveGroups | Where-Object {
-                                    [string]::Equals((ConvertTo-OPIMTenantMapKey -Pillar Group -InputObject $PSItem), $ConfiguredGroupKey, [System.StringComparison]::OrdinalIgnoreCase)
+                                    [string]::Equals((ConvertTo-OPIMTenantMapKey -Pillar Group -InputObject $PSItem), $Key, [System.StringComparison]::OrdinalIgnoreCase)
                                 })
                             if ($ActiveMatches.Count -gt 1) {
                                 # OPIM-17: an entry that matches several active posts names none of them.
                                 $PSCmdlet.WriteError((New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Group `
-                                    -Name $ConfiguredGroupKey -Status Active -Candidate $ActiveMatches -Configuration))
+                                    -Name $Key -Status Active -Candidate $ActiveMatches -Configuration))
                             } elseif ($ActiveMatches.Count -eq 1) {
                                 $ActiveMatches[0] | Disable-OPIMEntraIDGroup | ConvertTo-OPIMMyRoleResult
                             } else {
-                                Write-Verbose "Entra ID group '$ConfiguredGroupKey' is not currently activated. No deactivation needed."
+                                Write-Verbose "Entra ID group '$Key' is not currently activated. No deactivation needed."
                             }
                         }
                     } else {
@@ -337,12 +339,16 @@ function Disable-OPIMMyRole {
                     $ActiveAzureRoles = Get-OPIMAzureRole -Activated -ErrorAction Stop
                     if ($Config -is [hashtable] -and $Config.AzureRoles) {
                         # The config stores eligible schedule .Name values (same as Enable-OPIMMyRole), read
-                        # through the tenant map's key helper; a blank entry yields no key (the set then holds a
-                        # null, which no post's key equals), so it matches nothing. OPIM-22: an entry stored from
-                        # an active role is Name|ScopeId and selects the eligibility only at that scope. Active
-                        # instances are different objects -- correlate via RoleDefinitionId + ScopeId.
+                        # through the tenant map's key helper; a blank entry yields no key and is skipped, so it
+                        # matches nothing. OPIM-22: an entry stored from an active role is Name|ScopeId and selects
+                        # the eligibility only at that scope. Active instances are different objects -- correlate
+                        # via RoleDefinitionId + ScopeId.
                         $ConfiguredAzureKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                        foreach ($Entry in $Config.AzureRoles) { [void]$ConfiguredAzureKeys.Add((ConvertTo-OPIMTenantMapKey -Pillar Azure -Entry $Entry)) }
+                        foreach ($Entry in $Config.AzureRoles) {
+                            $Key = ConvertTo-OPIMTenantMapKey -Pillar Azure -Entry $Entry
+                            if (-not $Key) { continue }
+                            [void]$ConfiguredAzureKeys.Add($Key)
+                        }
                         $ConfiguredEligible = Get-OPIMAzureRole -ErrorAction Stop | Where-Object {
                             $ConfiguredAzureKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem)) -or
                             $ConfiguredAzureKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem -WithScope))
