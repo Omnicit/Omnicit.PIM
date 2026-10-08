@@ -97,6 +97,11 @@ map go to `docs/live-verification/raw/opim-s15b` (git-ignored), which is deleted
 are written up. This step creates no object of its own, so it has no prerequisite script; the
 sprint's prerequisite script `Initialize-OpimS1Prereq.ps1` tears the fixture down in section 4.
 
+The PIM policies of the fixture's roles require a justification on activation (measured in step 2),
+so every activation below passes one. A block reads the errors and warnings of `pim` and `unpim`
+from their streams (`2>&1 3>&1`): `-ErrorVariable` on `pim` does not collect the error a pillar
+cmdlet inside it writes (measured in this run, 1.3's first attempt).
+
 ### S.1. Find the build under test and tie it to the branch head
 
 - [ ] **S.1** Window B. The newest build in `output/module/Omnicit.PIM/` was made after the branch head was committed, and it holds this step's key helper.
@@ -268,7 +273,10 @@ $AtUnit = [PSCustomObject]@{ roleDefinitionId = $Role[0].roleDefinitionId; direc
 $AtUnit.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
 $AtUnit | Install-OPIMConfiguration -TenantAlias 's15b-au' -TenantMapPath $Map -Confirm:$false
 $Before = @(Get-OPIMDirectoryRole -Activated -ErrorAction Stop).Count
-$Out = @(Enable-OPIMMyRole -TenantAlias 's15b-au' -TenantMapPath $Map -ErrorVariable Errs -WarningVariable Warns -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+$All = @(Enable-OPIMMyRole -TenantAlias 's15b-au' -TenantMapPath $Map -Justification 'Omnicit.PIM live verification (opim-s15b)' 2>&1 3>&1)
+$Out = @($All | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+$Errs = @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+$Warns = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
 Start-Sleep -Seconds 15
 $After = @(Get-OPIMDirectoryRole -Activated -ErrorAction Stop).Count
 "pim results: $($Out.Count); errors: $($Errs.Count); warnings: $($Warns.Count)"
@@ -291,13 +299,19 @@ $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | So
 if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built.DirectoryName) { throw 'A different build of Omnicit.PIM is loaded; use a fresh window.' }
 if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
 $Map = Join-Path (Get-Location).Path 'docs/live-verification/raw/opim-s15b/TenantMap.psd1'
-$Out1 = @(Enable-OPIMMyRole -TenantAlias 's15b-dir' -TenantMapPath $Map -ErrorVariable Errs1 -WarningVariable Warns1 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+$All1 = @(Enable-OPIMMyRole -TenantAlias 's15b-dir' -TenantMapPath $Map -Justification 'Omnicit.PIM live verification (opim-s15b)' 2>&1 3>&1)
+$Out1 = @($All1 | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+$Errs1 = @($All1 | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+$Warns1 = @($All1 | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
 $global:S15bLastActivation = [datetime]::UtcNow
 "First call: results $($Out1.Count) ($((@($Out1 | ForEach-Object { "$($_.DisplayName) $($_.Scope) $($_.Status)" })) -join '; ')); errors $($Errs1.Count); warnings $($Warns1.Count)"
 Start-Sleep -Seconds 20
 $Active = @(Get-OPIMDirectoryRole -Activated -ErrorAction Stop)
 "Active: Usage Summary Reports Reader at the root $(@($Active | Where-Object { $_.roleDefinition.displayName -eq 'Usage Summary Reports Reader' -and $_.directoryScopeId -eq '/' }).Count); Message Center Privacy Reader $(@($Active | Where-Object { $_.roleDefinition.displayName -eq 'Message Center Privacy Reader' }).Count); all $($Active.Count)"
-$Out2 = @(Enable-OPIMMyRole -TenantAlias 's15b-dir' -TenantMapPath $Map -ErrorVariable Errs2 -WarningVariable Warns2 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+$All2 = @(Enable-OPIMMyRole -TenantAlias 's15b-dir' -TenantMapPath $Map -Justification 'Omnicit.PIM live verification (opim-s15b)' 2>&1 3>&1)
+$Out2 = @($All2 | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+$Errs2 = @($All2 | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+$Warns2 = @($All2 | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
 "Second call: results $($Out2.Count); errors $($Errs2.Count)$(if ($Errs2.Count) { ", last $($Errs2[-1].FullyQualifiedErrorId)" }); warning says already active: $([bool](@($Warns2 | Where-Object { "$_" -match 'is already active' })))"
 ```
 
@@ -326,13 +340,19 @@ $Lines = [System.Collections.Generic.List[string]]::new([string[]](Get-Content -
 $Lines.Insert($Lines.LastIndexOf('}'), "    's15b-old' = @{ TenantId = '$($Target.TenantId)'; DirectoryRoles = @('$($Role[0].roleDefinitionId)') }")
 Set-Content -LiteralPath $Map -Value $Lines -Encoding utf8NoBOM
 "The entry holds no scope: $(-not ([string]@((Import-PowerShellDataFile -LiteralPath $Map)['s15b-old'].DirectoryRoles)[0]).Contains('|'))"
-$Out1 = @(Enable-OPIMMyRole -TenantAlias 's15b-old' -TenantMapPath $Map -ErrorVariable Errs1 -WarningVariable Warns1 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+$All1 = @(Enable-OPIMMyRole -TenantAlias 's15b-old' -TenantMapPath $Map -Justification 'Omnicit.PIM live verification (opim-s15b)' 2>&1 3>&1)
+$Out1 = @($All1 | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+$Errs1 = @($All1 | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+$Warns1 = @($All1 | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
 $global:S15bLastActivation = [datetime]::UtcNow
 "First call: results $($Out1.Count) ($((@($Out1 | ForEach-Object { "$($_.DisplayName) $($_.Scope) $($_.Status)" })) -join '; ')); errors $($Errs1.Count); warnings $($Warns1.Count)"
 Start-Sleep -Seconds 20
 $Active = @(Get-OPIMDirectoryRole -Activated -ErrorAction Stop)
 "Active: Message Center Privacy Reader at the root $(@($Active | Where-Object { $_.roleDefinition.displayName -eq 'Message Center Privacy Reader' -and $_.directoryScopeId -eq '/' }).Count); all $($Active.Count)"
-$Out2 = @(Enable-OPIMMyRole -TenantAlias 's15b-old' -TenantMapPath $Map -ErrorVariable Errs2 -WarningVariable Warns2 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+$All2 = @(Enable-OPIMMyRole -TenantAlias 's15b-old' -TenantMapPath $Map -Justification 'Omnicit.PIM live verification (opim-s15b)' 2>&1 3>&1)
+$Out2 = @($All2 | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+$Errs2 = @($All2 | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+$Warns2 = @($All2 | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
 "Second call: results $($Out2.Count); errors $($Errs2.Count)$(if ($Errs2.Count) { ", last $($Errs2[-1].FullyQualifiedErrorId)" }); warning says already active: $([bool](@($Warns2 | Where-Object { "$_" -match 'is already active' })))"
 ```
 
@@ -410,11 +430,17 @@ $Map = Join-Path (Get-Location).Path 'docs/live-verification/raw/opim-s15b/Tenan
 Get-OPIMEntraIDGroup -ErrorAction Stop | Where-Object { $_.group.displayName -eq 'opim-s1-grp' } | Install-OPIMConfiguration -TenantAlias 's15b-grp' -TenantMapPath $Map -Confirm:$false
 $Keys = @((Import-PowerShellDataFile -LiteralPath $Map)['s15b-grp'].EntraIDGroups)
 "Stored group entries: $($Keys.Count); member $(@($Keys | Where-Object { $_.EndsWith('_member') }).Count); owner $(@($Keys | Where-Object { $_.EndsWith('_owner') }).Count)"
-$Out1 = @(Enable-OPIMMyRole -TenantAlias 's15b-grp' -TenantMapPath $Map -ErrorVariable Errs1 -WarningVariable Warns1 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+$All1 = @(Enable-OPIMMyRole -TenantAlias 's15b-grp' -TenantMapPath $Map -Justification 'Omnicit.PIM live verification (opim-s15b)' 2>&1 3>&1)
+$Out1 = @($All1 | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+$Errs1 = @($All1 | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+$Warns1 = @($All1 | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
 $global:S15bLastActivation = [datetime]::UtcNow
 "First call: results $($Out1.Count) ($((@($Out1 | ForEach-Object { "$($_.DisplayName) $($_.Scope) $($_.Status)" })) -join '; ')); errors $($Errs1.Count); warnings $($Warns1.Count) ($((@($Warns1 | ForEach-Object { if ("$_" -match 'is already active') { 'already active' } else { 'other' } })) -join ', '))"
 Start-Sleep -Seconds 45
-$Out2 = @(Enable-OPIMMyRole -TenantAlias 's15b-grp' -TenantMapPath $Map -ErrorVariable Errs2 -WarningVariable Warns2 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+$All2 = @(Enable-OPIMMyRole -TenantAlias 's15b-grp' -TenantMapPath $Map -Justification 'Omnicit.PIM live verification (opim-s15b)' 2>&1 3>&1)
+$Out2 = @($All2 | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+$Errs2 = @($All2 | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+$Warns2 = @($All2 | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
 "Second call: results $($Out2.Count); errors $($Errs2.Count)$(if ($Errs2.Count) { ", last $($Errs2[-1].FullyQualifiedErrorId)" }); warnings saying already active: $(@($Warns2 | Where-Object { "$_" -match 'is already active' }).Count)"
 $Active = @(Get-OPIMEntraIDGroup -Activated -ErrorAction Stop | Where-Object { $_.group.displayName -eq 'opim-s1-grp' })
 "Active for opim-s1-grp: member $(@($Active | Where-Object accessId -eq 'member').Count), owner $(@($Active | Where-Object accessId -eq 'owner').Count)"
@@ -441,7 +467,7 @@ if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
 $Map = Join-Path (Get-Location).Path 'docs/live-verification/raw/opim-s15b/TenantMap.psd1'
 $Eligible = @(Get-OPIMAzureRole -ErrorAction Stop | Where-Object { $_.RoleDefinitionDisplayName -eq 'Reader' -and $_.ScopeDisplayName -eq 'opim-s1-rg' })
 if ($Eligible.Count -ne 1) { throw "Expected one eligible Reader on opim-s1-rg, found $($Eligible.Count)." }
-$Request = @($Eligible | Enable-OPIMAzureRole -Hours 1 -ErrorAction Stop)
+$Request = @($Eligible | Enable-OPIMAzureRole -Hours 1 -Justification 'Omnicit.PIM live verification (opim-s15b)' -ErrorAction Stop)
 $global:S15bLastActivation = [datetime]::UtcNow
 "Activation: $(@($Request | ForEach-Object Status) -join ', ')"
 $Active = @()
@@ -451,7 +477,8 @@ foreach ($Try in 1..12) {
     Start-Sleep -Seconds 10
 }
 "Active Reader on opim-s1-rg listed: $($Active.Count) after $Try read(s)"
-$Active | Install-OPIMConfiguration -TenantAlias 's15b-az' -TenantMapPath $Map -Confirm:$false -ErrorVariable Errs -ErrorAction SilentlyContinue
+$InstallAll = @($Active | Install-OPIMConfiguration -TenantAlias 's15b-az' -TenantMapPath $Map -Confirm:$false 2>&1 3>&1)
+$Errs = @($InstallAll | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
 $Link = [string]$Active[0].LinkedRoleEligibilityScheduleId
 "The instance's link is a bare name: $($Link -notmatch '/'); it holds the role's scope: $($Link.StartsWith([string]$Active[0].ScopeId + '/', [System.StringComparison]::OrdinalIgnoreCase))"
 $Keys = @((Import-PowerShellDataFile -LiteralPath $Map)['s15b-az'].AzureRoles)
@@ -478,7 +505,10 @@ $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | So
 if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built.DirectoryName) { throw 'A different build of Omnicit.PIM is loaded; use a fresh window.' }
 if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
 $Map = Join-Path (Get-Location).Path 'docs/live-verification/raw/opim-s15b/TenantMap.psd1'
-$Out = @(Enable-OPIMMyRole -TenantAlias 's15b-az' -TenantMapPath $Map -ErrorVariable Errs -WarningVariable Warns -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+$All = @(Enable-OPIMMyRole -TenantAlias 's15b-az' -TenantMapPath $Map -Justification 'Omnicit.PIM live verification (opim-s15b)' 2>&1 3>&1)
+$Out = @($All | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+$Errs = @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+$Warns = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
 "pim results: $($Out.Count); errors: $($Errs.Count)$(if ($Errs.Count) { ", last $($Errs[-1].FullyQualifiedErrorId)" })"
 "Warning names Reader on opim-s1-rg as already active: $([bool](@($Warns | Where-Object { "$_" -match 'Reader -> opim-s1-rg is already active' })))"
 "Warning names opim-s1-rg2: $([bool](@($Warns | Where-Object { "$_" -match 'opim-s1-rg2' })))"
@@ -528,11 +558,17 @@ if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built
 if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
 $Map = Join-Path (Get-Location).Path 'docs/live-verification/raw/opim-s15b/TenantMap.psd1'
 foreach ($Alias in 's15b-dir', 's15b-old') {
-    $Out1 = @(Disable-OPIMMyRole -TenantAlias $Alias -TenantMapPath $Map -ErrorVariable Errs1 -ErrorAction SilentlyContinue)
+    $All1 = @(Disable-OPIMMyRole -TenantAlias $Alias -TenantMapPath $Map 2>&1 3>&1)
+$Out1 = @($All1 | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+$Errs1 = @($All1 | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+$Warns1 = @($All1 | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
     "$Alias first call: results $($Out1.Count) ($((@($Out1 | ForEach-Object { "$($_.DisplayName) $($_.Scope) $($_.Status)" })) -join '; ')); errors $($Errs1.Count)"
     Start-Sleep -Seconds 20
     "$Alias active after it: $((@(Get-OPIMDirectoryRole -Activated -ErrorAction Stop | ForEach-Object { $_.roleDefinition.displayName })) -join ', ')"
-    $Out2 = @(Disable-OPIMMyRole -TenantAlias $Alias -TenantMapPath $Map -ErrorVariable Errs2 -ErrorAction SilentlyContinue)
+    $All2 = @(Disable-OPIMMyRole -TenantAlias $Alias -TenantMapPath $Map 2>&1 3>&1)
+$Out2 = @($All2 | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+$Errs2 = @($All2 | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+$Warns2 = @($All2 | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
     "$Alias second call: results $($Out2.Count); errors $($Errs2.Count)$(if ($Errs2.Count) { ", last $($Errs2[-1].FullyQualifiedErrorId)" })"
 }
 ```
@@ -555,7 +591,10 @@ $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | So
 if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built.DirectoryName) { throw 'A different build of Omnicit.PIM is loaded; use a fresh window.' }
 if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
 $Map = Join-Path (Get-Location).Path 'docs/live-verification/raw/opim-s15b/TenantMap.psd1'
-$Out = @(Disable-OPIMMyRole -TenantAlias 's15b-grp' -TenantMapPath $Map -ErrorVariable Errs -ErrorAction SilentlyContinue)
+$All = @(Disable-OPIMMyRole -TenantAlias 's15b-grp' -TenantMapPath $Map 2>&1 3>&1)
+$Out = @($All | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+$Errs = @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+$Warns = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
 "Results: $($Out.Count) ($((@($Out | ForEach-Object { "$($_.DisplayName) $($_.Scope) $($_.Status)" })) -join '; '))"
 "Errors: $($Errs.Count); ids: $((@($Errs | ForEach-Object { ($_.FullyQualifiedErrorId -split ',')[0] } | Sort-Object -Unique)) -join ', ')"
 Start-Sleep -Seconds 45
@@ -580,7 +619,10 @@ $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | So
 if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built.DirectoryName) { throw 'A different build of Omnicit.PIM is loaded; use a fresh window.' }
 if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
 $Map = Join-Path (Get-Location).Path 'docs/live-verification/raw/opim-s15b/TenantMap.psd1'
-$Off = @(Disable-OPIMMyRole -TenantAlias 's15b-az' -TenantMapPath $Map -ErrorVariable ErrsOff -ErrorAction SilentlyContinue)
+$AllOff = @(Disable-OPIMMyRole -TenantAlias 's15b-az' -TenantMapPath $Map 2>&1 3>&1)
+$Off = @($AllOff | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+$ErrsOff = @($AllOff | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+$WarnsOff = @($AllOff | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
 "unpim: results $($Off.Count) ($((@($Off | ForEach-Object { "$($_.DisplayName) $($_.Scope) $($_.Status)" })) -join '; ')); errors $($ErrsOff.Count)"
 $Gone = $false
 foreach ($Try in 1..12) {
@@ -589,7 +631,10 @@ foreach ($Try in 1..12) {
     Start-Sleep -Seconds 10
 }
 "No Reader active: $Gone after $Try read(s)"
-$Out1 = @(Enable-OPIMMyRole -TenantAlias 's15b-az' -TenantMapPath $Map -ErrorVariable Errs1 -WarningVariable Warns1 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+$All1 = @(Enable-OPIMMyRole -TenantAlias 's15b-az' -TenantMapPath $Map -Justification 'Omnicit.PIM live verification (opim-s15b)' 2>&1 3>&1)
+$Out1 = @($All1 | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+$Errs1 = @($All1 | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+$Warns1 = @($All1 | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
 $global:S15bLastActivation = [datetime]::UtcNow
 "pim first call: results $($Out1.Count) ($((@($Out1 | ForEach-Object { "$($_.DisplayName) $($_.Scope) $($_.Status)" })) -join '; ')); errors $($Errs1.Count); warnings $($Warns1.Count)"
 $Active = @()
@@ -599,7 +644,10 @@ foreach ($Try in 1..12) {
     Start-Sleep -Seconds 10
 }
 "Active Azure roles: $($Active.Count) ($((@($Active | ForEach-Object { "$($_.RoleDefinitionDisplayName) $($_.ScopeDisplayName)" })) -join '; '))"
-$Out2 = @(Enable-OPIMMyRole -TenantAlias 's15b-az' -TenantMapPath $Map -ErrorVariable Errs2 -WarningVariable Warns2 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+$All2 = @(Enable-OPIMMyRole -TenantAlias 's15b-az' -TenantMapPath $Map -Justification 'Omnicit.PIM live verification (opim-s15b)' 2>&1 3>&1)
+$Out2 = @($All2 | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+$Errs2 = @($All2 | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+$Warns2 = @($All2 | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
 "pim second call: results $($Out2.Count); errors $($Errs2.Count)$(if ($Errs2.Count) { ", last $($Errs2[-1].FullyQualifiedErrorId)" }); warning says already active: $([bool](@($Warns2 | Where-Object { "$_" -match 'is already active' })))"
 ```
 
@@ -622,7 +670,10 @@ if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
 $Map = Join-Path (Get-Location).Path 'docs/live-verification/raw/opim-s15b/TenantMap.psd1'
 if (-not $global:S15bLastActivation) { throw 'No activation time is recorded in this window; run 3.4 in this window first.' }
 Start-Sleep -Seconds ([math]::Max(0, [math]::Ceiling(($global:S15bLastActivation.AddMinutes(5.5) - [datetime]::UtcNow).TotalSeconds)))
-$Out = @(Disable-OPIMMyRole -TenantAlias 's15b-az' -TenantMapPath $Map -ErrorVariable Errs -ErrorAction SilentlyContinue)
+$All = @(Disable-OPIMMyRole -TenantAlias 's15b-az' -TenantMapPath $Map 2>&1 3>&1)
+$Out = @($All | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+$Errs = @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+$Warns = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
 "unpim: results $($Out.Count) ($((@($Out | ForEach-Object { "$($_.DisplayName) $($_.Scope) $($_.Status)" })) -join '; ')); errors $($Errs.Count)"
 Start-Sleep -Seconds 45
 "Active: directory $(@(Get-OPIMDirectoryRole -Activated -ErrorAction Stop).Count), group $(@(Get-OPIMEntraIDGroup -Activated -ErrorAction Stop).Count), Azure $(@(Get-OPIMAzureRole -Activated -ErrorAction Stop).Count)"
