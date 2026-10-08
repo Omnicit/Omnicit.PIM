@@ -1704,6 +1704,28 @@ Describe 'Enable-OPIMAzureRole' {
             "$($Warns[0])" | Should -BeExactly $Twice
         }
 
+        It 'sends both posts of one role that differ only in scope, with nothing active' {
+            # The same Reader RoleDefinitionId at two resource groups, in ONE call and against an
+            # empty active list: only the second part of the requested-post key, the scope, tells the
+            # two apart, so a key on the role definition alone would withhold the second post.
+            $RgTwoPost = New-AzurePost -Name 'azure-004' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-two' -ScopeName 'rg-two'
+            $Result = Enable-OPIMAzureRole -Role @($Listing[0], $RgTwoPost) `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            # The active list was read and was empty, so only the requested-post key stood in the way.
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Scope -eq '/subscriptions/sub-001/resourceGroups/rg-one' -and $RoleDefinitionId -eq 'role-def-reader' -and $LinkedRoleEligibilityScheduleId -eq 'azure-001'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Scope -eq '/subscriptions/sub-001/resourceGroups/rg-two' -and $RoleDefinitionId -eq 'role-def-reader' -and $LinkedRoleEligibilityScheduleId -eq 'azure-004'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 2 -Exactly -Scope It
+            @($Warns | Where-Object { "$_" -like '*was already requested by this command*' }).Count | Should -Be 0
+            @($Warns).Count | Should -Be 0
+            @($Errs).Count | Should -Be 0
+            @($Result).Count | Should -Be 2
+        }
+
         It 'does not send the role again after its first request failed' {
             # The post counts as requested before the request is sent, so a failed one is not repeated.
             $Active.PostThrows = $true

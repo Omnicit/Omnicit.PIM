@@ -1568,6 +1568,27 @@ Describe 'Enable-OPIMEntraIDGroup' {
             "$($Warns[0])" | Should -BeExactly $Twice
         }
 
+        It 'sends both posts of one group that differ only in access type, with nothing active' {
+            # The same groupId as member and as owner, in ONE call and against an empty active list:
+            # only the second part of the requested-post key, the access type, tells the two apart,
+            # so a key on the group alone would withhold the second post.
+            $Result = Enable-OPIMEntraIDGroup -Group @($Listing[0], $Listing[1]) `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            # The active list was read and was empty, so only the requested-post key stood in the way.
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.groupId -eq 'g-1' -and $Body.accessId -eq 'member'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.groupId -eq 'g-1' -and $Body.accessId -eq 'owner'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns | Where-Object { "$_" -like '*was already requested by this command*' }).Count | Should -Be 0
+            @($Warns).Count | Should -Be 0
+            @($Errs).Count | Should -Be 0
+            @($Result).Count | Should -Be 2
+        }
+
         It 'does not send the group again after its first request failed' {
             # The post counts as requested before the request is sent, so a failed one is not repeated.
             $Active.PostThrows = $true
