@@ -1083,6 +1083,17 @@ completion authenticates and calls Graph or ARM on the prompt path. Keep that ca
 `Set-OPIMConfiguration`. The private `Export-OPIMTenantMap` owns the PSD1 serialization and is
 called by `Install`, `Set` and `Remove`; never inline it.
 
+**The stored keys (OPIM-10, A13).** `DirectoryRoles` holds `roleDefinitionId|directoryScopeId`,
+`EntraIDGroups` holds `groupId_accessId`, and `AzureRoles` the eligibility schedule's `Name`. The
+private `ConvertTo-OPIMTenantMapKey` is the single owner of these formats and of how a stored entry
+is read: `-InputObject` returns a post's key and `-Entry` an entry as the key to compare with, where
+a directory entry without `|` -- the form 0.5.x wrote -- means the role at `/` only, never every
+scope of the role. Build or read a key nowhere else. `Install` and `Set` store each key once
+(`OrdinalIgnoreCase`, in the order first piped); `Enable-OPIMMyRole` keeps only the eligible posts
+whose key is configured, and `Disable-OPIMMyRole` reads each distinct key once, in the order
+configured, and matches the active posts by key; both compare `OrdinalIgnoreCase`. So a configured
+directory role is activated and deactivated only at the scope its entry names.
+
 ---
 
 ## Code Style

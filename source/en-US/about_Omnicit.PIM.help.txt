@@ -91,6 +91,9 @@ LONG DESCRIPTION
 
     The *-OPIMConfiguration cmdlets manage a TenantMap.psd1 file that maps
     short tenant aliases to Azure Tenant IDs and optional default role lists.
+    A directory role is stored with its scope (roleDefinitionId|directoryScopeId), and
+    Enable-OPIMMyRole and Disable-OPIMMyRole activate and deactivate it only at that scope; an
+    entry written by 0.5.x holds the roleDefinitionId alone and means the role at '/' only.
 
       Install-OPIMConfiguration  Create a new alias
       Get-OPIMConfiguration      Read current configuration

@@ -426,10 +426,10 @@ the role/group arrays are optional — omit them and `pim` will activate **all**
 
 ```powershell
 @{
-    # Alias 'corp' — activates only the two stored directory roles and one group
+    # Alias 'corp' — activates only the stored directory role, at '/', and one group
     'corp' = @{
         TenantId       = 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
-        DirectoryRoles = @('e8611ab8-c189-46e8-94e1-60213ab1f814')   # roleDefinitionId
+        DirectoryRoles = @('e8611ab8-c189-46e8-94e1-60213ab1f814|/')   # roleDefinitionId|directoryScopeId
         EntraIDGroups  = @('00000000-0000-0000-0000-000000000006_member')  # groupId_accessId
         AzureRoles     = @('schedule-name-from-get-opimazurerole')
     }
@@ -446,13 +446,20 @@ The file is safe to edit manually — it is standard PowerShell data file syntax
 
 | Type | Stored value | Field on Get-OPIM* object |
 |---|---|---|
-| Directory Role | `roleDefinitionId` | `$_.roleDefinitionId` |
+| Directory Role | `"{roleDefinitionId}\|{directoryScopeId}"` | `"$($_.roleDefinitionId)\|$($_.directoryScopeId)"` |
 | Entra ID Group | `"{groupId}_{accessId}"` | `"$($_.groupId)_$($_.accessId)"` |
 | Azure Role | Schedule name | `$_.Name` |
 
 These identifiers are stable across eligibility renewals. The `accessId` in the group key is
 either `member` or `owner`, so you can store member and owner eligibility for the same group
 independently.
+
+A directory role is stored with its scope -- `/` for the whole directory, or
+`/administrativeUnits/{id}` for an administrative unit -- and `pim` and `unpim` activate and
+deactivate it only at that scope. An entry written by 0.5.x holds only the `roleDefinitionId` and
+now means the role at the root scope `/` only. An older module version reading an entry with a
+scope matches nothing for it: it activates and deactivates no directory role for that entry. Keys
+are compared without regard to letter case, and each key is stored once.
 
 ### Creating and managing entries
 
