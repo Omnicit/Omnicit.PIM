@@ -40,7 +40,7 @@ Describe 'Get-OPIMSignInRefusal' {
     }
 
     Context 'When a command on the call stack is latched' {
-        It 'still finds the held frame while a function named Get-PSCallStack that returns nothing is defined' {
+        It 'finds the held frame even while a function named Get-PSCallStack that returns nothing is defined' {
             # Both latch helpers call Microsoft.PowerShell.Utility\Get-PSCallStack. An unqualified call
             # would resolve to this global function, which outranks the cmdlet for module code: the latch
             # would then hold nothing, or this function would walk an empty stack and find nothing.

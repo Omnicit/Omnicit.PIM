@@ -738,7 +738,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
             @($Warns).Count | Should -Be 0
         }
 
-        It 'still waits for the next group after one times out' {
+        It 'goes on to wait for the next group after one times out' {
             $Clock.Step = 30
             $Plan.Poll['g-1'] = @('PendingProvisioning')
             $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp', 'opim-s1-other' -Wait -TimeoutSeconds 60 `

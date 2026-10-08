@@ -292,7 +292,7 @@ namespace OPIMTestFakes.DeviceCode {
             $Info = @($Records | Where-Object { $_ -is [System.Management.Automation.InformationRecord] })
         }
 
-        It 'still writes the tagged sign-in message to the Information stream' {
+        It 'writes the tagged sign-in message to the Information stream all the same' {
             $Info.Count | Should -Be 1
             $Info[0].Tags | Should -Contain 'OPIMDeviceCode'
             $Info[0].MessageData | Should -BeExactly $App.Message

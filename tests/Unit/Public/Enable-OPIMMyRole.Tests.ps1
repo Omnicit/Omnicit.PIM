@@ -458,7 +458,7 @@ Describe 'Enable-OPIMMyRole' {
             $Written[0].FullyQualifiedErrorId | Should -BeLike 'AzureConnectFailed*'
         }
 
-        It 'still activates directory roles and groups' {
+        It 'goes on to activate directory roles and groups' {
             Enable-OPIMMyRole -AllEligible -Confirm:$false -ErrorAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Exactly -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 1 -Exactly -Scope It
@@ -550,14 +550,14 @@ Describe 'Enable-OPIMMyRole' {
             Should -Invoke -ModuleName Omnicit.PIM $Activator -Times 0 -Scope It
         }
 
-        It 'never reports the failed listing as no eligible roles' {
+        It 'does not report the failed listing as no eligible roles' {
             $script:PartialRead = $false
             $Out = Enable-OPIMMyRole @MyRoleParams -ErrorAction SilentlyContinue -Verbose 4>&1
             $Said = @($Out | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message -match 'No eligible' })
             $Said.Count | Should -Be 0
         }
 
-        It 'still lists and activates the other pillars' {
+        It 'goes on to list and activate the other pillars' {
             $script:PartialRead = $true
             Enable-OPIMMyRole @MyRoleParams -ErrorAction SilentlyContinue
             foreach ($Other in $Others) {

@@ -704,7 +704,7 @@ Describe 'Enable-OPIMAzureRole' {
             }
         }
 
-        It 'never polls with asRequestor(), which ARM refuses to a user without a role at the scope' {
+        It 'does not poll with asRequestor(), which ARM refuses to a user without a role at the scope' {
             # Measured live 2026-10-08: asRequestor() at a scope where the user holds no active role
             # is InsufficientPermissions; asTarget() lists the user's own requests there.
             $Plan.Poll['azure-001'] = @('PendingProvisioning', 'Provisioned')
@@ -777,7 +777,7 @@ Describe 'Enable-OPIMAzureRole' {
             @($Warns).Count | Should -Be 0
         }
 
-        It 'still waits for the next role after one times out' {
+        It 'goes on to wait for the next role after one times out' {
             $Clock.Step = 30
             $Plan.Poll['azure-001'] = @('PendingProvisioning')
             $Result = Enable-OPIMAzureRole -RoleName 'Reader', 'Contributor' -Wait -TimeoutSeconds 60 `

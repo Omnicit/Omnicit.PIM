@@ -449,7 +449,7 @@ Describe 'Initialize-OPIMAuth' {
             }
         }
 
-        It 'never changes the user''s own Az configuration' {
+        It 'leaves the user''s own Az configuration unchanged' {
             $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
             $After = New-AzTestContext -TenantId $TenantA
             InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After } {
@@ -566,7 +566,7 @@ Describe 'Initialize-OPIMAuth' {
             }
         }
 
-        It 'still makes the other setting and signs in to Azure when the <Key> setting is refused' -ForEach @(
+        It 'makes the other setting and signs in to Azure all the same when the <Key> setting is refused' -ForEach @(
             @{ Key = 'EnableLoginByWam' }
             @{ Key = 'LoginExperienceV2' }
         ) {
@@ -933,7 +933,7 @@ Describe 'Initialize-OPIMAuth' {
             }
         }
 
-        It 'never counts the state that holds only the mode as a signed-in session' {
+        It 'does not count the state that holds only the mode as a signed-in session' {
             InModuleScope Omnicit.PIM {
                 try { Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -DeviceCode } catch { $null = $PSItem }
                 $script:_OPIMAuthState.ContainsKey('TenantId') | Should -BeFalse
@@ -1036,7 +1036,7 @@ Describe 'Initialize-OPIMAuth' {
             }
         }
 
-        It 'never relabels the session to organizations' {
+        It 'does not relabel the session to organizations' {
             $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
             InModuleScope Omnicit.PIM -Parameters @{ State = $State; TenantA = $TenantA } {
                 param($State, $TenantA)
@@ -1048,7 +1048,7 @@ Describe 'Initialize-OPIMAuth' {
             }
         }
 
-        It 'never adopts a Graph context the module did not make' {
+        It 'does not adopt a Graph context the module did not make' {
             # OPIM-09: a Connect-MgGraph made outside the module, for the tenant now asked for, is not
             # taken over as the module's session; the module signs in for that tenant itself. The
             # session fingerprint recorded after the module's own Connect-MgGraph is the one read of
@@ -1380,7 +1380,7 @@ Describe 'Initialize-OPIMAuth' {
             }
         }
 
-        It 'never connects Graph again by itself after a change (<Name>)' -ForEach @(
+        It 'does not connect Graph again by itself after a change (<Name>)' -ForEach @(
             @{ Name = '-ForceRefresh'; Parameters = @{ ForceRefresh = $true } }
             @{ Name = 'a claims challenge'; Parameters = @{ ClaimsChallenge = '{"access_token":{"acrs":{"essential":true,"value":"c1"}}}' } }
             @{ Name = 'another tenant'; Parameters = @{ TenantId = 'bbbbbbbb-0000-0000-0000-00000000000b' } }

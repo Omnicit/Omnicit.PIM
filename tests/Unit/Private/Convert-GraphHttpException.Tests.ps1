@@ -241,7 +241,7 @@ Describe 'Convert-GraphHttpException' {
     }
 
     Context 'When the input record reaches a request message that carries a token' {
-        It 'never returns a record that reaches the request message' {
+        It 'returns no record that reaches the request message' {
             $F = New-ScrubFixture -Status 403
             InModuleScope Omnicit.PIM -ArgumentList $F.Record {
                 param($InputRecord)

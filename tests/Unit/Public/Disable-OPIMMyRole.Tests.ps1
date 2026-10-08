@@ -240,7 +240,7 @@ Describe 'Disable-OPIMMyRole' {
             $Written[0].FullyQualifiedErrorId | Should -BeLike 'AzureConnectFailed*'
         }
 
-        It 'still deactivates directory roles and groups' {
+        It 'goes on to deactivate directory roles and groups' {
             Disable-OPIMMyRole -AllActivated -Confirm:$false -ErrorAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMEntraIDGroup -Times 1 -Exactly -Scope It
@@ -355,7 +355,7 @@ Describe 'Disable-OPIMMyRole' {
             Should -Invoke -ModuleName Omnicit.PIM $Deactivator -Times 0 -Scope It
         }
 
-        It 'never reports the failed listing as no active roles' {
+        It 'does not report the failed listing as no active roles' {
             $script:PartialRead = $false
             $Out = Disable-OPIMMyRole @MyRoleParams -ErrorAction SilentlyContinue -Verbose 4>&1
             $Said = @($Out | Where-Object {
@@ -364,7 +364,7 @@ Describe 'Disable-OPIMMyRole' {
             $Said.Count | Should -Be 0
         }
 
-        It 'still lists and deactivates the other pillars' {
+        It 'goes on to list and deactivate the other pillars' {
             $script:PartialRead = $true
             Disable-OPIMMyRole @MyRoleParams -ErrorAction SilentlyContinue
             foreach ($Other in $Others) {

@@ -217,7 +217,7 @@ Describe 'Write-OPIMRequestOutcome' {
             $Result.Errors.Count | Should -Be 0
         }
 
-        It 'still reports a failed status of a read-only request as an error' {
+        It 'reports a failed status of a read-only request as an error all the same' {
             $Req = [PSCustomObject]@{ id = 'req-1' }
             $Req | Add-Member -MemberType ScriptProperty -Name Status -Value { 'Denied' }
             $Result = Invoke-Probe -Request $Req -Status 'Denied'

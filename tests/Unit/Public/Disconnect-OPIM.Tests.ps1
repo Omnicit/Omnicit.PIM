@@ -42,7 +42,7 @@ Describe 'Disconnect-OPIM' {
             { Disconnect-OPIM } | Should -Not -Throw
         }
 
-        It 'still calls Disconnect-AzAccount despite the Disconnect-MgGraph error' {
+        It 'calls Disconnect-AzAccount as well, despite the Disconnect-MgGraph error' {
             Disconnect-OPIM
             Should -Invoke -ModuleName Omnicit.PIM Disconnect-AzAccount -Times 1 -Scope It
         }

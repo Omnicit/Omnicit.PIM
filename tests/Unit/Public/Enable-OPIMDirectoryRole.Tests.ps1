@@ -1273,7 +1273,7 @@ Describe 'Enable-OPIMDirectoryRole' {
             @($Result).Count | Should -Be 0
         }
 
-        It 'still hands a request that waits for a decision to Wait-OPIMDirectoryRole' {
+        It 'hands a request that waits for a decision to Wait-OPIMDirectoryRole as well' {
             $Answer.Status = 'PendingApproval'
             $null = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' -Wait -ErrorVariable Errs -ErrorAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole -Times 1 -Exactly -Scope It

@@ -139,7 +139,7 @@ Describe 'New-OPIMScheduleNameError' {
             $Record.Exception.Message | Should -BeLike '*They differ in scope: add -Scope*'
         }
 
-        It 'never names one candidate as the answer' {
+        It 'names no candidate as the answer' {
             $Record.Exception.Message | Should -BeLike '*matches 2*'
             $Record.Exception.Message | Should -Not -BeLike '*Did you mean*'
             $Record.Exception.Message | Should -Not -BeLike '*use elig-00*'
@@ -193,7 +193,7 @@ Describe 'New-OPIMScheduleNameError' {
     }
 
     Context 'When groups share a name' {
-        It 'never suggests -Scope for a group, since a group has no scope' {
+        It 'does not suggest -Scope for a group, since a group has no scope' {
             $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes } {
                 param($Fakes)
                 New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Group -Name 'opim-grp' `
@@ -461,7 +461,7 @@ Describe 'New-OPIMScheduleNameError' {
             $Record.Exception.Message | Should -Not -BeLike '*-AccessType*'
         }
 
-        It 'never also says the post is already deactivated when it is given the active form' {
+        It 'does not also say the post is already deactivated when it is given the active form' {
             $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes } {
                 param($Fakes)
                 New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Directory -Name 'Usage Summary Reports Reader (elig-001)' `
