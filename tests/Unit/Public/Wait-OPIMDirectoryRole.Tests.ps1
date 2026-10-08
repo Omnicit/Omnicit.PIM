@@ -416,6 +416,50 @@ Describe 'Wait-OPIMDirectoryRole' {
         }
     }
 
+    Context 'When a request carries no role name' {
+        # A hand-made request, or a raw Graph answer, may have no roleDefinition, and its label is
+        # then empty. The real Write-Progress refuses an empty -Activity with a terminating error
+        # (MissingActivity); this mock does the same, so a nameless request that reached its role
+        # assignment would end the whole wait if the command passed the empty label on.
+        BeforeEach {
+            Mock -ModuleName Omnicit.PIM Write-Progress {
+                if (-not $Completed -and [string]::IsNullOrEmpty($Activity)) {
+                    $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                            [System.ArgumentException]::new('The Activity parameter is empty.'), 'MissingActivity',
+                            [System.Management.Automation.ErrorCategory]::InvalidArgument, $null))
+                }
+            }
+        }
+
+        It 'names it by its id, and both requests finish and are returned' {
+            $RequestA = New-WaitTestRequest -Id 'req-a'
+            $RequestA.PSObject.Properties.Remove('roleDefinition')
+            $RequestB = New-WaitTestRequest -Id 'req-b' -Name 'Security Administrator'
+            $Thrown = $null
+            $Result = @()
+            try {
+                $Result = @($RequestA, $RequestB | Wait-OPIMDirectoryRole -NoSummary -PassThru -ErrorAction Stop)
+            } catch {
+                $Thrown = $PSItem
+            }
+            $Thrown | Should -BeNullOrEmpty
+            $Result.Count | Should -Be 2
+            @($Result.roleAssignmentScheduleId) | Should -Be @('schedule-req-a', 'schedule-req-b')
+            $RequestA.status | Should -BeExactly 'Provisioned'
+            Should -Invoke -ModuleName Omnicit.PIM Write-Progress -Times 1 -Exactly -Scope It -ParameterFilter { $Activity -eq 'Request req-a' }
+            Should -Invoke -ModuleName Omnicit.PIM Write-Progress -Times 1 -Exactly -Scope It -ParameterFilter { $Activity -eq 'Security Administrator' }
+        }
+
+        It 'names it by its id in what it writes' {
+            $Plan.Poll['req-a'] = @('Denied')
+            $RequestA = New-WaitTestRequest -Id 'req-a'
+            $RequestA.PSObject.Properties.Remove('roleDefinition')
+            $RequestA | Wait-OPIMDirectoryRole -NoSummary -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Wait-OPIMDirectoryRole'
+            $Errs[-1].Exception.Message | Should -BeExactly "Request req-a: the activation request ended with status 'Denied' and did not take effect."
+        }
+    }
+
     Context 'When -PassThru is given' {
         It 'returns the instance of a provisioned request, then the request that ended without one' {
             $Plan.Poll['req-b'] = @('ScheduleCreated')

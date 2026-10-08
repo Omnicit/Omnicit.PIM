@@ -90,8 +90,12 @@ function Wait-OPIMDirectoryRole {
         foreach ($RequestItem in $RoleRequests) {
             $Created = ConvertTo-OPIMUtcDateTime -Value $RequestItem.createdDateTime
             $CountFrom = if ($null -ne $Created) { $Created } else { $WaitStart }
+            # A request without a role name (a hand-made one, or a raw Graph answer) is named by its
+            # id: Write-Progress refuses an empty -Activity with a terminating error, outside any try.
+            $Label = (Get-OPIMScheduleName -Pillar Directory -InputObject $RequestItem).Label
+            if ([string]::IsNullOrWhiteSpace($Label)) { $Label = "Request $($RequestItem.id)".Trim() }
             $Tracked[[string]$RequestItem.id] = @{
-                Label       = (Get-OPIMScheduleName -Pillar Directory -InputObject $RequestItem).Label
+                Label       = $Label
                 Deadline    = $CountFrom.AddSeconds($TimeoutSeconds)
                 Status      = [string]$RequestItem.status
                 Provisioned = $false
