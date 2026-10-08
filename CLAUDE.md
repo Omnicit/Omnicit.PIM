@@ -169,7 +169,9 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   `CHANGELOG.md`, the git diff against `origin/main` and the BUILT manifest (see **CHANGELOG and
   Version**); module import and removal; for every function the module defines -- public and
   private alike, since the cases are enumerated from inside the module with
-  `Get-Command -CommandType Function` (42 on 2026-10-07) -- a unit test file under `tests/`, a
+  `Get-Command -CommandType Function` (46 on 2026-10-08, counted from the files: the 18 under
+  `source/Public` and 28 functions in the 29 files under `source/Private`, where the filter
+  `Restore-GraphProperty` is the one that does not count) -- a unit test file under `tests/`, a
   clean `Invoke-ScriptAnalyzer` run on its source file, and help quality: `.SYNOPSIS`, a
   `.DESCRIPTION` over 40 characters, at least one `.EXAMPLE`, every parameter described; an
   `[OutputType()]` on every EXPORTED function; and a `README.md` that names every exported cmdlet
@@ -229,7 +231,7 @@ and `testhygiene`, `sourcehygiene`, `dochygiene` and `docsync` read files static
 
 # Full test suite -- the authoritative gate, and the command every CI leg runs.
 # QA tests + unit tests + per-function PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-07: 1,354 passed, 0 failed, 0 skipped; coverage 91.66% over 2,219 analysed
+# (measured 2026-10-08: 1,876 passed, 0 failed, 0 skipped; coverage 93.23% over 2,524 analysed
 #  commands; Pester 6.2.0)
 ./build.ps1 -Tasks test
 
@@ -246,7 +248,7 @@ The Sampler test task measures coverage against the **built** module output, not
 `build.yaml`'s `test` workflow does not include `build` (`build.yaml:63-70`; only the default
 workflow, `./build.ps1` with no `-Tasks`, runs both). Always run `-Tasks build` before `-Tasks test`
 after changing source files -- and never build while the tests are running. The coverage threshold
-is 80 % (`build.yaml:152`): measured on 2026-10-07, 2,034 of 2,219 commands are covered, 258 more
+is 80 % (`build.yaml:152`): measured on 2026-10-08, 2,353 of 2,524 commands are covered, 333 more
 than 80 % requires. The margin has been thin before. The MSAL reflection lines in
 `Get-OPIMMsalApplication` are no longer run by any unit test, since reaching them builds a real
 MSAL client (see **Testing Conventions**), and that took coverage from 83.7 % to 80.28 % -- four
@@ -838,10 +840,10 @@ Terminology differs from the PIM portal. Every Graph path is `v1.0`.
 Reads use `filterByCurrentUser(on='principal')` and `$expand=principal,roledefinition`. Graph
 `v1.0` cannot expand `directoryScope`, so `Get-OPIMDirectoryRole` fetches
 `v1.0/directory<directoryScopeId>` through the wrapper for every item not at the root scope `/`
-(`Get-OPIMDirectoryRole.ps1:127`, `:165-169`). A `SelfDeactivate` request is built from the ACTIVE
+(`Get-OPIMDirectoryRole.ps1:142`, `:180-184`). A `SelfDeactivate` request is built from the ACTIVE
 instance, never from an eligibility schedule: it sends the instance's `roleDefinitionId`,
 `directoryScopeId` and `principalId`, and its `roleAssignmentScheduleId` as `targetScheduleId`
-(`Disable-OPIMDirectoryRole.ps1:68-74`). After a request, `Restore-GraphProperty` copies
+(`Disable-OPIMDirectoryRole.ps1:106-112`). After a request, `Restore-GraphProperty` copies
 `roleDefinition`, `principal` and `directoryScope` from the source object into the response; it
 makes no Graph call.
 
@@ -854,9 +856,18 @@ makes no Graph call.
 | `New-AzRoleAssignmentScheduleRequest` | Activate (`SelfActivate`) or deactivate (`SelfDeactivate`) |
 | `Get-AzRoleAssignmentScheduleRequest` | `Enable-OPIMAzureRole -Wait` polling |
 
-Reads use the filter `asTarget()` at scope `/` unless `-Scope` names another. An Azure schedule's
-id is its `Name`, not `id`; an activation sends `LinkedRoleEligibilityScheduleId = $Role.Name`
-(`Enable-OPIMAzureRole.ps1:102-110`).
+Reads use the filter `asTarget()` at scope `/` unless `-Scope` names another. `Get-OPIMAzureRole`
+reads at `-Scope` for a plain listing (no switch, name or `-Identity`), which hands the scope to
+Azure as it is and filters nothing itself, and for `-Activated` (with or without `-Identity`),
+where the module also keeps only the instances whose `ScopeId` equals `-Scope`. With `-All`,
+`-RoleName` or `-Identity` (without `-Activated`) it always reads at `/` and keeps the posts whose
+`ScopeId` equals `-Scope` (a `-Scope` of `/` keeps all); `-RoleName` reads at `/` also with
+`-Activated`, since the resolver calls `Get-OPIMAzureRole -Activated` with no scope. So a `Name` is
+found among the listed posts and never requested by itself, which a normal user is refused at `/`
+(OPIM-23). The `-Scope` of `Enable-` and `Disable-OPIMAzureRole` does the same: it selects among the
+posts of the root listing and changes what is read in no way. An Azure schedule's id is its `Name`,
+not `id`; an activation sends `LinkedRoleEligibilityScheduleId = $Role.Name`
+(`Enable-OPIMAzureRole.ps1:147-155`).
 
 **PIM for Groups** (Graph, `identityGovernance/privilegedAccess/group/`):
 
@@ -876,9 +887,16 @@ expand `group,principal`.
 **`Enable-OPIM*`** (`Enable-OPIMDirectoryRole`, `Enable-OPIMAzureRole`, `Enable-OPIMEntraIDGroup`):
 
 - `-Role` / `-Group` -- schedule objects piped from the matching `Get-OPIM*` cmdlet.
-- `-RoleName` / `-GroupName` -- tab-completed through the `IArgumentCompleter` class in
-  `source/Classes/`; the value ends in `(<schedule id>)`, which `Resolve-RoleByName` parses back.
-- `-Identity` -- a schedule id.
+- `-RoleName` / `-GroupName` (`[string[]]`, position 0) -- the display name of the role or group,
+  or the old tab-completed form `'<name> (<schedule id>)'`, which the `IArgumentCompleter` class in
+  `source/Classes/` offers. `Resolve-OPIMSchedule` resolves each name on its own (see **Name
+  resolution** below), so one name that fails never stops the next.
+- `-Scope` [string] on `Enable-OPIMDirectoryRole` and `Enable-OPIMAzureRole` -- picks one post when
+  a name matches the role at more than one scope; `-AccessType` (`Member` or `Owner`) on
+  `Enable-OPIMEntraIDGroup`, where a display name means the membership unless `Owner` is given.
+  Both exist in the `RoleName` / `GroupName` parameter set only, and apply to EVERY name in the list.
+- `-Identity` -- a schedule id (the Azure `Name`); an id that matches more than one schedule is
+  `AmbiguousName`, never the first.
 - `-Justification`, `-TicketNumber`, `-TicketSystem` -- the optional PIM policy fields.
 - `-Hours` [int] -- default 1; users override it through `$PSDefaultParameterValues`.
 - `-NotBefore` [DateTime] -- activation start, default now.
@@ -891,8 +909,15 @@ expand `group,principal`.
 
 **`Disable-OPIM*`:**
 
-- `-Role` / `-Group` (piped), `-RoleName` / `-GroupName` -- tab-completed to *active* assignments --
-  and `-Identity`.
+- `-Role` / `-Group` (piped), `-RoleName` / `-GroupName` -- a single `[string]`: the display name of
+  an *active* assignment or its old tab-completed form -- and `-Identity`.
+- `-Scope` on `Disable-OPIMDirectoryRole` and `Disable-OPIMAzureRole`, `-AccessType` on
+  `Disable-OPIMEntraIDGroup`, as on the `Enable-` cmdlets (the `RoleName` / `GroupName` parameter
+  set only).
+- A name that matches no active post is the NON-terminating `ActiveRoleNotFound`, written and
+  followed by `return`; when the name still matches an eligible post, its message says the role is
+  eligible but not active (already deactivated, or its activation has not finished yet) -- unless an
+  active post carries the same label under another key, when it names that active form instead.
 - An eligible-only object piped in is skipped with a verbose message.
 - `-WhatIf` / `-Confirm` through `[CmdletBinding(SupportsShouldProcess)]`.
 
@@ -901,13 +926,71 @@ expand `group,principal`.
 - `-Activated` [switch] -- active instances instead of eligibility schedules.
 - `-All` [switch] -- BOTH eligible and active in one call, tagged `Omnicit.PIM.*CombinedSchedule`
   with a `Status` column. Mutually exclusive with `-Activated`.
-- `-RoleName` / `-GroupName`, `-Identity` -- one schedule.
+- `-RoleName` / `-GroupName` (position 0) -- a display name or the old tab-completed form, resolved
+  like on the `Enable-` cmdlets (`Status` `Both`, or `Active` with `-Activated`): the eligible and
+  the active post of the name, or only the active one with `-Activated`. Several matches are
+  `AmbiguousName` and none `EligibleRoleNotFound` (`ActiveRoleNotFound` with `-Activated`), both
+  written non-terminating. `-Identity` and `-Filter` are ignored when a name is given.
+- `-Identity` -- one schedule.
 - `-Filter` [string] -- an OData filter passed through, on `Get-OPIMDirectoryRole` and
   `Get-OPIMEntraIDGroup`; without `-Activated` both eligible and active are searched.
-- `-Scope` [string] on `Get-OPIMAzureRole` -- default `/`; with `-Activated`, an exact scope match.
-- `-AccessType` on `Get-OPIMEntraIDGroup` -- `member` or `owner`.
+- `-Scope` [string] on `Get-OPIMAzureRole` -- default `/`, which has always meant EVERY scope, so
+  `/` is no filter here (unlike on `Enable-`/`Disable-OPIMAzureRole`, where it is the root scope
+  itself); any other scope is an exact, case-insensitive match in the modes the module filters
+  itself (`-Activated`, `-All`, `-RoleName`, `-Identity`), while a plain listing passes it to Azure
+  as it is. See **API Mapping** for where each mode reads.
+- `-AccessType` on `Get-OPIMEntraIDGroup` -- `member` or `owner`; with `-GroupName`, a display name
+  means the membership unless `owner` is given.
 
-**Tab completion.** Each completer returns a quoted string ending in the schedule id in
+**Name resolution.** `Resolve-OPIMSchedule` (private) is the single resolver behind `-RoleName` /
+`-GroupName` on all nine pillar cmdlets; they call it with `-ErrorAction Stop` inside a `try` whose
+catch scrubs first and writes the record. It lists the pillar's posts through the `Get-OPIM*`
+cmdlet, matches them with the pure `Find-OPIMScheduleMatch`, and returns the post or throws one of
+three terminating records built by `New-OPIMScheduleNameError`, their single owner (see **Error
+Handling**). `Get-OPIMScheduleName` is the single owner of the display name, key, scope, access type
+and old form of a post on each pillar; the matcher, the error builder and the completer text all
+read them there.
+
+- **The old form wins when it is a listed key.** When the name ends in parentheses and the text in
+  the LAST pair is the key of a listed post (directory and group `id`, Azure `Name`), that post is the
+  match -- under the explicit `-Scope` / `-AccessType` filters only, never under the Member default.
+  Otherwise the whole string is a display name (`roleDefinition.displayName`, `group.displayName`,
+  `RoleDefinitionDisplayName`), compared with `[string]::Equals(..., OrdinalIgnoreCase)`: exact, no
+  trimming, no wildcards, never `-like`. A name that merely ends in parentheses (`Contoso Ops (EU)`)
+  is a display name.
+- **`-Scope`** is the ARM scope for an Azure role and the `directoryScopeId` (`/` or
+  `/administrativeUnits/<id>`) for a directory role, where an administrative unit's display name is
+  accepted too, since the completer shows it. It is exact and case-insensitive, and a trailing slash
+  other than the root `/` is refused by the parameter's own validation
+  (`ParameterArgumentValidationError`), not by an id of the module. **`-AccessType`** is lower-cased
+  before it reaches the resolver.
+- **Never the first of several.** More than one match is `AmbiguousName` and nothing is activated or
+  deactivated. With `Both`, an eligible and an active post for one name are two states of the same
+  thing and are both returned.
+- **Not found is told apart from a failed read** (OPIM-12, **Error Handling**). The not-found message
+  names what the resolver saw: the access type a group name matches instead, the scopes a name
+  matches at instead, or -- for `Active` -- that the name is eligible but not active (OPIM-40, a
+  best-effort second listing that only leaves the hint out when it fails). That sentence is only
+  true when the role is not active under the same LABEL (`Get-OPIMScheduleName`'s `Label`) with
+  another key, which a name typed from the 0.5.1-era completers (the eligibility's own key) or a
+  stale instance key leads to: the resolver then checks the active list it already read, under the
+  same explicit filters, and `New-OPIMScheduleNameError -ActiveForm` names the active form instead
+  of saying "already deactivated". An activation still pending approval or provisioning is no
+  active instance yet, so the sentence says "already deactivated, or its activation has not
+  finished yet".
+
+**Tab completion.** The six completers build their text with the private, pure
+`Get-OPIMCompletionText`, which offers a post's bare display name when that name, under the filters
+already typed (`-Scope`, `-AccessType`) and the Member default for groups, names exactly that post,
+and otherwise its old form, which is unique. A post the typed filters exclude is not offered, and
+on a `Get-` command a typed `-Scope /` filters nothing. Every text is single-quoted with
+`[System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent` (OPIM-26),
+which doubles every kind of single quote the tokenizer knows -- the straight apostrophe and
+U+2018, U+2019, U+201A and U+201B -- not only `'`, so `Partner<U+2019>s Admins` stays one string.
+The word typed so far is a case-insensitive `StartsWith` prefix, never a wildcard: the engine hands
+it over as an opening quote, the UNESCAPED value and a closing quote (typographic delimiters
+arrive as straight ones), which the helper strips; a caller that passes the word as typed has its
+doubled quotes of any of the five kinds undone. The old form ends in the schedule id in
 parentheses, in a different format per pillar:
 
 - Directory roles: `'<role> -> <scope display name> (<id>)'`, the scope part omitted at the root
@@ -915,10 +998,9 @@ parentheses, in a different format per pillar:
 - Azure roles: `'<role> -> <scope display name> (<Name>)'` -- the id is the schedule's `Name`.
 - Groups: `'<group> - <accessId> (<id>)'` -- a dash, not an arrow.
 
-`Resolve-RoleByName` (private) parses the trailing `(<id>)` and matches `.id` for directory roles
-and groups, `.Name` for Azure. The completers call the `Get-OPIM*` cmdlets through
-`& ([scriptblock]::Create('Get-OPIM...'))`, so a completion authenticates and calls Graph or ARM on
-the prompt path. Keep that call form -- see **Testing Conventions**.
+The completers call the `Get-OPIM*` cmdlets through `& ([scriptblock]::Create('Get-OPIM...'))`, so a
+completion authenticates and calls Graph or ARM on the prompt path. Keep that call form -- see
+**Testing Conventions**.
 
 **Configuration CRUD.** The four `*-OPIMConfiguration` cmdlets manage `TenantMap.psd1`, which
 `Connect-OPIM -TenantAlias` and `pim`/`unpim` read:
@@ -995,16 +1077,16 @@ called by `Install`, `Set` and `Remove`; never inline it.
   module function calls it today.
 - **PSScriptAnalyzer:** the QA gate requires zero findings, with the default rules, for every
   function's source file. A targeted suppression is acceptable only for a known false positive and
-  only with a `Justification` string; **never suppress a rule that hides a real bug.** Four
+  only with a `Justification` string; **never suppress a rule that hides a real bug.** Five
   function files carry suppressions today, measured with a search for `SuppressMessageAttribute`
-  over `source/` on 2026-10-07: `Remove-OPIMErrorRecord` suppresses `PSAvoidGlobalVars` (the
+  over `source/` on 2026-10-08: `Remove-OPIMErrorRecord` suppresses `PSAvoidGlobalVars` (the
   caller's `$global:Error` is the list it must edit) and
   `PSUseShouldProcessForStateChangingFunctions` (it runs unconditionally first in a catch), and
-  `New-OPIMTenantMismatchError`, `New-OPIMGraphSessionChangedError` and
-  `New-OPIMSignInRefusedError` each suppress `PSUseShouldProcessForStateChangingFunctions` (a pure
-  record builder that the `New-` verb draws the rule onto). The six completer classes carry two each
-  (`PSAvoidUsingWriteHost` and `PSUseDeclaredVarsMoreThanAssignments`). Each suppression carries a
-  `Justification`.
+  `New-OPIMTenantMismatchError`, `New-OPIMGraphSessionChangedError`, `New-OPIMSignInRefusedError`
+  and `New-OPIMScheduleNameError` each suppress `PSUseShouldProcessForStateChangingFunctions` (a
+  pure record builder that the `New-` verb draws the rule onto). The six completer classes carry
+  two each (`PSAvoidUsingWriteHost` and `PSUseDeclaredVarsMoreThanAssignments`). Each suppression
+  carries a `Justification`.
 
 ---
 
@@ -1045,22 +1127,33 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `throw`: it writes a failed request with `Write-CmdletError` (non-terminating) and ends a timeout
   with `Write-CmdletError -Terminating`, both without an `-ErrorId`, so their
   `FullyQualifiedErrorId` is the bare command name `Wait-OPIMDirectoryRole`.
-- **Private helpers** such as `Resolve-RoleByName`, `Restore-GraphProperty` and `Get-MyId` may
+- **Private helpers** such as `Resolve-OPIMSchedule`, `Restore-GraphProperty` and `Get-MyId` may
   `throw` on caller error, and `Invoke-OPIMGraphRequest` throws the converted Graph error by
   design: the caller is responsible for catching and routing it.
+- **Name errors have one owner.** `New-OPIMScheduleNameError` builds `AmbiguousName` (category
+  `InvalidArgument`) and `EligibleRoleNotFound` and `ActiveRoleNotFound` (`ObjectNotFound`), with
+  their messages; build those records nowhere else. `AmbiguousName` lists every candidate in its old
+  form and never names one as the answer; `Resolve-OPIMSchedule` throws all three with
+  `ThrowTerminatingError`, and the pillar cmdlet's catch writes them (non-terminating), so a name
+  that cannot be resolved ends neither the pipeline nor the next name. `IdentityNotFound` stays the
+  id for an `-Identity` that matches nothing; an `-Identity` that matches several is written as
+  `AmbiguousName` (the message says "identity"), and the cmdlet returns without acting.
 - **A list that cannot be read is reported as itself, never as "not found" (OPIM-12).** A command
   that lists in order to resolve or act calls the `Get-OPIM*` listing with `-ErrorAction Stop` in
-  a `try` whose catch scrubs first. `Resolve-RoleByName` rethrows the listing's own record
-  (`throw $PSItem` keeps its id, such as `Forbidden,Get-OPIMDirectoryRole`), so the cmdlet stops
-  at that name as it does for a name it cannot resolve and never goes on to the next one -- except
-  under `-ErrorAction SilentlyContinue`, which suppresses the rethrow just as it has always
-  suppressed the not-found throw. The `-Identity` paths of the six `Enable-`/`Disable-` cmdlets
-  write the record and stop for that identity, with no `IdentityNotFound`; a written record keeps
-  the listing's id with the writing cmdlet as its suffix (`Forbidden,Enable-OPIMDirectoryRole`,
-  measured 2026-10-07). Each pillar of `Enable-`/`Disable-OPIMMyRole` writes it and skips the rest
-  of that pillar only: nothing the failed listing read is acted on, no "no eligible" or "not
-  currently activated" message is written for it, and the other pillars still run -- except under
-  the `Stop` error preference, where the first such write ends the command.
+  a `try` whose catch scrubs first. `Resolve-OPIMSchedule` rethrows the listing's own record
+  (`throw $PSItem` keeps its id, such as `Forbidden,Get-OPIMDirectoryRole`), and every pillar
+  cmdlet catches what the resolver throws, scrubs first and writes it as itself -- an error of that
+  NAME. The `Enable-` cmdlets resolve each name of `-RoleName` / `-GroupName` in a `try` of its own,
+  so a failed name (unreadable listing, ambiguous or not found) never stops the next one; a
+  `Disable-` or `Get-` cmdlet takes one name and returns. Under the `Stop` error preference the
+  first such write ends the command, as for any non-terminating error. The `-Identity` paths of the
+  six `Enable-`/`Disable-` cmdlets write the record and stop for that identity, with no
+  `IdentityNotFound`; a written record keeps the listing's id with the writing cmdlet as its suffix
+  (`Forbidden,Enable-OPIMDirectoryRole`, measured 2026-10-07). Each pillar of
+  `Enable-`/`Disable-OPIMMyRole` writes it and skips the rest of that pillar only: nothing the
+  failed listing read is acted on, no "no eligible" or "not currently activated" message is
+  written for it, and the other pillars still run -- except under the `Stop` error preference,
+  where the first such write ends the command.
 - **`Write-CmdletError`** (private) emits a structured record. Its `-Message` expects an
   `[Exception]`, not a string (`Write-CmdletError.ps1:76`) -- always wrap bare strings:
   `[System.Exception]::new('message')`. `-InnerException` chains a caught exception, `-Terminating`
@@ -1079,7 +1172,7 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   token -- and it is never the raw record itself.
   An `Az.Resources` error arrives in `$PSItem` as the cmdlet threw it; inspect
   `$PSItem.FullyQualifiedErrorId` (`.Split(',')[0]` where the id carries a suffix, as
-  `Get-OPIMAzureRole.ps1:110` does) and pass it to `$PSCmdlet.WriteError()` or rewrap it with
+  `Get-OPIMAzureRole.ps1:142` does) and pass it to `$PSCmdlet.WriteError()` or rewrap it with
   `Write-CmdletError`.
 - **Special error codes have converters.** `ConvertTo-ActiveDurationTooShortError` turns
   `ActiveDurationTooShort` (a deactivation within 5 minutes of the activation) into a readable
@@ -1285,6 +1378,15 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   ```
   `Write-Error -ErrorId ... -ErrorAction Stop` also works where the code reads the id with
   `.Split(',')[0]`.
+- **Name resolution is tested at its own boundary, and through the real resolver.** Most of a pillar
+  cmdlet's argument-contract tests mock `Resolve-OPIMSchedule` (`Mock -ModuleName Omnicit.PIM`) and
+  assert the arguments it was called with -- `Pillar`, `Name`, `Status`, `Scope` or `AccessType`,
+  `FilterParameter` -- since the resolver is where a wrong filter would activate the wrong post.
+  The cmdlets' behaviour contexts (an ambiguous name sends 0 requests, a name that is already
+  deactivated, a failed listing) run the REAL resolver against mocked `Get-OPIM*` listings, which is
+  what proves what the whole command does; `Resolve-OPIMSchedule.Tests.ps1` mocks the listings
+  too. `Find-OPIMScheduleMatch`, `Get-OPIMScheduleName`, `New-OPIMScheduleNameError` and
+  `Get-OPIMCompletionText` are pure and are called with typed fixtures.
 - **Private functions** are called inside `InModuleScope Omnicit.PIM { ... }`. A public function's
   test needs only `-ModuleName Omnicit.PIM` on its mocks.
 - **Reset module-scoped caches** in `BeforeEach` when the function under test uses them -- not as a
@@ -1298,13 +1400,17 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
       }
   }
   ```
-- **Completer classes.** `InModuleScope { Mock ... }` does NOT intercept a call made from a class
-  method, because the method body is bound to the module's runspace at class-load time. The
-  completers therefore call `Get-OPIM*` through
+- **Completer classes.** The completers call `Get-OPIM*` through
   `& ([scriptblock]::Create('Get-OPIMDirectoryRole'))`, which resolves the command through the
-  normal pipeline where a mock can intercept it -- **do not revert that to a direct call.** Mock
-  with `-ModuleName` OUTSIDE `InModuleScope`, and instantiate and call the class INSIDE it, since a
-  module's class types are not visible to the test scope:
+  normal pipeline where a mock can intercept it -- **do not revert that to a direct call.**
+  Measured 2026-10-08 (Pester 6.2.0, PowerShell 7.6.6): in a fresh `pwsh` process a
+  direct call from a class method IS intercepted, by `Mock -ModuleName` and by
+  `InModuleScope { Mock }` alike, but in a second `./build.ps1 -Tasks test` in the same process the
+  class methods stay bound to the FIRST module instance and no mock intercepts them any more; the
+  scriptblock form keeps working there. The text a completer returns is built by the private,
+  pure `Get-OPIMCompletionText`, which has a test file of its own. Mock with `-ModuleName` OUTSIDE
+  `InModuleScope`, and instantiate and call the class INSIDE it, since a module's class types are
+  not visible to the test scope:
   ```powershell
   It 'returns completion results' {
       Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return $FakeData }
@@ -1447,7 +1553,7 @@ version drift.
 
 1. **Create the file:** `source/Public/Verb-OPIMNoun.ps1` for a public function, or
    `source/Private/<FunctionName>.ps1` for a private helper (several, such as `Get-MyId` and
-   `Resolve-RoleByName`, carry no OPIM prefix). Either way the filename must match the function
+   `Write-CmdletError`, carry no OPIM prefix). Either way the filename must match the function
    name exactly. Declare it with `function`, not `filter` (see **Common Pitfalls**).
 2. **If public:** add it to `FunctionsToExport` in `source/Omnicit.PIM.psd1`, declare its
    `[OutputType()]`, declare any alias with `[Alias()]` on the function, and add the alias to

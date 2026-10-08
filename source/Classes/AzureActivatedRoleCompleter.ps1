@@ -16,12 +16,11 @@ class AzureActivatedRoleCompleter : IArgumentCompleter {
         $ErrorActionPreference = 'Stop'
         try {
             Write-Progress -Id 51806 -Activity 'Get Activated Azure Roles' -Status 'Fetching from Azure' -PercentComplete 1
-            [List[CompletionResult]]$Result = & ([scriptblock]::Create('Get-OPIMAzureRole -Activated')) | ForEach-Object {
-                "'{0} -> {1} ({2})'" -f $PSItem.RoleDefinitionDisplayName, $PSItem.ScopeDisplayName, $PSItem.Name
-            } | Where-Object {
-                if (-not $wordToComplete) { return $true }
-                $PSItem.replace("'", '') -like "$($wordToComplete.replace("'",''))*"
-            }
+            $Listed = @(& ([scriptblock]::Create('Get-OPIMAzureRole -Activated')))
+            [List[CompletionResult]]$Result = @(
+                Get-OPIMCompletionText -Pillar Azure -InputObject $Listed -WordToComplete $WordToComplete `
+                    -FakeBoundParameters $FakeBoundParameters -CommandName $CommandName
+            )
             Write-Progress -Id 51806 -Activity 'Get Activated Azure Roles' -Completed
             return $Result
         } catch {

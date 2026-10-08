@@ -10,11 +10,17 @@ function Get-OPIMDirectoryRole {
     Without any switch: returns eligible (inactive) directory roles for the current user.
     With -Activated: returns currently active role assignment schedule instances.
     With -All: returns BOTH eligible and active schedules for the current user.
+    With -RoleName (the first positional argument): returns one role named by its display name, or by
+    the tab-completed form, as its eligible and its active post.
 
     -All and -Activated are mutually exclusive.
     .EXAMPLE
     Get-OPIMDirectoryRole
     List all eligible (inactive) directory roles for yourself.
+    .EXAMPLE
+    Get-OPIMDirectoryRole 'Usage Summary Reports Reader'
+    Retrieve a role by its display name: its eligible and its active post, if it has both. A name that
+    matches the role at more than one scope is refused with AmbiguousName.
     .EXAMPLE
     Get-OPIMDirectoryRole -Activated
     List all currently activated directory roles for yourself.
@@ -32,11 +38,12 @@ function Get-OPIMDirectoryRole {
       principalId eq '<guid>'       -- filter by a specific principal (requires elevated permissions)
     .EXAMPLE
     Get-OPIMDirectoryRole 'Global Administrator -> Directory (elig-001)'
-    Tab-complete and retrieve details for a role by name (dual-search: returns eligible and/or active).
+    Retrieve a role by the tab-completed form, with its schedule id in parentheses (dual-search:
+    returns eligible and/or active).
     .OUTPUTS
     PSCustomObject tagged as Omnicit.PIM.DirectoryEligibilitySchedule,
     Omnicit.PIM.DirectoryAssignmentScheduleInstance, or Omnicit.PIM.DirectoryCombinedSchedule
-    (when -All, -Identity, or -Filter is used without -Activated).
+    (when -All, -Identity, -Filter, or -RoleName is used without -Activated).
     .PARAMETER All
     Return BOTH eligible and active role schedules for the current user in a single call.
     Objects are emitted with the Omnicit.PIM.DirectoryCombinedSchedule type for consistent
@@ -46,9 +53,12 @@ function Get-OPIMDirectoryRole {
     (inactive) role eligibility schedules.
     Mutually exclusive with -All.
     .PARAMETER RoleName
-    Tab-completable name of the directory role in the format produced by the argument completer.
-    Extracts the schedule ID from the trailing (id) and performs a dual-search across eligible
-    and active schedules. Mutually exclusive intent with -Identity (both set the same filter).
+    The display name of the directory role, or the tab-completed form the argument completer offers.
+    Returns the eligible and the active post of that role (only the active instance with -Activated);
+    several matches (the role at more than one scope) are refused with AmbiguousName, which lists them;
+    give the tab-completed form of the one you mean, since this cmdlet has no -Scope. No match is
+    EligibleRoleNotFound (ActiveRoleNotFound with -Activated). A display name is compared exactly,
+    without regard to letter case. -Identity and -Filter are ignored when -RoleName is given.
     .PARAMETER Identity
     The schedule item ID used to retrieve a single specific role record by its unique identifier.
     The ID corresponds to the id property on objects returned by this cmdlet.
@@ -75,13 +85,18 @@ function Get-OPIMDirectoryRole {
     )
     process {
         Initialize-OPIMAuth
-        # Resolve RoleName to a schedule Identity if provided (extract ID from trailing '(id)' suffix)
         if ($RoleName) {
-            if ($RoleName -match '\(([^)]+)\)$') {
-                $Identity = $Matches[1]
-            } else {
-                $Identity = $RoleName
+            # A name -- display name or the old tab-completed form -- resolves like on Enable and
+            # Disable: one post per state, AmbiguousName for several, EligibleRoleNotFound for none.
+            $ResolveParams = @{ Pillar = 'Directory'; ErrorAction = 'Stop' }
+            $ResolveParams.Status = if ($Activated) { 'Active' } else { 'Both' }
+            try {
+                Resolve-OPIMSchedule -Name $RoleName @ResolveParams
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
             }
+            return
         }
 
         [string]$UserFilter = "/filterByCurrentUser(on='principal')"

@@ -453,37 +453,262 @@ Describe 'Get-OPIMDirectoryRole' {
     }
 
     Context 'When -RoleName is specified' {
+        # A name resolves through Resolve-OPIMSchedule, as on Enable and Disable. The resolver lists by
+        # calling this cmdlet without a name, so the transport mocks below answer the nested listing
+        # and the whole path runs for real.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            # Typed fakes carry every property a self-referencing ScriptProperty of their type reads:
+            # memberType and endDateTime on an assignment instance.
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
-                return @{
+                @{
                     value = @(
-                        @{
-                            id               = 'elig-001'
-                            roleDefinitionId = 'role-def-001'
-                            directoryScopeId = '/'
-                            roleDefinition   = @{ displayName = 'Global Administrator' }
-                            principal        = @{ displayName = 'Jane Doe' }
-                        }
+                        @{ id = 'elig-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'; roleDefinition = @{ displayName = 'Global Administrator' }; principal = @{ displayName = 'Jane Doe' } }
+                        @{ id = 'elig-002'; roleDefinitionId = 'role-def-002'; directoryScopeId = '/administrativeUnits/au-001'; roleDefinition = @{ displayName = 'User Administrator' }; principal = @{ displayName = 'Jane Doe' } }
+                        @{ id = 'elig-003'; roleDefinitionId = 'role-def-003'; directoryScopeId = '/'; roleDefinition = @{ displayName = 'Helpdesk Administrator' }; principal = @{ displayName = 'Jane Doe' } }
+                        @{ id = 'elig-004'; roleDefinitionId = 'role-def-003'; directoryScopeId = '/administrativeUnits/au-001'; roleDefinition = @{ displayName = 'Helpdesk Administrator' }; principal = @{ displayName = 'Jane Doe' } }
                     )
                 }
             } -ParameterFilter { $Uri -like '*roleEligibilitySchedules*' }
-
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
-                return @{ value = @() }
+                @{
+                    value = @(
+                        @{ id = 'active-001'; assignmentType = 'Activated'; memberType = 'Direct'; endDateTime = '2026-10-08T12:00:00Z'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'; roleDefinition = @{ displayName = 'Global Administrator' }; principal = @{ displayName = 'Jane Doe' } }
+                    )
+                }
             } -ParameterFilter { $Uri -like '*roleAssignmentScheduleInstances*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                @{ id = '/administrativeUnits/au-001'; displayName = 'Admin Unit 1' }
+            } -ParameterFilter { $Uri -like '*directory/administrativeUnits/au-001*' }
         }
 
-        It 'extracts the schedule ID from trailing parentheses and performs dual-search' {
-            Get-OPIMDirectoryRole -RoleName 'Global Administrator -> Directory (elig-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Scope It -ParameterFilter {
-                $Uri -like "*id eq 'elig-001'*"
+        Context 'a display name that names one role' {
+            It 'returns the eligible post tagged as a combined schedule' {
+                $Result = @(Get-OPIMDirectoryRole -RoleName 'User Administrator')
+                $Result | Should -HaveCount 1
+                $Result[0].id | Should -BeExactly 'elig-002'
+                $Result[0].Status | Should -BeExactly 'Eligible'
+                $Result[0].directoryScope.displayName | Should -BeExactly 'Admin Unit 1'
+                $Result[0].PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryCombinedSchedule'
+                $Result[0].PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryEligibilitySchedule'
+            }
+
+            It 'takes the name as the first positional argument and ignores its case' {
+                $Result = @(Get-OPIMDirectoryRole 'user administrator')
+                $Result | Should -HaveCount 1
+                $Result[0].id | Should -BeExactly 'elig-002'
+            }
+
+            It 'sends no id filter, since the name is matched on the listing' {
+                $null = Get-OPIMDirectoryRole -RoleName 'User Administrator'
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter {
+                    $Uri -like '*id eq*'
+                }
             }
         }
 
-        It 'returns an object tagged with Omnicit.PIM.DirectoryCombinedSchedule' {
-            $Result = Get-OPIMDirectoryRole -RoleName 'Global Administrator -> Directory (elig-001)'
-            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryCombinedSchedule'
+        Context 'a display name whose role is both eligible and active' {
+            It 'returns one post per state' {
+                $Result = @(Get-OPIMDirectoryRole -RoleName 'Global Administrator')
+                $Result | Should -HaveCount 2
+                ($Result | Sort-Object Status | ForEach-Object { "$($_.Status):$($_.id)" }) -join ',' |
+                    Should -BeExactly 'Active:active-001,Eligible:elig-001'
+                foreach ($Post in $Result) {
+                    $Post.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryCombinedSchedule'
+                }
+            }
+
+            It 'reads both lists' {
+                $null = Get-OPIMDirectoryRole -RoleName 'Global Administrator'
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Uri -like '*roleEligibilitySchedules*'
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Uri -like '*roleAssignmentScheduleInstances*'
+                }
+            }
+        }
+
+        Context 'with -Activated' {
+            It 'returns only the active instance' {
+                $Result = @(Get-OPIMDirectoryRole -Activated -RoleName 'Global Administrator')
+                $Result | Should -HaveCount 1
+                $Result[0].id | Should -BeExactly 'active-001'
+                $Result[0].PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryAssignmentScheduleInstance'
+            }
+
+            It 'does not read the eligible list when the active instance is found' {
+                $null = Get-OPIMDirectoryRole -Activated -RoleName 'Global Administrator'
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter {
+                    $Uri -like '*roleEligibilitySchedules*'
+                }
+            }
+
+            It 'writes ActiveRoleNotFound for a role that is not active' {
+                $Output = @(Get-OPIMDirectoryRole -Activated -RoleName 'User Administrator' -ErrorAction Continue 2>&1)
+                $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Written | Should -HaveCount 1
+                $Written[0].FullyQualifiedErrorId | Should -BeExactly 'ActiveRoleNotFound,Get-OPIMDirectoryRole'
+                @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
+            }
+        }
+
+        Context 'a display name that names several roles' {
+            It 'writes AmbiguousName with the candidates and returns nothing' {
+                $Output = @(Get-OPIMDirectoryRole -RoleName 'Helpdesk Administrator' -ErrorAction Continue 2>&1)
+                $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Written | Should -HaveCount 1
+                $Written[0].FullyQualifiedErrorId | Should -BeExactly 'AmbiguousName,Get-OPIMDirectoryRole'
+                $Written[0].Exception.Message | Should -Match 'elig-003'
+                $Written[0].Exception.Message | Should -Match 'elig-004'
+                @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
+            }
+
+            It 'does not offer -Scope, since the cmdlet has none' {
+                $Output = @(Get-OPIMDirectoryRole -RoleName 'Helpdesk Administrator' -ErrorAction Continue 2>&1)
+                $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Written | Should -HaveCount 1
+                $Written[0].Exception.Message | Should -Not -Match '-Scope'
+                $Written[0].Exception.Message | Should -Match 'tab-completed'
+            }
+        }
+
+        Context 'a name that no role carries' {
+            It 'writes EligibleRoleNotFound and returns nothing' {
+                $Output = @(Get-OPIMDirectoryRole -RoleName 'No Such Role' -ErrorAction Continue 2>&1)
+                $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Written | Should -HaveCount 1
+                $Written[0].FullyQualifiedErrorId | Should -BeExactly 'EligibleRoleNotFound,Get-OPIMDirectoryRole'
+                @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
+            }
+
+            It 'writes it as a non-terminating error' {
+                { Get-OPIMDirectoryRole -RoleName 'No Such Role' -ErrorAction SilentlyContinue } | Should -Not -Throw
+            }
+        }
+
+        Context 'the old tab-completed form' {
+            It 'returns the post whose id ends the string, for a role at an administrative unit' {
+                $Result = @(Get-OPIMDirectoryRole -RoleName 'User Administrator -> Admin Unit 1 (elig-002)')
+                $Result | Should -HaveCount 1
+                $Result[0].id | Should -BeExactly 'elig-002'
+            }
+
+            It 'returns the post whose id ends the string, for the root scope form' {
+                $Result = @(Get-OPIMDirectoryRole -RoleName 'Global Administrator -> Directory (elig-001)')
+                $Result | Should -HaveCount 1
+                $Result[0].id | Should -BeExactly 'elig-001'
+                $Result[0].PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryCombinedSchedule'
+            }
+
+            It 'sends no id filter, since the key is matched on the listing' {
+                $null = Get-OPIMDirectoryRole -RoleName 'Global Administrator -> Directory (elig-001)'
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter {
+                    $Uri -like '*id eq*'
+                }
+            }
+        }
+    }
+
+    Context 'When -RoleName is specified and the listing fails' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                $PSCmdlet.ThrowTerminatingError(
+                    [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Forbidden: access denied'),
+                        'Forbidden',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied,
+                        $null
+                    )
+                )
+            }
+        }
+
+        It 'writes the listing''s own error and never EligibleRoleNotFound' {
+            $Output = @(Get-OPIMDirectoryRole -RoleName 'Global Administrator' -ErrorAction Continue 2>&1)
+            $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written | Should -HaveCount 1
+            $Written[0].FullyQualifiedErrorId | Should -BeExactly 'Forbidden,Get-OPIMDirectoryRole'
+            @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
+        }
+
+        It 'writes the listing''s own error under -ErrorAction SilentlyContinue too' {
+            $Errs = $null
+            $Output = @(Get-OPIMDirectoryRole -RoleName 'Global Administrator' -ErrorVariable Errs -ErrorAction SilentlyContinue)
+            $Output | Should -HaveCount 0
+            # -ErrorVariable collects every nested frame's copy as well; the cmdlet's own record is the last.
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'Forbidden,Get-OPIMDirectoryRole'
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'EligibleRoleNotFound*' }) | Should -HaveCount 0
+        }
+    }
+
+    Context 'When -RoleName is specified and the resolver is mocked' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {}
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule {
+                [PSCustomObject]@{ id = 'resolved-001'; Status = 'Eligible' }
+            }
+        }
+
+        It 'hands the resolver the directory pillar, both states and the name, and no filter' {
+            $Result = @(Get-OPIMDirectoryRole -RoleName 'Global Administrator')
+            $Result | Should -HaveCount 1
+            $Result[0].id | Should -BeExactly 'resolved-001'
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Pillar -eq 'Directory' -and $Status -eq 'Both' -and $Name -ceq 'Global Administrator' -and
+                -not $FilterParameter -and -not $Scope -and -not $AccessType
+            }
+        }
+
+        It 'hands the resolver both states with -All' {
+            $null = Get-OPIMDirectoryRole -All -RoleName 'Global Administrator'
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Status -eq 'Both'
+            }
+        }
+
+        It 'hands the resolver the active state with -Activated' {
+            $null = Get-OPIMDirectoryRole -Activated -RoleName 'Global Administrator'
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Pillar -eq 'Directory' -and $Status -eq 'Active'
+            }
+        }
+
+        It 'lists nothing itself, since the resolver lists' {
+            $null = Get-OPIMDirectoryRole -RoleName 'Global Administrator'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It
+        }
+
+        It 'does not call the resolver without a name' {
+            $null = Get-OPIMDirectoryRole
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 0 -Scope It
+        }
+    }
+
+    Context 'When the resolver writes an error instead of throwing' {
+        # The cmdlet calls the resolver with -ErrorAction Stop, so an error the resolver only writes
+        # ends that name inside the cmdlet's own try and is written as the cmdlet's own error. The
+        # mock takes its preference from an explicit -ErrorAction and is Continue otherwise, as the
+        # resolver is under the default preference.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {}
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule {
+                $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            }
+        }
+
+        It 'writes the error as its own, once' {
+            $Out = Get-OPIMDirectoryRole -RoleName 'Global Administrator' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            @($Written | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Get-OPIMDirectoryRole' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It
         }
     }
 

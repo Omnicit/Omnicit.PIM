@@ -16,15 +16,11 @@ class DirectoryEligibleRoleCompleter : IArgumentCompleter {
         $ErrorActionPreference = 'Stop'
         try {
             Write-Progress -Id 51806 -Activity 'Get Eligible Directory Roles' -Status 'Fetching from Azure' -PercentComplete 1
-            [List[CompletionResult]]$Result = & ([scriptblock]::Create('Get-OPIMDirectoryRole')) | ForEach-Object {
-                $Scope = if ($PSItem.directoryScopeId -ne '/') {
-                    "-> $($PSItem.directoryScope.displayName) "
-                }
-                "'{0} $Scope({1})'" -f $PSItem.roleDefinition.displayName, $PSItem.id
-            } | Where-Object {
-                if (-not $wordToComplete) { return $true }
-                $PSItem.replace("'", '') -like "$($wordToComplete.replace("'",''))*"
-            }
+            $Listed = @(& ([scriptblock]::Create('Get-OPIMDirectoryRole')))
+            [List[CompletionResult]]$Result = @(
+                Get-OPIMCompletionText -Pillar Directory -InputObject $Listed -WordToComplete $WordToComplete `
+                    -FakeBoundParameters $FakeBoundParameters -CommandName $CommandName
+            )
             Write-Progress -Id 51806 -Activity 'Get Eligible Directory Roles' -Completed
             return $Result
         } catch {

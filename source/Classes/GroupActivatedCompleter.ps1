@@ -16,12 +16,11 @@ class GroupActivatedCompleter : IArgumentCompleter {
         $ErrorActionPreference = 'Stop'
         try {
             Write-Progress -Id 51806 -Activity 'Get Activated PIM Groups' -Status 'Fetching from Azure' -PercentComplete 1
-            [List[CompletionResult]]$Result = & ([scriptblock]::Create('Get-OPIMEntraIDGroup -Activated')) | ForEach-Object {
-                "'{0} - {1} ({2})'" -f $PSItem.group.displayName, $PSItem.accessId, $PSItem.id
-            } | Where-Object {
-                if (-not $wordToComplete) { return $true }
-                $PSItem.replace("'", '') -like "$($wordToComplete.replace("'",''))*"
-            }
+            $Listed = @(& ([scriptblock]::Create('Get-OPIMEntraIDGroup -Activated')))
+            [List[CompletionResult]]$Result = @(
+                Get-OPIMCompletionText -Pillar Group -InputObject $Listed -WordToComplete $WordToComplete `
+                    -FakeBoundParameters $FakeBoundParameters -CommandName $CommandName
+            )
             Write-Progress -Id 51806 -Activity 'Get Activated PIM Groups' -Completed
             return $Result
         } catch {

@@ -10,11 +10,21 @@ function Get-OPIMEntraIDGroup {
     Without any switch: returns eligible (inactive) group assignments for the current user.
     With -Activated: returns currently active group assignment schedule instances.
     With -All: returns BOTH eligible and active group assignments for the current user.
+    With -GroupName (the first positional argument): returns one group named by its display name, or
+    by the tab-completed form, as its eligible and its active post. A display name means the
+    membership unless -AccessType owner is given.
 
     -All and -Activated are mutually exclusive.
     .EXAMPLE
     Get-OPIMEntraIDGroup
     List all eligible PIM group memberships/ownerships for yourself.
+    .EXAMPLE
+    Get-OPIMEntraIDGroup 'Finance Team'
+    Retrieve the membership of a group by its display name: its eligible and its active post, if it
+    has both.
+    .EXAMPLE
+    Get-OPIMEntraIDGroup 'Finance Team' -AccessType owner
+    Retrieve the ownership of the group instead.
     .EXAMPLE
     Get-OPIMEntraIDGroup -Activated
     List all currently active PIM group memberships/ownerships.
@@ -35,11 +45,12 @@ function Get-OPIMEntraIDGroup {
       principalId eq '<guid>'   -- filter by a specific principal
     .EXAMPLE
     Get-OPIMEntraIDGroup 'Finance Team - member (elig-001)'
-    Tab-complete and retrieve details for a group assignment by name (dual-search).
+    Retrieve a group assignment by the tab-completed form, with its schedule id in parentheses
+    (dual-search). The form names its access type itself.
     .OUTPUTS
     PSCustomObject tagged as Omnicit.PIM.GroupEligibilitySchedule,
     Omnicit.PIM.GroupAssignmentScheduleInstance, or Omnicit.PIM.GroupCombinedSchedule
-    (when -All, -Identity or -Filter is used without -Activated).
+    (when -All, -Identity, -Filter or -GroupName is used without -Activated).
     .PARAMETER All
     Return BOTH eligible and active group assignment schedules for the current user in a single call.
     Objects are emitted with the Omnicit.PIM.GroupCombinedSchedule type for consistent table
@@ -49,9 +60,11 @@ function Get-OPIMEntraIDGroup {
     (inactive) group eligibility schedules.
     Mutually exclusive with -All.
     .PARAMETER GroupName
-    Tab-completable name of the PIM group assignment in the format produced by the argument completer.
-    Extracts the schedule ID from the trailing (id) and performs a dual-search across eligible
-    and active schedules. Mutually exclusive intent with -Identity (both set the same filter).
+    The display name of the group, or the tab-completed form the argument completer offers. A display
+    name means the membership; add -AccessType owner for the ownership. Returns the eligible and the
+    active post (only the active instance with -Activated); several matches are refused with
+    AmbiguousName, and none with EligibleRoleNotFound (ActiveRoleNotFound with -Activated).
+    -Identity and -Filter are ignored when -GroupName is given.
     .PARAMETER Identity
     The schedule item ID used to retrieve a single specific group assignment record by its unique identifier.
     The ID corresponds to the id property on objects returned by this cmdlet.
@@ -65,7 +78,8 @@ function Get-OPIMEntraIDGroup {
       -Filter "principalId eq '<guid>'"
     .PARAMETER AccessType
     Limits results to a specific access type. Accepts member or owner. When omitted both
-    membership and ownership schedules are returned. Applies to all modes including -All.
+    membership and ownership schedules are returned, except with -GroupName, where a display name
+    means the membership and -AccessType owner picks the ownership. Applies to all modes including -All.
     #>
     [Alias('Get-PIMGroup')]
     [CmdletBinding(DefaultParameterSetName = 'Default')]
@@ -83,15 +97,22 @@ function Get-OPIMEntraIDGroup {
     )
     process {
         Initialize-OPIMAuth
-        # Resolve GroupName to a schedule Identity if provided (extract ID from trailing '(id)' suffix)
-        [string]$ResolvedId = $Identity
         if ($GroupName) {
-            if ($GroupName -match '\(([^)]+)\)$') {
-                $ResolvedId = $Matches[1]
-            } else {
-                $ResolvedId = $GroupName
+            # A name -- display name or the old tab-completed form -- resolves like on Enable and
+            # Disable: one post per state, AmbiguousName for several, EligibleRoleNotFound for none.
+            # A display name means the membership unless -AccessType says otherwise.
+            $ResolveParams = @{ Pillar = 'Group'; FilterParameter = 'AccessType'; ErrorAction = 'Stop' }
+            $ResolveParams.Status = if ($Activated) { 'Active' } else { 'Both' }
+            if ($AccessType) { $ResolveParams.AccessType = $AccessType.ToLowerInvariant() }
+            try {
+                Resolve-OPIMSchedule -Name $GroupName @ResolveParams
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
             }
+            return
         }
+        [string]$ResolvedId = $Identity
 
         $Base = 'v1.0/identityGovernance/privilegedAccess/group'
         [string]$UserFilter = "/filterByCurrentUser(on='principal')"
