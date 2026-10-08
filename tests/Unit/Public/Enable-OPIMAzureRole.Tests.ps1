@@ -337,6 +337,59 @@ Describe 'Enable-OPIMAzureRole' {
                 $ExpirationDuration -eq 'PT8H'
             }
         }
+
+        It 'sends PT1H when -Hours 1, the lower edge, is given' {
+            Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)' -Hours 1
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $ExpirationDuration -eq 'PT1H'
+            }
+        }
+
+        # XmlConvert.ToString writes 24 hours as P1D, which is the same ISO 8601 duration as PT24H, so
+        # the assertion reads the duration back instead of pinning one spelling of it.
+        It 'sends a duration of exactly 24 hours when -Hours 24, the upper edge, is given' {
+            Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)' -Hours 24
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                [System.Xml.XmlConvert]::ToTimeSpan($ExpirationDuration) -eq [TimeSpan]::FromHours(24)
+            }
+        }
+    }
+
+    Context 'When -Hours is outside 1 to 24' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $fakeRole = [PSCustomObject]@{
+                Name                      = 'elig-001'
+                ScopeId                   = '/subscriptions/sub-001'
+                ScopeDisplayName          = 'My Subscription'
+                PrincipalId               = 'principal-001'
+                RoleDefinitionId          = '/providers/Microsoft.Authorization/roleDefinitions/role-def-001'
+                RoleDefinitionDisplayName = 'Contributor'
+            }
+            $fakeResponse = [PSCustomObject]@{
+                Name        = [System.Guid]::NewGuid().ToString()
+                Scope       = '/subscriptions/sub-001'
+                RequestType = 'SelfActivate'
+                Status      = 'Provisioned'
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeRole }
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest { return $fakeResponse }
+        }
+
+        It 'refuses -Hours <_> at binding with ParameterArgumentValidationError' -ForEach 0, -1, 25 {
+            $Hours = $_
+            { Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)' -Hours $Hours -ErrorAction Stop } |
+                Should -Throw -ErrorId 'ParameterArgumentValidationError,Enable-OPIMAzureRole'
+        }
+
+        It 'signs in, resolves and sends nothing for -Hours <_>' -ForEach 0, -1, 25 {
+            $Hours = $_
+            { Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)' -Hours $Hours -ErrorAction Stop } |
+                Should -Throw -ErrorId 'ParameterArgumentValidationError,Enable-OPIMAzureRole'
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
+        }
     }
 
     Context 'When ticket information is provided' {

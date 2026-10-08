@@ -868,7 +868,7 @@ found among the listed posts and never requested by itself, which a normal user 
 (OPIM-23). The `-Scope` of `Enable-` and `Disable-OPIMAzureRole` does the same: it selects among the
 posts of the root listing and changes what is read in no way. An Azure schedule's id is its `Name`,
 not `id`; an activation sends `LinkedRoleEligibilityScheduleId = $Role.Name`
-(`Enable-OPIMAzureRole.ps1:167-191`), `ScheduleInfoStartDateTime` (UTC) when `-NotBefore` is given
+(`Enable-OPIMAzureRole.ps1:168-192`), `ScheduleInfoStartDateTime` (UTC) when `-NotBefore` is given
 (without it Azure starts the activation now), and `ExpirationEndDateTime` in UTC (OPIM-15). A
 deactivation sends no `LinkedRoleEligibilityScheduleId` (OPIM-24; `Disable-OPIMAzureRole.ps1:109-117`):
 ARM documents the field for an activation only, and the request names the active instance by its
@@ -903,7 +903,9 @@ expand `group,principal`.
 - `-Identity` -- a schedule id (the Azure `Name`); an id that matches more than one schedule is
   `AmbiguousName`, never the first.
 - `-Justification`, `-TicketNumber`, `-TicketSystem` -- the optional PIM policy fields.
-- `-Hours` [int] -- default 1; users override it through `$PSDefaultParameterValues`.
+- `-Hours` [int] -- 1 to 24 (`ValidateRange`), default 1; users override it through
+  `$PSDefaultParameterValues`. A value outside the range is refused at binding with
+  `ParameterArgumentValidationError`, before a sign-in, a resolver call or a request.
 - `-NotBefore` [DateTime] -- activation start, default now. A time without an offset (such as
   `'4pm'`, which binds as Kind Unspecified) is local time; it is sent in UTC (OPIM-18). The two Graph
   cmdlets send `.ToUniversalTime().ToString('o')`, since an Unspecified time rendered with `'o'`

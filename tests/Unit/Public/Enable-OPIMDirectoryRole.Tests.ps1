@@ -371,6 +371,57 @@ Describe 'Enable-OPIMDirectoryRole' {
                 $Method -eq 'POST' -and $Body.scheduleInfo.expiration.duration -eq 'PT8H'
             }
         }
+
+        It 'sends PT1H when -Hours 1, the lower edge, is given' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Hours 1
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.scheduleInfo.expiration.duration -eq 'PT1H'
+            }
+        }
+
+        # XmlConvert.ToString writes 24 hours as P1D, which is the same ISO 8601 duration as PT24H, so
+        # the assertion reads the duration back instead of pinning one spelling of it.
+        It 'sends a duration of exactly 24 hours when -Hours 24, the upper edge, is given' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Hours 24
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and
+                [System.Xml.XmlConvert]::ToTimeSpan($Body.scheduleInfo.expiration.duration) -eq [TimeSpan]::FromHours(24)
+            }
+        }
+    }
+
+    Context 'When -Hours is outside 1 to 24' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $fakeRole = [PSCustomObject]@{
+                id               = 'elig-001'
+                roleDefinitionId = 'role-def-001'
+                directoryScopeId = '/'
+                principalId      = 'principal-001'
+                roleDefinition   = [PSCustomObject]@{ displayName = 'Global Administrator' }
+                principal        = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeRole }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                return @{ id = 'req-001'; action = 'SelfActivate'; status = 'Provisioned' }
+            } -ParameterFilter { $Method -eq 'POST' }
+            Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
+        }
+
+        It 'refuses -Hours <_> at binding with ParameterArgumentValidationError' -ForEach 0, -1, 25 {
+            $Hours = $_
+            { Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Hours $Hours -ErrorAction Stop } |
+                Should -Throw -ErrorId 'ParameterArgumentValidationError,Enable-OPIMDirectoryRole'
+        }
+
+        It 'signs in, resolves and sends nothing for -Hours <_>' -ForEach 0, -1, 25 {
+            $Hours = $_
+            { Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Hours $Hours -ErrorAction Stop } |
+                Should -Throw -ErrorId 'ParameterArgumentValidationError,Enable-OPIMDirectoryRole'
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It
+        }
     }
 
     Context 'When ticket information is provided' {

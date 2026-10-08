@@ -359,6 +359,55 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 $Method -eq 'POST' -and $Body.scheduleInfo.expiration.duration -eq 'PT8H'
             }
         }
+
+        It 'sends PT1H when -Hours 1, the lower edge, is given' {
+            Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -Hours 1
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.scheduleInfo.expiration.duration -eq 'PT1H'
+            }
+        }
+
+        # XmlConvert.ToString writes 24 hours as P1D, which is the same ISO 8601 duration as PT24H, so
+        # the assertion reads the duration back instead of pinning one spelling of it.
+        It 'sends a duration of exactly 24 hours when -Hours 24, the upper edge, is given' {
+            Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -Hours 24
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and
+                [System.Xml.XmlConvert]::ToTimeSpan($Body.scheduleInfo.expiration.duration) -eq [TimeSpan]::FromHours(24)
+            }
+        }
+    }
+
+    Context 'When -Hours is outside 1 to 24' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $fakeGroup = [PSCustomObject]@{
+                id          = 'elig-001'
+                accessId    = 'member'
+                groupId     = 'group-001'
+                principalId = 'principal-001'
+                group       = [PSCustomObject]@{ displayName = 'Finance Team' }
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeGroup }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                return @{ id = 'req-001'; action = 'selfActivate'; status = 'Provisioned' }
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'refuses -Hours <_> at binding with ParameterArgumentValidationError' -ForEach 0, -1, 25 {
+            $Hours = $_
+            { Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -Hours $Hours -ErrorAction Stop } |
+                Should -Throw -ErrorId 'ParameterArgumentValidationError,Enable-OPIMEntraIDGroup'
+        }
+
+        It 'signs in, resolves and sends nothing for -Hours <_>' -ForEach 0, -1, 25 {
+            $Hours = $_
+            { Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -Hours $Hours -ErrorAction Stop } |
+                Should -Throw -ErrorId 'ParameterArgumentValidationError,Enable-OPIMEntraIDGroup'
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It
+        }
     }
 
     Context 'When ticket information is provided' {

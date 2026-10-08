@@ -66,7 +66,8 @@ function Enable-OPIMDirectoryRole {
     .PARAMETER TicketSystem
     Name of the ticket system that issued the above ticket number, e.g. ServiceNow or Jira.
     .PARAMETER Hours
-    Activation duration in hours. Defaults to 1. Ignored when -Until is specified.
+    Activation duration in hours, from 1 to 24. Defaults to 1. Ignored when -Until is specified. Your PIM
+    policy can allow less; a longer request is refused by the policy as before.
     .PARAMETER NotBefore
     Date and time when the role activation begins. Defaults to the current date and time. A time
     without an offset, such as '4pm', is local time; it is sent to Graph in UTC.
@@ -106,7 +107,7 @@ function Enable-OPIMDirectoryRole {
         [Parameter(Position = 1)][string]$Justification,
         [string]$TicketNumber,
         [string]$TicketSystem,
-        [Parameter(Position = 2)][ValidateNotNullOrEmpty()][int]$Hours = 1,
+        [Parameter(Position = 2)][ValidateRange(1, 24)][int]$Hours = 1,
         [ValidateNotNullOrEmpty()][DateTime]$NotBefore = [DateTime]::Now,
         [DateTime][Alias('NotAfter')]$Until,
         [Parameter(ParameterSetName = 'RoleName')]
