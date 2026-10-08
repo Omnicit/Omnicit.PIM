@@ -1076,7 +1076,9 @@ parentheses, in a different format per pillar:
 
 The completers call the `Get-OPIM*` cmdlets through `& ([scriptblock]::Create('Get-OPIM...'))`, so a
 completion authenticates and calls Graph or ARM on the prompt path. Keep that call form -- see
-**Testing Conventions**.
+**Testing Conventions**. The two directory completers pass `-WarningAction SilentlyContinue` in
+that string, since `Get-OPIMDirectoryRole` warns about an administrative unit it cannot read, and
+a completion must not print a warning into the prompt.
 
 **Configuration CRUD.** The four `*-OPIMConfiguration` cmdlets manage `TenantMap.psd1`, which
 `Connect-OPIM -TenantAlias` and `pim`/`unpim` read:
