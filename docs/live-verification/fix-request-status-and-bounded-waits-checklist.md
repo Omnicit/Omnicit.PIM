@@ -300,7 +300,7 @@ $Watch.Stop()
 $Before = & $Requests
 $W3 = $null; $E3 = $null
 $Second = @(Enable-OPIMDirectoryRole $Name -Justification 'opim-s15a live verification' -Hours 1 -WarningVariable W3 -WarningAction SilentlyContinue -ErrorVariable E3 -ErrorAction SilentlyContinue)
-"Second (G8): output $($Second.Count); warnings $(@($W3).Count), says already active: $([bool](@($W3) -match 'is already active')); errors $(@($E3).Count); requests sent: $((& $Requests) - $Before)"
+"Second (G8): output $($Second.Count); warnings $(@($W3).Count), says already active: $([bool](@($W3) -match 'is already active')); errors $(@($E3).Count), the last $(@($E3)[-1].FullyQualifiedErrorId); requests sent: $((& $Requests) - $Before)"
 "Active rows of the role: $(@(Get-OPIMDirectoryRole -Activated -ErrorAction Stop | Where-Object { $_.roleDefinition.displayName -eq $Name }).Count)"
 ```
 
@@ -339,7 +339,7 @@ foreach ($Try in 1..12) { $Seen = & $Member; if ($Seen -ge 1) { break }; Start-S
 $Before = & $Requests
 $W2 = $null; $E2 = $null
 $Second = @(Enable-OPIMEntraIDGroup 'opim-s1-grp' -Hours 1 -Justification 'opim-s15a live verification' -WarningVariable W2 -WarningAction SilentlyContinue -ErrorVariable E2 -ErrorAction SilentlyContinue)
-"Second (G8): output $($Second.Count); warnings $(@($W2).Count), says already active: $([bool](@($W2) -match 'is already active')); errors $(@($E2).Count); requests sent: $((& $Requests) - $Before)"
+"Second (G8): output $($Second.Count); warnings $(@($W2).Count), says already active: $([bool](@($W2) -match 'is already active')); errors $(@($E2).Count), the last $(@($E2)[-1].FullyQualifiedErrorId); requests sent: $((& $Requests) - $Before)"
 ```
 
 **Expect:** `First: output 1; status returned Provisioned; accessId member; warnings 0`; `The
@@ -375,7 +375,7 @@ foreach ($Try in 1..12) { $Seen = @(Get-OPIMAzureRole -Activated -ErrorAction St
 $Before = & $Requests
 $W2 = $null; $E2 = $null
 $Second = @(Enable-OPIMAzureRole 'Reader' -Scope $Scope -Hours 1 -Justification 'opim-s15a live verification' -WarningVariable W2 -WarningAction SilentlyContinue -ErrorVariable E2 -ErrorAction SilentlyContinue)
-"Second (G8): output $($Second.Count); warnings $(@($W2).Count), says already active: $([bool](@($W2) -match 'is already active')); errors $(@($E2).Count); requests sent: $((& $Requests) - $Before)"
+"Second (G8): output $($Second.Count); warnings $(@($W2).Count), says already active: $([bool](@($W2) -match 'is already active')); errors $(@($E2).Count), the last $(@($E2)[-1].FullyQualifiedErrorId); requests sent: $((& $Requests) - $Before)"
 ```
 
 **Expect:** `First: output 1; status Provisioned; warnings 0`; the listing shows the activation;
