@@ -123,7 +123,11 @@ function Set-OPIMConfiguration {
             return
         }
 
-        $ExistingEntry = if ($MapData[$TenantAlias] -is [hashtable]) { $MapData[$TenantAlias] } else { @{} }
+        # OPIM-20: an alias stored in the 0.4-era string form (contoso = '<tenant id>') is not a dictionary;
+        # its value IS the tenant id, so carry it over instead of starting from an empty entry (which wrote
+        # TenantId = '' and sent pim -TenantAlias to 'organizations').
+        $Stored = $MapData[$TenantAlias]
+        $ExistingEntry = if ($Stored -is [System.Collections.IDictionary]) { $Stored } else { @{ TenantId = [string]$Stored } }
 
         $ResolvedTenantId  = if ($TenantId)                  { $TenantId                  } else { $ExistingEntry.TenantId }
         $ResolvedDirRoles  = if ($StoredKeys.Directory.Count) { @($StoredKeys.Directory) } elseif ($ExistingEntry.DirectoryRoles) { @($ExistingEntry.DirectoryRoles) }

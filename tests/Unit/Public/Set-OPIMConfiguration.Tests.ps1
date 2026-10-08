@@ -248,6 +248,71 @@ Describe 'Set-OPIMConfiguration' {
         }
     }
 
+    Context 'When the alias is in the string form (OPIM-20)' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }
+            # The 0.4-era form: the alias maps straight to the tenant id, not to a hashtable.
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{ contoso = '00000000-0000-0000-0000-000000000001' }
+            }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+
+            $script:stringFormRole = [PSCustomObject]@{
+                id               = 'elig-001'
+                roleDefinitionId = 'role-def-001'
+                directoryScopeId = '/'
+            }
+            $script:stringFormRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'keeps the TenantId of the string form when -TenantId is not given' {
+            $script:stringFormRole | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000001'"
+            $script:writtenContent | Should -Match ([regex]::Escape("'role-def-001|/'"))
+        }
+
+        It 'writes the given TenantId over the string form' {
+            Set-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000099' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000099'"
+            $script:writtenContent | Should -Not -Match '00000000-0000-0000-0000-000000000001'
+        }
+
+        It 'keeps the TenantId when nothing is piped and no -TenantId is given' {
+            Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000001'"
+        }
+    }
+
+    Context 'When the alias entry is an ordered dictionary' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    contoso = [ordered]@{
+                        TenantId   = '00000000-0000-0000-0000-000000000001'
+                        AzureRoles = @('kept-azure-001')
+                    }
+                }
+            }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'keeps the TenantId and the stored lists of the entry' {
+            Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000001'"
+            $script:writtenContent | Should -Match 'kept-azure-001'
+        }
+    }
+
     Context 'When -WhatIf is specified' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
