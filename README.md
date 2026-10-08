@@ -276,11 +276,12 @@ Get-OPIMEntraIDGroup -Activated | Disable-OPIMEntraIDGroup
 `Disable-OPIMMyRole` (aliases: `unpim`, `Disable-OPIMMyRoles`) is its counterpart for deactivation.
 
 Both commands reuse an existing sign-in: after `Connect-OPIM` or any role or group cmdlet, they
-start no new Microsoft Graph sign-in while its token can still be used or refreshed silently. When
-Azure roles are part of the run, Azure needs its own sign-in, which is reused only when it was
-already made for the same tenant and account (`Connect-OPIM -IncludeARM`, or an earlier Azure role
-cmdlet). With `-DeviceCode`, a sign-in that needs a prompt shows a device code instead of opening
-the browser -- one for Microsoft Graph and, when Azure signs in, a second one for Azure.
+start no new Microsoft Graph sign-in for the same tenant while its token can still be used or
+refreshed silently. When Azure roles are part of the run, Azure needs its own sign-in, which is
+reused only when it was already made for the same tenant and account (`Connect-OPIM -IncludeARM`,
+or an earlier Azure role cmdlet). With `-DeviceCode`, a sign-in that needs a prompt shows a
+device code instead of opening the browser -- one for Microsoft Graph and, when Azure signs in, a
+second one for Azure.
 
 Output is a unified table across all three role types:
 

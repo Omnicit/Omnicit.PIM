@@ -53,9 +53,10 @@ reaches `main` through a pull request.
 | Build / CI pipeline | `ci/` | `ci/publish-on-merge` |
 
 The prefix is not cosmetic: `GitVersion.yml` reads it. A `feat/` (or `feature/`) branch builds a
-Minor increment and a `fix/` (or `hotfix/`) branch a Patch increment on the branch itself; every
-other prefix in the table matches no branch configuration and falls back to the defaults. No branch
-publishes anything -- only `main` and a version tag do. See **CHANGELOG and Version**.
+Minor increment and a `fix/` (or `hotfix/`) branch a Patch increment on the branch itself (from a
+stable base; see **How the version is computed**); every other prefix in the table matches no
+branch configuration and falls back to the defaults. No branch publishes anything -- only `main`
+and a version tag do. See **CHANGELOG and Version**.
 
 ---
 
@@ -830,13 +831,14 @@ over `source/` on 2026-10-08, listed as they are:
 | File:line (under `source/`) | Call |
 |---|---|
 | `Private/Invoke-OPIMGraphRequest.ps1:198, 236, 273` | `Invoke-MgGraphRequest` -- the wrapper itself |
-| `Private/Get-OPIMCurrentTenantInfo.ps1:60` | `Invoke-MgGraphRequest` for `v1.0/organization` (best-effort tenant display name, under the module's own Graph session only) |
+| `Private/Get-OPIMCurrentTenantInfo.ps1:60` | `Invoke-MgGraphRequest` for `v1.0/organization` (tenant display name) |
 | `Private/Initialize-OPIMAuth.ps1:441` | `Connect-MgGraph -AccessToken` |
 | `Private/Initialize-OPIMAuth.ps1:498` | `Get-AzAccessToken` (silent validation; the token is discarded) |
 | `Private/Initialize-OPIMAuth.ps1:553` | `Connect-AzAccount` (with `-UseDeviceAuthentication` in device code mode) |
 | `Public/Disconnect-OPIM.ps1:30, 31` | `Disconnect-MgGraph`, `Disconnect-AzAccount` |
 
-`Wait-OPIMDirectoryRole` is not in it: it polls in sequence through `Invoke-OPIMGraphRequest`.
+`Get-OPIMCurrentTenantInfo` makes its call best-effort, and only under the module's own Graph
+session. `Wait-OPIMDirectoryRole` is not in the table: it polls in sequence through `Invoke-OPIMGraphRequest`.
 `Invoke-OPIMDeviceCodeAuth` is not in it either: it reaches MSAL through the application object it
 is handed, not through the Graph SDK or an Az cmdlet.
 
@@ -1696,8 +1698,9 @@ version drift.
 
 1. **Create the file:** `source/Public/Verb-OPIMNoun.ps1` for a public function, or
    `source/Private/<FunctionName>.ps1` for a private helper (several, such as
-   `Convert-GraphHttpException` and `Write-CmdletError`, carry no OPIM prefix). Either way the filename must match the function
-   name exactly. Declare it with `function`, not `filter` (see **Common Pitfalls**).
+   `Convert-GraphHttpException` and `Write-CmdletError`, carry no OPIM prefix). Either way the
+   filename must match the function name exactly. Declare it with `function`, not `filter` (see
+   **Common Pitfalls**).
 2. **If public:** add it to `FunctionsToExport` in `source/Omnicit.PIM.psd1`, declare its
    `[OutputType()]`, declare any alias with `[Alias()]` on the function, and add the alias to
    `AliasesToExport` there.
