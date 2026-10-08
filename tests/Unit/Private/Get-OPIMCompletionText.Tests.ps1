@@ -258,6 +258,90 @@ Describe 'Get-OPIMCompletionText' {
         }
     }
 
+    # PowerShell's tokenizer reads U+2018, U+2019, U+201A and U+201B as single quotes, as it does the
+    # straight one, so a display name that holds one must have it doubled too, or the text ends at it.
+    # The test file stays ASCII: the quotes are built from their code points.
+    Context 'When a display name holds a typographic single quote (I2)' -ForEach @(
+        @{ Code = 0x2018; Hex = '2018' }
+        @{ Code = 0x2019; Hex = '2019' }
+        @{ Code = 0x201A; Hex = '201A' }
+        @{ Code = 0x201B; Hex = '201B' }
+    ) {
+        BeforeAll {
+            $Quote = [string][char]$Code
+            $DisplayName = "Partner${Quote}s Admins"
+            $Posts = @{
+                Directory = @([PSCustomObject]@{
+                        id = 'elig-017'; directoryScopeId = '/'; directoryScope = $null
+                        roleDefinition = [PSCustomObject]@{ displayName = $DisplayName }
+                    })
+                Group     = @([PSCustomObject]@{
+                        id = 'grp-elig-017'; accessId = 'member'; memberType = 'direct'
+                        group = [PSCustomObject]@{ displayName = $DisplayName }
+                    })
+                Azure     = @([PSCustomObject]@{
+                        Name = 'azure-017'; RoleDefinitionDisplayName = $DisplayName
+                        ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'sub-001'
+                    })
+            }
+        }
+
+        It 'doubles the quote and parses back to the display name as one string (U+<Hex>, <Pillar>)' -ForEach @(
+            @{ Pillar = 'Directory' }
+            @{ Pillar = 'Group' }
+            @{ Pillar = 'Azure' }
+        ) {
+            $Got = @(InModuleScope Omnicit.PIM -Parameters @{ Pillar = $Pillar; Posts = $Posts[$Pillar] } {
+                param($Pillar, $Posts)
+                Get-OPIMCompletionText -Pillar $Pillar -InputObject $Posts
+            })
+            $Got.Count | Should -Be 1
+            $Got[0] | Should -BeExactly "'Partner${Quote}${Quote}s Admins'"
+
+            $Tokens = $null
+            $Errors = $null
+            $Ast = [System.Management.Automation.Language.Parser]::ParseInput("Enable-OPIMDirectoryRole $($Got[0])", [ref]$Tokens, [ref]$Errors)
+            @($Errors).Count | Should -Be 0
+            $Command = $Ast.Find({ param($Node) $Node -is [System.Management.Automation.Language.CommandAst] }, $true)
+            $Command.CommandElements.Count | Should -Be 2
+            $Command.CommandElements[1] | Should -BeOfType [System.Management.Automation.Language.StringConstantExpressionAst]
+            $Command.CommandElements[1].Value | Should -BeExactly $DisplayName
+        }
+
+        It 'completes the word the engine hands over, with the quote undoubled (U+<Hex>)' {
+            $Got = @(InModuleScope Omnicit.PIM -Parameters @{ Posts = $Posts.Directory; Word = "'Partner${Quote}s Ad" } {
+                param($Posts, $Word)
+                Get-OPIMCompletionText -Pillar Directory -InputObject $Posts -WordToComplete $Word
+            })
+            ($Got -join '|') | Should -BeExactly "'Partner${Quote}${Quote}s Admins'"
+        }
+
+        It 'completes the word as typed, with the quote doubled (U+<Hex>)' {
+            $Got = @(InModuleScope Omnicit.PIM -Parameters @{ Posts = $Posts.Directory; Word = "'Partner${Quote}${Quote}s Ad" } {
+                param($Posts, $Word)
+                Get-OPIMCompletionText -Pillar Directory -InputObject $Posts -WordToComplete $Word
+            })
+            ($Got -join '|') | Should -BeExactly "'Partner${Quote}${Quote}s Admins'"
+        }
+
+        It 'completes a word that ends in the doubled quote (U+<Hex>)' {
+            $Got = @(InModuleScope Omnicit.PIM -Parameters @{ Posts = $Posts.Directory; Word = "'Partner${Quote}${Quote}" } {
+                param($Posts, $Word)
+                Get-OPIMCompletionText -Pillar Directory -InputObject $Posts -WordToComplete $Word
+            })
+            ($Got -join '|') | Should -BeExactly "'Partner${Quote}${Quote}s Admins'"
+        }
+
+        It 'offers nothing for a word with another quote kind in place of it (U+<Hex>)' {
+            $Other = if ($Code -eq 0x2019) { [string][char]0x2018 } else { [string][char]0x2019 }
+            $Got = @(InModuleScope Omnicit.PIM -Parameters @{ Posts = $Posts.Directory; Word = "'Partner${Other}s Ad" } {
+                param($Posts, $Word)
+                Get-OPIMCompletionText -Pillar Directory -InputObject $Posts -WordToComplete $Word
+            })
+            $Got.Count | Should -Be 0
+        }
+    }
+
     Context 'When the input is unusual' {
         It 'offers nothing for an empty list' {
             InModuleScope Omnicit.PIM {

@@ -8,8 +8,10 @@ function Get-OPIMCompletionText {
     when that name, under the filters already typed (-Scope, -AccessType) and the Member default for
     groups, names exactly that post; otherwise the old form 'Name (id)', 'Name -> AU (id)',
     'Group - member (id)' or 'Role -> Scope (Name)', which is unique. A post the typed filters
-    exclude is not offered. Every text is single-quoted with its apostrophes doubled (OPIM-26), and
-    the word typed so far is compared with StartsWith, case-insensitively, never as a wildcard.
+    exclude is not offered. Every text is single-quoted with every kind of single quote doubled --
+    the straight apostrophe and the typographic U+2018, U+2019, U+201A and U+201B, which the
+    PowerShell tokenizer reads as quotes too (OPIM-26) -- and the word typed so far is compared
+    with StartsWith, case-insensitively, never as a wildcard.
 
     .PARAMETER Pillar
     Directory, Group or Azure.
@@ -60,7 +62,9 @@ function Get-OPIMCompletionText {
     $Word = [string]$WordToComplete
     if ($Word.Length -gt 0 -and $Word[0] -in [char]"'", [char]'"') { $Word = $Word.Substring(1) }
     if ($Word.Length -gt 0 -and $Word[-1] -in [char]"'", [char]'"') { $Word = $Word.Substring(0, $Word.Length - 1) }
-    $Word = $Word.Replace("''", "'")
+    # PowerShell reads U+2018, U+2019, U+201A and U+201B as single quotes too, and a doubled one
+    # stands for itself, so a word as typed has those undone as well (the escapes are the regex's).
+    $Word = [regex]::Replace($Word, '([''\u2018\u2019\u201A\u201B])\1', '$1')
 
     $Items = @($InputObject | Where-Object { $null -ne $PSItem })
     foreach ($Item in $Items) {
@@ -74,6 +78,8 @@ function Get-OPIMCompletionText {
             (Get-OPIMScheduleName -Pillar $Pillar -InputObject $ByName[0]).Key -eq $Names.Key
         $Text = if ($Unique) { $Names.DisplayName } else { $Names.OldForm }
         if ($Word -and -not $Text.StartsWith($Word, $Ignore)) { continue }
-        "'" + $Text.Replace("'", "''") + "'"
+        # The call PowerShell's own completers use: it doubles every kind of single quote the
+        # tokenizer knows, not only the straight one (OPIM-26).
+        "'" + [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($Text) + "'"
     }
 }
