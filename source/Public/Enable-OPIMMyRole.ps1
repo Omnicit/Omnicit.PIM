@@ -9,7 +9,9 @@ function Enable-OPIMMyRole {
 
     When -TenantAlias is used, only roles and groups explicitly defined in the tenant configuration
     are activated. Categories not listed in the configuration are skipped with a warning. Use
-    Set-OPIMConfiguration to add roles to a tenant alias.
+    Set-OPIMConfiguration to add roles to a tenant alias. A directory role is activated only at the
+    scope its entry names (roleDefinitionId|directoryScopeId); an entry written by 0.5.x holds the
+    roleDefinitionId alone and means the role at the root scope '/' only.
 
     When an -AllEligible* switch is used without -TenantAlias, all eligible assignments in the
     selected categories are activated. Confirmation is required -- use -WhatIf to preview or
@@ -55,7 +57,8 @@ function Enable-OPIMMyRole {
     .PARAMETER TenantAlias
     Short alias for the target tenant matched against TenantMap.psd1. Run Install-OPIMConfiguration
     to create or update tenant aliases. Only categories explicitly listed in the configuration are
-    activated; categories without configuration are skipped with a warning.
+    activated; categories without configuration are skipped with a warning. A directory role is
+    activated only at its configured scope, and an entry without a scope means the role at '/' only.
     .PARAMETER AllEligible
     Activate all eligible directory roles, Entra ID group assignments, and Azure RBAC roles.
     Requires confirmation per category. Use -Confirm:$false to suppress prompts.
@@ -214,7 +217,11 @@ function Enable-OPIMMyRole {
                 }
                 if ($ListRead) {
                     if ($Config -is [hashtable] -and $Config.DirectoryRoles) {
-                        $DirectoryRoles = $DirectoryRoles | Where-Object { $_.roleDefinitionId -in $Config.DirectoryRoles }
+                        # OPIM-10 (A13): a role is activated only at the scope its entry names; an entry from before
+                        # 0.6.0 names no scope and means the role at '/' only.
+                        $ConfiguredKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                        foreach ($Entry in $Config.DirectoryRoles) { [void]$ConfiguredKeys.Add((ConvertTo-OPIMTenantMapKey -Pillar Directory -Entry $Entry)) }
+                        $DirectoryRoles = $DirectoryRoles | Where-Object { $ConfiguredKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Directory -InputObject $PSItem)) }
                     }
                     if ($DirectoryRoles) {
                         Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($DirectoryRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))

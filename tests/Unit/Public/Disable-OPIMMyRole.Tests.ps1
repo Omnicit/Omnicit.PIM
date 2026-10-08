@@ -693,7 +693,7 @@ Describe 'Disable-OPIMMyRole' {
             Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
             Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
                 return @{
-                    dirambig = @{ TenantId = '00000000-0000-0000-0000-000000000006'; DirectoryRoles = @('role-def-001', 'role-def-002') }
+                    dirambig = @{ TenantId = '00000000-0000-0000-0000-000000000006'; DirectoryRoles = @('role-def-001|/', 'role-def-002') }
                     dirone   = @{ TenantId = '00000000-0000-0000-0000-000000000006'; DirectoryRoles = @('role-def-002') }
                     grpambig = @{ TenantId = '00000000-0000-0000-0000-000000000006'; EntraIDGroups = @('group-001_member', 'group-002_member') }
                     grpone   = @{ TenantId = '00000000-0000-0000-0000-000000000006'; EntraIDGroups = @('group-002_member') }
@@ -704,15 +704,16 @@ Describe 'Disable-OPIMMyRole' {
 
             # memberType, assignmentType and endDateTime are set as Graph sets them: the types'
             # ScriptProperties of those names read $this.<name>.
+            # Two overlapping activations of role-def-001 at '/': the entry 'role-def-001|/' names the
+            # role at that scope, and both posts carry its key (OPIM-10, A13).
             $DirectoryRoot = [PSCustomObject]@{
                 id = 'active-dir-a1'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'
                 memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T12:00:00Z'
                 roleDefinition = [PSCustomObject]@{ displayName = 'Global Administrator' }
             }
-            $DirectoryAu = [PSCustomObject]@{
-                id = 'active-dir-a2'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/administrativeUnits/au-001'
-                directoryScope = [PSCustomObject]@{ displayName = 'Sales AU' }
-                memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T12:00:00Z'
+            $DirectoryRootSecond = [PSCustomObject]@{
+                id = 'active-dir-a2'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'
+                memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T14:00:00Z'
                 roleDefinition = [PSCustomObject]@{ displayName = 'Global Administrator' }
             }
             $DirectoryOther = [PSCustomObject]@{
@@ -720,7 +721,7 @@ Describe 'Disable-OPIMMyRole' {
                 memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T12:00:00Z'
                 roleDefinition = [PSCustomObject]@{ displayName = 'User Administrator' }
             }
-            foreach ($Post in @($DirectoryRoot, $DirectoryAu, $DirectoryOther)) {
+            foreach ($Post in @($DirectoryRoot, $DirectoryRootSecond, $DirectoryOther)) {
                 $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleInstance')
             }
             $GroupFirst = [PSCustomObject]@{
@@ -764,7 +765,7 @@ Describe 'Disable-OPIMMyRole' {
             foreach ($Post in @($EligibleOne, $EligibleTwo)) { $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule') }
             foreach ($Post in @($AzureFirst, $AzureSecond, $AzureOther)) { $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance') }
 
-            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @($DirectoryRoot, $DirectoryAu, $DirectoryOther) } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @($DirectoryRoot, $DirectoryRootSecond, $DirectoryOther) } -ParameterFilter { $Activated }
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @($GroupFirst, $GroupSecond, $GroupOther) } -ParameterFilter { $Activated }
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($EligibleOne, $EligibleTwo) } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($AzureFirst, $AzureSecond, $AzureOther) } -ParameterFilter { $Activated }
@@ -785,9 +786,9 @@ Describe 'Disable-OPIMMyRole' {
                 $Written[0].FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
                 $Written[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidArgument)
                 $Written[0].Exception.Message | Should -BeExactly (
-                    "The configured entry 'role-def-001' matches 2 active directory roles, so it names none of them: " +
+                    "The configured entry 'role-def-001|/' matches 2 active directory roles, so it names none of them: " +
                     "'Global Administrator (active-dir-a1)' at scope '/'; " +
-                    "'Global Administrator -> Sales AU (active-dir-a2)' at scope '/administrativeUnits/au-001'. " +
+                    "'Global Administrator (active-dir-a2)' at scope '/'. " +
                     'Deactivate the one you mean with Disable-OPIMDirectoryRole and its tab-completed form, as listed.')
             }
 
@@ -883,8 +884,100 @@ Describe 'Disable-OPIMMyRole' {
 
         It 'writes the ambiguity as an error and ends the command under -ErrorAction Stop, before anything is deactivated' {
             { Disable-OPIMMyRole -TenantAlias 'dirambig' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction Stop } |
-                Should -Throw -ExpectedMessage "The configured entry 'role-def-001' matches 2*"
+                Should -Throw -ExpectedMessage "The configured entry 'role-def-001|/' matches 2*"
             Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 0 -Exactly -Scope It
+        }
+    }
+
+    Context 'When a tenant alias lists directory roles (OPIM-10, A13)' {
+        # A directory role is deactivated only at the scope its entry names. An entry written before
+        # 0.6.0 holds the roleDefinitionId alone and means the role at '/' only.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    oldkey    = @{ TenantId = '00000000-0000-0000-0000-000000000003'; DirectoryRoles = @('role-def-001') }
+                    aukey     = @{ TenantId = '00000000-0000-0000-0000-000000000003'; DirectoryRoles = @('role-def-001|/administrativeUnits/au-001') }
+                    mixed     = @{ TenantId = '00000000-0000-0000-0000-000000000003'; DirectoryRoles = @('role-def-001', 'role-def-001|/') }
+                    upper     = @{ TenantId = '00000000-0000-0000-0000-000000000003'; DirectoryRoles = @('ROLE-DEF-001|/ADMINISTRATIVEUNITS/AU-001') }
+                    notactive = @{ TenantId = '00000000-0000-0000-0000-000000000003'; DirectoryRoles = @('role-def-002|/') }
+                    twocase   = @{ TenantId = '00000000-0000-0000-0000-000000000003'; DirectoryRoles = @('role-def-001|/administrativeUnits/au-001', 'ROLE-DEF-001|/ADMINISTRATIVEUNITS/AU-001') }
+                }
+            }
+
+            # memberType and endDateTime are set as Graph sets them: the type's ScriptProperties of
+            # those names read $this.<name>.
+            $ActiveRoot = [PSCustomObject]@{
+                id = 'active-a13-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'
+                memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T12:00:00Z'
+                roleDefinition = [PSCustomObject]@{ displayName = 'Global Administrator' }
+            }
+            $ActiveAu = [PSCustomObject]@{
+                id = 'active-a13-002'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/administrativeUnits/au-001'
+                directoryScope = [PSCustomObject]@{ displayName = 'Sales AU' }
+                memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T12:00:00Z'
+                roleDefinition = [PSCustomObject]@{ displayName = 'Global Administrator' }
+            }
+            foreach ($Post in @($ActiveRoot, $ActiveAu)) {
+                $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleInstance')
+            }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @($ActiveRoot, $ActiveAu) } -ParameterFilter { $Activated }
+        }
+
+        It 'deactivates only the activation at the root for an entry without a scope' {
+            Disable-OPIMMyRole -TenantAlias 'oldkey' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Role.id -eq 'active-a13-001'
+            }
+            $Errs.Count | Should -Be 0
+        }
+
+        It 'deactivates exactly the configured scope for a new entry' {
+            Disable-OPIMMyRole -TenantAlias 'aukey' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Role.id -eq 'active-a13-002'
+            }
+            $Errs.Count | Should -Be 0
+        }
+
+        It 'deactivates the root activation once for an old and a new entry of the same role' {
+            Disable-OPIMMyRole -TenantAlias 'mixed' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Role.id -eq 'active-a13-001'
+            }
+            $Errs.Count | Should -Be 0
+        }
+
+        It 'compares the key without regard to letter case' {
+            Disable-OPIMMyRole -TenantAlias 'upper' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Role.id -eq 'active-a13-002'
+            }
+            $Errs.Count | Should -Be 0
+        }
+
+        It 'deactivates the activation once for two entries that differ only in letter case' {
+            Disable-OPIMMyRole -TenantAlias 'twocase' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Role.id -eq 'active-a13-002'
+            }
+            $Errs.Count | Should -Be 0
+        }
+
+        It 'writes the entry in the verbose message when the configured scope is not active' {
+            $Out = Disable-OPIMMyRole -TenantAlias 'notactive' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue -Verbose 4>&1
+            $Verbose = @($Out | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } |
+                    Where-Object { $_.Message -like "*'role-def-002|/'*" })
+            $Verbose.Count | Should -Be 1
+            $Verbose[0].Message | Should -BeLike '*not currently activated*'
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 0 -Scope It
+            $Errs.Count | Should -Be 0
         }
     }
 

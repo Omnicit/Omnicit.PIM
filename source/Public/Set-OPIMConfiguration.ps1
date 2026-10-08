@@ -39,7 +39,11 @@ function Set-OPIMConfiguration {
     .PARAMETER InputObject
     Role, group, or Azure role eligibility objects piped from Get-OPIMDirectoryRole, Get-OPIMEntraIDGroup,
     or Get-OPIMAzureRole. The piped category replaces the stored list; categories not supplied via pipeline
-    retain their existing values. Objects not matching a known Omnicit.PIM type are silently ignored.
+    retain their existing values. A directory role is stored with its scope, as
+    roleDefinitionId|directoryScopeId, so pim and unpim act on it only at that scope; a group is stored as
+    groupId_accessId, and an Azure role as the Name of its eligibility schedule. Each key is stored once,
+    without regard to letter case, in the order first piped. Objects not matching a known Omnicit.PIM type
+    are silently ignored.
     #>
     [Alias('Set-PIMConfig')]
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
@@ -59,25 +63,37 @@ function Set-OPIMConfiguration {
     )
 
     begin {
-        [List[string]]$_directoryRoleIds = [List[string]]::new()
-        [List[string]]$_groupIds         = [List[string]]::new()
-        [List[string]]$_azureRoleNames   = [List[string]]::new()
+        # One ordered list per pillar, and a case-insensitive set beside it so that each key is stored
+        # once (Get-OPIM* -All returns the eligible and the active post of one role).
+        $StoredKeys = @{
+            Directory = [List[string]]::new()
+            Group     = [List[string]]::new()
+            Azure     = [List[string]]::new()
+        }
+        $SeenKeys = @{
+            Directory = [HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            Group     = [HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            Azure     = [HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        }
     }
     process {
         if ($null -eq $InputObject) { return }
-        switch ($true) {
+        $Pillar = switch ($true) {
             { $InputObject.PSTypeNames -contains 'Omnicit.PIM.DirectoryEligibilitySchedule' -or
               $InputObject.PSTypeNames -contains 'Omnicit.PIM.DirectoryAssignmentScheduleInstance' } {
-                [void]$_directoryRoleIds.Add($InputObject.roleDefinitionId); break
+                'Directory'; break
             }
             { $InputObject.PSTypeNames -contains 'Omnicit.PIM.GroupEligibilitySchedule' -or
               $InputObject.PSTypeNames -contains 'Omnicit.PIM.GroupAssignmentScheduleInstance' } {
-                [void]$_groupIds.Add("$($InputObject.groupId)_$($InputObject.accessId)"); break
+                'Group'; break
             }
             { $null -ne $InputObject.RoleDefinitionId -and $null -ne $InputObject.ScopeId } {
-                [void]$_azureRoleNames.Add($InputObject.Name); break
+                'Azure'; break
             }
         }
+        if (-not $Pillar) { return }
+        $Key = ConvertTo-OPIMTenantMapKey -Pillar $Pillar -InputObject $InputObject
+        if ($SeenKeys[$Pillar].Add($Key)) { $StoredKeys[$Pillar].Add($Key) }
     }
     end {
         if (-not (Test-Path $TenantMapPath)) {
@@ -110,9 +126,9 @@ function Set-OPIMConfiguration {
         $ExistingEntry = if ($MapData[$TenantAlias] -is [hashtable]) { $MapData[$TenantAlias] } else { @{} }
 
         $ResolvedTenantId  = if ($TenantId)                  { $TenantId                  } else { $ExistingEntry.TenantId }
-        $ResolvedDirRoles  = if ($_directoryRoleIds.Count)   { @($_directoryRoleIds)       } elseif ($ExistingEntry.DirectoryRoles) { @($ExistingEntry.DirectoryRoles) }
-        $ResolvedGroups    = if ($_groupIds.Count)            { @($_groupIds)               } elseif ($ExistingEntry.EntraIDGroups)  { @($ExistingEntry.EntraIDGroups)  }
-        $ResolvedAzureRole = if ($_azureRoleNames.Count)      { @($_azureRoleNames)         } elseif ($ExistingEntry.AzureRoles)     { @($ExistingEntry.AzureRoles)     }
+        $ResolvedDirRoles  = if ($StoredKeys.Directory.Count) { @($StoredKeys.Directory) } elseif ($ExistingEntry.DirectoryRoles) { @($ExistingEntry.DirectoryRoles) }
+        $ResolvedGroups    = if ($StoredKeys.Group.Count)     { @($StoredKeys.Group)     } elseif ($ExistingEntry.EntraIDGroups)  { @($ExistingEntry.EntraIDGroups)  }
+        $ResolvedAzureRole = if ($StoredKeys.Azure.Count)     { @($StoredKeys.Azure)     } elseif ($ExistingEntry.AzureRoles)     { @($ExistingEntry.AzureRoles)     }
 
         $Entry = [ordered]@{ TenantId = $ResolvedTenantId }
         if ($ResolvedDirRoles)  { $Entry.DirectoryRoles = $ResolvedDirRoles  }

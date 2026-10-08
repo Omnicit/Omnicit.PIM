@@ -114,14 +114,40 @@ Describe 'Set-OPIMConfiguration' {
             $script:writtenContent = $null
         }
 
-        It 'replaces the DirectoryRoles list with the piped roleDefinitionId' {
+        It 'writes roleDefinitionId|directoryScopeId into the DirectoryRoles list' {
             $script:dirRole | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            $script:writtenContent | Should -Match 'new-role-def-001'
+            $script:writtenContent | Should -Match ([regex]::Escape("'new-role-def-001|/'"))
         }
 
         It 'removes the old roleDefinitionId from the content' {
             $script:dirRole | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
             $script:writtenContent | Should -Not -Match 'old-role-def-001'
+        }
+
+        It 'writes the administrative unit of a post at an administrative unit' {
+            $AuRole = [PSCustomObject]@{ id = 'elig-002'; roleDefinitionId = 'new-role-def-001'; directoryScopeId = '/administrativeUnits/au-001' }
+            $AuRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
+            $AuRole | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Match ([regex]::Escape("'new-role-def-001|/administrativeUnits/au-001'"))
+            $script:writtenContent | Should -Not -Match ([regex]::Escape("'new-role-def-001|/'"))
+        }
+
+        It 'stores a key once when the same post is piped twice' {
+            # Get-OPIMDirectoryRole -All returns the eligible and the active post of one role at one scope.
+            $ActiveRole = [PSCustomObject]@{ id = 'active-001'; roleDefinitionId = 'new-role-def-001'; directoryScopeId = '/' }
+            $ActiveRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleInstance')
+            $script:dirRole, $ActiveRole | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Not -BeNullOrEmpty
+            [regex]::Matches($script:writtenContent, [regex]::Escape("'new-role-def-001|/'")).Count | Should -Be 1
+        }
+
+        It 'stores a key once when two posts differ only in letter case, and keeps the first' {
+            $Lower = [PSCustomObject]@{ id = 'elig-003'; roleDefinitionId = 'new-role-def-001'; directoryScopeId = '/administrativeUnits/au-001' }
+            $Upper = [PSCustomObject]@{ id = 'elig-004'; roleDefinitionId = 'NEW-ROLE-DEF-001'; directoryScopeId = '/administrativeUnits/AU-001' }
+            $Other = [PSCustomObject]@{ id = 'elig-005'; roleDefinitionId = 'new-role-def-002'; directoryScopeId = '/' }
+            foreach ($Post in @($Lower, $Upper, $Other)) { $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule') }
+            $Lower, $Upper, $Other | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Match ([regex]::Escape("DirectoryRoles = @('new-role-def-001|/administrativeUnits/au-001', 'new-role-def-002|/')"))
         }
     }
 

@@ -689,4 +689,80 @@ Describe 'Enable-OPIMMyRole' {
             Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 0 -Scope It -ParameterFilter { $IncludeARM }
         }
     }
+
+    Context 'When a tenant alias lists directory roles (OPIM-10, A13)' {
+        # A directory role is activated only at the scope its entry names. An entry written before
+        # 0.6.0 holds the roleDefinitionId alone and means the role at '/' only.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @() }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @() }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    oldkey  = @{ TenantId = '00000000-0000-0000-0000-000000000003'; DirectoryRoles = @('role-def-001') }
+                    aukey   = @{ TenantId = '00000000-0000-0000-0000-000000000003'; DirectoryRoles = @('role-def-001|/administrativeUnits/au-001') }
+                    rootkey = @{ TenantId = '00000000-0000-0000-0000-000000000003'; DirectoryRoles = @('role-def-001|/') }
+                    mixed   = @{ TenantId = '00000000-0000-0000-0000-000000000003'; DirectoryRoles = @('role-def-001', 'role-def-001|/') }
+                    upper   = @{ TenantId = '00000000-0000-0000-0000-000000000003'; DirectoryRoles = @('ROLE-DEF-001|/ADMINISTRATIVEUNITS/AU-001') }
+                }
+            }
+
+            $RootPost = [PSCustomObject]@{
+                id = 'elig-a13-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'
+                roleDefinition = [PSCustomObject]@{ displayName = 'Global Administrator' }
+            }
+            $AuPost = [PSCustomObject]@{
+                id = 'elig-a13-002'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/administrativeUnits/au-001'
+                directoryScope = [PSCustomObject]@{ displayName = 'Sales AU' }
+                roleDefinition = [PSCustomObject]@{ displayName = 'Global Administrator' }
+            }
+            $OtherPost = [PSCustomObject]@{
+                id = 'elig-a13-003'; roleDefinitionId = 'role-def-002'; directoryScopeId = '/'
+                roleDefinition = [PSCustomObject]@{ displayName = 'User Administrator' }
+            }
+            foreach ($Post in @($RootPost, $AuPost, $OtherPost)) {
+                $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
+            }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @($RootPost, $AuPost, $OtherPost) }
+            Mock -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole { $script:EnabledPosts.Add($Role) }
+        }
+        BeforeEach {
+            $script:EnabledPosts = [System.Collections.Generic.List[object]]::new()
+        }
+
+        It 'activates only the role at the root for an entry without a scope' {
+            Enable-OPIMMyRole -TenantAlias oldkey -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:EnabledPosts.Count | Should -Be 1
+            $script:EnabledPosts[0].roleDefinitionId | Should -BeExactly 'role-def-001'
+            $script:EnabledPosts[0].directoryScopeId | Should -BeExactly '/'
+        }
+
+        It 'activates exactly the configured scope for a new entry' {
+            Enable-OPIMMyRole -TenantAlias aukey -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:EnabledPosts.Count | Should -Be 1
+            $script:EnabledPosts[0].roleDefinitionId | Should -BeExactly 'role-def-001'
+            $script:EnabledPosts[0].directoryScopeId | Should -BeExactly '/administrativeUnits/au-001'
+        }
+
+        It 'activates the role at the root for an entry with the root scope' {
+            Enable-OPIMMyRole -TenantAlias rootkey -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:EnabledPosts.Count | Should -Be 1
+            $script:EnabledPosts[0].id | Should -BeExactly 'elig-a13-001'
+            $script:EnabledPosts[0].directoryScopeId | Should -BeExactly '/'
+        }
+
+        It 'activates the root post once for an old and a new entry of the same role' {
+            Enable-OPIMMyRole -TenantAlias mixed -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:EnabledPosts.Count | Should -Be 1
+            $script:EnabledPosts[0].id | Should -BeExactly 'elig-a13-001'
+        }
+
+        It 'compares the key without regard to letter case' {
+            Enable-OPIMMyRole -TenantAlias upper -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:EnabledPosts.Count | Should -Be 1
+            $script:EnabledPosts[0].id | Should -BeExactly 'elig-a13-002'
+            $script:EnabledPosts[0].directoryScopeId | Should -BeExactly '/administrativeUnits/au-001'
+        }
+    }
 }

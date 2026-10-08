@@ -10,7 +10,10 @@ function Disable-OPIMMyRole {
     When -TenantAlias is used, only roles and groups explicitly defined in the tenant configuration
     are deactivated. For each configured item that is not currently active a verbose message is
     written and the item is skipped without error. Categories not listed in the configuration are
-    skipped with a verbose message. Each configured item is matched against every active role or
+    skipped with a verbose message. A directory role is deactivated only at the scope its entry
+    names (roleDefinitionId|directoryScopeId); an entry written by 0.5.x holds the roleDefinitionId
+    alone and means the role at the root scope '/' only, and an old and a new entry for the same
+    role and scope are read once. Each configured item is matched against every active role or
     group: an item that matches more than one is refused with AmbiguousName, which lists the active
     roles or groups it matches, and none of them is deactivated; the next item still runs. To
     deactivate one of them, use Disable-OPIMDirectoryRole, Disable-OPIMEntraIDGroup or
@@ -56,9 +59,10 @@ function Disable-OPIMMyRole {
     Short alias for the target tenant matched against TenantMap.psd1. Run Install-OPIMConfiguration
     to create or update tenant aliases. Only categories explicitly listed in the configuration are
     deactivated; categories without configuration are skipped. Configured items that are not
-    currently active are written to the verbose stream and skipped. A configured item that matches
-    more than one active role or group is written as the error AmbiguousName and none of the
-    matches is deactivated.
+    currently active are written to the verbose stream and skipped. A directory role is deactivated
+    only at its configured scope, and an entry without a scope means the role at '/' only. A
+    configured item that matches more than one active role or group is written as the error
+    AmbiguousName and none of the matches is deactivated.
     .PARAMETER AllActivated
     Deactivate all currently active directory roles, Entra ID group assignments, and Azure RBAC
     roles. Requires confirmation per category. Use -Confirm:$false to suppress prompts.
@@ -193,17 +197,28 @@ function Disable-OPIMMyRole {
                 }
                 if ($ListRead) {
                     if ($Config -is [hashtable] -and $Config.DirectoryRoles) {
-                        Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($Config.DirectoryRoles.Count) configured role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                        foreach ($ConfiguredRoleId in $Config.DirectoryRoles) {
-                            $ActiveMatches = @($ActiveDirectoryRoles | Where-Object { $_.roleDefinitionId -eq $ConfiguredRoleId })
+                        # OPIM-10 (A13): a role is deactivated only at the scope its entry names; an entry from
+                        # before 0.6.0 names no scope and means the role at '/' only. Each distinct key is read
+                        # once, in the order configured.
+                        $ConfiguredKeys = [System.Collections.Generic.List[string]]::new()
+                        $SeenKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                        foreach ($Entry in $Config.DirectoryRoles) {
+                            $Key = ConvertTo-OPIMTenantMapKey -Pillar Directory -Entry $Entry
+                            if ($SeenKeys.Add($Key)) { $ConfiguredKeys.Add($Key) }
+                        }
+                        Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ConfiguredKeys.Count) configured role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
+                        foreach ($Key in $ConfiguredKeys) {
+                            $ActiveMatches = @($ActiveDirectoryRoles | Where-Object {
+                                    [string]::Equals((ConvertTo-OPIMTenantMapKey -Pillar Directory -InputObject $PSItem), $Key, [System.StringComparison]::OrdinalIgnoreCase)
+                                })
                             if ($ActiveMatches.Count -gt 1) {
                                 # OPIM-17: an entry that matches several active posts names none of them.
                                 $PSCmdlet.WriteError((New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Directory `
-                                    -Name $ConfiguredRoleId -Status Active -Candidate $ActiveMatches -Configuration))
+                                    -Name $Key -Status Active -Candidate $ActiveMatches -Configuration))
                             } elseif ($ActiveMatches.Count -eq 1) {
                                 $ActiveMatches[0] | Disable-OPIMDirectoryRole | ConvertTo-OPIMMyRoleResult
                             } else {
-                                Write-Verbose "Directory role '$ConfiguredRoleId' is not currently activated. No deactivation needed."
+                                Write-Verbose "Directory role '$Key' is not currently activated at that scope. No deactivation needed."
                             }
                         }
                     } else {

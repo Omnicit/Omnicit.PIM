@@ -41,7 +41,10 @@ function Install-OPIMConfiguration {
     Path to the TenantMap.psd1 configuration file. Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
     .PARAMETER InputObject
     Role, group, or Azure role eligibility objects piped from Get-OPIMDirectoryRole, Get-OPIMEntraIDGroup, or Get-OPIMAzureRole.
-    Objects not matching a known Omnicit.PIM type are silently ignored.
+    A directory role is stored with its scope, as roleDefinitionId|directoryScopeId, so pim and unpim
+    act on it only at that scope; a group is stored as groupId_accessId, and an Azure role as the
+    Name of its eligibility schedule. Each key is stored once, without regard to letter case, in the
+    order first piped. Objects not matching a known Omnicit.PIM type are silently ignored.
     #>
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     [OutputType([void])]
@@ -60,28 +63,40 @@ function Install-OPIMConfiguration {
     )
 
     begin {
-        [List[string]]$_directoryRoleIds = [List[string]]::new()
-        [List[string]]$_groupIds         = [List[string]]::new()
-        [List[string]]$_azureRoleNames   = [List[string]]::new()
+        # One ordered list per pillar, and a case-insensitive set beside it so that each key is stored
+        # once (Get-OPIM* -All returns the eligible and the active post of one role).
+        $StoredKeys = @{
+            Directory = [List[string]]::new()
+            Group     = [List[string]]::new()
+            Azure     = [List[string]]::new()
+        }
+        $SeenKeys = @{
+            Directory = [HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            Group     = [HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            Azure     = [HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        }
     }
     process {
         if ($null -eq $InputObject) { return }
-        switch ($true) {
+        $Pillar = switch ($true) {
             { $InputObject.PSTypeNames -contains 'Omnicit.PIM.DirectoryEligibilitySchedule' -or
               $InputObject.PSTypeNames -contains 'Omnicit.PIM.DirectoryAssignmentScheduleInstance' } {
-                # Store roleDefinitionId -- stable across eligibility renewals
-                [void]$_directoryRoleIds.Add($InputObject.roleDefinitionId); break
+                # roleDefinitionId|directoryScopeId -- the role at the one scope it was piped at
+                'Directory'; break
             }
             { $InputObject.PSTypeNames -contains 'Omnicit.PIM.GroupEligibilitySchedule' -or
               $InputObject.PSTypeNames -contains 'Omnicit.PIM.GroupAssignmentScheduleInstance' } {
-                # Store groupId_accessId -- stable and encodes member vs owner
-                [void]$_groupIds.Add("$($InputObject.groupId)_$($InputObject.accessId)"); break
+                # groupId_accessId -- stable and encodes member vs owner
+                'Group'; break
             }
             { $null -ne $InputObject.RoleDefinitionId -and $null -ne $InputObject.ScopeId } {
-                # Azure RBAC eligibility schedule from Get-OPIMAzureRole
-                [void]$_azureRoleNames.Add($InputObject.Name); break
+                # Azure RBAC eligibility schedule from Get-OPIMAzureRole: its Name
+                'Azure'; break
             }
         }
+        if (-not $Pillar) { return }
+        $Key = ConvertTo-OPIMTenantMapKey -Pillar $Pillar -InputObject $InputObject
+        if ($SeenKeys[$Pillar].Add($Key)) { $StoredKeys[$Pillar].Add($Key) }
     }
     end {
         # -- Resolve TenantId from active Graph session when not supplied ------
@@ -138,9 +153,9 @@ function Install-OPIMConfiguration {
         # -- Build the new entry -----------------------------------------------
         $Entry = [ordered]@{ TenantId = $TenantId }
 
-        if ($_directoryRoleIds.Count) { $Entry.DirectoryRoles = @($_directoryRoleIds) }
-        if ($_groupIds.Count)         { $Entry.EntraIDGroups  = @($_groupIds)         }
-        if ($_azureRoleNames.Count)   { $Entry.AzureRoles     = @($_azureRoleNames)   }
+        if ($StoredKeys.Directory.Count) { $Entry.DirectoryRoles = @($StoredKeys.Directory) }
+        if ($StoredKeys.Group.Count)     { $Entry.EntraIDGroups  = @($StoredKeys.Group)     }
+        if ($StoredKeys.Azure.Count)     { $Entry.AzureRoles     = @($StoredKeys.Azure)     }
 
         Write-Verbose "Adding new tenant alias '$TenantAlias' (TenantId: $TenantId)"
         foreach ($RoleKey in 'DirectoryRoles', 'EntraIDGroups', 'AzureRoles') {
