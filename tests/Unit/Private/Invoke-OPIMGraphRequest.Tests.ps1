@@ -1210,6 +1210,139 @@ Describe 'Invoke-OPIMGraphRequest' {
         }
     }
 
+    Context 'When a next link names a host other than the first request''s' {
+        # OPIM-46 (SEC). A next link is followed only when it is an absolute https URI on the host of
+        # the first request: that host is the host of an absolute -Uri over https, else
+        # graph.microsoft.com. Any other link is an error with no error id (category SecurityError)
+        # and is never sent, since the request carries the session's bearer token. The mock answers
+        # page n with the item id n and the n-th link of $script:_OPIMTestLinks (none past the end of
+        # the array), and records every URI it is asked for, so a link that is followed by mistake
+        # shows in the sent list and in the call count.
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Initialize-OPIMAuth {}
+                Mock Invoke-MgGraphRequest {
+                    param($Method, $Uri)
+                    $script:_OPIMTestSent.Add($Uri)
+                    $Index = $script:_OPIMTestSent.Count
+                    $Page = @{ value = @(@{ id = [string]$Index }) }
+                    if ($Index -le @($script:_OPIMTestLinks).Count -and $script:_OPIMTestLinks[$Index - 1]) {
+                        $Page['@odata.nextLink'] = $script:_OPIMTestLinks[$Index - 1]
+                    }
+                    return $Page
+                }
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMTestSent = [System.Collections.Generic.List[string]]::new()
+                $script:_OPIMTestLinks = @()
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMTestSent = $null
+                $script:_OPIMTestLinks = $null
+            }
+        }
+
+        It 'follows <Name>' -ForEach @(
+            @{ Name = 'a link on graph.microsoft.com'; FirstUri = 'v1.0/x'; Links = @('https://graph.microsoft.com/v1.0/x?$skiptoken=2') }
+            @{ Name = 'a link whose host differs only in letter case'; FirstUri = 'v1.0/x'; Links = @('https://GRAPH.microsoft.com/v1.0/x?$skiptoken=2') }
+            @{ Name = 'a link on the host of an absolute first -Uri'; FirstUri = 'https://graph.microsoft.com/v1.0/x'; Links = @('https://graph.microsoft.com/v1.0/x?$skiptoken=2') }
+            @{ Name = 'a link on the host of an absolute first -Uri on another host'; FirstUri = 'https://graph.example.com/v1.0/x'; Links = @('https://graph.example.com/v1.0/x?$skiptoken=2') }
+            @{ Name = 'a graph.microsoft.com link when the first -Uri is not over https'; FirstUri = 'http://graph.example.com/v1.0/x'; Links = @('https://graph.microsoft.com/v1.0/x?$skiptoken=2') }
+        ) {
+            InModuleScope Omnicit.PIM -Parameters @{ FirstUri = $FirstUri; Links = $Links } {
+                param($FirstUri, $Links)
+                $script:_OPIMTestLinks = @($Links)
+                $Result = Invoke-OPIMGraphRequest -Uri $FirstUri -All
+                (@($Result.value) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1,2'
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                # The mock's -Uri is a [System.Uri], as the SDK's is, which lower-cases the host: the
+                # link is compared by value, not by letter case.
+                $script:_OPIMTestSent[0] | Should -Be $FirstUri
+                $script:_OPIMTestSent[1] | Should -Be $Links[0]
+            }
+        }
+
+        It 'refuses <Name> and sends nothing for it' -ForEach @(
+            @{ Name = 'a link to another host'; FirstUri = 'v1.0/x'; Links = @('https://evil.example.com/v1.0/x?$skiptoken=2') }
+            @{ Name = 'a link over http'; FirstUri = 'v1.0/x'; Links = @('http://graph.microsoft.com/v1.0/x?$skiptoken=2') }
+            @{ Name = 'a relative link'; FirstUri = 'v1.0/x'; Links = @('v1.0/x?$skiptoken=2') }
+            @{ Name = 'a link on a subdomain of an unrelated host that starts with the right name'; FirstUri = 'v1.0/x'; Links = @('https://graph.microsoft.com.evil.example.com/v1.0/x?$skiptoken=2') }
+            @{ Name = 'a link whose user info names the right host'; FirstUri = 'v1.0/x'; Links = @('https://graph.microsoft.com@evil.example.com/v1.0/x?$skiptoken=2') }
+            @{ Name = 'a link with another scheme'; FirstUri = 'v1.0/x'; Links = @('ftp://graph.microsoft.com/v1.0/x?$skiptoken=2') }
+            @{ Name = 'a scheme-relative link'; FirstUri = 'v1.0/x'; Links = @('//evil.example.com/v1.0/x?$skiptoken=2') }
+            @{ Name = 'a link that is no URI'; FirstUri = 'v1.0/x'; Links = @('not a uri $skiptoken=2') }
+            @{ Name = 'a graph.microsoft.com link after an absolute first -Uri on another host'; FirstUri = 'https://graph.example.com/v1.0/x'; Links = @('https://graph.microsoft.com/v1.0/x?$skiptoken=2') }
+            @{ Name = 'a link on the first -Uri host when that -Uri is not over https'; FirstUri = 'http://graph.example.com/v1.0/x'; Links = @('https://graph.example.com/v1.0/x?$skiptoken=2') }
+        ) {
+            InModuleScope Omnicit.PIM -Parameters @{ FirstUri = $FirstUri; Links = $Links } {
+                param($FirstUri, $Links)
+                $script:_OPIMTestLinks = @($Links)
+                $Caught = $null
+                try { $null = Invoke-OPIMGraphRequest -Uri $FirstUri -All } catch { $Caught = $PSItem }
+                $Caught | Should -Not -BeNullOrEmpty -Because 'a link to another host leaves the list incomplete'
+                $Caught.Exception.Message | Should -BeExactly 'Page 2: Microsoft Graph returned a next link to another host than the first request, so it was not followed and the list is incomplete.'
+                $Caught.Exception.Message | Should -Not -Match 'evil|example|skiptoken|://|\.com'
+                $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::SecurityError)
+                # No error id: the record's id is only the name of the command that raised it.
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'Invoke-OPIMGraphRequest'
+                $Caught.TargetObject | Should -BeNullOrEmpty
+                (@($Caught.Exception.PartialValue) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1'
+                , $Caught.Exception.PartialValue | Should -BeOfType ([object[]])
+                $Caught.Exception.NextLink | Should -BeExactly $Links[0]
+                $Caught.Exception.PageNumber | Should -Be 2
+                $Caught.Exception.PageNumber | Should -BeOfType ([int])
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                @($script:_OPIMTestSent).Count | Should -Be 1 -Because 'the link is never sent'
+            }
+        }
+
+        It 'numbers the page that would have been read and keeps what was read before it' {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMTestLinks = @(
+                    'https://graph.microsoft.com/v1.0/x?$skiptoken=2'
+                    'https://evil.example.com/v1.0/x?$skiptoken=3'
+                )
+                $Caught = $null
+                try { $null = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All } catch { $Caught = $PSItem }
+                $Caught.Exception.Message | Should -BeExactly 'Page 3: Microsoft Graph returned a next link to another host than the first request, so it was not followed and the list is incomplete.'
+                $Caught.Exception.PageNumber | Should -Be 3
+                (@($Caught.Exception.PartialValue) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1,2'
+                $Caught.Exception.NextLink | Should -BeExactly 'https://evil.example.com/v1.0/x?$skiptoken=3'
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+            }
+        }
+
+        It 'writes neither the link nor its host to the verbose stream' {
+            # Outside any try, so the verbose records written before the refusal are not lost with the
+            # terminating error (inside an It the throw would end the whole statement).
+            InModuleScope Omnicit.PIM { $script:_OPIMTestLinks = @('https://evil.example.com/v1.0/x?$skiptoken=2') }
+            $Run = Invoke-OutsideAnyTry -Script '$ErrorActionPreference = ''SilentlyContinue''; Invoke-OPIMGraphRequest -Uri ''v1.0/x'' -All -Verbose 4>&1'
+            $Records = @($Run.Output | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] })
+            $Text = ($Records | ForEach-Object { $_.Message }) -join "`n"
+            $Records.Count | Should -BeGreaterOrEqual 1 -Because 'the page that was read is still reported'
+            $Text | Should -Match 'page 1'
+            $Text | Should -Not -Match 'evil|example|skiptoken'
+        }
+
+        It 'returns nothing outside any try when a link names another host' {
+            # ThrowTerminatingError ends the function even under SilentlyContinue; the return after it
+            # keeps the loop from ever handing back page 1 as if it were the whole list.
+            InModuleScope Omnicit.PIM { $script:_OPIMTestLinks = @('https://evil.example.com/v1.0/x?$skiptoken=2') }
+            $Run = Invoke-OutsideAnyTry -Script '$ErrorActionPreference = ''SilentlyContinue''; $R = Invoke-OPIMGraphRequest -Uri ''v1.0/x'' -All; $R'
+            $Run.Output.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+            InModuleScope Omnicit.PIM { $script:_OPIMTestSent.Clear() }
+            $Run = Invoke-OutsideAnyTry -Script '$R = Invoke-OPIMGraphRequest -Uri ''v1.0/x'' -All -ErrorAction SilentlyContinue; $R'
+            $Run.Output.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+        }
+    }
+
     Context 'When a gate refuses a later page' {
         # Every page passes the session gate and the latch gate, as a single request does. The gate
         # mocks answer 'Own' and nothing for page 1 and refuse from their second call on.

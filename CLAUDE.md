@@ -658,7 +658,7 @@ their last parameter and hand it down to `Initialize-OPIMAuth`; without it nothi
   and a failed first sign-in -- a declined or expired code, Ctrl+C -- keeps the mode: the next call
   asks for a code again instead of opening the system browser, until `Disconnect-OPIM`. The
   token-rejected retry in `Invoke-OPIMGraphRequest` checks only that a state exists
-  (`Invoke-OPIMGraphRequest.ps1:246`), but a pillar cmdlet never reaches it on such a state: the
+  (`Invoke-OPIMGraphRequest.ps1:255`), but a pillar cmdlet never reaches it on such a state: the
   failed sign-in left the cmdlet latched, so the wrapper refuses its requests with `SignInRefused`
   before sending.
 - **The mode lives in the module instance of the runspace that signed in.** A
@@ -761,31 +761,31 @@ which is why it is the way out of `GraphSessionChanged`; `Disconnect-AzAccount` 
 current Az context, whether or not the module established it.
 
 **`Invoke-OPIMGraphRequest` owns the Graph transport.** Every request goes through its nested
-`Invoke-OPIMGraphSingle` (`Invoke-OPIMGraphRequest.ps1:151-277`), which calls
-`Invoke-MgGraphRequest` with `-Verbose:$false -ErrorAction Stop` (`:153-158`). Before the first
+`Invoke-OPIMGraphSingle` (`Invoke-OPIMGraphRequest.ps1:160-286`), which calls
+`Invoke-MgGraphRequest` with `-Verbose:$false -ErrorAction Stop` (`:162-167`). Before the first
 attempt and before each retry it runs the session gate and then the latch gate, outside the `try`
-that sends, and throws `GraphSessionChanged` or `SignInRefused` without sending (`:173-187`,
-`:214-225`, `:252-262`); the `return` after each throw keeps a caller under
+that sends, and throws `GraphSessionChanged` or `SignInRefused` without sending (`:182-196`,
+`:223-234`, `:261-271`); the `return` after each throw keeps a caller under
 `-ErrorAction SilentlyContinue` from sending anyway. For the same reason each retry's catch sets a
 flag (`$ClaimsRetryFailed`, `$RefreshRetryFailed`) before its throw, read straight after the `try`
-(`:234`, `:272`): under `SilentlyContinue` with no `try` up the call stack a throw inside a catch
+(`:243`, `:281`): under `SilentlyContinue` with no `try` up the call stack a throw inside a catch
 resumes after the whole `try` statement, and a failed claims retry would otherwise fall on into the
 token-rejected retry -- a refresh and a third send. On a failure:
 
 1. **ACRS claims-challenge retry.** It looks for `claims=` in the `WWW-Authenticate` header, the
    response body and the exception message, and decodes the value as URL-encoded JSON (the PIM 400
    `RoleAssignmentRequestAcrsValidationFailed` body form), base64url JSON (the 401 step-up header
-   form) or raw JSON (`:107-144`). It then calls `Initialize-OPIMAuth -ClaimsChallenge` for one
+   form) or raw JSON (`:116-153`). It then calls `Initialize-OPIMAuth -ClaimsChallenge` for one
    step-up -- interactive, or with a device code in device code mode, which it does not pass but
    the auth state remembers -- and retries exactly once; a second failure is converted and thrown,
-   and ends the request (`:201-235`).
+   and ends the request (`:210-244`).
 2. **Token-rejected retry.** A 401 that is not a claims challenge, or a message matching
    `InvalidAuthenticationToken`, `CompactToken`, `token is expired` or `Lifetime validation failed`,
-   calls `Initialize-OPIMAuth -ForceRefresh` and retries once (`:241-273`).
+   calls `Initialize-OPIMAuth -ForceRefresh` and retries once (`:250-282`).
 3. **Error conversion.** Anything else is thrown as `Convert-GraphHttpException`'s record, whose
    `FullyQualifiedErrorId` is the Graph `error.code` -- or, when the body carries none, the input
    record's own `FullyQualifiedErrorId` string (its exception's type name when that is empty), with
-   the HTTP status in the message, `HTTP 403: ...` (`:276`). No error id is invented. It is always a
+   the HTTP status in the message, `HTTP 403: ...` (`:285`). No error id is invented. It is always a
    NEW record that never chains the raw exception. A caller receives a response or a thrown
    `ErrorRecord` -- there is no side-channel protocol.
 
@@ -799,15 +799,21 @@ and retry above, and returns `@{ value = <every page's items> }`; the four listi
 never a shorter list, with `PartialValue`, `NextLink` and `PageNumber` as note properties on its
 `Exception`, which survives the throw where the record does not. A later page that comes back with
 no body is a failed read too, raised with the same three facts and no error id (category
-`InvalidResult`); a first page with no body is an empty list. There is no page cap, since a cap
-would cut a list short silently, and verbose output never prints a next link.
+`InvalidResult`); a first page with no body is an empty list. A next link is followed only when it
+is an absolute https URI on the first request's host (OPIM-46) -- the host of `-Uri` when that is an
+absolute https URI, else `graph.microsoft.com`, since the module's tokens are for the global
+Microsoft Graph only; any other link would carry the session's bearer token elsewhere, so it is an
+error with no error id (category `SecurityError`), with the same three facts (`PageNumber` is the
+page that would have been read), and is never sent. Its message names neither the link nor its
+host. A sovereign cloud (OPIM-29) needs the endpoint owner to supply its host. There is no page
+cap, since a cap would cut a list short silently, and verbose output never prints a next link.
 
 **The places that call the raw SDK or Az authentication directly today**, from a `Select-String`
-over `source/` on 2026-10-07, listed as they are:
+over `source/` on 2026-10-08, listed as they are:
 
 | File:line (under `source/`) | Call |
 |---|---|
-| `Private/Invoke-OPIMGraphRequest.ps1:189, 227, 264` | `Invoke-MgGraphRequest` -- the wrapper itself |
+| `Private/Invoke-OPIMGraphRequest.ps1:198, 236, 273` | `Invoke-MgGraphRequest` -- the wrapper itself |
 | `Private/Get-OPIMCurrentTenantInfo.ps1:44` | `Invoke-MgGraphRequest` for `v1.0/organization` (best-effort tenant display name) |
 | `Private/Initialize-OPIMAuth.ps1:441` | `Connect-MgGraph -AccessToken` |
 | `Private/Initialize-OPIMAuth.ps1:498` | `Get-AzAccessToken` (silent validation; the token is discarded) |

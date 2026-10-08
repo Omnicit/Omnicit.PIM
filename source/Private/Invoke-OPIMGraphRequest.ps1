@@ -50,8 +50,14 @@ function Invoke-OPIMGraphRequest {
        before it), NextLink (the URI of the failed page) and PageNumber (its number, from 1). A
        later page that comes back with no body is a failed read as well: it throws an error with no
        error id (category InvalidResult) and the same three facts, since the list is incomplete. A
-       first page with no body is an empty list. The verbose stream names a page by its number and
-       item count, never by its link, which can carry a skip token.
+       first page with no body is an empty list. A next link is followed only when it is an
+       absolute https URI on the host of the first request (OPIM-46): the host of -Uri when that
+       is an absolute https URI, else graph.microsoft.com. Any other link would carry the session's
+       bearer token to another host, so it is never sent: the same kind of error is thrown, with
+       no error id (category SecurityError), the same three facts (PageNumber is the page that
+       would have been read) and a message that names neither the link nor its host. The verbose
+       stream names a page by its number and item count, never by its link, which can carry a skip
+       token.
 
     .PARAMETER Method
     HTTP method for the Graph request. Defaults to GET.
@@ -66,7 +72,10 @@ function Invoke-OPIMGraphRequest {
     Reads every page of a Graph list: follows @odata.nextLink until a page carries none and returns
     @{ value = <the items of every page> }. A failed page throws its own error, with PartialValue,
     NextLink and PageNumber on its Exception, and nothing is returned; so does a later page that
-    comes back with no body, with an error that carries no error id.
+    comes back with no body, with an error that carries no error id. A next link is followed only
+    when it is an absolute https URI on the host of the first request (graph.microsoft.com when
+    -Uri is relative); any other is the same kind of error, category SecurityError, and is never
+    sent.
 
     .OUTPUTS
     The Graph API response hashtable on success; with -All, a hashtable whose value holds the items
@@ -290,6 +299,16 @@ function Invoke-OPIMGraphRequest {
     $AllValues = [System.Collections.Generic.List[object]]::new()
     $NextUri = $Uri
     [int]$PageNumber = 0
+    # OPIM-46 (SEC), ruling P10: the host a next link must stay on is the host of the first request --
+    # the host of -Uri when that is an absolute https URI, else graph.microsoft.com, since the module's
+    # tokens are for the global Microsoft Graph only. TryCreate, not IsWellFormedUriString, which
+    # refuses an unescaped ' or $ in an absolute Graph URI.
+    $FirstParsed = $null
+    $FirstHost = if ([uri]::TryCreate($Uri, [UriKind]::Absolute, [ref]$FirstParsed) -and $FirstParsed.Scheme -eq 'https') {
+        $FirstParsed.Host
+    } else {
+        'graph.microsoft.com'
+    }
     while ($NextUri) {
         $PageNumber++
         $PageFailed = $false
@@ -337,6 +356,26 @@ function Invoke-OPIMGraphRequest {
         # skip token.
         Write-Verbose "[Invoke-OPIMGraphRequest] Read page $PageNumber of the list: $PageItemCount item(s)."
         $NextUri = [string]$Page['@odata.nextLink']
+        if ($NextUri) {
+            # OPIM-46 (SEC): follow a next link only to the host of the first request, over https.
+            # A link elsewhere would carry the session's token to another host: it is never sent,
+            # and the list is reported incomplete. The message names neither the link nor its host.
+            $NextParsed = $null
+            $SameHost = [uri]::TryCreate($NextUri, [UriKind]::Absolute, [ref]$NextParsed) -and
+                $NextParsed.Scheme -eq 'https' -and
+                [string]::Equals($NextParsed.Host, $FirstHost, [System.StringComparison]::OrdinalIgnoreCase)
+            if (-not $SameHost) {
+                $Foreign = [System.Exception]::new(
+                    "Page $($PageNumber + 1): Microsoft Graph returned a next link to another host than the first request, so it was not followed and the list is incomplete.")
+                $Foreign | Add-Member -NotePropertyName PartialValue -NotePropertyValue $AllValues.ToArray() -Force
+                $Foreign | Add-Member -NotePropertyName NextLink -NotePropertyValue $NextUri -Force
+                $Foreign | Add-Member -NotePropertyName PageNumber -NotePropertyValue ($PageNumber + 1) -Force
+                Write-CmdletError -Message $Foreign -Category SecurityError -TargetObject $null -Cmdlet $PSCmdlet -Terminating
+                # As for the page with no body above: ThrowTerminatingError ends this function, so this
+                # line is not reached; it stays so the loop can never fall through to follow the link.
+                return
+            }
+        }
     }
     return @{ value = $AllValues.ToArray() }
 }
