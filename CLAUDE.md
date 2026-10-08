@@ -231,7 +231,7 @@ and `testhygiene`, `sourcehygiene`, `dochygiene` and `docsync` read files static
 
 # Full test suite -- the authoritative gate, and the command every CI leg runs.
 # QA tests + unit tests + per-function PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-08: 1,876 passed, 0 failed, 0 skipped; coverage 93.23% over 2,524 analysed
+# (measured 2026-10-08: 2,382 passed, 0 failed, 0 skipped; coverage 94.16% over 2,879 analysed
 #  commands; Pester 6.2.0)
 ./build.ps1 -Tasks test
 
@@ -248,7 +248,7 @@ The Sampler test task measures coverage against the **built** module output, not
 `build.yaml`'s `test` workflow does not include `build` (`build.yaml:63-70`; only the default
 workflow, `./build.ps1` with no `-Tasks`, runs both). Always run `-Tasks build` before `-Tasks test`
 after changing source files -- and never build while the tests are running. The coverage threshold
-is 80 % (`build.yaml:152`): measured on 2026-10-08, 2,353 of 2,524 commands are covered, 333 more
+is 80 % (`build.yaml:152`): measured on 2026-10-08, 2,711 of 2,879 commands are covered, 407 more
 than 80 % requires. The margin has been thin before. The MSAL reflection lines in
 `Get-OPIMMsalApplication` are no longer run by any unit test, since reaching them builds a real
 MSAL client (see **Testing Conventions**), and that took coverage from 83.7 % to 80.28 % -- four
@@ -1138,14 +1138,15 @@ called by `Install`, `Set` and `Remove`; never inline it.
   module function calls it today.
 - **PSScriptAnalyzer:** the QA gate requires zero findings, with the default rules, for every
   function's source file. A targeted suppression is acceptable only for a known false positive and
-  only with a `Justification` string; **never suppress a rule that hides a real bug.** Five
+  only with a `Justification` string; **never suppress a rule that hides a real bug.** Six
   function files carry suppressions today, measured with a search for `SuppressMessageAttribute`
   over `source/` on 2026-10-08: `Remove-OPIMErrorRecord` suppresses `PSAvoidGlobalVars` (the
   caller's `$global:Error` is the list it must edit) and
   `PSUseShouldProcessForStateChangingFunctions` (it runs unconditionally first in a catch), and
-  `New-OPIMTenantMismatchError`, `New-OPIMGraphSessionChangedError`, `New-OPIMSignInRefusedError`
-  and `New-OPIMScheduleNameError` each suppress `PSUseShouldProcessForStateChangingFunctions` (a
-  pure record builder that the `New-` verb draws the rule onto). The six completer classes carry
+  `New-OPIMTenantMismatchError`, `New-OPIMGraphSessionChangedError`, `New-OPIMSignInRefusedError`,
+  `New-OPIMScheduleNameError` and `New-OPIMRequestError` each suppress
+  `PSUseShouldProcessForStateChangingFunctions` (a pure record builder that the `New-` verb draws
+  the rule onto). The six completer classes carry
   two each (`PSAvoidUsingWriteHost` and `PSUseDeclaredVarsMoreThanAssignments`). Each suppression
   carries a `Justification`.
 
