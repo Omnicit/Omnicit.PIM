@@ -456,7 +456,7 @@ The file is safe to edit manually — it is standard PowerShell data file syntax
 |---|---|---|
 | Directory Role | `"{roleDefinitionId}\|{directoryScopeId}"` | `"$($_.roleDefinitionId)\|$($_.directoryScopeId)"` |
 | Entra ID Group | `"{groupId}_{accessId}"` | `"$($_.groupId)_$($_.accessId)"` |
-| Azure Role | Eligibility schedule name | `$_.Name`; for an active role from `-Activated`, the eligibility it was activated from (the last segment of `$_.LinkedRoleEligibilityScheduleId`) |
+| Azure Role | Eligibility schedule name | `$_.Name`; for an active role from `-Activated`, the eligibility it was activated from (the last segment of `$_.LinkedRoleEligibilityScheduleId`), only when the role is active at that eligibility's own scope |
 
 These identifiers are stable across eligibility renewals. The `accessId` in the group key is
 either `member` or `owner`, so you can store member and owner eligibility for the same group
@@ -498,9 +498,12 @@ roles/groups `pim` should activate for a tenant. Both eligible (`default`) and a
 (`-Activated`) objects are accepted — useful for piping your currently active roles as the
 default set. `-TenantMap` is implied; `-TenantAlias` and `-TenantId` are required.
 
-An active Azure role is stored by the eligibility it was activated from, so `pim` finds it among
-your eligible roles. An active Azure role that names no eligibility is refused with the error
-`LinkedEligibilityNotFound` and is not stored; the other piped objects still are.
+An active Azure role is stored as the eligibility it was activated from, so `pim` finds it among
+your eligible roles and activates it at that eligibility's own scope. An active Azure role that
+names no eligibility, or that is active at another scope than its eligibility (a narrower scope
+chosen when it was activated), is refused with the error `LinkedEligibilityNotFound` and is not
+stored, since `pim` would activate the wider scope; pipe the eligible role from `Get-OPIMAzureRole`
+instead. The other piped objects are still stored.
 
 ```powershell
 # Store all eligible directory roles for this tenant
@@ -525,7 +528,8 @@ Get-OPIMAzureRole |
     Where-Object { $_.RoleDefinitionDisplayName -like 'Contributor*' } |
     Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>'
 
-# Store your currently active Azure roles (each by the eligibility it was activated from)
+# Store your currently active Azure roles as the eligibilities they were activated from
+# (a role activated at a narrower scope than its eligibility is refused)
 Get-OPIMAzureRole -Activated |
     Install-OPIMConfiguration -TenantAlias fabrikam -TenantId '<guid>'
 

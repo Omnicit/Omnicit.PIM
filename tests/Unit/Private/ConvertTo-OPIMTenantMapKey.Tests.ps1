@@ -106,16 +106,73 @@ Describe 'ConvertTo-OPIMTenantMapKey' {
             }
         }
 
-        It 'returns a bare linked id as it is' {
-            InModuleScope Omnicit.PIM {
+        It 'refuses an instance whose link is <Label>, which names no scope to compare' -ForEach @(
+            @{ Label = 'a bare name'; Linked = 'elig-az-002'; ScopeId = '/subscriptions/sub-001' }
+            @{ Label = 'the provider-only form'; Linked = '/providers/Microsoft.Authorization/roleEligibilitySchedules/elig-az-002'; ScopeId = '/subscriptions/sub-001' }
+            @{ Label = 'the provider-only form, at the root scope'; Linked = '/providers/Microsoft.Authorization/roleEligibilitySchedules/elig-az-002'; ScopeId = '/' }
+        ) {
+            InModuleScope Omnicit.PIM -Parameters @{ Linked = $Linked; ScopeId = $ScopeId } {
+                param($Linked, $ScopeId)
                 $Post = [PSCustomObject]@{
                     Name                            = 'az-active-002'
-                    LinkedRoleEligibilityScheduleId = 'elig-az-002'
+                    LinkedRoleEligibilityScheduleId = $Linked
                     RoleDefinitionId                = 'role-az-002'
+                    ScopeId                         = $ScopeId
+                }
+                $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+                { ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $Post } |
+                    Should -Throw -ErrorId 'LinkedEligibilityNotFound*' -ExpectedMessage '*cannot be shown to be active at the scope of the eligibility*'
+            }
+        }
+
+        It 'refuses an instance activated at a narrower scope than its eligibility' {
+            InModuleScope Omnicit.PIM {
+                # The portal's Scope tab activates a subscription eligibility at one resource group: the
+                # instance is at the resource group, its link names the subscription eligibility. Storing that
+                # eligibility would make pim activate the whole subscription.
+                $Post = [PSCustomObject]@{
+                    Name                            = 'az-active-010'
+                    LinkedRoleEligibilityScheduleId = '/subscriptions/sub-001/providers/Microsoft.Authorization/roleEligibilitySchedules/elig-az-010'
+                    RoleDefinitionId                = 'role-az-010'
+                    RoleDefinitionDisplayName       = 'Contributor'
+                    ScopeId                         = '/subscriptions/sub-001/resourceGroups/rg-001'
+                    ScopeDisplayName                = 'rg-001'
+                }
+                $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+                $Err = { ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $Post } | Should -Throw -PassThru
+                $Err.FullyQualifiedErrorId | Should -BeLike 'LinkedEligibilityNotFound*'
+                $Err.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+                [object]::ReferenceEquals($Err.TargetObject, $Post) | Should -BeTrue
+                $Err.Exception.Message | Should -BeExactly (
+                    "The active Azure role 'Contributor' at scope 'rg-001' cannot be shown to be active at the scope " +
+                    'of the eligibility it was activated from, so it is not stored: pim activates an eligibility at ' +
+                    'its own scope, which can be wider. Pipe the eligible role from Get-OPIMAzureRole instead.')
+            }
+        }
+
+        It 'stores an instance at the scope of its eligibility, compared without regard to letter case' {
+            InModuleScope Omnicit.PIM {
+                $Post = [PSCustomObject]@{
+                    Name                            = 'az-active-012'
+                    LinkedRoleEligibilityScheduleId = '/subscriptions/sub-001/providers/Microsoft.Authorization/roleEligibilitySchedules/elig-az-012'
+                    RoleDefinitionId                = 'role-az-012'
+                    ScopeId                         = '/SUBSCRIPTIONS/SUB-001'
+                }
+                $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+                ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $Post | Should -BeExactly 'elig-az-012'
+            }
+        }
+
+        It 'finds the eligibility provider segment of the link without regard to letter case' {
+            InModuleScope Omnicit.PIM {
+                $Post = [PSCustomObject]@{
+                    Name                            = 'az-active-013'
+                    LinkedRoleEligibilityScheduleId = '/subscriptions/sub-001/PROVIDERS/microsoft.authorization/ROLEELIGIBILITYSCHEDULES/elig-az-013'
+                    RoleDefinitionId                = 'role-az-013'
                     ScopeId                         = '/subscriptions/sub-001'
                 }
                 $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
-                ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $Post | Should -BeExactly 'elig-az-002'
+                ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $Post | Should -BeExactly 'elig-az-013'
             }
         }
 
@@ -184,7 +241,7 @@ Describe 'ConvertTo-OPIMTenantMapKey' {
                 }
                 $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
                 { ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $Post } |
-                    Should -Throw -ErrorId 'LinkedEligibilityNotFound*'
+                    Should -Throw -ErrorId 'LinkedEligibilityNotFound*' -ExpectedMessage "*'role-az-007' at scope '/subscriptions/sub-001' names no eligibility schedule it was activated from*"
             }
         }
 
@@ -204,9 +261,8 @@ Describe 'ConvertTo-OPIMTenantMapKey' {
                 $Err.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
                 [object]::ReferenceEquals($Err.TargetObject, $Post) | Should -BeTrue
                 $Err.Exception.Message | Should -BeExactly (
-                    "The active Azure role 'Contributor' at scope 'ProdSub' names no eligibility it was activated " +
-                    'from (its LinkedRoleEligibilityScheduleId is empty), so it is not stored. Pipe the eligible ' +
-                    'role from Get-OPIMAzureRole instead.')
+                    "The active Azure role 'Contributor' at scope 'ProdSub' names no eligibility schedule it was " +
+                    'activated from, so it is not stored. Pipe the eligible role from Get-OPIMAzureRole instead.')
             }
         }
 

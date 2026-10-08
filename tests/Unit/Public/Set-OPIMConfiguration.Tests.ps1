@@ -271,6 +271,16 @@ Describe 'Set-OPIMConfiguration' {
             $script:azOther.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
             $script:grpForAz = [PSCustomObject]@{ id = 'elig-grp-az-001'; groupId = 'group-001'; accessId = 'member' }
             $script:grpForAz.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupEligibilitySchedule')
+            # Activated at one resource group from a subscription eligibility (the portal's Scope tab).
+            $script:azNarrow = [PSCustomObject]@{
+                Name                            = 'az-active-004'
+                LinkedRoleEligibilityScheduleId = '/subscriptions/sub-001/providers/Microsoft.Authorization/roleEligibilitySchedules/elig-az-004'
+                RoleDefinitionId                = '/providers/Microsoft.Authorization/roleDefinitions/role-def-az-004'
+                RoleDefinitionDisplayName       = 'Contributor'
+                ScopeId                         = '/subscriptions/sub-001/resourceGroups/rg-001'
+                ScopeDisplayName                = 'rg-001'
+            }
+            $script:azNarrow.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
         }
         BeforeEach {
             $script:writtenContent = $null
@@ -288,9 +298,10 @@ Describe 'Set-OPIMConfiguration' {
             $Errs.Count | Should -Be 0
             $script:writtenContent | Should -Not -BeNullOrEmpty
             [regex]::Matches($script:writtenContent, [regex]::Escape("'elig-az-001'")).Count | Should -Be 1
+            $script:writtenContent | Should -Not -Match 'az-active-001'
         }
 
-        It 'writes one LinkedEligibilityNotFound for an active role that names no eligibility, and stores the other piped objects' {
+        It 'writes LinkedEligibilityNotFound for an active role that names no eligibility, and stores the other piped objects' {
             $script:azUnlinked, $script:azOther, $script:grpForAz | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
             @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'LinkedEligibilityNotFound*' }).Count | Should -BeGreaterThan 0
             $Errs[-1].FullyQualifiedErrorId | Should -BeLike 'LinkedEligibilityNotFound*'
@@ -308,6 +319,15 @@ Describe 'Set-OPIMConfiguration' {
             $Written.Count | Should -Be 1
             $Written[0].FullyQualifiedErrorId | Should -BeLike 'LinkedEligibilityNotFound*'
             $script:writtenContent | Should -Match "AzureRoles\s+=\s+@\('elig-az-003'\)"
+        }
+
+        It 'writes LinkedEligibilityNotFound for an active role at a narrower scope than its eligibility, and stores neither' {
+            $script:azNarrow, $script:azOther | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[-1].FullyQualifiedErrorId | Should -BeLike 'LinkedEligibilityNotFound*'
+            $Errs[-1].Exception.Message | Should -BeLike "The active Azure role 'Contributor' at scope 'rg-001' cannot be shown to be active at the scope of the eligibility*"
+            $script:writtenContent | Should -Match "AzureRoles\s+=\s+@\('elig-az-003'\)"
+            $script:writtenContent | Should -Not -Match 'elig-az-004'
+            $script:writtenContent | Should -Not -Match 'az-active-004'
         }
 
         It 'keeps the stored AzureRoles when the only piped Azure role is refused' {

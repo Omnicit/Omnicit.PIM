@@ -1095,7 +1095,9 @@ called by `Install`, `Set` and `Remove`; never inline it.
 **The stored keys (OPIM-10, A13).** `DirectoryRoles` holds `roleDefinitionId|directoryScopeId`,
 `EntraIDGroups` holds `groupId_accessId`, and `AzureRoles` the eligibility schedule's `Name` -- for
 an active Azure role piped from `-Activated` (or an active row of `-All`), the eligibility it was
-activated from, the last segment of its `LinkedRoleEligibilityScheduleId` (OPIM-22). The
+activated from, the last segment of its `LinkedRoleEligibilityScheduleId` (OPIM-22), and only when
+the link names that eligibility at the instance's own `ScopeId`: `pim` activates an eligibility at
+its own scope, so storing one activated at a narrower scope would widen it (SECURITY 4). The
 private `ConvertTo-OPIMTenantMapKey` is the single owner of these formats and of how a stored entry
 is read: `-InputObject` returns a post's key and `-Entry` an entry as the key to compare with, where
 a directory entry without `|` -- the form 0.5.x wrote -- means the role at `/` only, never every
@@ -1238,9 +1240,12 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `AmbiguousName`, built with `-Configuration` (the message says "configured entry").
 - **`LinkedEligibilityNotFound` has one owner.** `ConvertTo-OPIMTenantMapKey` builds it (category
   `ObjectNotFound`, the instance as its target) and throws it with `ThrowTerminatingError` when an
-  active Azure role names no eligibility it was activated from (an empty or missing
-  `LinkedRoleEligibilityScheduleId`), so the role cannot be stored in the tenant map (OPIM-22); build
-  it nowhere else. `Install-OPIMConfiguration` and `Set-OPIMConfiguration` call the helper with
+  active Azure role cannot be stored in the tenant map (OPIM-22): its
+  `LinkedRoleEligibilityScheduleId` is empty or missing, or the scope the link names (the text
+  before `/providers/Microsoft.Authorization/roleEligibilitySchedules/`, compared
+  `OrdinalIgnoreCase`) differs from the instance's `ScopeId` -- an activation at a narrower scope --
+  or is absent (a bare name, or the provider-only form), since an unprovable scope is no proof of
+  the same scope. The two cases carry messages of their own; build the record nowhere else. `Install-OPIMConfiguration` and `Set-OPIMConfiguration` call the helper with
   `-ErrorAction Stop` in a `try` whose catch scrubs first, writes the record (non-terminating) and
   skips only that piped object; the others are still stored.
 - **Request status has one owner.** `Get-OPIMRequestOutcome` classifies a status (Succeeded,

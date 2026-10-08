@@ -28,8 +28,13 @@ function ConvertTo-OPIMTenantMapKey {
     segment of its LinkedRoleEligibilityScheduleId, which is the Name of that eligibility and so
     the key Enable-OPIMMyRole compares with. An object is such an instance when it carries the
     type Omnicit.PIM.AzureAssignmentScheduleInstance or a LinkedRoleEligibilityScheduleId
-    property; an Az.Resources eligibility schedule has no such property. An instance that names
-    no eligibility is refused: the terminating error LinkedEligibilityNotFound (category
+    property; an Az.Resources eligibility schedule has no such property. pim activates a stored
+    eligibility at the eligibility's own scope, so an instance is stored only when its link names
+    the eligibility at the instance's own scope (the text before
+    /providers/Microsoft.Authorization/roleEligibilitySchedules/, compared OrdinalIgnoreCase). An
+    instance that names no eligibility, one activated at another scope than its eligibility (a
+    narrower scope chosen at activation), and one whose link names no scope (a bare name, or the
+    provider-only form) are refused: the terminating error LinkedEligibilityNotFound (category
     ObjectNotFound, the instance as its target), whose single owner this function is.
 
     .PARAMETER Pillar
@@ -59,7 +64,8 @@ function ConvertTo-OPIMTenantMapKey {
     Get-OPIMAzureRole -Activated | ForEach-Object { ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem }
 
     Returns, for each active Azure role, the Name of the eligibility schedule it was activated
-    from, and throws LinkedEligibilityNotFound for one that names none.
+    from, and throws LinkedEligibilityNotFound for one that names none or is active at another
+    scope than that eligibility.
     #>
     [CmdletBinding(DefaultParameterSetName = 'Object')]
     [OutputType([string])]
@@ -86,17 +92,37 @@ function ConvertTo-OPIMTenantMapKey {
             if (-not $IsInstance) {
                 [string]$InputObject.Name
             } else {
-                # OPIM-22: the linked id is an ARM id ending in /roleEligibilitySchedules/<name>, or the bare
+                # OPIM-22: the linked id is an ARM id,
+                # <eligibility scope>/providers/Microsoft.Authorization/roleEligibilitySchedules/<name>, or the bare
                 # name; its last segment is the eligibility's Name.
-                [string]$Linked = ([string]$InputObject.LinkedRoleEligibilityScheduleId).Split('/')[-1]
+                [string]$LinkedId = $InputObject.LinkedRoleEligibilityScheduleId
+                [string]$Linked = $LinkedId.Split('/')[-1]
+                $RoleLabel  = if ($InputObject.RoleDefinitionDisplayName) { $InputObject.RoleDefinitionDisplayName } else { $InputObject.RoleDefinitionId }
+                $ScopeLabel = if ($InputObject.ScopeDisplayName) { $InputObject.ScopeDisplayName } else { $InputObject.ScopeId }
+                $Refusal = $null
                 if ([string]::IsNullOrWhiteSpace($Linked)) {
-                    $RoleLabel  = if ($InputObject.RoleDefinitionDisplayName) { $InputObject.RoleDefinitionDisplayName } else { $InputObject.RoleDefinitionId }
-                    $ScopeLabel = if ($InputObject.ScopeDisplayName) { $InputObject.ScopeDisplayName } else { $InputObject.ScopeId }
+                    $Refusal = "The active Azure role '$RoleLabel' at scope '$ScopeLabel' names no eligibility schedule it " +
+                               'was activated from, so it is not stored. Pipe the eligible role from Get-OPIMAzureRole instead.'
+                } else {
+                    # pim activates a stored eligibility at the eligibility's own scope (Enable-OPIMAzureRole sends
+                    # its ScopeId), and a role can be activated at a narrower scope than its eligibility (the
+                    # portal's Scope tab). So the instance is stored only when its link proves that the eligibility
+                    # is at the instance's own scope; a link without a scope (a bare name, or the provider-only
+                    # form) proves nothing (SECURITY 4: never a wider scope).
+                    [int]$At = $LinkedId.IndexOf('/providers/Microsoft.Authorization/roleEligibilitySchedules/',
+                        [System.StringComparison]::OrdinalIgnoreCase)
+                    [bool]$SameScope = $At -gt 0 -and
+                        [string]::Equals($LinkedId.Substring(0, $At), [string]$InputObject.ScopeId, [System.StringComparison]::OrdinalIgnoreCase)
+                    if (-not $SameScope) {
+                        $Refusal = "The active Azure role '$RoleLabel' at scope '$ScopeLabel' cannot be shown to be active at " +
+                                   'the scope of the eligibility it was activated from, so it is not stored: pim activates an ' +
+                                   'eligibility at its own scope, which can be wider. Pipe the eligible role from ' +
+                                   'Get-OPIMAzureRole instead.'
+                    }
+                }
+                if ($Refusal) {
                     $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
-                            [System.Exception]::new(
-                                "The active Azure role '$RoleLabel' at scope '$ScopeLabel' names no eligibility it was activated " +
-                                'from (its LinkedRoleEligibilityScheduleId is empty), so it is not stored. Pipe the eligible ' +
-                                'role from Get-OPIMAzureRole instead.'),
+                            [System.Exception]::new($Refusal),
                             'LinkedEligibilityNotFound',
                             [System.Management.Automation.ErrorCategory]::ObjectNotFound,
                             $InputObject))

@@ -50,10 +50,13 @@ function Install-OPIMConfiguration {
     A directory role is stored with its scope, as roleDefinitionId|directoryScopeId, so pim and unpim
     act on it only at that scope; a group is stored as groupId_accessId, and an Azure role as the
     Name of its eligibility schedule. An active Azure role (from Get-OPIMAzureRole -Activated, or an
-    active row of -All) is stored by the eligibility schedule it was activated from; one that names
-    none is written as the error LinkedEligibilityNotFound and not stored, and the other piped
-    objects still are. Each key is stored once, without regard to letter case, in the order first
-    piped. Objects not matching a known Omnicit.PIM type are silently ignored.
+    active row of -All) is stored as the eligibility schedule it was activated from, which pim
+    activates at the eligibility's own scope. An active Azure role that names no eligibility, or that
+    is not shown to be active at its eligibility's scope (activated at a narrower scope, or a link
+    without a scope), is written as the error LinkedEligibilityNotFound and not stored; pipe the
+    eligible role instead. The other piped objects still are stored. Each key is stored once,
+    without regard to letter case, in the order first piped. Objects not matching a known
+    Omnicit.PIM type are silently ignored.
     #>
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     [OutputType([void])]
