@@ -755,6 +755,9 @@ The same applies to `Get-OPIMEntraIDGroup` and `Get-OPIMAzureRole`.
 > users' roles. Both result types are returned with their correct TypeNames so Format views apply.
 > A permanent assignment is no activation and cannot be deactivated by you, so it is listed in
 > neither `-Activated` nor the active rows of `-All`.
+>
+> A directory role at an administrative unit that cannot be read is still listed, with the unit's id in
+> place of its name, and a warning reports the error.
 
 ---
 

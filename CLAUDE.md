@@ -847,7 +847,10 @@ Terminology differs from the PIM portal. Every Graph path is `v1.0`.
 Reads use `filterByCurrentUser(on='principal')` and `$expand=principal,roledefinition`. Graph
 `v1.0` cannot expand `directoryScope`, so `Get-OPIMDirectoryRole` fetches
 `v1.0/directory<directoryScopeId>` through the wrapper for every item not at the root scope `/`
-(`Get-OPIMDirectoryRole.ps1:151`, `:196-200`). A `SelfDeactivate` request is built from the ACTIVE
+(`Get-OPIMDirectoryRole.ps1:156`, `:212`), and a lookup that fails (OPIM-19) never ends the listing:
+its catch scrubs first, the post keeps its scope id as the scope's name, and a WARNING carries the
+caught message and id -- not an error record, which would end `pim`, since it lists with
+`-ErrorAction Stop`. A `SelfDeactivate` request is built from the ACTIVE
 instance, never from an eligibility schedule: it sends the instance's `roleDefinitionId`,
 `directoryScopeId` and `principalId`, and its `roleAssignmentScheduleId` as `targetScheduleId`
 (`Disable-OPIMDirectoryRole.ps1:112-118`). After a request, `Restore-GraphProperty` copies
