@@ -1220,8 +1220,11 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `ActivationRequestFailed` (through `Write-OPIMRequestOutcome`), a request still in progress at its
   deadline is `ActivationWaitTimedOut` (Ruling P3: the timeout used to end the command; one slow
   request no longer ends the wait for the others, though under `-ErrorAction Stop` it still ends the
-  command), and a failed poll is written as itself. The expiry error in its `process` block is
-  unchanged: `Write-CmdletError` without an `-ErrorId`.
+  command), and a failed poll is written as itself. The expiry error in its `process` block -- a
+  request whose end date has already passed, which is not polled -- is `ActivationAlreadyExpired`
+  (Ruling R-P5: no existing id says "nothing to wait for"), category `InvalidArgument`, with the
+  request as its target, written through `Write-CmdletError -Cmdlet $PSCmdlet` so the record
+  carries the command's own name (`ActivationAlreadyExpired,Wait-OPIMDirectoryRole`).
 - **Private helpers** such as `Resolve-OPIMSchedule` and `Restore-GraphProperty` may
   `throw` on caller error, and `Invoke-OPIMGraphRequest` throws the converted Graph error by
   design: the caller is responsible for catching and routing it.

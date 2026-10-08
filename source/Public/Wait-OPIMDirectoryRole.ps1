@@ -17,8 +17,9 @@ function Wait-OPIMDirectoryRole {
     error; one still in progress -TimeoutSeconds after Graph created it (after the start of the
     wait when the request carries no readable creation time) is written as an
     ActivationWaitTimedOut error and stays submitted; and one whose status cannot be read is written
-    as that error. All of them are non-terminating, so one request never ends the wait for the
-    others. Times are compared in UTC.
+    as that error. A request whose end date has already passed is not polled at all: it is written
+    as an ActivationAlreadyExpired error. All of them are non-terminating, so one request never ends
+    the wait for the others. Times are compared in UTC.
     .EXAMPLE
     Enable-OPIMDirectoryRole -RoleName 'Global Administrator (...)' | Wait-OPIMDirectoryRole
     Enable a role and wait for it to be fully active.
@@ -74,7 +75,10 @@ function Wait-OPIMDirectoryRole {
         # The end date is read as UTC and compared with UTC, whatever Kind or offset it arrives in.
         $EndTime = ConvertTo-OPIMUtcDateTime -Value $RoleRequest.scheduleInfo.expiration.endDateTime
         if ($null -ne $EndTime -and $EndTime -lt (Get-Date -AsUTC)) {
-            Write-CmdletError -Message ([System.Exception]::new("$($RoleRequest.RoleName) role end date already expired at $($EndTime.ToLocalTime()). Skipping."))
+            # Ruling R-P5: an id of its own, since no existing one says "the end date has passed;
+            # nothing to wait for". Written as this command, with the request as its target.
+            Write-CmdletError -Message ([System.Exception]::new("$($RoleRequest.RoleName) role end date already expired at $($EndTime.ToLocalTime()). Skipping.")) `
+                -ErrorId 'ActivationAlreadyExpired' -Category InvalidArgument -TargetObject $RoleRequest -Cmdlet $PSCmdlet
             return
         }
         $RoleRequests.Add($RoleRequest)

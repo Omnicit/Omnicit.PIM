@@ -107,6 +107,26 @@ Describe 'Wait-OPIMDirectoryRole' {
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It
         }
 
+        It 'writes the expiry error as ActivationAlreadyExpired, with the request as its target (<Case>)' -ForEach @(
+            @{ Case = 'bound by -RoleRequest'; Piped = $false }
+            @{ Case = 'piped'; Piped = $true }
+        ) {
+            # Bound by name, $PSItem is empty in the process block, so a target that falls back to it
+            # is $null there: only an explicit -TargetObject names the request.
+            $Expired = New-WaitTestRequest -Id 'req-a' -EndDateTime $T0.AddHours(-1).ToString('o')
+            if ($Piped) {
+                $Expired | Wait-OPIMDirectoryRole -NoSummary -ErrorVariable Errs -ErrorAction SilentlyContinue
+            } else {
+                Wait-OPIMDirectoryRole -RoleRequest $Expired -NoSummary -ErrorVariable Errs -ErrorAction SilentlyContinue
+            }
+            @($Errs).Count | Should -Be 1
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationAlreadyExpired,Wait-OPIMDirectoryRole'
+            $Errs[-1].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidArgument)
+            [object]::ReferenceEquals($Errs[-1].TargetObject, $Expired) | Should -BeTrue -Because 'the record names the request that expired'
+            $Errs[-1].Exception.Message | Should -BeLike '*role end date already expired*'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It
+        }
+
         It 'reads an end date of Kind Local as the instant it is' {
             # An hour ago, as a local DateTime: expired in every time zone.
             $Expired = New-WaitTestRequest -Id 'req-a' -EndDateTime $T0.AddHours(-1).ToLocalTime()
