@@ -931,6 +931,16 @@ expand `group,principal`.
   next role or group still runs.
 - `-WhatIf` / `-Confirm` through `[CmdletBinding(SupportsShouldProcess)]`.
 - An already-active object piped in (from `Get-OPIM* -All`) is skipped with a verbose message.
+- A post that is already active (by `Get-OPIM* -Activated`) is not requested again (OPIM-39): a
+  warning, `"<Label> is already active, so no new request was sent and the active assignment is left
+  as it is."`, and no request. The check stands after the skip above and before `ShouldProcess`, and
+  reads the active list lazily, once per `process` call, at the first role or group that reaches it.
+  The keys are `roleDefinitionId` and `directoryScopeId`, `groupId` and `accessId`, and
+  `RoleDefinitionId` and `ScopeId`, compared with `OrdinalIgnoreCase`. A failed read of the active
+  list is written as itself once and sends nothing more in that `process` call: a list that cannot
+  be read is no proof that nothing is active. A permanent assignment is not in that list, so Graph
+  still refuses it (`RoleAssignmentExists`), and an activation the listing does not show yet (about
+  30 seconds for a group, OPIM-50) is requested again.
 
 **`Disable-OPIM*`:**
 

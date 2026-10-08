@@ -13,6 +13,9 @@ function Enable-OPIMEntraIDGroup {
     The request is reported by the status Graph gives it: a request that failed, was denied or was
     canceled is written as an ActivationRequestFailed error, and one that waits for approval or is
     still being provisioned is returned with a warning.
+    A membership or ownership that is already active (listed by Get-OPIMEntraIDGroup -Activated) is
+    not requested again: a warning is written and nothing is sent for it, and when that list cannot
+    be read, its error is written and nothing more is sent.
     .EXAMPLE
     Get-OPIMEntraIDGroup | Enable-OPIMEntraIDGroup
     Activate all eligible PIM group assignments for 1 hour.
@@ -152,10 +155,34 @@ function Enable-OPIMEntraIDGroup {
             @($Group)
         }
 
+        $ActivePosts = $null
+        $ActiveReadFailed = $false
         foreach ($Group in $ResolvedGroups) {
             # Skip already-active instances piped from Get-OPIMEntraIDGroup -All
             if ($Group.PSObject.TypeNames -contains 'Omnicit.PIM.GroupAssignmentScheduleInstance') {
                 Write-Verbose "Skipping already-active group assignment: $($Group.group.displayName) ($($Group.accessId))"
+                continue
+            }
+            # OPIM-39: never send a second request for a membership or ownership that is already
+            # active -- a repeated request can end the active one. A list that cannot be read is no
+            # proof that nothing is active, so nothing more is sent (G3).
+            if ($ActiveReadFailed) { continue }
+            if ($null -eq $ActivePosts) {
+                try {
+                    $ActivePosts = @(Get-OPIMEntraIDGroup -Activated -ErrorAction Stop)
+                } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
+                    $PSCmdlet.WriteError($PSItem)
+                    $ActiveReadFailed = $true
+                    continue
+                }
+            }
+            $Label = (Get-OPIMScheduleName -Pillar Group -InputObject $Group).Label
+            if (@($ActivePosts | Where-Object {
+                        [string]::Equals($_.groupId, $Group.groupId, [System.StringComparison]::OrdinalIgnoreCase) -and
+                        [string]::Equals($_.accessId, $Group.accessId, [System.StringComparison]::OrdinalIgnoreCase)
+                    }).Count -gt 0) {
+                $PSCmdlet.WriteWarning("$Label is already active, so no new request was sent and the active assignment is left as it is.")
                 continue
             }
             # OPIM-18: a time without an offset is local time; Graph gets it in UTC.
@@ -211,7 +238,6 @@ function Enable-OPIMEntraIDGroup {
                 # Convert to PSCustomObject so custom Format views apply (hashtable uses Key/Value formatter).
                 $Out = [PSCustomObject]$Response
                 $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleRequest')
-                $Label = (Get-OPIMScheduleName -Pillar Group -InputObject $Group).Label
                 $Status = [string]$Out.status
                 if ($Wait) {
                     # OPIM-14: poll while the request is in progress, up to -TimeoutSeconds, counted in UTC.

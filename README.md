@@ -714,6 +714,10 @@ error and returns nothing, and one that waits for approval or is still being pro
 with a warning, since it has not taken effect yet. A status the module does not know counts as a
 failure, never as a success; a deactivation succeeds only when it ends `Revoked`.
 
+The `Enable-OPIM*` cmdlets never request a role or group that is already active (listed by
+`Get-OPIM* -Activated`): they write a warning and send nothing for it, and when that list cannot be
+read they write that error and send nothing.
+
 With `-Wait`, the `Enable-OPIM*` role and group cmdlets wait for at most `-TimeoutSeconds` (default
 300) and then report the request by its last status, written back onto the object they return.
 Groups and Azure roles read the status again, with a pause between reads, only while the request is

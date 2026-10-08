@@ -13,6 +13,9 @@ function Enable-OPIMDirectoryRole {
     The request is reported by the status Graph gives it: a request that failed, was denied or was
     canceled is written as an ActivationRequestFailed error, and one that waits for approval or is
     still being provisioned is returned with a warning.
+    A role that is already active at that scope (listed by Get-OPIMDirectoryRole -Activated) is not
+    requested again: a warning is written and nothing is sent for it, and when that list cannot be
+    read, its error is written and nothing more is sent.
     .NOTES
     The default activation period is 1 hour. Override with -Hours. Make it persistent in your profile:
 
@@ -165,10 +168,34 @@ function Enable-OPIMDirectoryRole {
             @($Role)
         }
 
+        $ActivePosts = $null
+        $ActiveReadFailed = $false
         foreach ($Role in $ResolvedRoles) {
             # Skip already-active instances piped from Get-OPIMDirectoryRole -All
             if ($Role.PSObject.TypeNames -contains 'Omnicit.PIM.DirectoryAssignmentScheduleInstance') {
                 Write-Verbose "Skipping already-active directory role: $($Role.roleDefinition.displayName)"
+                continue
+            }
+            # OPIM-39: never send a second request for a post that is already active -- a repeated
+            # request can end the active one. A list that cannot be read is no proof that nothing is
+            # active, so nothing more is sent (G3).
+            if ($ActiveReadFailed) { continue }
+            if ($null -eq $ActivePosts) {
+                try {
+                    $ActivePosts = @(Get-OPIMDirectoryRole -Activated -ErrorAction Stop)
+                } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
+                    $PSCmdlet.WriteError($PSItem)
+                    $ActiveReadFailed = $true
+                    continue
+                }
+            }
+            $Label = (Get-OPIMScheduleName -Pillar Directory -InputObject $Role).Label
+            if (@($ActivePosts | Where-Object {
+                        [string]::Equals($_.roleDefinitionId, $Role.roleDefinitionId, [System.StringComparison]::OrdinalIgnoreCase) -and
+                        [string]::Equals($_.directoryScopeId, $Role.directoryScopeId, [System.StringComparison]::OrdinalIgnoreCase)
+                    }).Count -gt 0) {
+                $PSCmdlet.WriteWarning("$Label is already active, so no new request was sent and the active assignment is left as it is.")
                 continue
             }
             # OPIM-18: a time without an offset is local time; Graph gets it in UTC.
@@ -226,7 +253,6 @@ function Enable-OPIMDirectoryRole {
                 $Out = [PSCustomObject]$Response
                 $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleRequest')
 
-                $Label = (Get-OPIMScheduleName -Pillar Directory -InputObject $Role).Label
                 if ($Wait -and (Get-OPIMRequestOutcome -Status $Out.status) -ne 'Failed') {
                     # Wait-OPIMDirectoryRole reads the status again and reports it. A request Graph has
                     # already refused is reported here and never waited for.

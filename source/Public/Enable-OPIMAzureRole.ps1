@@ -15,6 +15,9 @@ function Enable-OPIMAzureRole {
     The request is reported by the status Azure gives it: a request that failed, was denied or was
     canceled is written as an ActivationRequestFailed error, and one that waits for approval or is
     still being provisioned is returned with a warning.
+    A role that is already active at that scope (listed by Get-OPIMAzureRole -Activated) is not
+    requested again: a warning is written and nothing is sent for it, and when that list cannot be
+    read, its error is written and nothing more is sent.
     .NOTES
     The default activation period is 1 hour. Override with -Hours. Make it persistent in your profile:
 
@@ -159,10 +162,34 @@ function Enable-OPIMAzureRole {
             @($Role)
         }
 
+        $ActivePosts = $null
+        $ActiveReadFailed = $false
         foreach ($Role in $ResolvedRoles) {
             # Skip already-active instances piped from Get-OPIMAzureRole -All
             if ($Role.PSObject.TypeNames -contains 'Omnicit.PIM.AzureAssignmentScheduleInstance') {
                 Write-Verbose "Skipping already-active Azure role: $($Role.RoleDefinitionDisplayName) on $($Role.ScopeDisplayName)"
+                continue
+            }
+            # OPIM-39: never send a second request for a post that is already active -- a repeated
+            # request can end the active one. A list that cannot be read is no proof that nothing is
+            # active, so nothing more is sent (G3).
+            if ($ActiveReadFailed) { continue }
+            if ($null -eq $ActivePosts) {
+                try {
+                    $ActivePosts = @(Get-OPIMAzureRole -Activated -ErrorAction Stop)
+                } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
+                    $PSCmdlet.WriteError($PSItem)
+                    $ActiveReadFailed = $true
+                    continue
+                }
+            }
+            $Label = (Get-OPIMScheduleName -Pillar Azure -InputObject $Role).Label
+            if (@($ActivePosts | Where-Object {
+                        [string]::Equals($_.RoleDefinitionId, $Role.RoleDefinitionId, [System.StringComparison]::OrdinalIgnoreCase) -and
+                        [string]::Equals($_.ScopeId, $Role.ScopeId, [System.StringComparison]::OrdinalIgnoreCase)
+                    }).Count -gt 0) {
+                $PSCmdlet.WriteWarning("$Label is already active, so no new request was sent and the active assignment is left as it is.")
                 continue
             }
             $RoleActivateParams = @{
@@ -212,7 +239,6 @@ function Enable-OPIMAzureRole {
                     continue
                 }
 
-                $Label = (Get-OPIMScheduleName -Pillar Azure -InputObject $Role).Label
                 # An Az request's Status is read-only, so the request reported is the last one read:
                 # the response, or the polled request that carries the final status.
                 $Current = $Response

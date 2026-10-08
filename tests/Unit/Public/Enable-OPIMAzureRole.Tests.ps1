@@ -27,6 +27,10 @@ Describe 'Enable-OPIMAzureRole' {
             $Post.PSObject.TypeNames.Insert(0, $TypeName)
             $Post
         }
+        # OPIM-39: every role that reaches the request reads the active list first. Nothing is active
+        # unless a context answers -Activated itself, and every listing mock that answers the resolver
+        # or -Identity is filtered on -not $Activated, so an eligible list is never read as the active one.
+        Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { } -ParameterFilter { $Activated }
     }
 
     Context 'When called with -RoleName (happy path)' {
@@ -917,7 +921,7 @@ Describe 'Enable-OPIMAzureRole' {
                 PrincipalId                     = 'principal-001'
                 LinkedRoleEligibilityScheduleId = 'schedule-010'
             }
-            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return $FakeElig }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return $FakeElig } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
                 return [PSCustomObject]@{
                     Name        = [System.Guid]::NewGuid().ToString()
@@ -930,7 +934,7 @@ Describe 'Enable-OPIMAzureRole' {
 
         It 'looks up the role via Get-OPIMAzureRole filtered by Name' {
             Enable-OPIMAzureRole -Identity 'elig-010'
-            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter { -not $Activated }
         }
 
         It 'submits the SelfActivate request via New-AzRoleAssignmentScheduleRequest' {
@@ -942,7 +946,7 @@ Describe 'Enable-OPIMAzureRole' {
     Context 'When -Identity is specified but no eligible role is found' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return $null }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return $null } -ParameterFilter { -not $Activated }
         }
 
         It 'writes a non-terminating error' {
@@ -973,7 +977,7 @@ Describe 'Enable-OPIMAzureRole' {
                 $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                         [System.Exception]::new('Forbidden: denied'), 'Forbidden',
                         [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
-            }
+            } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {}
         }
 
@@ -1011,7 +1015,7 @@ Describe 'Enable-OPIMAzureRole' {
                 $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                         [System.Exception]::new('Forbidden: denied'), 'Forbidden',
                         [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
-            }
+            } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {}
         }
 
@@ -1199,7 +1203,7 @@ Describe 'Enable-OPIMAzureRole' {
                 New-AzurePost -Name 'azure-002' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-two' -ScopeName 'rg-two'
                 New-AzurePost -Name 'azure-003' -DefinitionId 'role-def-contributor' -RoleName 'Contributor' -ScopeId '/subscriptions/sub-001' -ScopeName 'sub-001'
             )
-            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Listing }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Listing } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
                 [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfActivate'; Status = 'Provisioned' }
             }
@@ -1268,7 +1272,7 @@ Describe 'Enable-OPIMAzureRole' {
                 New-AzurePost -Name 'azure-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one'
                 New-AzurePost -Name 'azure-003' -DefinitionId 'role-def-contributor' -RoleName 'Contributor' -ScopeId '/subscriptions/sub-001' -ScopeName 'sub-001'
             )
-            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Listing }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Listing } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
                 [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfActivate'; Status = 'Provisioned' }
             }
@@ -1292,7 +1296,7 @@ Describe 'Enable-OPIMAzureRole' {
                 New-AzurePost -Name 'azure-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one'
                 New-AzurePost -Name 'azure-003' -DefinitionId 'role-def-contributor' -RoleName 'Contributor' -ScopeId '/subscriptions/sub-001' -ScopeName 'sub-001'
             )
-            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Listing }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Listing } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
                 [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfActivate'; Status = 'Provisioned' }
             }
@@ -1323,7 +1327,7 @@ Describe 'Enable-OPIMAzureRole' {
                 New-AzurePost -Name 'dup-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-two' -ScopeName 'rg-two'
                 New-AzurePost -Name 'azure-003' -DefinitionId 'role-def-contributor' -RoleName 'Contributor' -ScopeId '/subscriptions/sub-001' -ScopeName 'sub-001'
             )
-            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Listing }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Listing } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
                 [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfActivate'; Status = 'Provisioned' }
             }
@@ -1351,7 +1355,7 @@ Describe 'Enable-OPIMAzureRole' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
-            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest { }
         }
 
@@ -1504,6 +1508,154 @@ Describe 'Enable-OPIMAzureRole' {
             @($Result).Count | Should -Be 1
             $Result.Name | Should -BeExactly 'request-azure-003'
             $Result.Status | Should -BeExactly 'Provisioned'
+        }
+    }
+
+    Context 'When the role is already active (OPIM-39)' {
+        # A second request for an active post can end it, so the active list is read before anything
+        # is sent. The real resolver runs; the eligible listing, the active listing, the ARM gate and
+        # the ARM call are mocked. $Active.List is what Get-OPIMAzureRole -Activated answers; with
+        # FailFirst the first read writes an ARM 403, as a listing does, and later reads answer the list.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
+            $Listing = @(
+                New-AzurePost -Name 'azure-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one'
+                New-AzurePost -Name 'azure-003' -DefinitionId 'role-def-contributor' -RoleName 'Contributor' -ScopeId '/subscriptions/sub-001' -ScopeName 'sub-001'
+            )
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Listing } -ParameterFilter { -not $Activated }
+            $Active = @{ List = @(); FailFirst = $false; Reads = 0 }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole {
+                $Active.Reads++
+                if ($Active.FailFirst -and $Active.Reads -eq 1) {
+                    $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                            [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+                    return
+                }
+                $Active.List
+            } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
+                [PSCustomObject]@{ Name = "request-$LinkedRoleEligibilityScheduleId"; Scope = $Scope; RequestType = 'SelfActivate'; Status = 'Provisioned' }
+            }
+            $Message = 'Reader -> rg-one is already active, so no new request was sent and the active assignment is left as it is.'
+        }
+        BeforeEach {
+            $Active.List = @()
+            $Active.FailFirst = $false
+            $Active.Reads = 0
+        }
+
+        It 'sends no request, writes one warning and returns nothing' {
+            $Active.List = @(New-AzurePost -Name 'azure-inst-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one' -Active)
+            $Result = Enable-OPIMAzureRole -RoleName 'Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            # The active list was read, so the guard was reached.
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Message
+            @($Result).Count | Should -Be 0
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'compares the <Key> of the active role without regard to letter case' -ForEach @(
+            @{ Key = 'scope'; DefinitionId = 'role-def-reader'; ScopeId = '/SUBSCRIPTIONS/sub-001/resourcegroups/RG-ONE' }
+            @{ Key = 'role definition'; DefinitionId = 'ROLE-DEF-READER'; ScopeId = '/subscriptions/sub-001/resourceGroups/rg-one' }
+        ) {
+            $Active.List = @(New-AzurePost -Name 'azure-inst-001' -DefinitionId $DefinitionId -RoleName 'Reader' -ScopeId $ScopeId -ScopeName 'rg-one' -Active)
+            $null = Enable-OPIMAzureRole -RoleName 'Reader' -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Message
+        }
+
+        It 'sends the request when the role is active only at another scope' {
+            $Active.List = @(New-AzurePost -Name 'azure-inst-002' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-two' -ScopeName 'rg-two' -Active)
+            $Result = Enable-OPIMAzureRole -RoleName 'Reader' -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $LinkedRoleEligibilityScheduleId -eq 'azure-001' -and $Scope -eq '/subscriptions/sub-001/resourceGroups/rg-one'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
+            @($Warns).Count | Should -Be 0
+            @($Result).Count | Should -Be 1
+        }
+
+        It 'sends the request when another role is active at the same scope' {
+            $Active.List = @(New-AzurePost -Name 'azure-inst-004' -DefinitionId 'role-def-contributor' -RoleName 'Contributor' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one' -Active)
+            $null = Enable-OPIMAzureRole -RoleName 'Reader' -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $LinkedRoleEligibilityScheduleId -eq 'azure-001'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'warns for the active role and still requests the next one' {
+            $Active.List = @(New-AzurePost -Name 'azure-inst-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one' -Active)
+            $Result = Enable-OPIMAzureRole -RoleName 'Reader', 'Contributor' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $LinkedRoleEligibilityScheduleId -eq 'azure-003'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Message
+            @($Result).Count | Should -Be 1
+            $Result.Name | Should -BeExactly 'request-azure-003'
+        }
+
+        It 'reads the active list once for several names' {
+            $null = Enable-OPIMAzureRole -RoleName 'Reader', 'Contributor' -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 2 -Exactly -Scope It
+        }
+
+        It 'reads the active list once for two objects passed to -Role at once' {
+            $null = Enable-OPIMAzureRole -Role @($Listing[0], $Listing[1]) -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 2 -Exactly -Scope It
+        }
+
+        It 'checks every object piped in, reading the active list afresh for each' {
+            # Each piped object is a process call of its own, and each reads the active list.
+            $Active.List = @(New-AzurePost -Name 'azure-inst-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one' -Active)
+            $Result = $Listing | Enable-OPIMAzureRole -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 2 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $LinkedRoleEligibilityScheduleId -eq 'azure-003'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Message
+            @($Result).Count | Should -Be 1
+        }
+
+        It 'reads no active list when no name resolves' {
+            $null = Enable-OPIMAzureRole -RoleName 'Unknown Role' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'EligibleRoleNotFound,Enable-OPIMAzureRole'
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 0 -Scope It -ParameterFilter { $Activated }
+        }
+
+        It 'writes a failed read of the active list as itself and sends nothing more' {
+            # The read fails once and would succeed after: no second read, and no name is sent.
+            $Active.FailFirst = $true
+            $Result = Enable-OPIMAzureRole -RoleName 'Reader', 'Contributor' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'Forbidden,Enable-OPIMAzureRole'
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
+            @($Result).Count | Should -Be 0
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'writes the failed read to its own error stream once' {
+            $Active.FailFirst = $true
+            $Out = Enable-OPIMAzureRole -RoleName 'Reader', 'Contributor' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeExactly 'Forbidden,Enable-OPIMAzureRole'
         }
     }
 }

@@ -37,6 +37,10 @@ Describe 'Enable-OPIMEntraIDGroup' {
             }
             $Post
         }
+        # OPIM-39: every group that reaches the request reads the active list first. Nothing is active
+        # unless a context answers -Activated itself, and every listing mock that answers the resolver
+        # or -Identity is filtered on -not $Activated, so an eligible list is never read as the active one.
+        Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { } -ParameterFilter { $Activated }
     }
 
     Context 'When called with -GroupName (happy path)' {
@@ -860,7 +864,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 group       = [PSCustomObject]@{ displayName = 'Finance Team' }
                 principal   = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
             }
-            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return $FakeElig }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return $FakeElig } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     id          = 'req-010'
@@ -875,7 +879,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
 
         It 'looks up the group via Get-OPIMEntraIDGroup -Identity' {
             Enable-OPIMEntraIDGroup -Identity 'elig-010'
-            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Exactly -Scope It -ParameterFilter { $Identity -eq 'elig-010' }
         }
 
         It 'submits the selfActivate request' {
@@ -892,7 +896,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
     Context 'When -Identity is specified but no eligible group is found' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return $null }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return $null } -ParameterFilter { -not $Activated }
         }
 
         It 'writes a non-terminating error' {
@@ -923,7 +927,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                         [System.Exception]::new('Forbidden: denied'), 'Forbidden',
                         [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
-            }
+            } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {}
         }
 
@@ -961,7 +965,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                         [System.Exception]::new('Forbidden: denied'), 'Forbidden',
                         [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
-            }
+            } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {}
         }
 
@@ -1040,7 +1044,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 New-GroupPost -Id 'grp-elig-004' -GroupId 'g-3' -Name 'Twin' -AccessId 'member'
                 New-GroupPost -Id 'grp-elig-005' -GroupId 'g-4' -Name 'unique-grp' -AccessId 'member'
             )
-            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Listing }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Listing } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 @{ id = 'req-001'; action = 'selfActivate'; status = 'Provisioned' }
             } -ParameterFilter { $Method -eq 'POST' }
@@ -1078,7 +1082,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 New-GroupPost -Id 'grp-elig-002' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'owner'
                 New-GroupPost -Id 'grp-elig-006' -GroupId 'g-5' -Name 'owner-only-grp' -AccessId 'owner'
             )
-            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Listing }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Listing } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 @{ id = 'req-001'; action = 'selfActivate'; status = 'Provisioned' }
             } -ParameterFilter { $Method -eq 'POST' }
@@ -1135,7 +1139,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 New-GroupPost -Id 'grp-elig-001' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'member'
                 New-GroupPost -Id 'grp-elig-005' -GroupId 'g-4' -Name 'unique-grp' -AccessId 'member'
             )
-            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Listing }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Listing } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 @{ id = 'req-001'; action = 'selfActivate'; status = 'Provisioned' }
             } -ParameterFilter { $Method -eq 'POST' }
@@ -1164,7 +1168,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 New-GroupPost -Id 'dup-001' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'member'
                 New-GroupPost -Id 'dup-001' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'owner'
             )
-            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Listing }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Listing } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 @{ id = 'req-001'; action = 'selfActivate'; status = 'Provisioned' }
             } -ParameterFilter { $Method -eq 'POST' }
@@ -1183,7 +1187,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
     Context 'When -AccessType is given where it does not belong' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest { } -ParameterFilter { $Method -eq 'POST' }
         }
 
@@ -1237,7 +1241,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
                 New-GroupPost -Id 'dup-001' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'member'
                 New-GroupPost -Id 'dup-001' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'owner'
             )
-            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Listing }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Listing } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 @{ id = 'req-001'; action = 'selfActivate'; status = 'Provisioned' }
             } -ParameterFilter { $Method -eq 'POST' }
@@ -1379,6 +1383,145 @@ Describe 'Enable-OPIMEntraIDGroup' {
             @($Result).Count | Should -Be 1
             $Result.groupId | Should -BeExactly 'g-2'
             $Result.status | Should -BeExactly 'Provisioned'
+        }
+    }
+
+    Context 'When the group is already active (OPIM-39)' {
+        # A second request for an active membership ended it in step 2, so the active list is read
+        # before anything is sent. The real resolver runs; the eligible listing, the active listing and
+        # the transport are mocked. $Active.List is what Get-OPIMEntraIDGroup -Activated answers; with
+        # FailFirst the first read writes a Graph 403, as a listing does, and later reads answer the list.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $Listing = @(
+                New-GroupPost -Id 'grp-elig-001' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'member'
+                New-GroupPost -Id 'grp-elig-002' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'owner'
+                New-GroupPost -Id 'grp-elig-005' -GroupId 'g-4' -Name 'unique-grp' -AccessId 'member'
+            )
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Listing } -ParameterFilter { -not $Activated }
+            $Active = @{ List = @(); FailFirst = $false; Reads = 0 }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup {
+                $Active.Reads++
+                if ($Active.FailFirst -and $Active.Reads -eq 1) {
+                    $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                            [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+                    return
+                }
+                $Active.List
+            } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                @{ id = "req-$($Body.groupId)-$($Body.accessId)"; action = 'selfActivate'; accessId = $Body.accessId; groupId = $Body.groupId; principalId = 'principal-001'; status = 'Provisioned' }
+            } -ParameterFilter { $Method -eq 'POST' }
+            $Message = 'opim-grp - member is already active, so no new request was sent and the active assignment is left as it is.'
+        }
+        BeforeEach {
+            $Active.List = @()
+            $Active.FailFirst = $false
+            $Active.Reads = 0
+        }
+
+        It 'sends no request, writes one warning and returns nothing' {
+            $Active.List = @(New-GroupPost -Id 'grp-inst-001' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'member' -Active)
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-grp' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            # The active list was read, so the guard was reached.
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Message
+            @($Result).Count | Should -Be 0
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'sends the request when only the other access type of the group is active' {
+            $Active.List = @(New-GroupPost -Id 'grp-inst-002' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'owner' -Active)
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-grp' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.groupId -eq 'g-1' -and $Body.accessId -eq 'member'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns).Count | Should -Be 0
+            @($Result).Count | Should -Be 1
+        }
+
+        It 'sends the request when another group is active with the same access type' {
+            $Active.List = @(New-GroupPost -Id 'grp-inst-005' -GroupId 'g-4' -Name 'unique-grp' -AccessId 'member' -Active)
+            $null = Enable-OPIMEntraIDGroup -GroupName 'opim-grp' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.groupId -eq 'g-1' -and $Body.accessId -eq 'member'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'warns for the active group and still requests the next one' {
+            $Active.List = @(New-GroupPost -Id 'grp-inst-001' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'member' -Active)
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-grp', 'unique-grp' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.groupId -eq 'g-4'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Message
+            @($Result).Count | Should -Be 1
+            $Result.groupId | Should -BeExactly 'g-4'
+        }
+
+        It 'reads the active list once for several names' {
+            $null = Enable-OPIMEntraIDGroup -GroupName 'opim-grp', 'unique-grp' -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'reads the active list once for two objects passed to -Group at once' {
+            $null = Enable-OPIMEntraIDGroup -Group @($Listing[0], $Listing[2]) -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'checks every object piped in, reading the active list afresh for each' {
+            # Each piped object is a process call of its own, and each reads the active list.
+            $Active.List = @(New-GroupPost -Id 'grp-inst-001' -GroupId 'g-1' -Name 'opim-grp' -AccessId 'member' -Active)
+            $Result = $Listing | Enable-OPIMEntraIDGroup -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 3 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.groupId -eq 'g-1' -and $Body.accessId -eq 'member'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Message
+            @($Result).Count | Should -Be 2
+        }
+
+        It 'reads no active list when no name resolves' {
+            $null = Enable-OPIMEntraIDGroup -GroupName 'Unknown Group' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'EligibleRoleNotFound,Enable-OPIMEntraIDGroup'
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 0 -Scope It -ParameterFilter { $Activated }
+        }
+
+        It 'writes a failed read of the active list as itself and sends nothing more' {
+            # The read fails once and would succeed after: no second read, and no name is sent.
+            $Active.FailFirst = $true
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-grp', 'unique-grp' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'Forbidden,Enable-OPIMEntraIDGroup'
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Result).Count | Should -Be 0
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'writes the failed read to its own error stream once' {
+            $Active.FailFirst = $true
+            $Out = Enable-OPIMEntraIDGroup -GroupName 'opim-grp', 'unique-grp' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeExactly 'Forbidden,Enable-OPIMEntraIDGroup'
         }
     }
 
