@@ -1118,4 +1118,14 @@ Describe 'Enable-OPIMDirectoryRole' {
             @($Errs).Count | Should -Be 0
         }
     }
+
+    Context 'When the help is read (OPIM-37)' {
+        It 'describes in .OUTPUTS a PSCustomObject, what -Wait returns, and no Hashtable' {
+            $Outputs = @((Get-Help Enable-OPIMDirectoryRole -Full).returnValues.returnValue.type.name) -join "`n"
+            $Outputs | Should -Match 'PSCustomObject'
+            $Outputs | Should -Match 'Omnicit\.PIM\.DirectoryAssignmentScheduleRequest'
+            $Outputs | Should -Match 'Wait-OPIMDirectoryRole -PassThru'
+            $Outputs | Should -Not -Match 'Hashtable'
+        }
+    }
 }

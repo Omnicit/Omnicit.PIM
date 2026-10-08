@@ -657,4 +657,13 @@ Describe 'Disable-OPIMDirectoryRole' {
             $Errs[-1].Exception.Message | Should -BeLike '*ended with no status*'
         }
     }
+
+    Context 'When the help is read (OPIM-37)' {
+        It 'describes in .OUTPUTS a PSCustomObject and no Hashtable' {
+            $Outputs = @((Get-Help Disable-OPIMDirectoryRole -Full).returnValues.returnValue.type.name) -join "`n"
+            $Outputs | Should -Match 'PSCustomObject'
+            $Outputs | Should -Match 'Omnicit\.PIM\.DirectoryAssignmentScheduleRequest'
+            $Outputs | Should -Not -Match 'Hashtable'
+        }
+    }
 }

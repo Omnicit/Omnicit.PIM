@@ -26,7 +26,8 @@ function Disable-OPIMEntraIDGroup {
     Disable-OPIMEntraIDGroup <tab>
     Tab complete active PIM group assignments. A name that is unique is offered bare.
     .OUTPUTS
-    System.Collections.Hashtable (tagged as Omnicit.PIM.GroupAssignmentScheduleRequest)
+    PSCustomObject (tagged as Omnicit.PIM.GroupAssignmentScheduleRequest): the deactivation request,
+    with the status Graph gave it.
     .PARAMETER Group
     Active PIM group assignment schedule instance object piped from Get-OPIMEntraIDGroup -Activated.
     .PARAMETER GroupName

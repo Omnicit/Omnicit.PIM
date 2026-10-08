@@ -43,7 +43,10 @@ function Enable-OPIMDirectoryRole {
     Get-OPIMDirectoryRole | Select -First 1 | Enable-OPIMDirectoryRole -NotBefore '4pm' -Until '5pm'
     Activate a role from 4pm to 5pm today.
     .OUTPUTS
-    System.Collections.Hashtable (tagged as Omnicit.PIM.DirectoryAssignmentScheduleRequest)
+    PSCustomObject (tagged as Omnicit.PIM.DirectoryAssignmentScheduleRequest): the activation
+    request, with the status Graph gave it. With -Wait, what Wait-OPIMDirectoryRole -PassThru
+    returns: the activated assignments (tagged Omnicit.PIM.DirectoryAssignmentScheduleInstance) and
+    the requests that ended without one.
     .PARAMETER Role
     Eligible directory role schedule object piped from Get-OPIMDirectoryRole. Used when activating
     by object rather than by name. Mutually exclusive with -RoleName.

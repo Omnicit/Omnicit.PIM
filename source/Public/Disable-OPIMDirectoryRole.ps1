@@ -26,7 +26,8 @@ function Disable-OPIMDirectoryRole {
     Get-OPIMDirectoryRole -Activated | Select-Object -First 1 | Disable-OPIMDirectoryRole
     Deactivate the first active role.
     .OUTPUTS
-    System.Collections.Hashtable (tagged as Omnicit.PIM.DirectoryAssignmentScheduleRequest)
+    PSCustomObject (tagged as Omnicit.PIM.DirectoryAssignmentScheduleRequest): the deactivation
+    request, with the status Graph gave it.
     .PARAMETER Role
     Active directory role assignment schedule instance object piped from Get-OPIMDirectoryRole -Activated.
     .PARAMETER RoleName

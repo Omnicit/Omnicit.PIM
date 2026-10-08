@@ -34,7 +34,8 @@ function Enable-OPIMEntraIDGroup {
     Get-OPIMEntraIDGroup -AccessType member | Enable-OPIMEntraIDGroup -Hours 4 -Justification 'Project work'
     Activate all eligible group memberships for 4 hours with justification.
     .OUTPUTS
-    System.Collections.Hashtable (tagged as Omnicit.PIM.GroupAssignmentScheduleRequest)
+    PSCustomObject (tagged as Omnicit.PIM.GroupAssignmentScheduleRequest): the activation request,
+    with the status Graph gave it (the last status read, with -Wait).
     .PARAMETER Group
     Eligible group schedule object piped from Get-OPIMEntraIDGroup. Used when activating
     by object rather than by name. Mutually exclusive with -GroupName.

@@ -1235,4 +1235,13 @@ Describe 'Enable-OPIMEntraIDGroup' {
             $Result.status | Should -BeExactly 'Provisioned'
         }
     }
+
+    Context 'When the help is read (OPIM-37)' {
+        It 'describes in .OUTPUTS a PSCustomObject and no Hashtable' {
+            $Outputs = @((Get-Help Enable-OPIMEntraIDGroup -Full).returnValues.returnValue.type.name) -join "`n"
+            $Outputs | Should -Match 'PSCustomObject'
+            $Outputs | Should -Match 'Omnicit\.PIM\.GroupAssignmentScheduleRequest'
+            $Outputs | Should -Not -Match 'Hashtable'
+        }
+    }
 }

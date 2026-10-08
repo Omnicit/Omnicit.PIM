@@ -573,4 +573,22 @@ Describe 'Wait-OPIMDirectoryRole' {
             $Result[0].roleAssignmentScheduleId | Should -BeExactly 'schedule-req-b'
         }
     }
+
+    Context 'When the declared output type and the help are read (OPIM-37)' {
+        It 'declares PSCustomObject as its output type and no Hashtable' {
+            # PowerShell resolves the type literal [PSCustomObject] to System.Management.Automation.PSObject.
+            $Declared = @((Get-Command Wait-OPIMDirectoryRole).OutputType.Type)
+            $Declared | Should -Contain ([System.Management.Automation.PSObject])
+            $Declared | Should -Not -Contain ([System.Collections.Hashtable])
+        }
+
+        It 'describes in .OUTPUTS the instances and the requests it returns, and no Hashtable' {
+            $Outputs = @((Get-Help Wait-OPIMDirectoryRole -Full).returnValues.returnValue.type.name) -join "`n"
+            $Outputs | Should -Match 'PSCustomObject'
+            $Outputs | Should -Match 'Omnicit\.PIM\.DirectoryAssignmentScheduleInstance'
+            $Outputs | Should -Match 'Omnicit\.PIM\.DirectoryAssignmentScheduleRequest'
+            $Outputs | Should -Match 'Nothing without -PassThru'
+            $Outputs | Should -Not -Match 'Hashtable'
+        }
+    }
 }

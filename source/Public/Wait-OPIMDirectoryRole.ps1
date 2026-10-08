@@ -29,7 +29,9 @@ function Wait-OPIMDirectoryRole {
     Enable-OPIMDirectoryRole 'Global Administrator' | Wait-OPIMDirectoryRole -TimeoutSeconds 600 -PassThru
     Enable a role, wait up to 10 minutes for it, and return the active assignment.
     .OUTPUTS
-    System.Collections.Hashtable (tagged as Omnicit.PIM.DirectoryAssignmentScheduleInstance) when -PassThru is used.
+    PSCustomObject: with -PassThru, the instances of the activated roles (tagged
+    Omnicit.PIM.DirectoryAssignmentScheduleInstance) and the requests that ended without an instance
+    (tagged Omnicit.PIM.DirectoryAssignmentScheduleRequest). Nothing without -PassThru.
     .PARAMETER RoleRequest
     Role activation request object piped from Enable-OPIMDirectoryRole. Contains the schedule request details used to poll for provisioning status.
     .PARAMETER Interval
@@ -51,7 +53,7 @@ function Wait-OPIMDirectoryRole {
     Skip the 1-second summary pause before returning results.
     #>
     [Alias('Wait-PIMADRole', 'Wait-PIMRole')]
-    [OutputType([System.Collections.Hashtable])]
+    [OutputType([PSCustomObject])]
     [CmdletBinding()]
     param (
         [Parameter(Mandatory, ValueFromPipeline)]

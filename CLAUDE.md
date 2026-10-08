@@ -1049,7 +1049,7 @@ called by `Install`, `Set` and `Remove`; never inline it.
 - `[OutputType([PSCustomObject])]` on every function that returns type-tagged objects, and
   `[OutputType([void])]` on an exported one that emits nothing -- the QA gate requires an
   `[OutputType()]` on every export, and checks that it is declared, not what it says. Do not
-  declare `[OutputType([System.Collections.Hashtable])]` (`Wait-OPIMDirectoryRole` still does).
+  declare `[OutputType([System.Collections.Hashtable])]`.
 - **Output tagging is mandatory** -- never return a raw `Invoke-OPIMGraphRequest` hashtable (the
   default Key/Value formatter applies to it):
   ```powershell
