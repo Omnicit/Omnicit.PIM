@@ -19,8 +19,9 @@ function ConvertTo-OPIMTenantMapKey {
     A directory role is stored with its scope, so a configured role is activated and deactivated
     only at the scope it names (A13). An entry written before 0.6.0 holds the roleDefinitionId
     alone; read through -Entry it means the role at the root scope '/' only, never every scope of
-    the role. Every other entry is returned as it is. Compare keys with
-    [System.StringComparison]::OrdinalIgnoreCase: a scope compares without regard to letter case.
+    the role. A blank entry returns nothing, so it matches no post; every other entry is returned
+    as it is. Compare keys with [System.StringComparison]::OrdinalIgnoreCase: a scope compares
+    without regard to letter case.
 
     An active Azure role (an instance from Get-OPIMAzureRole -Activated, or an active row of
     -All) is stored by the eligibility schedule it was activated from (OPIM-22): the last
@@ -40,7 +41,8 @@ function ConvertTo-OPIMTenantMapKey {
 
     .PARAMETER Entry
     One configured entry as TenantMap.psd1 holds it. It is returned as the key to compare with: a
-    directory entry without a scope (no '|') becomes the key of the role at '/'.
+    directory entry without a scope (no '|') becomes the key of the role at '/'. A null, empty or
+    blank entry returns nothing.
 
     .EXAMPLE
     ConvertTo-OPIMTenantMapKey -Pillar Directory -InputObject $Role
@@ -64,9 +66,11 @@ function ConvertTo-OPIMTenantMapKey {
     param(
         [Parameter(Mandatory)][ValidateSet('Directory', 'Group', 'Azure')][string]$Pillar,
         [Parameter(Mandatory, ParameterSetName = 'Object')][AllowNull()]$InputObject,
-        [Parameter(Mandatory, ParameterSetName = 'Entry')][string]$Entry
+        [Parameter(Mandatory, ParameterSetName = 'Entry')][AllowNull()][AllowEmptyString()][string]$Entry
     )
     if ($PSCmdlet.ParameterSetName -eq 'Entry') {
+        # A blank entry (a hand-edited '' in the file) names nothing and matches no post.
+        if ([string]::IsNullOrWhiteSpace($Entry)) { return }
         # A13: a directory entry written before 0.6.0 holds only the roleDefinitionId and means the role
         # at the root scope only -- never every scope of the role.
         if ($Pillar -eq 'Directory' -and -not $Entry.Contains('|')) { return "$Entry|/" }

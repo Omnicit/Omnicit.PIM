@@ -981,6 +981,112 @@ Describe 'Disable-OPIMMyRole' {
         }
     }
 
+    Context 'When a tenant alias holds a blank entry or an entry in other letter case' {
+        # Every configured entry is read through the tenant map's key helper: a blank entry matches
+        # nothing, and an entry is compared without regard to letter case.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    blankdir = @{ TenantId = '00000000-0000-0000-0000-000000000003'; DirectoryRoles = @('', 'role-def-001|/') }
+                    blankgrp = @{ TenantId = '00000000-0000-0000-0000-000000000003'; EntraIDGroups = @('', 'group-001_member') }
+                    blankaz  = @{ TenantId = '00000000-0000-0000-0000-000000000003'; AzureRoles = @('', 'elig-az-001') }
+                    grpcase  = @{ TenantId = '00000000-0000-0000-0000-000000000003'; EntraIDGroups = @('GROUP-001_MEMBER') }
+                    azcase   = @{ TenantId = '00000000-0000-0000-0000-000000000003'; AzureRoles = @('ELIG-AZ-001') }
+                }
+            }
+
+            # memberType, assignmentType and endDateTime are set as Graph sets them: the types'
+            # ScriptProperties of those names read $this.<name>.
+            $ActiveDir = [PSCustomObject]@{
+                id = 'active-blank-dir-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'
+                memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T12:00:00Z'
+                roleDefinition = [PSCustomObject]@{ displayName = 'Global Administrator' }
+            }
+            $ActiveDir.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleInstance')
+            $ActiveGroup = [PSCustomObject]@{
+                id = 'active-blank-grp-001'; groupId = 'group-001'; accessId = 'member'
+                memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T12:00:00Z'
+                group = [PSCustomObject]@{ displayName = 'PIM Admins' }
+            }
+            $ActiveGroup.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleInstance')
+            $EligibleAzure = [PSCustomObject]@{
+                Name = 'elig-az-001'; ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'ProdSub'
+                RoleDefinitionId = 'role-az-001'; RoleDefinitionDisplayName = 'Contributor'
+            }
+            $EligibleAzure.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
+            $ActiveAzure = [PSCustomObject]@{
+                Name = 'az-active-blank-001'; ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'ProdSub'
+                RoleDefinitionId = 'role-az-001'; RoleDefinitionDisplayName = 'Contributor'
+                LinkedRoleEligibilityScheduleId = '/subscriptions/sub-001/providers/Microsoft.Authorization/roleEligibilitySchedules/elig-az-001'
+            }
+            $ActiveAzure.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+            # An eligibility whose key is empty, and its activation: a blank entry matches it no more
+            # than any other post.
+            $EligibleNoName = [PSCustomObject]@{
+                Name = ''; ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'ProdSub'
+                RoleDefinitionId = 'role-az-009'; RoleDefinitionDisplayName = 'Reader'
+            }
+            $EligibleNoName.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
+            $ActiveNoName = [PSCustomObject]@{
+                Name = 'az-active-blank-009'; ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'ProdSub'
+                RoleDefinitionId = 'role-az-009'; RoleDefinitionDisplayName = 'Reader'
+            }
+            $ActiveNoName.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @($ActiveDir) } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @($ActiveGroup) } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($EligibleAzure, $EligibleNoName) } -ParameterFilter { -not $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($ActiveAzure, $ActiveNoName) } -ParameterFilter { $Activated }
+        }
+
+        It 'reads a blank directory entry as matching nothing, writes no error and deactivates only the real entry' {
+            $Out = Disable-OPIMMyRole -TenantAlias 'blankdir' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue -Verbose 4>&1
+            $Errs.Count | Should -Be 0
+            @($Out | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message -like "*''*" }).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Role.id -eq 'active-blank-dir-001'
+            }
+        }
+
+        It 'reads a blank group entry as matching nothing, writes no error and deactivates only the real entry' {
+            $Out = Disable-OPIMMyRole -TenantAlias 'blankgrp' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue -Verbose 4>&1
+            $Errs.Count | Should -Be 0
+            @($Out | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message -like "*''*" }).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMEntraIDGroup -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMEntraIDGroup -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Group.id -eq 'active-blank-grp-001'
+            }
+        }
+
+        It 'reads a blank Azure entry as matching nothing, writes no error and deactivates only the real entry' {
+            Disable-OPIMMyRole -TenantAlias 'blankaz' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Role.Name -eq 'az-active-blank-001'
+            }
+        }
+
+        It 'compares a group entry without regard to letter case' {
+            Disable-OPIMMyRole -TenantAlias 'grpcase' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMEntraIDGroup -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Group.id -eq 'active-blank-grp-001'
+            }
+        }
+
+        It 'compares an Azure entry without regard to letter case' {
+            Disable-OPIMMyRole -TenantAlias 'azcase' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Role.Name -eq 'az-active-blank-001'
+            }
+        }
+    }
+
     Context 'When called with -TenantAlias pointing to a hashtable config with no category lists' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Connect-OPIM {}

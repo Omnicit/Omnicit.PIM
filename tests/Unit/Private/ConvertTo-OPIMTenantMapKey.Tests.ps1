@@ -46,6 +46,19 @@ Describe 'ConvertTo-OPIMTenantMapKey' {
                 ConvertTo-OPIMTenantMapKey -Pillar Azure -Entry 'elig-az-001' | Should -BeExactly 'elig-az-001'
             }
         }
+
+        It 'returns nothing for a blank or null <Pillar> entry, so it matches no post' -ForEach @(
+            @{ Pillar = 'Directory' }
+            @{ Pillar = 'Group' }
+            @{ Pillar = 'Azure' }
+        ) {
+            InModuleScope Omnicit.PIM -Parameters @{ Pillar = $Pillar } {
+                param($Pillar)
+                foreach ($Blank in @('', '   ', $null)) {
+                    @(ConvertTo-OPIMTenantMapKey -Pillar $Pillar -Entry $Blank -ErrorAction Stop).Count | Should -Be 0
+                }
+            }
+        }
     }
 
     Context 'When it builds the key of a group or an Azure eligibility' {

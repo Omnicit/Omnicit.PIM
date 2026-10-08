@@ -705,6 +705,7 @@ Describe 'Enable-OPIMMyRole' {
                     rootkey = @{ TenantId = '00000000-0000-0000-0000-000000000003'; DirectoryRoles = @('role-def-001|/') }
                     mixed   = @{ TenantId = '00000000-0000-0000-0000-000000000003'; DirectoryRoles = @('role-def-001', 'role-def-001|/') }
                     upper   = @{ TenantId = '00000000-0000-0000-0000-000000000003'; DirectoryRoles = @('ROLE-DEF-001|/ADMINISTRATIVEUNITS/AU-001') }
+                    blank   = @{ TenantId = '00000000-0000-0000-0000-000000000003'; DirectoryRoles = @('', 'role-def-001|/administrativeUnits/au-001') }
                 }
             }
 
@@ -732,37 +733,117 @@ Describe 'Enable-OPIMMyRole' {
         }
 
         It 'activates only the role at the root for an entry without a scope' {
-            Enable-OPIMMyRole -TenantAlias oldkey -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            Enable-OPIMMyRole -TenantAlias oldkey -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
             $script:EnabledPosts.Count | Should -Be 1
             $script:EnabledPosts[0].roleDefinitionId | Should -BeExactly 'role-def-001'
             $script:EnabledPosts[0].directoryScopeId | Should -BeExactly '/'
+            $Errs.Count | Should -Be 0
         }
 
         It 'activates exactly the configured scope for a new entry' {
-            Enable-OPIMMyRole -TenantAlias aukey -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            Enable-OPIMMyRole -TenantAlias aukey -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
             $script:EnabledPosts.Count | Should -Be 1
             $script:EnabledPosts[0].roleDefinitionId | Should -BeExactly 'role-def-001'
             $script:EnabledPosts[0].directoryScopeId | Should -BeExactly '/administrativeUnits/au-001'
+            $Errs.Count | Should -Be 0
         }
 
         It 'activates the role at the root for an entry with the root scope' {
-            Enable-OPIMMyRole -TenantAlias rootkey -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            Enable-OPIMMyRole -TenantAlias rootkey -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
             $script:EnabledPosts.Count | Should -Be 1
             $script:EnabledPosts[0].id | Should -BeExactly 'elig-a13-001'
             $script:EnabledPosts[0].directoryScopeId | Should -BeExactly '/'
+            $Errs.Count | Should -Be 0
         }
 
         It 'activates the root post once for an old and a new entry of the same role' {
-            Enable-OPIMMyRole -TenantAlias mixed -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            Enable-OPIMMyRole -TenantAlias mixed -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
             $script:EnabledPosts.Count | Should -Be 1
             $script:EnabledPosts[0].id | Should -BeExactly 'elig-a13-001'
+            $Errs.Count | Should -Be 0
         }
 
         It 'compares the key without regard to letter case' {
-            Enable-OPIMMyRole -TenantAlias upper -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            Enable-OPIMMyRole -TenantAlias upper -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
             $script:EnabledPosts.Count | Should -Be 1
             $script:EnabledPosts[0].id | Should -BeExactly 'elig-a13-002'
             $script:EnabledPosts[0].directoryScopeId | Should -BeExactly '/administrativeUnits/au-001'
+            $Errs.Count | Should -Be 0
+        }
+
+        It 'reads a blank entry as matching nothing, writes no error and activates only the real entry' {
+            Enable-OPIMMyRole -TenantAlias blank -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:EnabledPosts.Count | Should -Be 1
+            $script:EnabledPosts[0].id | Should -BeExactly 'elig-a13-002'
+        }
+    }
+
+    Context 'When a tenant alias lists groups and Azure roles' {
+        # The configured entries are read through the tenant map's key helper and compared without
+        # regard to letter case; a blank entry matches nothing.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @() }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    grpcase = @{ TenantId = '00000000-0000-0000-0000-000000000003'; EntraIDGroups = @('GROUP-001_MEMBER') }
+                    azcase  = @{ TenantId = '00000000-0000-0000-0000-000000000003'; AzureRoles = @('ELIG-AZ-001') }
+                    blanks  = @{
+                        TenantId      = '00000000-0000-0000-0000-000000000003'
+                        EntraIDGroups = @('', 'group-002_owner')
+                        AzureRoles    = @('', 'elig-az-002')
+                    }
+                }
+            }
+
+            $GroupMember = [PSCustomObject]@{ id = 'elig-grp-001'; groupId = 'group-001'; accessId = 'member' }
+            $GroupOwner  = [PSCustomObject]@{ id = 'elig-grp-002'; groupId = 'group-001'; accessId = 'owner' }
+            $GroupOther  = [PSCustomObject]@{ id = 'elig-grp-003'; groupId = 'group-002'; accessId = 'owner' }
+            foreach ($Post in @($GroupMember, $GroupOwner, $GroupOther)) {
+                $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupEligibilitySchedule')
+            }
+            $AzureOne = [PSCustomObject]@{ Name = 'elig-az-001'; RoleDefinitionId = 'role-az-001'; ScopeId = '/subscriptions/sub-001' }
+            $AzureTwo = [PSCustomObject]@{ Name = 'elig-az-002'; RoleDefinitionId = 'role-az-002'; ScopeId = '/subscriptions/sub-001' }
+            # A post whose key is empty: a blank entry matches it no more than any other post.
+            $AzureNoName = [PSCustomObject]@{ Name = ''; RoleDefinitionId = 'role-az-009'; ScopeId = '/subscriptions/sub-001' }
+            foreach ($Post in @($AzureOne, $AzureTwo, $AzureNoName)) {
+                $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
+            }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @($GroupMember, $GroupOwner, $GroupOther) }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($AzureOne, $AzureTwo, $AzureNoName) }
+            Mock -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup { $script:EnabledGroups.Add($Group) }
+            Mock -ModuleName Omnicit.PIM Enable-OPIMAzureRole { $script:EnabledAzure.Add($Role) }
+        }
+        BeforeEach {
+            $script:EnabledGroups = [System.Collections.Generic.List[object]]::new()
+            $script:EnabledAzure  = [System.Collections.Generic.List[object]]::new()
+        }
+
+        It 'activates only the configured group, compared without regard to letter case' {
+            Enable-OPIMMyRole -TenantAlias grpcase -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:EnabledGroups.Count | Should -Be 1
+            $script:EnabledGroups[0].id | Should -BeExactly 'elig-grp-001'
+            $script:EnabledAzure.Count | Should -Be 0
+        }
+
+        It 'activates only the configured Azure role, compared without regard to letter case' {
+            Enable-OPIMMyRole -TenantAlias azcase -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:EnabledAzure.Count | Should -Be 1
+            $script:EnabledAzure[0].Name | Should -BeExactly 'elig-az-001'
+            $script:EnabledGroups.Count | Should -Be 0
+        }
+
+        It 'reads a blank group or Azure entry as matching nothing, writes no error and activates only the real entries' {
+            Enable-OPIMMyRole -TenantAlias blanks -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:EnabledGroups.Count | Should -Be 1
+            $script:EnabledGroups[0].id | Should -BeExactly 'elig-grp-003'
+            $script:EnabledAzure.Count | Should -Be 1
+            $script:EnabledAzure[0].Name | Should -BeExactly 'elig-az-002'
         }
     }
 

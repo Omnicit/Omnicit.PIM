@@ -1093,11 +1093,15 @@ activated from, the last segment of its `LinkedRoleEligibilityScheduleId` (OPIM-
 private `ConvertTo-OPIMTenantMapKey` is the single owner of these formats and of how a stored entry
 is read: `-InputObject` returns a post's key and `-Entry` an entry as the key to compare with, where
 a directory entry without `|` -- the form 0.5.x wrote -- means the role at `/` only, never every
-scope of the role. Build or read a key nowhere else. `Install` and `Set` store each key once
-(`OrdinalIgnoreCase`, in the order first piped); `Enable-OPIMMyRole` keeps only the eligible posts
-whose key is configured, and `Disable-OPIMMyRole` reads each distinct key once, in the order
-configured, and matches the active posts by key; both compare `OrdinalIgnoreCase`. So a configured
-directory role is activated and deactivated only at the scope its entry names.
+scope of the role, and a blank entry returns nothing and matches no post. Build or read a key
+nowhere else: `Enable-OPIMMyRole` and `Disable-OPIMMyRole` read every configured entry of all
+three lists through `-Entry` and every listed post through `-InputObject`. `Install` and `Set`
+store each key once (`OrdinalIgnoreCase`, in the order first piped); `Enable-OPIMMyRole` keeps only
+the eligible posts whose key is configured, and `Disable-OPIMMyRole` reads each distinct directory
+key once, in the order configured, and matches the active posts by key -- a group entry is matched
+the same way, entry by entry, and an Azure entry selects the eligible schedules whose active
+instances it then finds by `RoleDefinitionId` and `ScopeId`; keys compare `OrdinalIgnoreCase`. So a
+configured directory role is activated and deactivated only at the scope its entry names.
 
 ---
 

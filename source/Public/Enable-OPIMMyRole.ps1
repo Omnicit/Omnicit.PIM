@@ -271,7 +271,11 @@ function Enable-OPIMMyRole {
                 }
                 if ($ListRead) {
                     if ($Config -is [hashtable] -and $Config.EntraIDGroups) {
-                        $Groups = $Groups | Where-Object { "$($_.groupId)_$($_.accessId)" -in $Config.EntraIDGroups }
+                        # groupId_accessId, read through the tenant map's key helper. A blank entry yields no key
+                        # (the set then holds a null, which no post's key equals), so it matches nothing.
+                        $ConfiguredGroupKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                        foreach ($Entry in $Config.EntraIDGroups) { [void]$ConfiguredGroupKeys.Add((ConvertTo-OPIMTenantMapKey -Pillar Group -Entry $Entry)) }
+                        $Groups = $Groups | Where-Object { $ConfiguredGroupKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Group -InputObject $PSItem)) }
                     }
                     if ($Groups) {
                         Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($Groups.Count) group(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
@@ -322,7 +326,11 @@ function Enable-OPIMMyRole {
                 }
                 if ($ListRead) {
                     if ($Config -is [hashtable] -and $Config.AzureRoles) {
-                        $AzureRoles = $AzureRoles | Where-Object { $_.Name -in $Config.AzureRoles }
+                        # The eligibility schedule Name, read through the tenant map's key helper; a blank entry
+                        # yields no key and matches nothing, as above.
+                        $ConfiguredAzureKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                        foreach ($Entry in $Config.AzureRoles) { [void]$ConfiguredAzureKeys.Add((ConvertTo-OPIMTenantMapKey -Pillar Azure -Entry $Entry)) }
+                        $AzureRoles = $AzureRoles | Where-Object { $ConfiguredAzureKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem)) }
                     }
                     if ($AzureRoles) {
                         Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($AzureRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
