@@ -703,12 +703,16 @@ error and returns nothing, and one that waits for approval or is still being pro
 with a warning, since it has not taken effect yet. A status the module does not know counts as a
 failure, never as a success; a deactivation succeeds only when it ends `Revoked`.
 
-With `-Wait`, the `Enable-OPIM*` role and group cmdlets read the status again, with a pause between
-reads, for as long as the request is still being worked on and at most `-TimeoutSeconds` (default
-300), and then report the request by its last status, written back onto the object they return. A
-request that waits for approval ends the wait at once, with a warning. One still in progress at the
-limit is an `ActivationWaitTimedOut` error and returns nothing; the request stays submitted. Each
-role or group is reported on its own, so one that fails or times out never stops the next.
+With `-Wait`, the `Enable-OPIM*` role and group cmdlets wait for at most `-TimeoutSeconds` (default
+300) and then report the request by its last status, written back onto the object they return.
+Groups and Azure roles read the status again, with a pause between reads, only while the request is
+still being worked on, counting from the start of the wait. Directory roles hand every request that
+has not failed to `Wait-OPIMDirectoryRole`, which reads each one at least once, waits for the role
+assignment to appear once a request is provisioned, and counts from the time Graph created the
+request. A request that waits for approval ends the wait at once, with a warning. One still in
+progress at the limit is an `ActivationWaitTimedOut` error and returns nothing; the request stays
+submitted. Each role or group is reported on its own, so one that fails or times out never stops
+the next.
 
 ---
 

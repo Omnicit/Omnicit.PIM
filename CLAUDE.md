@@ -903,17 +903,22 @@ expand `group,principal`.
 - `-NotBefore` [DateTime] -- activation start, default now.
 - `-Until` [DateTime] (alias `-NotAfter`) -- explicit end; takes precedence over `-Hours`.
 - `-Wait` [switch] and `-TimeoutSeconds` [int] (1-86400, default 300) -- on all three, and on
-  `Enable-OPIMMyRole`, which hands both to `Enable-OPIMDirectoryRole`. Directory roles hand the
-  requests to `Wait-OPIMDirectoryRole -PassThru -TimeoutSeconds` (whose old `-Timeout` is an alias);
-  Azure roles poll `Get-AzRoleAssignmentScheduleRequest` every 5 seconds; groups poll the request
-  every 2 seconds. All three poll only while `Get-OPIMRequestOutcome` says `InProgress` -- a request
-  whose answer is already final is not polled -- with a sleep before each poll, up to
-  `-TimeoutSeconds` counted in UTC (`Get-Date -AsUTC`): from the start of the wait for groups and
-  Azure, from each request's `createdDateTime` (read by `ConvertTo-OPIMUtcDateTime`) for directory
-  roles. A request awaiting a decision ends the wait at once, returned with a warning. Each request
-  is reported on its own, with its last status written back: `ActivationRequestFailed` for a
-  failure, `ActivationWaitTimedOut` at the limit (nothing returned for it; it stays submitted), and a
-  failed poll written as itself -- all non-terminating, so the next role or group still runs.
+  `Enable-OPIMMyRole`, which hands both to `Enable-OPIMDirectoryRole`. Groups poll the request every
+  2 seconds and Azure roles poll `Get-AzRoleAssignmentScheduleRequest` every 5 seconds; these two
+  poll only while `Get-OPIMRequestOutcome` says `InProgress` -- a request whose answer is already
+  final is not polled -- and before each poll check the deadline, `-TimeoutSeconds` after the start
+  of the wait counted in UTC (`Get-Date -AsUTC`), and then sleep. Directory roles hand every request
+  that has not failed -- `Provisioned`, `Granted` and `PendingApproval` answers included -- to
+  `Wait-OPIMDirectoryRole -PassThru -TimeoutSeconds` (whose old `-Timeout` is an alias), which
+  ignores the status a request carries and reads each one at least once, in rounds with a sleep of
+  `-Interval` (default 1 second) between them, waits for the role assignment after `Provisioned`,
+  and checks each request's deadline after its read: `-TimeoutSeconds` after its `createdDateTime`
+  (read as UTC by `ConvertTo-OPIMUtcDateTime`), or after the start of the wait when it has none
+  that can be read. In all three, a request awaiting a decision ends its wait at once, returned with
+  a warning. Each request is reported on its own, with its last status written back:
+  `ActivationRequestFailed` for a failure, `ActivationWaitTimedOut` at the limit (nothing returned
+  for it; it stays submitted), and a failed poll written as itself -- all non-terminating, so the
+  next role or group still runs.
 - `-WhatIf` / `-Confirm` through `[CmdletBinding(SupportsShouldProcess)]`.
 - An already-active object piped in (from `Get-OPIM* -All`) is skipped with a verbose message.
 
