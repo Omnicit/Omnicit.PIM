@@ -664,7 +664,8 @@ Enable-OPIMDirectoryRole 'Usage Summary Reports Reader (elig-001)'    # tab-comp
 - **A name that matches more than one role or group is never resolved by guessing.** The command
   writes `AmbiguousName`, lists the candidates and activates or deactivates nothing. For a role
   name, `-Scope` picks one on the cmdlets that have it (`Enable-`/`Disable-OPIMDirectoryRole`,
-  `Enable-`/`Disable-OPIMAzureRole` and `Get-OPIMAzureRole`; it does not combine with `-Identity`):
+  `Enable-`/`Disable-OPIMAzureRole` and `Get-OPIMAzureRole`; on the `Enable-` and `Disable-` commands
+  it does not combine with `-Identity`, on `Get-OPIMAzureRole` it does):
   `'/'` or an administrative unit (its `/administrativeUnits/` path or its display name) for a
   directory role, the ARM scope for an Azure role. The scope is compared without regard to letter
   case, means exactly that scope, and is refused when it ends in a slash (only the root scope is

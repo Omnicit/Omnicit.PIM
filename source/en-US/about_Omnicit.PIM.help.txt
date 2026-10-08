@@ -115,7 +115,8 @@ LONG DESCRIPTION
     which lists the candidates. Nothing is activated or deactivated, and the first match is never
     taken. For a role name, -Scope picks one on the cmdlets that have it (Enable-OPIMDirectoryRole,
     Disable-OPIMDirectoryRole, Enable-OPIMAzureRole, Disable-OPIMAzureRole and Get-OPIMAzureRole;
-    it does not combine with -Identity): '/' or an administrative unit (its /administrativeUnits/
+    on the Enable- and Disable- commands it does not combine with -Identity, on Get-OPIMAzureRole
+    it does): '/' or an administrative unit (its /administrativeUnits/
     path or its display name) for a directory role, the ARM scope for an Azure role. A scope that
     ends in a slash is refused; only the root scope is written '/'. A group name means the
     membership, and -AccessType Owner names the ownership. Two groups with the same display name
