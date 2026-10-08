@@ -70,10 +70,16 @@ Describe 'Disable-OPIMAzureRole' {
             }
         }
 
-        It 'uses the active assignment Name as LinkedRoleEligibilityScheduleId' {
+        It 'sends no LinkedRoleEligibilityScheduleId and keeps the ids of the active assignment' {
+            # OPIM-24: ARM documents the field for an activation only. -Times 1 -Exactly proves the mock
+            # was reached, so the negative half cannot pass on a request that never went out.
             Disable-OPIMAzureRole -RoleName 'Contributor (active-001)'
-            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Scope It -ParameterFilter {
-                $LinkedRoleEligibilityScheduleId -eq 'active-001'
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $RequestType -eq 'SelfDeactivate' -and
+                -not $PesterBoundParameters.ContainsKey('LinkedRoleEligibilityScheduleId') -and
+                $Scope -eq '/subscriptions/sub-001' -and
+                $PrincipalId -eq 'principal-001' -and
+                $RoleDefinitionId -eq '/providers/Microsoft.Authorization/roleDefinitions/role-def-001'
             }
         }
 
@@ -112,10 +118,14 @@ Describe 'Disable-OPIMAzureRole' {
             }
         }
 
-        It 'uses the piped role Name as LinkedRoleEligibilityScheduleId' {
+        It 'sends no LinkedRoleEligibilityScheduleId for a piped role either' {
             $FakeRole | Disable-OPIMAzureRole
-            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Scope It -ParameterFilter {
-                $LinkedRoleEligibilityScheduleId -eq 'active-002'
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $RequestType -eq 'SelfDeactivate' -and
+                -not $PesterBoundParameters.ContainsKey('LinkedRoleEligibilityScheduleId') -and
+                $Scope -eq '/subscriptions/sub-002' -and
+                $PrincipalId -eq 'principal-002' -and
+                $RoleDefinitionId -eq '/providers/Microsoft.Authorization/roleDefinitions/role-def-002'
             }
         }
     }
@@ -466,7 +476,7 @@ Describe 'Disable-OPIMAzureRole' {
             Disable-OPIMAzureRole -RoleName 'Reader' -Scope '/subscriptions/sub-001/resourceGroups/rg-two' -ErrorAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $RequestType -eq 'SelfDeactivate' -and $Scope -eq '/subscriptions/sub-001/resourceGroups/rg-two' -and
-                $LinkedRoleEligibilityScheduleId -eq 'active-002' -and $RoleDefinitionId -eq 'role-def-reader'
+                -not $PesterBoundParameters.ContainsKey('LinkedRoleEligibilityScheduleId') -and $RoleDefinitionId -eq 'role-def-reader'
             }
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
         }
@@ -474,7 +484,7 @@ Describe 'Disable-OPIMAzureRole' {
         It 'deactivates a unique display name with its own ids' {
             Disable-OPIMAzureRole -RoleName 'contributor' -ErrorAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
-                $Scope -eq '/subscriptions/sub-001' -and $LinkedRoleEligibilityScheduleId -eq 'active-004' -and
+                $Scope -eq '/subscriptions/sub-001' -and -not $PesterBoundParameters.ContainsKey('LinkedRoleEligibilityScheduleId') -and
                 $RoleDefinitionId -eq 'role-def-contributor' -and $PrincipalId -eq 'principal-001'
             }
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
@@ -528,8 +538,10 @@ Describe 'Disable-OPIMAzureRole' {
 
         It 'deactivates the one post when the identity names only one' {
             Disable-OPIMAzureRole -Identity 'active-004' -ErrorAction SilentlyContinue
+            # The instance is identified by its scope and role definition now: the linked id is gone.
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
-                $LinkedRoleEligibilityScheduleId -eq 'active-004'
+                $Scope -eq '/subscriptions/sub-001' -and $RoleDefinitionId -eq 'role-def-contributor' -and
+                -not $PesterBoundParameters.ContainsKey('LinkedRoleEligibilityScheduleId')
             }
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
         }

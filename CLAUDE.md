@@ -869,7 +869,10 @@ found among the listed posts and never requested by itself, which a normal user 
 posts of the root listing and changes what is read in no way. An Azure schedule's id is its `Name`,
 not `id`; an activation sends `LinkedRoleEligibilityScheduleId = $Role.Name`
 (`Enable-OPIMAzureRole.ps1:167-191`), `ScheduleInfoStartDateTime` (UTC) when `-NotBefore` is given
-(without it Azure starts the activation now), and `ExpirationEndDateTime` in UTC (OPIM-15).
+(without it Azure starts the activation now), and `ExpirationEndDateTime` in UTC (OPIM-15). A
+deactivation sends no `LinkedRoleEligibilityScheduleId` (OPIM-24; `Disable-OPIMAzureRole.ps1:109-117`):
+ARM documents the field for an activation only, and the request names the active instance by its
+`Scope`, `PrincipalId` and `RoleDefinitionId`.
 
 **PIM for Groups** (Graph, `identityGovernance/privilegedAccess/group/`):
 

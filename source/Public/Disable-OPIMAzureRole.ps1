@@ -106,13 +106,14 @@ function Disable-OPIMAzureRole {
             return
         }
 
+        # OPIM-24: a deactivation names no eligibility; ARM documents LinkedRoleEligibilityScheduleId
+        # for an activation only. The instance's own Name is not an eligibility id.
         $RoleDeactivateParams = @{
-            Name                            = New-Guid
-            Scope                           = $Role.ScopeId
-            PrincipalId                     = $Role.PrincipalId
-            RoleDefinitionId                = $Role.RoleDefinitionId
-            RequestType                     = 'SelfDeactivate'
-            LinkedRoleEligibilityScheduleId = $Role.Name
+            Name             = New-Guid
+            Scope            = $Role.ScopeId
+            PrincipalId      = $Role.PrincipalId
+            RoleDefinitionId = $Role.RoleDefinitionId
+            RequestType      = 'SelfDeactivate'
         }
 
         if ($PSCmdlet.ShouldProcess(
