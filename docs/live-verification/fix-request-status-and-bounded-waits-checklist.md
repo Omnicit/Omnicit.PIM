@@ -363,7 +363,7 @@ if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
 $Rg = @(Get-OPIMAzureRole -ErrorAction Stop | Where-Object { $_.RoleDefinitionDisplayName -eq 'Reader' -and $_.ScopeDisplayName -eq 'opim-s1-rg' })
 if ($Rg.Count -ne 1) { throw "Expected one Reader eligibility on opim-s1-rg, found $($Rg.Count)." }
 $Scope = $Rg[0].ScopeId
-$Requests = { @(Get-AzRoleAssignmentScheduleRequest -Scope $Scope -Filter 'asRequestor()' -ErrorAction Stop).Count }
+$Requests = { @(Get-AzRoleAssignmentScheduleRequest -Scope $Scope -Filter 'asTarget()' -ErrorAction Stop).Count }
 $Watch = [System.Diagnostics.Stopwatch]::StartNew()
 $W1 = $null
 $First = @(Enable-OPIMAzureRole 'Reader' -Scope $Scope -Wait -Hours 1 -Justification 'opim-s15a live verification' -WarningVariable W1 -WarningAction SilentlyContinue -ErrorAction Stop)
@@ -382,7 +382,7 @@ $Second = @(Enable-OPIMAzureRole 'Reader' -Scope $Scope -Hours 1 -Justification 
 `Second (G8): output 0; warnings 1, says already active: True; errors 0; requests sent: 0` -- which
 also shows that the eligibility and the active instance carry the same role definition id form.
 **Record:** the seconds; whether the answer was already `Provisioned` (then no poll was needed, and
-the poll with `asRequestor()` stays class B).
+the poll with `asTarget()` stays class B).
 **Failure looks like:** `requests sent: 1` -- the Azure guard did not match the active instance:
 STOP and record the two id forms by shape only (never the ids).
 
@@ -597,7 +597,7 @@ $Rg2 = @(Get-OPIMAzureRole -ErrorAction Stop | Where-Object { $_.RoleDefinitionD
 $Count = {
     @((& (Get-Module Omnicit.PIM) { Invoke-OPIMGraphRequest -Uri "v1.0/roleManagement/directory/roleAssignmentScheduleRequests/filterByCurrentUser(on='principal')" -All }).value).Count +
     @((& (Get-Module Omnicit.PIM) { Invoke-OPIMGraphRequest -Uri "v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests/filterByCurrentUser(on='principal')" -All }).value).Count +
-    @(Get-AzRoleAssignmentScheduleRequest -Scope $Rg2.ScopeId -Filter 'asRequestor()' -ErrorAction Stop).Count
+    @(Get-AzRoleAssignmentScheduleRequest -Scope $Rg2.ScopeId -Filter 'asTarget()' -ErrorAction Stop).Count
 }
 $Before = & $Count
 $Ids = foreach ($Hours in 0, 25) {
