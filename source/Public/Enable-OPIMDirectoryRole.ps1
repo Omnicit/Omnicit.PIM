@@ -10,6 +10,13 @@ function Enable-OPIMDirectoryRole {
     add -Scope to pick one. A name that matches no eligible role is written as an EligibleRoleNotFound
     error. Several names are resolved one by one, each on its own, so a name that fails does not stop
     the next one.
+    The request is reported by the status Graph gives it: a request that failed, was denied or was
+    canceled is written as an ActivationRequestFailed error, and one that waits for approval or is
+    still being provisioned is returned with a warning.
+    A role that is already active at that scope (listed by Get-OPIMDirectoryRole -Activated) is not
+    requested again: a warning is written and nothing is sent for it, and when that list cannot be
+    read, its error is written and nothing more is sent. The list is read once per command, and a
+    role named or piped twice is requested once, with a warning for the second.
     .NOTES
     The default activation period is 1 hour. Override with -Hours. Make it persistent in your profile:
 
@@ -40,7 +47,10 @@ function Enable-OPIMDirectoryRole {
     Get-OPIMDirectoryRole | Select -First 1 | Enable-OPIMDirectoryRole -NotBefore '4pm' -Until '5pm'
     Activate a role from 4pm to 5pm today.
     .OUTPUTS
-    System.Collections.Hashtable (tagged as Omnicit.PIM.DirectoryAssignmentScheduleRequest)
+    PSCustomObject (tagged as Omnicit.PIM.DirectoryAssignmentScheduleRequest): the activation
+    request, with the status Graph gave it. With -Wait, what Wait-OPIMDirectoryRole -PassThru
+    returns: the activated assignments (tagged Omnicit.PIM.DirectoryAssignmentScheduleInstance) and
+    the requests that ended without one.
     .PARAMETER Role
     Eligible directory role schedule object piped from Get-OPIMDirectoryRole. Used when activating
     by object rather than by name. Mutually exclusive with -RoleName.
@@ -60,11 +70,14 @@ function Enable-OPIMDirectoryRole {
     .PARAMETER TicketSystem
     Name of the ticket system that issued the above ticket number, e.g. ServiceNow or Jira.
     .PARAMETER Hours
-    Activation duration in hours. Defaults to 1. Ignored when -Until is specified.
+    Activation duration in hours, from 1 to 24. Defaults to 1. Ignored when -Until is specified. Your PIM
+    policy can allow less; a longer request is refused by the policy as before.
     .PARAMETER NotBefore
-    Date and time when the role activation begins. Defaults to the current date and time.
+    Date and time when the role activation begins. Defaults to the current date and time. A time
+    without an offset, such as '4pm', is local time; it is sent to Graph in UTC.
     .PARAMETER Until
     Explicit end date and time for the activation. Takes precedence over -Hours when specified.
+    A time without an offset, such as '5pm', is local time; it is sent to Graph in UTC.
     Aliased as -NotAfter.
     .PARAMETER Scope
     Picks one role when the name matches the role at more than one scope: '/' for the directory
@@ -74,7 +87,15 @@ function Enable-OPIMDirectoryRole {
     -Identity: piping objects in together with -Scope selects the -RoleName parameter set, so an
     interactive host asks for -RoleName instead of failing to bind.
     .PARAMETER Wait
-    Wait until the directory role is fully provisioned before returning.
+    Hand the requests to Wait-OPIMDirectoryRole -PassThru, which waits for each until it is
+    provisioned and its role assignment appears, up to -TimeoutSeconds, and returns the activated
+    assignments and the requests that ended without one. A request Graph has already refused is
+    reported here and not waited for.
+    .PARAMETER TimeoutSeconds
+    With -Wait, the most seconds to wait for each request, counted from the time Graph created it.
+    Defaults to 300. A request that waits for approval ends its wait at once, with a warning; one
+    still in progress at the limit is written as an ActivationWaitTimedOut error and stays
+    submitted.
     #>
     [Alias('Enable-PIMADRole', 'Enable-PIMRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
@@ -90,18 +111,24 @@ function Enable-OPIMDirectoryRole {
         [Parameter(Position = 1)][string]$Justification,
         [string]$TicketNumber,
         [string]$TicketSystem,
-        [Parameter(Position = 2)][ValidateNotNullOrEmpty()][int]$Hours = 1,
+        [Parameter(Position = 2)][ValidateRange(1, 24)][int]$Hours = 1,
         [ValidateNotNullOrEmpty()][DateTime]$NotBefore = [DateTime]::Now,
         [DateTime][Alias('NotAfter')]$Until,
         [Parameter(ParameterSetName = 'RoleName')]
         [ValidateNotNullOrEmpty()]
         [ValidateScript({ $_ -eq '/' -or -not $_.EndsWith('/') }, ErrorMessage = "The scope '{0}' ends with '/'. Give it without the trailing slash; only the root scope is written '/'.")]
         [string]$Scope,
-        [Switch]$Wait
+        [Switch]$Wait,
+        [ValidateRange(1, 86400)][int]$TimeoutSeconds = 300
     )
     begin {
         Initialize-OPIMAuth
         [System.Collections.Generic.List[PSObject]]$_pendingWait = [System.Collections.Generic.List[PSObject]]::new()
+        # OPIM-39: the active list is read at most once per command, at the first role that needs it,
+        # and every post this command has requested is kept, so no post is requested twice.
+        $ActivePosts = $null
+        $ActiveReadFailed = $false
+        $RequestedPosts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     }
     process {
         if ($Identity) {
@@ -153,15 +180,45 @@ function Enable-OPIMDirectoryRole {
                 Write-Verbose "Skipping already-active directory role: $($Role.roleDefinition.displayName)"
                 continue
             }
+            # OPIM-39: never send a second request for a post that is already active -- a repeated
+            # request can end the active one. A list that cannot be read is no proof that nothing is
+            # active, so nothing more is sent by this command (G3).
+            if ($ActiveReadFailed) { continue }
+            if ($null -eq $ActivePosts) {
+                try {
+                    $ActivePosts = @(Get-OPIMDirectoryRole -Activated -ErrorAction Stop)
+                } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
+                    $PSCmdlet.WriteError($PSItem)
+                    $ActiveReadFailed = $true
+                    continue
+                }
+            }
+            $Label = (Get-OPIMScheduleName -Pillar Directory -InputObject $Role).Label
+            if (@($ActivePosts | Where-Object {
+                        [string]::Equals($_.roleDefinitionId, $Role.roleDefinitionId, [System.StringComparison]::OrdinalIgnoreCase) -and
+                        [string]::Equals($_.directoryScopeId, $Role.directoryScopeId, [System.StringComparison]::OrdinalIgnoreCase)
+                    }).Count -gt 0) {
+                $PSCmdlet.WriteWarning("$Label is already active, so no new request was sent and the active assignment is left as it is.")
+                continue
+            }
+            # The same post named twice, or piped twice, is requested once (G8): the active list was
+            # read before the first request and does not show it.
+            $PostKey = "$($Role.roleDefinitionId)|$($Role.directoryScopeId)"
+            if ($RequestedPosts.Contains($PostKey)) {
+                $PSCmdlet.WriteWarning("$Label was already requested by this command, so no second request was sent.")
+                continue
+            }
+            # OPIM-18: a time without an offset is local time; Graph gets it in UTC.
             $ScheduleInfo = @{
-                startDateTime = $NotBefore.ToString('o')
+                startDateTime = $NotBefore.ToUniversalTime().ToString('o')
                 expiration    = @{}
             }
 
             $Expiration = $ScheduleInfo.expiration
             if ($Until) {
                 $Expiration.type        = 'AfterDateTime'
-                $Expiration.endDateTime = $Until.ToString('o')
+                $Expiration.endDateTime = $Until.ToUniversalTime().ToString('o')
                 [string]$RoleExpireTime = $Until
             } else {
                 $Expiration.type     = 'AfterDuration'
@@ -187,6 +244,8 @@ function Enable-OPIMDirectoryRole {
                     $UserPrincipalName,
                     "Activate $($Role.roleDefinition.displayName) for scope $($Role.directoryScopeId) from $NotBefore to $RoleExpireTime"
                 )) {
+                # Counted before it is sent, so a request that fails still is not sent again.
+                $null = $RequestedPosts.Add($PostKey)
                 $GraphUri = 'v1.0/roleManagement/directory/roleAssignmentScheduleRequests'
                 $Response = try {
                     Invoke-OPIMGraphRequest -Method POST -Uri $GraphUri -Body $Request
@@ -207,17 +266,19 @@ function Enable-OPIMDirectoryRole {
                 $Out = [PSCustomObject]$Response
                 $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleRequest')
 
-                if ($Wait) {
+                if ($Wait -and (Get-OPIMRequestOutcome -Status $Out.status) -ne 'Failed') {
+                    # Wait-OPIMDirectoryRole reads the status again and reports it. A request Graph has
+                    # already refused is reported here and never waited for.
                     $_pendingWait.Add($Out)
                 } else {
-                    $Out
+                    Write-OPIMRequestOutcome -Request $Out -Status $Out.status -Name $Label -Cmdlet $PSCmdlet
                 }
             }
         }
     }
     end {
         if ($_pendingWait.Count -gt 0) {
-            $_pendingWait | Wait-OPIMDirectoryRole -PassThru
+            $_pendingWait | Wait-OPIMDirectoryRole -PassThru -TimeoutSeconds $TimeoutSeconds
         }
     }
 }

@@ -9,6 +9,9 @@ function Disable-OPIMDirectoryRole {
     refused with AmbiguousName and nothing is deactivated: add -Scope to pick one. A name that matches
     no active role is written as a (non-terminating) ActiveRoleNotFound error; when the role is
     eligible but not active, the message says it is already deactivated.
+    The request is reported by the status Graph gives it: a deactivation that does not end Revoked
+    is written as an ActivationRequestFailed error, and one that waits for approval or is still
+    being processed is returned with a warning.
     .EXAMPLE
     Get-OPIMDirectoryRole -Activated | Disable-OPIMDirectoryRole
     Deactivate all currently active directory roles.
@@ -23,7 +26,8 @@ function Disable-OPIMDirectoryRole {
     Get-OPIMDirectoryRole -Activated | Select-Object -First 1 | Disable-OPIMDirectoryRole
     Deactivate the first active role.
     .OUTPUTS
-    System.Collections.Hashtable (tagged as Omnicit.PIM.DirectoryAssignmentScheduleRequest)
+    PSCustomObject (tagged as Omnicit.PIM.DirectoryAssignmentScheduleRequest): the deactivation
+    request, with the status Graph gave it.
     .PARAMETER Role
     Active directory role assignment schedule instance object piped from Get-OPIMDirectoryRole -Activated.
     .PARAMETER RoleName
@@ -139,7 +143,9 @@ function Disable-OPIMDirectoryRole {
             # Convert to PSCustomObject so custom Format views apply (hashtable uses Key/Value formatter).
             $Out = [PSCustomObject]$Response
             $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleRequest')
-            return $Out
+            $Label = (Get-OPIMScheduleName -Pillar Directory -InputObject $Role).Label
+            Write-OPIMRequestOutcome -Request $Out -Status $Out.status -Name $Label -Deactivate -Cmdlet $PSCmdlet
+            return
         }
     }
 }

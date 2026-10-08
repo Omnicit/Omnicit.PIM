@@ -8,8 +8,10 @@ function Get-OPIMDirectoryRole {
     pre-authenticate or to specify a target tenant. Call Disconnect-OPIM to clear cached tokens.
 
     Without any switch: returns eligible (inactive) directory roles for the current user.
-    With -Activated: returns currently active role assignment schedule instances.
-    With -All: returns BOTH eligible and active schedules for the current user.
+    With -Activated: returns your currently active role activations (time-bound, assignment type
+    Activated). A permanent assignment is no activation and is not listed.
+    With -All: returns BOTH eligible and active schedules for the current user; the active ones are
+    the activations only.
     With -RoleName (the first positional argument): returns one role named by its display name, or by
     the tab-completed form, as its eligible and its active post.
 
@@ -50,7 +52,8 @@ function Get-OPIMDirectoryRole {
     table formatting with a Status column. Mutually exclusive with -Activated.
     .PARAMETER Activated
     Only return currently activated role assignment schedule instances instead of eligible
-    (inactive) role eligibility schedules.
+    (inactive) role eligibility schedules. Only activations are returned: a permanent assignment
+    (assignment type Assigned) is no activation and is not listed.
     Mutually exclusive with -All.
     .PARAMETER RoleName
     The display name of the directory role, or the tab-completed form the argument completer offers.
@@ -135,6 +138,12 @@ function Get-OPIMDirectoryRole {
                     $PSCmdlet.WriteError($PSItem)
                     continue
                 }
+                # OPIM-17: an active post is a time-bound activation; a permanent assignment
+                # (assignmentType Assigned) is no activation and cannot be deactivated by the user.
+                # Filtered before the scope lookup below, so a permanent assignment costs no request.
+                if ($TypeConfig.Status -eq 'Active') {
+                    $Items = @($Items | Where-Object { $_.assignmentType -eq 'Activated' })
+                }
                 foreach ($Item in $Items) {
                     if ($Item.directoryScopeId -eq '/') {
                         $Item['directoryScope'] = @{ id = '/' }
@@ -166,6 +175,13 @@ function Get-OPIMDirectoryRole {
             Remove-OPIMErrorRecord -Record $PSItem
             $PSCmdlet.WriteError($PSItem)
             return
+        }
+
+        # OPIM-17: an active post is a time-bound activation; a permanent assignment
+        # (assignmentType Assigned) is no activation and cannot be deactivated by the user.
+        # Filtered before the scope lookup below, so a permanent assignment costs no request.
+        if ($Activated) {
+            $Items = @($Items | Where-Object { $_.assignmentType -eq 'Activated' })
         }
 
         $TypeName = if ($Activated) {

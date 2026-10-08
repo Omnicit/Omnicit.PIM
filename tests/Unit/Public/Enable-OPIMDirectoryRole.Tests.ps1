@@ -37,6 +37,10 @@ Describe 'Enable-OPIMDirectoryRole' {
             }
             $Post
         }
+        # OPIM-39: every role that reaches the request reads the active list first. Nothing is active
+        # unless a context answers -Activated itself, and every listing mock that answers the resolver
+        # or -Identity is filtered on -not $Activated, so an eligible list is never read as the active one.
+        Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { } -ParameterFilter { $Activated }
     }
 
     Context 'When called with -RoleName (happy path)' {
@@ -232,6 +236,107 @@ Describe 'Enable-OPIMDirectoryRole' {
         }
     }
 
+    Context 'When a time carries no offset (OPIM-18)' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $fakeRole = [PSCustomObject]@{
+                id               = 'elig-001'
+                roleDefinitionId = 'role-def-001'
+                directoryScopeId = '/'
+                principalId      = 'principal-001'
+                roleDefinition   = [PSCustomObject]@{ displayName = 'Global Administrator' }
+                principal        = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeRole }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                return @{
+                    id               = 'req-001'
+                    action           = 'SelfActivate'
+                    roleDefinitionId = 'role-def-001'
+                    directoryScopeId = '/'
+                    principalId      = 'principal-001'
+                    status           = 'Provisioned'
+                }
+            } -ParameterFilter { $Method -eq 'POST' }
+            Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
+            # A time typed without an offset ('4pm') binds as Kind Unspecified and means local time.
+            # Each test asserts the exact string and the trailing Z: on a UTC machine a converted
+            # value equals an unconverted one, so only the Z tells a missing conversion there.
+            $script:StartAsLocal = [datetime]::SpecifyKind([datetime]'4pm', [System.DateTimeKind]::Local).ToUniversalTime().ToString('o')
+            $script:EndAsLocal = [datetime]::SpecifyKind([datetime]'5pm', [System.DateTimeKind]::Local).ToUniversalTime().ToString('o')
+            $script:StartUtc = [datetime]::new(2026, 10, 9, 14, 0, 0, [System.DateTimeKind]::Utc)
+            $script:EndUtc = [datetime]::new(2026, 10, 9, 16, 0, 0, [System.DateTimeKind]::Utc)
+            $script:StartLocal = [datetime]::SpecifyKind([datetime]::new(2026, 10, 9, 16, 0, 0), [System.DateTimeKind]::Local)
+        }
+
+        It 'sends a -NotBefore without an offset as startDateTime, as local time in UTC' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -NotBefore '4pm'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and
+                $Body.scheduleInfo.startDateTime -ceq $script:StartAsLocal -and
+                $Body.scheduleInfo.startDateTime.EndsWith('Z', [System.StringComparison]::Ordinal)
+            }
+        }
+
+        It 'sends a -NotBefore that is already UTC as its own round-trip string' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -NotBefore $script:StartUtc
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and
+                $Body.scheduleInfo.startDateTime -ceq $script:StartUtc.ToString('o') -and
+                $Body.scheduleInfo.startDateTime.EndsWith('Z', [System.StringComparison]::Ordinal)
+            }
+        }
+
+        It 'sends a -NotBefore of Kind Local in UTC' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -NotBefore $script:StartLocal
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and
+                $Body.scheduleInfo.startDateTime -ceq $script:StartLocal.ToUniversalTime().ToString('o') -and
+                $Body.scheduleInfo.startDateTime.EndsWith('Z', [System.StringComparison]::Ordinal)
+            }
+        }
+
+        It 'sends the default start, now, in UTC' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Start = $Body.scheduleInfo.startDateTime
+                $Method -eq 'POST' -and
+                $Start.EndsWith('Z', [System.StringComparison]::Ordinal) -and
+                [math]::Abs(([datetime]::Parse($Start, [cultureinfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind) - [datetime]::UtcNow).TotalMinutes) -lt 5
+            }
+        }
+
+        It 'sends an -Until without an offset as endDateTime, as local time in UTC' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Until '5pm'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and
+                $Body.scheduleInfo.expiration.type -eq 'AfterDateTime' -and
+                $Body.scheduleInfo.expiration.endDateTime -ceq $script:EndAsLocal -and
+                $Body.scheduleInfo.expiration.endDateTime.EndsWith('Z', [System.StringComparison]::Ordinal)
+            }
+        }
+
+        It 'sends an -Until that is already UTC as its own round-trip string' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Until $script:EndUtc
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and
+                $Body.scheduleInfo.expiration.endDateTime -ceq $script:EndUtc.ToString('o') -and
+                $Body.scheduleInfo.expiration.endDateTime.EndsWith('Z', [System.StringComparison]::Ordinal)
+            }
+        }
+
+        It 'sends both times in UTC when -NotBefore and -Until are given together' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -NotBefore '4pm' -Until '5pm'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and
+                $Body.scheduleInfo.startDateTime -ceq $script:StartAsLocal -and
+                $Body.scheduleInfo.expiration.endDateTime -ceq $script:EndAsLocal -and
+                $Body.scheduleInfo.startDateTime.EndsWith('Z', [System.StringComparison]::Ordinal) -and
+                $Body.scheduleInfo.expiration.endDateTime.EndsWith('Z', [System.StringComparison]::Ordinal)
+            }
+        }
+    }
+
     Context 'When -Hours overrides the default duration' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
@@ -269,6 +374,57 @@ Describe 'Enable-OPIMDirectoryRole' {
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.scheduleInfo.expiration.duration -eq 'PT8H'
             }
+        }
+
+        It 'sends PT1H when -Hours 1, the lower edge, is given' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Hours 1
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.scheduleInfo.expiration.duration -eq 'PT1H'
+            }
+        }
+
+        # XmlConvert.ToString writes 24 hours as P1D, which is the same ISO 8601 duration as PT24H, so
+        # the assertion reads the duration back instead of pinning one spelling of it.
+        It 'sends a duration of exactly 24 hours when -Hours 24, the upper edge, is given' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Hours 24
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and
+                [System.Xml.XmlConvert]::ToTimeSpan($Body.scheduleInfo.expiration.duration) -eq [TimeSpan]::FromHours(24)
+            }
+        }
+    }
+
+    Context 'When -Hours is outside 1 to 24' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $fakeRole = [PSCustomObject]@{
+                id               = 'elig-001'
+                roleDefinitionId = 'role-def-001'
+                directoryScopeId = '/'
+                principalId      = 'principal-001'
+                roleDefinition   = [PSCustomObject]@{ displayName = 'Global Administrator' }
+                principal        = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
+            }
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeRole }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                return @{ id = 'req-001'; action = 'SelfActivate'; status = 'Provisioned' }
+            } -ParameterFilter { $Method -eq 'POST' }
+            Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
+        }
+
+        It 'refuses -Hours <_> at binding with ParameterArgumentValidationError' -ForEach 0, -1, 25 {
+            $Hours = $_
+            { Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Hours $Hours -ErrorAction Stop } |
+                Should -Throw -ErrorId 'ParameterArgumentValidationError,Enable-OPIMDirectoryRole'
+        }
+
+        It 'signs in, resolves and sends nothing for -Hours <_>' -ForEach 0, -1, 25 {
+            $Hours = $_
+            { Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Hours $Hours -ErrorAction Stop } |
+                Should -Throw -ErrorId 'ParameterArgumentValidationError,Enable-OPIMDirectoryRole'
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It
         }
     }
 
@@ -490,6 +646,29 @@ Describe 'Enable-OPIMDirectoryRole' {
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)'
             Should -Invoke -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole -Times 0 -Scope It
         }
+
+        It 'passes -TimeoutSeconds to Wait-OPIMDirectoryRole -PassThru' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Wait -TimeoutSeconds 120
+            Should -Invoke -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $TimeoutSeconds -eq 120 -and $PassThru
+            }
+        }
+
+        It 'passes 300 seconds to Wait-OPIMDirectoryRole when -TimeoutSeconds is not given' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Wait
+            Should -Invoke -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $TimeoutSeconds -eq 300
+            }
+        }
+
+        It 'refuses -TimeoutSeconds <Value> before anything is sent' -ForEach @(
+            @{ Value = 0 }
+            @{ Value = 86401 }
+        ) {
+            { Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Wait -TimeoutSeconds $Value } |
+                Should -Throw -ErrorId 'ParameterArgumentValidationError,Enable-OPIMDirectoryRole'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It
+        }
     }
 
     Context 'When API returns RoleAssignmentRequestPolicyValidationFailed with an unrecognized rule' {
@@ -573,7 +752,7 @@ Describe 'Enable-OPIMDirectoryRole' {
                 roleDefinition   = [PSCustomObject]@{ displayName = 'Reports Reader' }
                 principal        = [PSCustomObject]@{ displayName = 'Jane Doe'; userPrincipalName = 'jane@contoso.com' }
             }
-            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return $FakeElig }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return $FakeElig } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 return @{
                     id               = 'req-010'
@@ -589,7 +768,7 @@ Describe 'Enable-OPIMDirectoryRole' {
 
         It 'looks up the role via Get-OPIMDirectoryRole -Identity' {
             Enable-OPIMDirectoryRole -Identity 'elig-010'
-            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter { $Identity -eq 'elig-010' }
         }
 
         It 'submits the SelfActivate request' {
@@ -606,7 +785,7 @@ Describe 'Enable-OPIMDirectoryRole' {
     Context 'When -Identity is specified but no eligible role is found' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return $null }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return $null } -ParameterFilter { -not $Activated }
         }
 
         It 'writes a non-terminating error' {
@@ -637,7 +816,7 @@ Describe 'Enable-OPIMDirectoryRole' {
                 $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                         [System.Exception]::new('Forbidden: denied'), 'Forbidden',
                         [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
-            }
+            } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {}
         }
 
@@ -673,6 +852,11 @@ Describe 'Enable-OPIMDirectoryRole' {
                         [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
             } -ParameterFilter { $Uri -like '*roleEligibilitySchedules*' -or $Uri -like '*roleAssignmentScheduleInstances*' }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {} -ParameterFilter { $Method -eq 'POST' }
+            # The Describe answers Get-OPIMDirectoryRole -Activated, and Pester 6 refuses a call that no
+            # filter matches, so the -Identity listing is handed on to the real command, invoked
+            # through its own FunctionInfo so the mock does not call itself.
+            $RealListing = (Get-Module Omnicit.PIM).ExportedFunctions['Get-OPIMDirectoryRole']
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { & $RealListing @PesterBoundParameters } -ParameterFilter { -not $Activated }
         }
 
         It 'writes the 403 as itself, reads no further list and sends no activation' {
@@ -700,7 +884,7 @@ Describe 'Enable-OPIMDirectoryRole' {
                 $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                         [System.Exception]::new('Forbidden: denied'), 'Forbidden',
                         [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
-            }
+            } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {}
         }
 
@@ -778,7 +962,7 @@ Describe 'Enable-OPIMDirectoryRole' {
                 New-DirectoryPost -Id 'elig-002' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader' -ScopeId '/administrativeUnits/au-001' -ScopeName 'Sales AU'
                 New-DirectoryPost -Id 'elig-003' -DefinitionId 'role-def-003' -RoleName 'Message Center Privacy Reader'
             )
-            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { $Listing }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { $Listing } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 @{ id = 'req-001'; action = 'SelfActivate'; status = 'Provisioned' }
             } -ParameterFilter { $Method -eq 'POST' }
@@ -839,7 +1023,7 @@ Describe 'Enable-OPIMDirectoryRole' {
                 New-DirectoryPost -Id 'elig-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader'
                 New-DirectoryPost -Id 'elig-003' -DefinitionId 'role-def-003' -RoleName 'Message Center Privacy Reader'
             )
-            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { $Listing }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { $Listing } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 @{ id = 'req-001'; action = 'SelfActivate'; status = 'Provisioned' }
             } -ParameterFilter { $Method -eq 'POST' }
@@ -863,7 +1047,7 @@ Describe 'Enable-OPIMDirectoryRole' {
                 New-DirectoryPost -Id 'elig-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader'
                 New-DirectoryPost -Id 'elig-003' -DefinitionId 'role-def-003' -RoleName 'Message Center Privacy Reader'
             )
-            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { $Listing }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { $Listing } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 @{ id = 'req-001'; action = 'SelfActivate'; status = 'Provisioned' }
             } -ParameterFilter { $Method -eq 'POST' }
@@ -893,7 +1077,7 @@ Describe 'Enable-OPIMDirectoryRole' {
                 New-DirectoryPost -Id 'dup-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader'
                 New-DirectoryPost -Id 'dup-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader' -ScopeId '/administrativeUnits/au-001' -ScopeName 'Sales AU'
             )
-            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { $Listing }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { $Listing } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 @{ id = 'req-001'; action = 'SelfActivate'; status = 'Provisioned' }
             } -ParameterFilter { $Method -eq 'POST' }
@@ -913,7 +1097,7 @@ Describe 'Enable-OPIMDirectoryRole' {
     Context 'When -Scope is given where it does not belong' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { } -ParameterFilter { -not $Activated }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest { } -ParameterFilter { $Method -eq 'POST' }
         }
 
@@ -963,6 +1147,370 @@ Describe 'Enable-OPIMDirectoryRole' {
             @($Written | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Enable-OPIMDirectoryRole' }).Count | Should -Be 2
             Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 2 -Exactly -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+    }
+
+    Context 'When Graph answers the request with a status' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $Post = New-DirectoryPost -Id 'elig-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader'
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { $Post }
+            Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
+            # The answer is read when the POST is made, so each test sets the status it wants.
+            $Answer = @{ Status = 'Provisioned' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                $Response = @{ id = 'req-001'; action = 'SelfActivate'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'; principalId = 'principal-001' }
+                if ($null -ne $Answer.Status) { $Response.status = $Answer.Status }
+                $Response
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'returns the request and writes neither a warning nor an error for <Status>' -ForEach @(
+            @{ Status = 'Provisioned' }
+            @{ Status = 'Granted' }
+            @{ Status = 'ScheduleCreated' }
+            @{ Status = 'provisioned' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.DirectoryAssignmentScheduleRequest'
+            $Result.status | Should -BeExactly $Status
+            @($Warns).Count | Should -Be 0
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'returns the request with one warning that names <Status>' -ForEach @(
+            @{ Status = 'PendingApproval'; Message = 'Usage Summary Reports Reader: the activation request is PendingApproval. It waits for a decision and has not taken effect yet.' }
+            @{ Status = 'PendingAdminDecision'; Message = 'Usage Summary Reports Reader: the activation request is PendingAdminDecision. It waits for a decision and has not taken effect yet.' }
+            @{ Status = 'PendingProvisioning'; Message = 'Usage Summary Reports Reader: the activation request is PendingProvisioning and has not taken effect yet.' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
+            $Result.status | Should -BeExactly $Status
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Message
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'writes ActivationRequestFailed and returns nothing for <Status>' -ForEach @(
+            @{ Status = 'Failed' }
+            @{ Status = 'Denied' }
+            @{ Status = 'Canceled' }
+            @{ Status = 'Revoked' }
+            @{ Status = 'AdminDenied' }
+            @{ Status = 'SomethingNew' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Enable-OPIMDirectoryRole'
+            $Errs[-1].Exception.Message | Should -BeExactly "Usage Summary Reports Reader: the activation request ended with status '$Status' and did not take effect."
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'ActivationRequestFailed*' }).Count | Should -Be 1
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'writes ActivationRequestFailed for an answer that carries no status' {
+            $Answer.Status = $null
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' `
+                -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Enable-OPIMDirectoryRole'
+            $Errs[-1].Exception.Message | Should -BeLike '*ended with no status*'
+        }
+    }
+
+    Context 'When the first of two requests comes back Failed' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $PostA = New-DirectoryPost -Id 'elig-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader'
+            $PostB = New-DirectoryPost -Id 'elig-003' -DefinitionId 'role-def-003' -RoleName 'Message Center Privacy Reader'
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule {
+                if ($Name -like 'Usage*') { $PostA } else { $PostB }
+            }
+            Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                $State = if ($Body.roleDefinitionId -eq 'role-def-001') { 'Failed' } else { 'Provisioned' }
+                @{ id = "req-$($Body.roleDefinitionId)"; action = 'SelfActivate'; roleDefinitionId = $Body.roleDefinitionId; status = $State }
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'writes one error and still requests and returns the second role' {
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader', 'Message Center Privacy Reader' `
+                -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'ActivationRequestFailed,Enable-OPIMDirectoryRole' }).Count | Should -Be 1
+            $Errs[-1].Exception.Message | Should -BeLike 'Usage Summary Reports Reader: *'
+            @($Result).Count | Should -Be 1
+            $Result.roleDefinitionId | Should -BeExactly 'role-def-003'
+            $Result.status | Should -BeExactly 'Provisioned'
+        }
+    }
+
+    Context 'When -Wait is given and the request comes back Failed' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $Post = New-DirectoryPost -Id 'elig-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader'
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { $Post }
+            Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
+            $Answer = @{ Status = 'Failed' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                @{ id = 'req-001'; action = 'SelfActivate'; roleDefinitionId = 'role-def-001'; status = $Answer.Status }
+            } -ParameterFilter { $Method -eq 'POST' }
+            Mock -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole { }
+        }
+
+        It 'reports it as ActivationRequestFailed and never waits for it' {
+            $Answer.Status = 'Failed'
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' -Wait -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole -Times 0 -Exactly -Scope It
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'ActivationRequestFailed,Enable-OPIMDirectoryRole' }).Count | Should -Be 1
+            @($Result).Count | Should -Be 0
+        }
+
+        It 'still hands a request that waits for a decision to Wait-OPIMDirectoryRole' {
+            $Answer.Status = 'PendingApproval'
+            $null = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' -Wait -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole -Times 1 -Exactly -Scope It
+            @($Errs).Count | Should -Be 0
+        }
+    }
+
+    Context 'When the role is already active (OPIM-39)' {
+        # A second request for an active post can end it, so the active list is read before anything
+        # is sent. The real resolver runs; the eligible listing, the active listing and the transport
+        # are mocked. $Active.List is what Get-OPIMDirectoryRole -Activated answers; with FailFirst the
+        # first read writes a Graph 403, as a listing does, and later reads answer the list.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $Listing = @(
+                New-DirectoryPost -Id 'elig-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader'
+                New-DirectoryPost -Id 'elig-003' -DefinitionId 'role-def-003' -RoleName 'Message Center Privacy Reader'
+            )
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { $Listing } -ParameterFilter { -not $Activated }
+            $Active = @{ List = @(); FailFirst = $false; Reads = 0 }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole {
+                $Active.Reads++
+                if ($Active.FailFirst -and $Active.Reads -eq 1) {
+                    $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                            [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+                    return
+                }
+                $Active.List
+            } -ParameterFilter { $Activated }
+            # With PostThrows every request fails as Graph refuses one.
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                if ($Active.PostThrows) {
+                    $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('BadRequest: refused'), 'BadRequest',
+                            [System.Management.Automation.ErrorCategory]::InvalidOperation, $null))
+                }
+                @{ id = "req-$($Body.roleDefinitionId)"; action = 'SelfActivate'; roleDefinitionId = $Body.roleDefinitionId; directoryScopeId = $Body.directoryScopeId; status = 'Provisioned' }
+            } -ParameterFilter { $Method -eq 'POST' }
+            Mock -ModuleName Omnicit.PIM Restore-GraphProperty { }
+            Mock -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole { }
+            $Message = 'Usage Summary Reports Reader is already active, so no new request was sent and the active assignment is left as it is.'
+            $Twice = 'Usage Summary Reports Reader was already requested by this command, so no second request was sent.'
+        }
+        BeforeEach {
+            $Active.List = @()
+            $Active.FailFirst = $false
+            $Active.Reads = 0
+            $Active.PostThrows = $false
+        }
+
+        It 'sends no request, writes one warning and returns nothing' {
+            $Active.List = @(New-DirectoryPost -Id 'inst-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader' -Active)
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            # The active list was read, so the guard was reached.
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Message
+            @($Result).Count | Should -Be 0
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'sends the request when the role is active only at another scope' {
+            $Active.List = @(New-DirectoryPost -Id 'inst-002' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader' -ScopeId '/administrativeUnits/au-001' -ScopeName 'Sales AU' -Active)
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.roleDefinitionId -eq 'role-def-001' -and $Body.directoryScopeId -eq '/'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns).Count | Should -Be 0
+            @($Result).Count | Should -Be 1
+        }
+
+        It 'sends the request when another role is active at the same scope' {
+            $Active.List = @(New-DirectoryPost -Id 'inst-003' -DefinitionId 'role-def-003' -RoleName 'Message Center Privacy Reader' -Active)
+            $null = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.roleDefinitionId -eq 'role-def-001' -and $Body.directoryScopeId -eq '/'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'warns for the active role and still requests the next one' {
+            $Active.List = @(New-DirectoryPost -Id 'inst-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader' -Active)
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader', 'Message Center Privacy Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.roleDefinitionId -eq 'role-def-003'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Message
+            @($Result).Count | Should -Be 1
+            $Result.roleDefinitionId | Should -BeExactly 'role-def-003'
+        }
+
+        It 'reads the active list once for several names' {
+            $null = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader', 'Message Center Privacy Reader' -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'reads the active list once for two objects passed to -Role at once' {
+            $null = Enable-OPIMDirectoryRole -Role @($Listing[0], $Listing[1]) -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'checks every object piped in and reads the active list once for the whole pipeline' {
+            # Each piped object is a process call of its own; the list is read once per command.
+            $Active.List = @(New-DirectoryPost -Id 'inst-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader' -Active)
+            $Result = $Listing | Enable-OPIMDirectoryRole -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.roleDefinitionId -eq 'role-def-003'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Message
+            @($Result).Count | Should -Be 1
+        }
+
+        It 'reads no active list when no name resolves' {
+            $null = Enable-OPIMDirectoryRole -RoleName 'Unknown Role' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'EligibleRoleNotFound,Enable-OPIMDirectoryRole'
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 0 -Scope It -ParameterFilter { $Activated }
+        }
+
+        It 'writes a failed read of the active list as itself and sends nothing more' {
+            # The read fails once and would succeed after: no second read, and no name is sent.
+            $Active.FailFirst = $true
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader', 'Message Center Privacy Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'Forbidden,Enable-OPIMDirectoryRole'
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Result).Count | Should -Be 0
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'writes the failed read to its own error stream once' {
+            $Active.FailFirst = $true
+            $Out = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader', 'Message Center Privacy Reader' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeExactly 'Forbidden,Enable-OPIMDirectoryRole'
+        }
+
+        It 'writes a failed read once for several piped roles and sends nothing' {
+            # The read fails once and would succeed after: a later piped role reads no list again.
+            $Active.FailFirst = $true
+            $Out = $Listing | Enable-OPIMDirectoryRole -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeExactly 'Forbidden,Enable-OPIMDirectoryRole'
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'sends one request for the same role named twice, by its name and its old form' {
+            $Result = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader', 'Usage Summary Reports Reader (elig-001)' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Twice
+            @($Result).Count | Should -Be 1
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'sends one request for the same role piped twice' {
+            $Result = @($Listing[0], $Listing[0]) | Enable-OPIMDirectoryRole -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Twice
+            @($Result).Count | Should -Be 1
+        }
+
+        It 'sends one request for the same role passed twice to -Role' {
+            $null = Enable-OPIMDirectoryRole -Role @($Listing[0], $Listing[0]) -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Twice
+        }
+
+        It 'sends both posts of one role that differ only in scope, with nothing active' {
+            # The same roleDefinitionId at the root and at an administrative unit, in ONE call and
+            # against an empty active list: only the second part of the requested-post key, the scope,
+            # tells the two apart, so a key on the role alone would withhold the second post.
+            $AuPost = New-DirectoryPost -Id 'elig-au-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader' -ScopeId '/administrativeUnits/au-001' -ScopeName 'Sales AU'
+            $Result = Enable-OPIMDirectoryRole -Role @($Listing[0], $AuPost) `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            # The active list was read and was empty, so only the requested-post key stood in the way.
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter { $Activated }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.roleDefinitionId -eq 'role-def-001' -and $Body.directoryScopeId -eq '/'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $Body.roleDefinitionId -eq 'role-def-001' -and $Body.directoryScopeId -eq '/administrativeUnits/au-001'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            @($Warns | Where-Object { "$_" -like '*was already requested by this command*' }).Count | Should -Be 0
+            @($Warns).Count | Should -Be 0
+            @($Errs).Count | Should -Be 0
+            @($Result).Count | Should -Be 2
+        }
+
+        It 'does not send the role again after its first request failed' {
+            # The post counts as requested before the request is sent, so a failed one is not repeated.
+            $Active.PostThrows = $true
+            $null = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader', 'Usage Summary Reports Reader (elig-001)' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'BadRequest,Enable-OPIMDirectoryRole'
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Twice
+        }
+
+        It 'hands no request for an active role to Wait-OPIMDirectoryRole' {
+            $Active.List = @(New-DirectoryPost -Id 'inst-001' -DefinitionId 'role-def-001' -RoleName 'Usage Summary Reports Reader' -Active)
+            $null = Enable-OPIMDirectoryRole -RoleName 'Usage Summary Reports Reader' -Wait -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+    }
+
+    Context 'When the help is read (OPIM-37)' {
+        It 'describes in .OUTPUTS a PSCustomObject, what -Wait returns, and no Hashtable' {
+            $Outputs = @((Get-Help Enable-OPIMDirectoryRole -Full).returnValues.returnValue.type.name) -join "`n"
+            $Outputs | Should -Match 'PSCustomObject'
+            $Outputs | Should -Match 'Omnicit\.PIM\.DirectoryAssignmentScheduleRequest'
+            $Outputs | Should -Match 'Wait-OPIMDirectoryRole -PassThru'
+            $Outputs | Should -Not -Match 'Hashtable'
         }
     }
 }

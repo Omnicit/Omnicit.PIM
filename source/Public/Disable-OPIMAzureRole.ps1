@@ -10,6 +10,9 @@ function Disable-OPIMAzureRole {
     refused with AmbiguousName and nothing is deactivated: add -Scope to pick one. A name that
     matches no active role is written as a (non-terminating) ActiveRoleNotFound error; when the role
     is eligible but not active, the message says it is already deactivated.
+    The request is reported by the status Azure gives it: a deactivation that does not end Revoked
+    is written as an ActivationRequestFailed error, and one that waits for approval or is still
+    being processed is returned with a warning.
     .EXAMPLE
     Get-OPIMAzureRole -Activated | Disable-OPIMAzureRole
     Deactivate all currently active Azure roles.
@@ -103,13 +106,14 @@ function Disable-OPIMAzureRole {
             return
         }
 
+        # OPIM-24: a deactivation names no eligibility; ARM documents LinkedRoleEligibilityScheduleId
+        # for an activation only. The instance's own Name is not an eligibility id.
         $RoleDeactivateParams = @{
-            Name                            = New-Guid
-            Scope                           = $Role.ScopeId
-            PrincipalId                     = $Role.PrincipalId
-            RoleDefinitionId                = $Role.RoleDefinitionId
-            RequestType                     = 'SelfDeactivate'
-            LinkedRoleEligibilityScheduleId = $Role.Name
+            Name             = New-Guid
+            Scope            = $Role.ScopeId
+            PrincipalId      = $Role.PrincipalId
+            RoleDefinitionId = $Role.RoleDefinitionId
+            RequestType      = 'SelfDeactivate'
         }
 
         if ($PSCmdlet.ShouldProcess(
@@ -122,8 +126,6 @@ function Disable-OPIMAzureRole {
                 $ArmRefusal = Get-OPIMArmRefusal
                 if ($null -ne $ArmRefusal) { throw $ArmRefusal }
                 $Response = New-AzRoleAssignmentScheduleRequest @RoleDeactivateParams -ErrorAction Stop
-                $Response.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleRequest')
-                $Response
             } catch {
                 Remove-OPIMErrorRecord -Record $PSItem
                 if (-not (ConvertTo-ActiveDurationTooShortError -CaughtError $PSItem -ResourceType 'role' -Cmdlet $PSCmdlet)) {
@@ -131,6 +133,11 @@ function Disable-OPIMAzureRole {
                 }
                 return
             }
+            # Outside the try: a failed status written under -ErrorAction Stop must not reach the
+            # catch above and be written a second time.
+            $Response.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleRequest')
+            $Label = (Get-OPIMScheduleName -Pillar Azure -InputObject $Role).Label
+            Write-OPIMRequestOutcome -Request $Response -Status $Response.Status -Name $Label -Deactivate -Cmdlet $PSCmdlet
         }
     }
 }

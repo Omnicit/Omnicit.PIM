@@ -8,8 +8,10 @@ function Get-OPIMEntraIDGroup {
     to pre-authenticate or to specify a target tenant. Call Disconnect-OPIM to clear cached tokens.
 
     Without any switch: returns eligible (inactive) group assignments for the current user.
-    With -Activated: returns currently active group assignment schedule instances.
-    With -All: returns BOTH eligible and active group assignments for the current user.
+    With -Activated: returns your currently active group activations (time-bound, assignment type
+    activated). A permanent assignment is no activation and is not listed.
+    With -All: returns BOTH eligible and active group assignments for the current user; the active
+    ones are the activations only.
     With -GroupName (the first positional argument): returns one group named by its display name, or
     by the tab-completed form, as its eligible and its active post. A display name means the
     membership unless -AccessType owner is given.
@@ -57,7 +59,8 @@ function Get-OPIMEntraIDGroup {
     formatting with a Status column. Mutually exclusive with -Activated.
     .PARAMETER Activated
     Only return currently activated group assignment schedule instances instead of eligible
-    (inactive) group eligibility schedules.
+    (inactive) group eligibility schedules. Only activations are returned: a permanent assignment
+    (assignment type assigned) is no activation and is not listed.
     Mutually exclusive with -All.
     .PARAMETER GroupName
     The display name of the group, or the tab-completed form the argument completer offers. A display
@@ -149,6 +152,11 @@ function Get-OPIMEntraIDGroup {
                     $PSCmdlet.WriteError($PSItem)
                     continue
                 }
+                # OPIM-17: an active post is a time-bound activation; a permanent assignment
+                # (assignmentType assigned) is no activation and cannot be deactivated by the user.
+                if ($TypeConfig.Status -eq 'Active') {
+                    $Items = @($Items | Where-Object { $_.assignmentType -eq 'Activated' })
+                }
                 foreach ($Item in $Items) {
                     $Obj = [PSCustomObject]$Item
                     $Obj | Add-Member -NotePropertyName Status -NotePropertyValue $TypeConfig.Status -Force
@@ -175,6 +183,12 @@ function Get-OPIMEntraIDGroup {
             Remove-OPIMErrorRecord -Record $PSItem
             $PSCmdlet.WriteError($PSItem)
             return
+        }
+
+        # OPIM-17: an active post is a time-bound activation; a permanent assignment
+        # (assignmentType assigned) is no activation and cannot be deactivated by the user.
+        if ($Activated) {
+            $Items = @($Items | Where-Object { $_.assignmentType -eq 'Activated' })
         }
 
         $TypeName = if ($Activated) {

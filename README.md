@@ -120,7 +120,7 @@ Connect-OPIM -TenantId 'contoso.onmicrosoft.com'     # specific tenant
 # List eligible roles
 Get-OPIMDirectoryRole
 
-# List active role assignments
+# List your active role activations (a permanent assignment is not listed)
 Get-OPIMDirectoryRole -Activated
 
 # List BOTH eligible and active in one call
@@ -155,8 +155,9 @@ Disable-OPIMDirectoryRole -Identity 'active-instance-001'
 # Deactivate all active roles
 Get-OPIMDirectoryRole -Activated | Disable-OPIMDirectoryRole
 
-# Activate and wait for provisioning before continuing
+# Activate and wait for provisioning before continuing (up to -TimeoutSeconds per role, default 300)
 Get-OPIMDirectoryRole | Enable-OPIMDirectoryRole -Wait
+Enable-OPIMDirectoryRole 'Usage Summary Reports Reader' -Wait -TimeoutSeconds 600
 ```
 
 ### Azure Resource (RBAC) Roles
@@ -169,7 +170,7 @@ Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -IncludeARM
 # List eligible roles (current user, all scopes)
 Get-OPIMAzureRole
 
-# List active role assignments
+# List your active role activations (a permanent assignment is not listed)
 Get-OPIMAzureRole -Activated
 
 # List BOTH eligible and active in one call
@@ -198,6 +199,10 @@ Enable-OPIMAzureRole 'Contributor -> My Subscription (elig-name)' 'Incident resp
 # Activate by schedule Name (the Name property from Get-OPIMAzureRole)
 Enable-OPIMAzureRole -Identity 'elig-schedule-name'
 
+# Schedule an activation: -NotBefore is sent to Azure as the start (a time without an offset is
+# local time), and a start in the future is reported as a scheduled activation (ScheduleCreated)
+Enable-OPIMAzureRole 'Reader' -Scope '/subscriptions/00000000-0000-0000-0000-000000000000' -NotBefore '4pm' -Until '6pm'
+
 # Deactivate by display name, or by schedule instance Name (from Get-OPIMAzureRole -Activated)
 Disable-OPIMAzureRole 'Reader' -Scope '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-app'
 Disable-OPIMAzureRole -Identity 'active-schedule-name'
@@ -215,7 +220,7 @@ Connect-OPIM
 # List eligible group memberships/ownerships
 Get-OPIMEntraIDGroup
 
-# List active group assignments
+# List your active group activations (a permanent assignment is not listed)
 Get-OPIMEntraIDGroup -Activated
 
 # List BOTH eligible and active in one call
@@ -283,7 +288,7 @@ pim -TenantAlias contoso
 # Activate using a named tenant alias looked up in TenantMap.psd1, for 4 hours
 pim -TenantAlias contoso -Hours 4 -Justification 'Incident response'
 
-# Wait until directory role activations are fully provisioned
+# Wait until directory role activations are fully provisioned (up to -TimeoutSeconds, default 300)
 pim -TenantAlias corp -Wait
 
 # Activate ALL eligible roles without a stored alias (confirmation required per category)
@@ -311,6 +316,13 @@ Disable-OPIMMyRole -AllActivatedDirectoryRoles -AllActivatedEntraIDGroups
 # Preview without making changes
 unpim -TenantAlias contoso -WhatIf
 ```
+
+Each stored item is matched against every active role or group. An item that matches more than
+one -- the same directory role active at two scopes, say -- is refused with `AmbiguousName`, which
+lists the active posts it matches, and none of them is deactivated; the next item still runs.
+Deactivate the one you mean with `Disable-OPIMDirectoryRole`, `Disable-OPIMEntraIDGroup` or
+`Disable-OPIMAzureRole` and its tab-completed form, as listed. Only activations count as active:
+a permanent assignment is never deactivated.
 
 The default activation duration is 1 hour. Override persistently:
 
@@ -562,10 +574,10 @@ are under [Short Aliases](#short-aliases).
 
 ### Directory roles (4)
 
-- `Get-OPIMDirectoryRole` -- lists your eligible directory roles; `-Activated` lists the active ones and `-All` both; a role's display name as the first argument retrieves that role.
+- `Get-OPIMDirectoryRole` -- lists your eligible directory roles; `-Activated` lists your activations (a permanent assignment is not listed) and `-All` both; a role's display name as the first argument retrieves that role.
 - `Enable-OPIMDirectoryRole` -- activates an eligible directory role named by its display name (or the tab-completed form), for 1 hour unless `-Hours` or `-Until` says otherwise; `-Scope` picks one when the name matches the role at more than one scope.
 - `Disable-OPIMDirectoryRole` -- deactivates an active directory role named by its display name (or the tab-completed form); `-Scope` picks one when the name matches at more than one scope.
-- `Wait-OPIMDirectoryRole` -- waits for a directory role activation request to finish provisioning.
+- `Wait-OPIMDirectoryRole` -- waits for each directory role activation request to finish provisioning, up to `-TimeoutSeconds` (default 300; the old `-Timeout` still works).
 
 ### Groups (3)
 
@@ -694,6 +706,32 @@ Get-OPIMAzureRole 'Reader' -Scope '/subscriptions/00000000-0000-0000-0000-000000
 
 ---
 
+## What a request reports
+
+The `Enable-OPIM*` and `Disable-OPIM*` role and group cmdlets report a request by the status Graph or
+Azure gives it. A request that failed, was denied or was canceled is an `ActivationRequestFailed`
+error and returns nothing, and one that waits for approval or is still being provisioned is returned
+with a warning, since it has not taken effect yet. A status the module does not know counts as a
+failure, never as a success; a deactivation succeeds only when it ends `Revoked`.
+
+The `Enable-OPIM*` cmdlets never request a role or group that is already active (listed by
+`Get-OPIM* -Activated`, read once per command): they write a warning and send nothing for it, and
+when that list cannot be read they write that error and send nothing. A role or group named or piped
+twice in one command is requested once, with a warning for the second.
+
+With `-Wait`, the `Enable-OPIM*` role and group cmdlets wait for at most `-TimeoutSeconds` (default
+300) and then report the request by its last status, written back onto the request (a directory
+role returns its role assignment once that appears). Groups and Azure roles read the status
+again, with a pause between reads, only while the request is still being worked on, counting from
+the start of the wait. Directory roles hand every request that has not failed to
+`Wait-OPIMDirectoryRole`, which reads each one at least once, waits for the role assignment to
+appear once a request is provisioned, and counts from the time Graph created the request. A
+request that waits for approval ends the wait at once, with a warning. One still in progress at the
+limit is an `ActivationWaitTimedOut` error and returns nothing; the request stays submitted. Each
+role or group is reported on its own, so one that fails or times out never stops the next.
+
+---
+
 ## Using -All, -Activated, and default (eligible only)
 
 All `Get-OPIM*` cmdlets support three modes. `-All` and `-Activated` are mutually exclusive:
@@ -701,13 +739,15 @@ All `Get-OPIM*` cmdlets support three modes. `-All` and `-Activated` are mutuall
 | Command | Returns |
 |---|---|
 | `Get-OPIMDirectoryRole` | Eligible (inactive) roles only |
-| `Get-OPIMDirectoryRole -Activated` | Currently active role assignments |
-| `Get-OPIMDirectoryRole -All` | Both eligible **and** active for the current user |
+| `Get-OPIMDirectoryRole -Activated` | Your activations: the currently active, time-bound role assignments. Permanent assignments are not listed |
+| `Get-OPIMDirectoryRole -All` | Both eligible **and** active (activations only) for the current user |
 
 The same applies to `Get-OPIMEntraIDGroup` and `Get-OPIMAzureRole`.
 
 > **Note:** `-All` returns both schedule types **for the current user**. It does not list other
 > users' roles. Both result types are returned with their correct TypeNames so Format views apply.
+> A permanent assignment is no activation and cannot be deactivated by you, so it is listed in
+> neither `-Activated` nor the active rows of `-All`.
 
 ---
 
@@ -783,7 +823,8 @@ This module distinguishes:
 - **Activated** — an eligible role you have explicitly turned on for a time window
 - **Active (persistent)** — a role that is always on (outside scope of this module)
 
-Use `-Activated` on the `Get-OPIM*` cmdlets to see currently active assignments.
+Use `-Activated` on the `Get-OPIM*` cmdlets to see your activations: the currently active,
+time-bound assignments. An always-on assignment is not listed.
 
 ---
 

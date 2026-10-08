@@ -126,7 +126,11 @@ Describe 'Get-OPIMDirectoryRole' {
         }
     }
 
-    Context 'When -Activated returns mixed assignment types' {
+    Context 'When the instances hold a permanent assignment beside an activation (OPIM-17)' {
+        # roleAssignmentScheduleInstances lists a time-bound activation (assignmentType Activated) and a
+        # permanent assignment (Assigned) alike. Only the activation is the user's to deactivate, so
+        # only it is listed, and a permanent assignment costs no scope lookup. Graph's own spelling is
+        # kept in the fakes; the comparison ignores letter case.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
@@ -135,12 +139,107 @@ Describe 'Get-OPIMDirectoryRole' {
                         @{
                             id               = 'active-001'
                             assignmentType   = 'Activated'
+                            memberType       = 'Direct'
+                            endDateTime      = '2026-10-08T12:00:00Z'
                             directoryScopeId = '/'
                             roleDefinition   = @{ displayName = 'Global Administrator' }
                             principal        = @{ displayName = 'Jane Doe' }
                         },
                         @{
-                            id               = 'inherited-001'
+                            id               = 'permanent-001'
+                            assignmentType   = 'Assigned'
+                            memberType       = 'Direct'
+                            endDateTime      = $null
+                            directoryScopeId = '/administrativeUnits/au-perm'
+                            roleDefinition   = @{ displayName = 'Reader' }
+                            principal        = @{ displayName = 'Jane Doe' }
+                        },
+                        @{
+                            id               = 'active-lower-001'
+                            assignmentType   = 'activated'
+                            memberType       = 'Direct'
+                            endDateTime      = '2026-10-08T12:00:00Z'
+                            directoryScopeId = '/'
+                            roleDefinition   = @{ displayName = 'User Administrator' }
+                            principal        = @{ displayName = 'Jane Doe' }
+                        }
+                    )
+                }
+            } -ParameterFilter { $Uri -like '*roleAssignmentScheduleInstances*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                return @{ id = '/administrativeUnits/au-perm'; displayName = 'Permanent AU' }
+            } -ParameterFilter { $Uri -like '*directory/administrativeUnits/au-perm*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                return @{
+                    value = @(
+                        @{
+                            id               = 'elig-001'
+                            roleDefinitionId = 'role-def-001'
+                            directoryScopeId = '/'
+                            roleDefinition   = @{ displayName = 'Global Administrator' }
+                            principal        = @{ displayName = 'Jane Doe' }
+                        }
+                    )
+                }
+            } -ParameterFilter { $Uri -like '*roleEligibilitySchedules*' }
+        }
+
+        It 'returns only the activations with -Activated, the lower case spelling included' {
+            $Result = @(Get-OPIMDirectoryRole -Activated)
+            ($Result | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'active-001,active-lower-001'
+        }
+
+        It 'makes no scope lookup for the permanent assignment' {
+            $null = Get-OPIMDirectoryRole -Activated
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Exactly -Scope It -ParameterFilter {
+                $Uri -like '*v1.0/directory/administrativeUnits*'
+            }
+        }
+
+        It 'lists only the activations in the Active rows of -All' {
+            $Result = @(Get-OPIMDirectoryRole -All)
+            ($Result | Where-Object Status -EQ 'Active' | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'active-001,active-lower-001'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Exactly -Scope It -ParameterFilter {
+                $Uri -like '*v1.0/directory/administrativeUnits*'
+            }
+        }
+
+        It 'leaves the Eligible rows of -All as they are' {
+            $Result = @(Get-OPIMDirectoryRole -All)
+            ($Result | Where-Object Status -EQ 'Eligible' | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'elig-001'
+        }
+
+        It 'lists only the activations in the Active rows of -Identity' {
+            $Result = @(Get-OPIMDirectoryRole -Identity 'active-001')
+            ($Result | Where-Object Status -EQ 'Active' | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'active-001,active-lower-001'
+            ($Result | Where-Object Status -EQ 'Eligible' | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'elig-001'
+        }
+
+        It 'lists only the activations in the Active rows of -Filter' {
+            $Result = @(Get-OPIMDirectoryRole -Filter "roleDefinitionId eq 'role-def-001'")
+            ($Result | Where-Object Status -EQ 'Active' | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'active-001,active-lower-001'
+            ($Result | Where-Object Status -EQ 'Eligible' | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'elig-001'
+        }
+
+        It 'lists only the activations with -Activated -Identity' {
+            $Result = @(Get-OPIMDirectoryRole -Activated -Identity 'active-001')
+            ($Result | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'active-001,active-lower-001'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Exactly -Scope It -ParameterFilter {
+                $Uri -like '*roleEligibilitySchedules*'
+            }
+        }
+
+        It 'lists only the activations with -Activated -Filter' {
+            $Result = @(Get-OPIMDirectoryRole -Activated -Filter "roleDefinitionId eq 'role-def-001'")
+            ($Result | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'active-001,active-lower-001'
+        }
+
+        It 'returns nothing when the only instance is a permanent assignment' {
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                return @{
+                    value = @(
+                        @{
+                            id               = 'permanent-002'
                             assignmentType   = 'Assigned'
                             directoryScopeId = '/'
                             roleDefinition   = @{ displayName = 'Reader' }
@@ -149,11 +248,7 @@ Describe 'Get-OPIMDirectoryRole' {
                     )
                 }
             } -ParameterFilter { $Uri -like '*roleAssignmentScheduleInstances*' }
-        }
-
-        It 'returns all items from roleAssignmentScheduleInstances without post-filtering by assignmentType' {
-            $Result = Get-OPIMDirectoryRole -Activated
-            $Result | Should -HaveCount 2
+            @(Get-OPIMDirectoryRole -Activated).Count | Should -Be 0
         }
     }
 
@@ -416,6 +511,9 @@ Describe 'Get-OPIMDirectoryRole' {
                     value = @(
                         @{
                             id               = 'active-001'
+                            assignmentType   = 'Activated'
+                            memberType       = 'Direct'
+                            endDateTime      = '2026-10-08T12:00:00Z'
                             roleDefinitionId = 'role-def-001'
                             directoryScopeId = '/'
                             roleDefinition   = @{ displayName = 'Global Administrator' }

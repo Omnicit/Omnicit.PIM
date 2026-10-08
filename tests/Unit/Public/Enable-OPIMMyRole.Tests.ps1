@@ -240,6 +240,40 @@ Describe 'Enable-OPIMMyRole' {
                 $Wait -eq $true
             }
         }
+
+        It 'passes -TimeoutSeconds with -Wait to Enable-OPIMDirectoryRole' {
+            Enable-OPIMMyRole -AllEligible -Wait -TimeoutSeconds 120 -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Wait -and $TimeoutSeconds -eq 120
+            }
+        }
+
+        It 'passes 300 seconds to Enable-OPIMDirectoryRole when -TimeoutSeconds is not given' {
+            Enable-OPIMMyRole -AllEligible -Wait -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $TimeoutSeconds -eq 300
+            }
+        }
+
+        It 'passes -TimeoutSeconds to Enable-OPIMDirectoryRole for a tenant alias' {
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                @{ contoso = @{ TenantId = '00000000-0000-0000-0000-000000000003'; DirectoryRoles = @('role-def-w01') } }
+            }
+            Enable-OPIMMyRole -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Wait -TimeoutSeconds 120
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Wait -and $TimeoutSeconds -eq 120
+            }
+        }
+
+        It 'refuses -TimeoutSeconds <Value> before anything is sent' -ForEach @(
+            @{ Value = 0 }
+            @{ Value = 86401 }
+        ) {
+            { Enable-OPIMMyRole -AllEligible -Wait -TimeoutSeconds $Value -Confirm:$false } |
+                Should -Throw -ErrorId 'ParameterArgumentValidationError,Enable-OPIMMyRole'
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 0 -Scope It
+        }
     }
 
     Context 'When called with no TenantAlias and no AllEligible switch' {

@@ -46,6 +46,7 @@ Describe 'Disable-OPIMAzureRole' {
                     Name        = [System.Guid]::NewGuid().ToString()
                     Scope       = '/subscriptions/sub-001'
                     RequestType = 'SelfDeactivate'
+                    Status      = 'Revoked'
                 }
             }
         }
@@ -69,10 +70,16 @@ Describe 'Disable-OPIMAzureRole' {
             }
         }
 
-        It 'uses the active assignment Name as LinkedRoleEligibilityScheduleId' {
+        It 'sends no LinkedRoleEligibilityScheduleId and keeps the ids of the active assignment' {
+            # OPIM-24: ARM documents the field for an activation only. -Times 1 -Exactly proves the mock
+            # was reached, so the negative half cannot pass on a request that never went out.
             Disable-OPIMAzureRole -RoleName 'Contributor (active-001)'
-            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Scope It -ParameterFilter {
-                $LinkedRoleEligibilityScheduleId -eq 'active-001'
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $RequestType -eq 'SelfDeactivate' -and
+                -not $PesterBoundParameters.ContainsKey('LinkedRoleEligibilityScheduleId') -and
+                $Scope -eq '/subscriptions/sub-001' -and
+                $PrincipalId -eq 'principal-001' -and
+                $RoleDefinitionId -eq '/providers/Microsoft.Authorization/roleDefinitions/role-def-001'
             }
         }
 
@@ -99,6 +106,7 @@ Describe 'Disable-OPIMAzureRole' {
                     Name        = [System.Guid]::NewGuid().ToString()
                     Scope       = '/subscriptions/sub-002'
                     RequestType = 'SelfDeactivate'
+                    Status      = 'Revoked'
                 }
             }
         }
@@ -110,10 +118,14 @@ Describe 'Disable-OPIMAzureRole' {
             }
         }
 
-        It 'uses the piped role Name as LinkedRoleEligibilityScheduleId' {
+        It 'sends no LinkedRoleEligibilityScheduleId for a piped role either' {
             $FakeRole | Disable-OPIMAzureRole
-            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Scope It -ParameterFilter {
-                $LinkedRoleEligibilityScheduleId -eq 'active-002'
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $RequestType -eq 'SelfDeactivate' -and
+                -not $PesterBoundParameters.ContainsKey('LinkedRoleEligibilityScheduleId') -and
+                $Scope -eq '/subscriptions/sub-002' -and
+                $PrincipalId -eq 'principal-002' -and
+                $RoleDefinitionId -eq '/providers/Microsoft.Authorization/roleDefinitions/role-def-002'
             }
         }
     }
@@ -222,6 +234,7 @@ Describe 'Disable-OPIMAzureRole' {
                     Name        = [System.Guid]::NewGuid().ToString()
                     Scope       = '/subscriptions/sub-002'
                     RequestType = 'SelfDeactivate'
+                    Status      = 'Revoked'
                 }
             }
         }
@@ -359,7 +372,7 @@ Describe 'Disable-OPIMAzureRole' {
             }
             Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $FakeRole }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
-                [PSCustomObject]@{ Name = 'request-001'; Scope = '/subscriptions/sub-001'; RequestType = 'SelfDeactivate' }
+                [PSCustomObject]@{ Name = 'request-001'; Scope = '/subscriptions/sub-001'; RequestType = 'SelfDeactivate'; Status = 'Revoked' }
             }
             Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal {
                 [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('refused'), 'SignInRefused', 'AuthenticationError', 'x')
@@ -440,7 +453,7 @@ Describe 'Disable-OPIMAzureRole' {
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Eligible }
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Active } -ParameterFilter { $Activated }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
-                [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfDeactivate' }
+                [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfDeactivate'; Status = 'Revoked' }
             }
         }
 
@@ -463,7 +476,7 @@ Describe 'Disable-OPIMAzureRole' {
             Disable-OPIMAzureRole -RoleName 'Reader' -Scope '/subscriptions/sub-001/resourceGroups/rg-two' -ErrorAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $RequestType -eq 'SelfDeactivate' -and $Scope -eq '/subscriptions/sub-001/resourceGroups/rg-two' -and
-                $LinkedRoleEligibilityScheduleId -eq 'active-002' -and $RoleDefinitionId -eq 'role-def-reader'
+                -not $PesterBoundParameters.ContainsKey('LinkedRoleEligibilityScheduleId') -and $RoleDefinitionId -eq 'role-def-reader'
             }
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
         }
@@ -471,7 +484,7 @@ Describe 'Disable-OPIMAzureRole' {
         It 'deactivates a unique display name with its own ids' {
             Disable-OPIMAzureRole -RoleName 'contributor' -ErrorAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
-                $Scope -eq '/subscriptions/sub-001' -and $LinkedRoleEligibilityScheduleId -eq 'active-004' -and
+                $Scope -eq '/subscriptions/sub-001' -and -not $PesterBoundParameters.ContainsKey('LinkedRoleEligibilityScheduleId') -and
                 $RoleDefinitionId -eq 'role-def-contributor' -and $PrincipalId -eq 'principal-001'
             }
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
@@ -510,7 +523,7 @@ Describe 'Disable-OPIMAzureRole' {
             )
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $Listing }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
-                [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfDeactivate' }
+                [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfDeactivate'; Status = 'Revoked' }
             }
         }
 
@@ -525,8 +538,10 @@ Describe 'Disable-OPIMAzureRole' {
 
         It 'deactivates the one post when the identity names only one' {
             Disable-OPIMAzureRole -Identity 'active-004' -ErrorAction SilentlyContinue
+            # The instance is identified by its scope and role definition now: the linked id is gone.
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
-                $LinkedRoleEligibilityScheduleId -eq 'active-004'
+                $Scope -eq '/subscriptions/sub-001' -and $RoleDefinitionId -eq 'role-def-contributor' -and
+                -not $PesterBoundParameters.ContainsKey('LinkedRoleEligibilityScheduleId')
             }
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
         }
@@ -579,7 +594,7 @@ Describe 'Disable-OPIMAzureRole' {
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $EligiblePost }
             Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
                 $Held.IsActive = $false
-                [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfDeactivate' }
+                [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfDeactivate'; Status = 'Revoked' }
             }
         }
 
@@ -646,6 +661,143 @@ Describe 'Disable-OPIMAzureRole' {
             @($Written | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Disable-OPIMAzureRole' }).Count | Should -Be 1
             Should -Invoke -ModuleName Omnicit.PIM Resolve-OPIMSchedule -Times 1 -Exactly -Scope It
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
+        }
+    }
+
+    Context 'When Azure answers the deactivation with a status' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
+            $Active = New-AzurePost -Name 'active-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one' -Active
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { $Active }
+            # The answer is read when the request is made, so each test sets the status it wants.
+            $Answer = @{ Status = 'Revoked' }
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
+                $Response = [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfDeactivate' }
+                if ($null -ne $Answer.Status) { $Response | Add-Member -NotePropertyName Status -NotePropertyValue $Answer.Status }
+                $Response
+            }
+        }
+
+        It 'returns the request and writes neither a warning nor an error for <Status>' -ForEach @(
+            @{ Status = 'Revoked' }
+            @{ Status = 'revoked' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Disable-OPIMAzureRole -RoleName 'Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
+            $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureAssignmentScheduleRequest'
+            $Result.Status | Should -BeExactly $Status
+            @($Warns).Count | Should -Be 0
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'returns the request with one warning that names <Status>' -ForEach @(
+            @{ Status = 'PendingRevocation'; Message = 'Reader -> rg-one: the deactivation request is PendingRevocation and has not taken effect yet.' }
+            @{ Status = 'PendingApproval'; Message = 'Reader -> rg-one: the deactivation request is PendingApproval. It waits for a decision and has not taken effect yet.' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Disable-OPIMAzureRole -RoleName 'Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
+            $Result.Status | Should -BeExactly $Status
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $Message
+            @($Errs).Count | Should -Be 0
+        }
+
+        It 'writes ActivationRequestFailed and returns nothing for <Status>' -ForEach @(
+            @{ Status = 'Failed' }
+            @{ Status = 'Provisioned' }
+            @{ Status = 'Granted' }
+            @{ Status = 'ScheduleCreated' }
+            @{ Status = 'Denied' }
+            @{ Status = 'Canceled' }
+            @{ Status = 'SomethingNew' }
+        ) {
+            $Answer.Status = $Status
+            $Result = Disable-OPIMAzureRole -RoleName 'Reader' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Disable-OPIMAzureRole'
+            $Errs[-1].Exception.Message | Should -BeExactly "Reader -> rg-one: the deactivation request ended with status '$Status' and did not take effect."
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'ActivationRequestFailed*' }).Count | Should -Be 1
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'writes ActivationRequestFailed for an answer that carries no status' {
+            $Answer.Status = $null
+            $Result = Disable-OPIMAzureRole -RoleName 'Reader' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Disable-OPIMAzureRole'
+            $Errs[-1].Exception.Message | Should -BeLike '*ended with no status*'
+        }
+
+        It 'throws the failed status once under -ErrorAction Stop and never reaches the catch around the request' {
+            # The catch around the request calls ConvertTo-ActiveDurationTooShortError for every record
+            # it takes. Measured on PowerShell 7.6.6: an error that $PSCmdlet.WriteError raises under the
+            # Stop preference is not caught by a try in the same function, so this holds the contract
+            # (one record thrown, the converter unused) and the next test holds the placement itself.
+            Mock -ModuleName Omnicit.PIM ConvertTo-ActiveDurationTooShortError { $false }
+            $Answer.Status = 'Failed'
+            $Caught = [System.Collections.Generic.List[object]]::new()
+            try {
+                Disable-OPIMAzureRole -RoleName 'Reader' -ErrorAction Stop
+                $Caught.Add('returned')
+            } catch {
+                $Caught.Add($PSItem)
+            }
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM ConvertTo-ActiveDurationTooShortError -Times 0 -Exactly -Scope It
+            $Caught.Count | Should -Be 1
+            $Caught[0] | Should -BeOfType [System.Management.Automation.ErrorRecord]
+            $Caught[0].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Disable-OPIMAzureRole'
+            $Caught[0].Exception.Message | Should -BeLike "*ended with status 'Failed'*"
+        }
+
+        It 'reports the status outside the catch around the request' {
+            # What the report itself throws is not a failure of the request. Inside that try the catch
+            # would take it, call the converter for it and write it as an error of the request.
+            Mock -ModuleName Omnicit.PIM Write-OPIMRequestOutcome { throw [System.InvalidOperationException]::new('report failed') }
+            Mock -ModuleName Omnicit.PIM ConvertTo-ActiveDurationTooShortError { $false }
+            $Answer.Status = 'Revoked'
+            $Caught = $null
+            try {
+                $null = Disable-OPIMAzureRole -RoleName 'Reader' -ErrorAction SilentlyContinue
+            } catch {
+                $Caught = $PSItem
+            }
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Write-OPIMRequestOutcome -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM ConvertTo-ActiveDurationTooShortError -Times 0 -Exactly -Scope It
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.Exception.Message | Should -BeExactly 'report failed'
+        }
+
+        It 'still gives a request that Azure refuses to the catch around it' {
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
+                $PSCmdlet.ThrowTerminatingError(
+                    [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Active duration too short'),
+                        'ActiveDurationTooShort',
+                        [System.Management.Automation.ErrorCategory]::InvalidOperation,
+                        $null
+                    )
+                )
+            }
+            Mock -ModuleName Omnicit.PIM ConvertTo-ActiveDurationTooShortError { $false }
+            $null = Disable-OPIMAzureRole -RoleName 'Reader' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM ConvertTo-ActiveDurationTooShortError -Times 1 -Exactly -Scope It
+            $Errs[-1].FullyQualifiedErrorId | Should -BeLike 'ActiveDurationTooShort*'
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'ActivationRequestFailed*' }).Count | Should -Be 0
+        }
+
+        It 'writes exactly one ActivationRequestFailed under -ErrorAction SilentlyContinue' {
+            $Answer.Status = 'Failed'
+            $null = Disable-OPIMAzureRole -RoleName 'Reader' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'ActivationRequestFailed*' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It
         }
     }
 }

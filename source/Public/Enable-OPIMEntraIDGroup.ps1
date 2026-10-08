@@ -10,6 +10,13 @@ function Enable-OPIMEntraIDGroup {
     is activated; give the tab-completed form of the one you mean. A name that matches no eligible
     assignment is written as an EligibleRoleNotFound error. Several names are resolved one by one,
     each on its own, so a name that fails does not stop the next one.
+    The request is reported by the status Graph gives it: a request that failed, was denied or was
+    canceled is written as an ActivationRequestFailed error, and one that waits for approval or is
+    still being provisioned is returned with a warning.
+    A membership or ownership that is already active (listed by Get-OPIMEntraIDGroup -Activated) is
+    not requested again: a warning is written and nothing is sent for it, and when that list cannot
+    be read, its error is written and nothing more is sent. The list is read once per command, and a
+    group named or piped twice is requested once, with a warning for the second.
     .EXAMPLE
     Get-OPIMEntraIDGroup | Enable-OPIMEntraIDGroup
     Activate all eligible PIM group assignments for 1 hour.
@@ -31,7 +38,8 @@ function Enable-OPIMEntraIDGroup {
     Get-OPIMEntraIDGroup -AccessType member | Enable-OPIMEntraIDGroup -Hours 4 -Justification 'Project work'
     Activate all eligible group memberships for 4 hours with justification.
     .OUTPUTS
-    System.Collections.Hashtable (tagged as Omnicit.PIM.GroupAssignmentScheduleRequest)
+    PSCustomObject (tagged as Omnicit.PIM.GroupAssignmentScheduleRequest): the activation request,
+    with the status Graph gave it (the last status read, with -Wait).
     .PARAMETER Group
     Eligible group schedule object piped from Get-OPIMEntraIDGroup. Used when activating
     by object rather than by name. Mutually exclusive with -GroupName.
@@ -52,11 +60,14 @@ function Enable-OPIMEntraIDGroup {
     .PARAMETER TicketSystem
     Name of the ticket system that issued the above ticket number, e.g. ServiceNow or Jira.
     .PARAMETER Hours
-    Activation duration in hours. Defaults to 1. Ignored when -Until is specified.
+    Activation duration in hours, from 1 to 24. Defaults to 1. Ignored when -Until is specified. Your PIM
+    policy can allow less; a longer request is refused by the policy as before.
     .PARAMETER NotBefore
-    Date and time when the group activation begins. Defaults to the current date and time.
+    Date and time when the group activation begins. Defaults to the current date and time. A time
+    without an offset, such as '4pm', is local time; it is sent to Graph in UTC.
     .PARAMETER Until
     Explicit end date and time for the activation. Takes precedence over -Hours when specified.
+    A time without an offset, such as '5pm', is local time; it is sent to Graph in UTC.
     Aliased as -NotAfter.
     .PARAMETER AccessType
     Member or Owner. A group display name means the membership unless -AccessType Owner is given;
@@ -67,7 +78,15 @@ function Enable-OPIMEntraIDGroup {
     objects in together with -AccessType selects the -GroupName parameter set, so an interactive
     host asks for -GroupName instead of failing to bind.
     .PARAMETER Wait
-    Wait until the group assignment is fully provisioned and active before returning.
+    Wait while the request is in progress before returning: the request status is read every 2
+    seconds, up to -TimeoutSeconds, and the group is then reported by the last status, which is
+    written back onto the returned request. A failed read is written as its own error for that group
+    only.
+    .PARAMETER TimeoutSeconds
+    With -Wait, the most seconds to wait for the request to finish, counted from the start of the
+    wait. Defaults to 300. A request that waits for approval ends the wait at once, with a warning;
+    one still in progress at the limit is written as an ActivationWaitTimedOut error and stays
+    submitted.
     #>
     [Alias('Enable-PIMGroup')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'GroupName')]
@@ -83,14 +102,22 @@ function Enable-OPIMEntraIDGroup {
         [Parameter(Position = 1)][string]$Justification,
         [string]$TicketNumber,
         [string]$TicketSystem,
-        [Parameter(Position = 2)][ValidateNotNullOrEmpty()][int]$Hours = 1,
+        [Parameter(Position = 2)][ValidateRange(1, 24)][int]$Hours = 1,
         [ValidateNotNullOrEmpty()][DateTime]$NotBefore = [DateTime]::Now,
         [DateTime][Alias('NotAfter')]$Until,
         [Parameter(ParameterSetName = 'GroupName')]
         [ValidateSet('Member', 'Owner')]
         [string]$AccessType,
-        [Switch]$Wait
+        [Switch]$Wait,
+        [ValidateRange(1, 86400)][int]$TimeoutSeconds = 300
     )
+    begin {
+        # OPIM-39: the active list is read at most once per command, at the first group that needs it,
+        # and every post this command has requested is kept, so no post is requested twice.
+        $ActivePosts = $null
+        $ActiveReadFailed = $false
+        $RequestedPosts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    }
     process {
         Initialize-OPIMAuth
         if ($Identity) {
@@ -142,14 +169,44 @@ function Enable-OPIMEntraIDGroup {
                 Write-Verbose "Skipping already-active group assignment: $($Group.group.displayName) ($($Group.accessId))"
                 continue
             }
+            # OPIM-39: never send a second request for a membership or ownership that is already
+            # active -- a repeated request can end the active one. A list that cannot be read is no
+            # proof that nothing is active, so nothing more is sent by this command (G3).
+            if ($ActiveReadFailed) { continue }
+            if ($null -eq $ActivePosts) {
+                try {
+                    $ActivePosts = @(Get-OPIMEntraIDGroup -Activated -ErrorAction Stop)
+                } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
+                    $PSCmdlet.WriteError($PSItem)
+                    $ActiveReadFailed = $true
+                    continue
+                }
+            }
+            $Label = (Get-OPIMScheduleName -Pillar Group -InputObject $Group).Label
+            if (@($ActivePosts | Where-Object {
+                        [string]::Equals($_.groupId, $Group.groupId, [System.StringComparison]::OrdinalIgnoreCase) -and
+                        [string]::Equals($_.accessId, $Group.accessId, [System.StringComparison]::OrdinalIgnoreCase)
+                    }).Count -gt 0) {
+                $PSCmdlet.WriteWarning("$Label is already active, so no new request was sent and the active assignment is left as it is.")
+                continue
+            }
+            # The same post named twice, or piped twice, is requested once (G8): the active list was
+            # read before the first request and does not show it.
+            $PostKey = "$($Group.groupId)|$($Group.accessId)"
+            if ($RequestedPosts.Contains($PostKey)) {
+                $PSCmdlet.WriteWarning("$Label was already requested by this command, so no second request was sent.")
+                continue
+            }
+            # OPIM-18: a time without an offset is local time; Graph gets it in UTC.
             $ScheduleInfo = @{
-                startDateTime = $NotBefore.ToString('o')
+                startDateTime = $NotBefore.ToUniversalTime().ToString('o')
                 expiration    = @{}
             }
             $Expiration = $ScheduleInfo.expiration
             if ($Until) {
                 $Expiration.type        = 'AfterDateTime'
-                $Expiration.endDateTime = $Until.ToString('o')
+                $Expiration.endDateTime = $Until.ToUniversalTime().ToString('o')
                 [string]$ExpireTime     = $Until
             } else {
                 $Expiration.type     = 'AfterDuration'
@@ -175,6 +232,8 @@ function Enable-OPIMEntraIDGroup {
                     "$DisplayName ($($Group.accessId))",
                     "Activate PIM Group from $NotBefore to $ExpireTime"
                 )) {
+                # Counted before it is sent, so a request that fails still is not sent again.
+                $null = $RequestedPosts.Add($PostKey)
                 $GraphUri = 'v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests'
                 $Response = try {
                     Invoke-OPIMGraphRequest -Method POST -Uri $GraphUri -Body $Request
@@ -191,18 +250,38 @@ function Enable-OPIMEntraIDGroup {
                 # Rehydrate group info from the eligibility schedule
                 if (-not $Response.group) { $Response['group'] = $Group.group }
 
-                if ($Wait) {
-                    $PollId = $Response.id
-                    do {
-                        Start-Sleep 2
-                        $Status = (Invoke-OPIMGraphRequest -Uri "v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests/$PollId").status
-                    } while ($Status -like 'Pending*')
-                }
-
                 # Convert to PSCustomObject so custom Format views apply (hashtable uses Key/Value formatter).
                 $Out = [PSCustomObject]$Response
                 $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleRequest')
-                $Out
+                $Status = [string]$Out.status
+                if ($Wait) {
+                    # OPIM-14: poll while the request is in progress, up to -TimeoutSeconds, counted in UTC.
+                    $Deadline = (Get-Date -AsUTC).AddSeconds($TimeoutSeconds)
+                    $PollUri = "v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests/$($Out.id)"
+                    $PollFailed = $false
+                    $TimedOut = $false
+                    while ((Get-OPIMRequestOutcome -Status $Status) -eq 'InProgress') {
+                        if ((Get-Date -AsUTC) -ge $Deadline) { $TimedOut = $true; break }
+                        Start-Sleep -Seconds 2
+                        try {
+                            $Status = [string](Invoke-OPIMGraphRequest -Uri $PollUri).status
+                        } catch {
+                            # A poll that fails is reported as itself for this group only.
+                            Remove-OPIMErrorRecord -Record $PSItem
+                            $PSCmdlet.WriteError($PSItem)
+                            $PollFailed = $true
+                            break
+                        }
+                    }
+                    if ($PollFailed) { continue }
+                    if ($TimedOut) {
+                        $Out.status = $Status
+                        $PSCmdlet.WriteError((New-OPIMRequestError -ErrorId ActivationWaitTimedOut -Name $Label `
+                            -Status $Status -TimeoutSeconds $TimeoutSeconds -Request $Out))
+                        continue
+                    }
+                }
+                Write-OPIMRequestOutcome -Request $Out -Status $Status -Name $Label -Cmdlet $PSCmdlet
             }
         }
     }

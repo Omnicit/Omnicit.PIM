@@ -23,7 +23,7 @@ BeforeDiscovery {
         @{ Name = 'Get-AzRoleEligibilitySchedule'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{ Scope = '/' } }
         @{ Name = 'Get-AzRoleAssignmentScheduleInstance'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{ Scope = '/' } }
         @{ Name = 'Get-AzRoleAssignmentScheduleRequest'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{ Scope = '/' } }
-        # The parameter shape source/Public/Enable-OPIMAzureRole.ps1:123 sends.
+        # The parameter shape source/Public/Enable-OPIMAzureRole.ps1:208-224 sends.
         @{ Name = 'New-AzRoleAssignmentScheduleRequest'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{
                 Name                            = 'opim-tripwire-request'
                 Scope                           = '/'
@@ -364,10 +364,11 @@ Describe 'OPIMTransportTripwire' {
         $Queue = [System.AppDomain]::CurrentDomain.GetData('OPIMTransportTripwire.ParallelHits')
         $Saved = @($Queue.ToArray())
 
-        # Imports Microsoft.Graph.Authentication by name, as Wait-OPIMDirectoryRole.ps1:68 does, then
-        # resolves Invoke-MgGraphRequest and invokes it only when it is the stand-in. The stand-in's
-        # module is identified by the root's leaf, which carries a GUID unique to this installation,
-        # so a temp path the OS reports in another spelling (a symlinked temp folder) still matches.
+        # Imports Microsoft.Graph.Authentication by name, as a -Parallel block must (source/ holds
+        # none today; Wait-OPIMDirectoryRole once did), then resolves Invoke-MgGraphRequest and
+        # invokes it only when it is the stand-in. The stand-in's module is identified by the root's
+        # leaf, which carries a GUID unique to this installation, so a temp path the OS reports in
+        # another spelling (a symlinked temp folder) still matches.
         $Probe = {
             Import-Module 'Microsoft.Graph.Authentication' -Verbose:$false 4>$null
             $RootLeaf = Split-Path -Path $using:Root -Leaf

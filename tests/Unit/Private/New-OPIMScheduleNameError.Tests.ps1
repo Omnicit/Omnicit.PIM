@@ -529,4 +529,96 @@ Describe 'New-OPIMScheduleNameError' {
             $Record.Exception.Message | Should -BeLike '*tab-completed form*'
         }
     }
+
+    Context 'When the value is a configured entry of a tenant alias (OPIM-17)' {
+        # Disable-OPIMMyRole reads its entries from TenantMap.psd1 and matches each against every active
+        # post: an entry that matches several is refused. The record says "configured entry", and the
+        # hint names the Disable- cmdlet of the pillar, since an entry offers neither -Scope nor -AccessType.
+        It 'says configured entry instead of name and counts the active candidates (<Pillar>)' -ForEach @(
+            @{ Pillar = 'Directory'; Noun = 'directory roles'; Candidate = @('DirectoryActive', 'DirectoryActiveAu') }
+            @{ Pillar = 'Group'; Noun = 'group assignments'; Candidate = @('GroupMemberActive', 'GroupOwnerActive') }
+            @{ Pillar = 'Azure'; Noun = 'Azure roles'; Candidate = @('AzureOne', 'AzureTwo') }
+        ) {
+            $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes; Pillar = $Pillar; Candidate = $Candidate } {
+                param($Fakes, $Pillar, $Candidate)
+                New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar $Pillar -Name 'entry-001' -Status Active `
+                    -Candidate @($Candidate | ForEach-Object { $Fakes[$PSItem] }) -Configuration
+            }
+            $Record.Exception.Message | Should -BeLike "The configured entry 'entry-001' matches 2 active $Noun, so it names none of them:*"
+            $Record.Exception.Message | Should -Not -BeLike 'The name*'
+            $Record.FullyQualifiedErrorId | Should -Be 'AmbiguousName'
+            $Record.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidArgument)
+            $Record.TargetObject | Should -Be 'entry-001'
+        }
+
+        It 'names the Disable- cmdlet of the pillar and its tab-completed form in the hint (<Pillar>)' -ForEach @(
+            @{ Pillar = 'Directory'; Noun = 'DirectoryRole'; Candidate = @('DirectoryActive', 'DirectoryActiveAu') }
+            @{ Pillar = 'Group'; Noun = 'EntraIDGroup'; Candidate = @('GroupMemberActive', 'GroupOwnerActive') }
+            @{ Pillar = 'Azure'; Noun = 'AzureRole'; Candidate = @('AzureOne', 'AzureTwo') }
+        ) {
+            $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes; Pillar = $Pillar; Candidate = $Candidate } {
+                param($Fakes, $Pillar, $Candidate)
+                New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar $Pillar -Name 'entry-001' -Status Active `
+                    -Candidate @($Candidate | ForEach-Object { $Fakes[$PSItem] }) -Configuration
+            }
+            $Record.Exception.Message | Should -BeLike "*. Deactivate the one you mean with Disable-OPIM$Noun and its tab-completed form, as listed."
+        }
+
+        It 'lists every candidate in its old form with its scope' {
+            $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes } {
+                param($Fakes)
+                New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Directory -Name 'role-def-001' -Status Active `
+                    -Candidate @($Fakes.DirectoryActive, $Fakes.DirectoryActiveAu) -Configuration
+            }
+            $Record.Exception.Message | Should -BeLike "*'Usage Summary Reports Reader (inst-001)' at scope '/'*"
+            $Record.Exception.Message | Should -BeLike "*'Usage Summary Reports Reader -> Sales AU (inst-002)' at scope '/administrativeUnits/au-001'*"
+        }
+
+        It 'suggests no filter parameter, though the caller offers one and the candidates differ in it (<Pillar>)' -ForEach @(
+            @{ Pillar = 'Directory'; Offered = 'Scope'; Candidate = @('DirectoryActive', 'DirectoryActiveAu') }
+            @{ Pillar = 'Azure'; Offered = 'Scope'; Candidate = @('AzureOne', 'AzureTwo') }
+            @{ Pillar = 'Group'; Offered = 'AccessType'; Candidate = @('GroupMemberActive', 'GroupOwnerActive') }
+        ) {
+            $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes; Pillar = $Pillar; Offered = $Offered; Candidate = $Candidate } {
+                param($Fakes, $Pillar, $Offered, $Candidate)
+                New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar $Pillar -Name 'entry-001' -Status Active `
+                    -Candidate @($Candidate | ForEach-Object { $Fakes[$PSItem] }) -FilterParameter $Offered -Configuration
+            }
+            $Record.Exception.Message | Should -Not -BeLike '*They differ in*'
+            $Record.Exception.Message | Should -Not -BeLike '*add -Scope*'
+            $Record.Exception.Message | Should -Not -BeLike '*add -AccessType*'
+        }
+
+        It 'leaves the message of a plain name unchanged without -Configuration' {
+            $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes } {
+                param($Fakes)
+                New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Directory -Name 'role-def-001' -Status Active `
+                    -Candidate @($Fakes.DirectoryActive, $Fakes.DirectoryActiveAu)
+            }
+            $Record.Exception.Message | Should -BeLike "The name 'role-def-001' matches 2 active directory roles, so it names none of them:*"
+            $Record.Exception.Message | Should -Not -BeLike '*configured entry*'
+            $Record.Exception.Message | Should -Not -BeLike '*Deactivate the one you mean*'
+        }
+
+        It 'changes nothing in the records that find nothing' {
+            $Plain = InModuleScope Omnicit.PIM {
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Directory -Name 'role-def-009' -Status Active
+            }
+            $Configured = InModuleScope Omnicit.PIM {
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Directory -Name 'role-def-009' -Status Active -Configuration
+            }
+            $Configured.Exception.Message | Should -BeExactly $Plain.Exception.Message
+            $Configured.Exception.Message | Should -BeLike "No active directory role matches the name 'role-def-009'.*"
+        }
+
+        It 'writes nothing to any stream' {
+            $Out = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes } {
+                param($Fakes)
+                New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Directory -Name 'role-def-001' -Status Active `
+                    -Candidate @($Fakes.DirectoryActive, $Fakes.DirectoryActiveAu) -Configuration -Verbose *>&1
+            }
+            @($Out).Count | Should -Be 1
+            @($Out)[0] | Should -BeOfType [System.Management.Automation.ErrorRecord]
+        }
+    }
 }
