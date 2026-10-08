@@ -36,8 +36,10 @@ function Disable-OPIMAzureRole {
     active assignment, such as a subscription or a resource group. It means exactly that scope, not
     the scopes below it, and it is compared without regard to letter case. Unlike on
     Get-OPIMAzureRole, where '/' means every scope, '/' here means only a role that is active at the
-    root scope itself. A scope that ends in '/' (other than '/') is refused. Cannot be combined with
-    -Role or -Identity.
+    root scope itself. A scope that ends in '/' (other than '/') is refused. Applies to a name, and
+    cannot be combined with piped objects (-Role) or -Identity: piping objects in together with
+    -Scope selects the -RoleName parameter set, so an interactive host asks for -RoleName instead
+    of failing to bind.
     #>
     [Alias('Disable-PIMResourceRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]

@@ -916,7 +916,8 @@ expand `group,principal`.
   set only).
 - A name that matches no active post is the NON-terminating `ActiveRoleNotFound`, written and
   followed by `return`; when the name still matches an eligible post, its message says the role is
-  already deactivated.
+  eligible but not active (already deactivated, or its activation has not finished yet) -- unless an
+  active post carries the same label under another key, when it names that active form instead.
 - An eligible-only object piped in is skipped with a verbose message.
 - `-WhatIf` / `-Confirm` through `[CmdletBinding(SupportsShouldProcess)]`.
 
@@ -968,18 +969,29 @@ read them there.
   thing and are both returned.
 - **Not found is told apart from a failed read** (OPIM-12, **Error Handling**). The not-found message
   names what the resolver saw: the access type a group name matches instead, the scopes a name
-  matches at instead, or -- for `Active` -- that the name is eligible but not active and so already
-  deactivated (OPIM-40, a best-effort second listing that only leaves the hint out when it fails).
+  matches at instead, or -- for `Active` -- that the name is eligible but not active (OPIM-40, a
+  best-effort second listing that only leaves the hint out when it fails). That sentence is only
+  true when the role is not active under the same LABEL (`Get-OPIMScheduleName`'s `Label`) with
+  another key, which a name typed from the 0.5.1-era completers (the eligibility's own key) or a
+  stale instance key leads to: the resolver then checks the active list it already read, under the
+  same explicit filters, and `New-OPIMScheduleNameError -ActiveForm` names the active form instead
+  of saying "already deactivated". An activation still pending approval or provisioning is no
+  active instance yet, so the sentence says "already deactivated, or its activation has not
+  finished yet".
 
 **Tab completion.** The six completers build their text with the private, pure
 `Get-OPIMCompletionText`, which offers a post's bare display name when that name, under the filters
 already typed (`-Scope`, `-AccessType`) and the Member default for groups, names exactly that post,
 and otherwise its old form, which is unique. A post the typed filters exclude is not offered, and
-on a `Get-` command a typed `-Scope /` filters nothing. Every text is single-quoted with its
-apostrophes doubled (OPIM-26), and the word typed so far is a case-insensitive `StartsWith` prefix,
-never a wildcard: the engine hands it over as an opening quote, the UNESCAPED value and a closing
-quote, which the helper strips. The old form ends in the schedule id in parentheses, in a different
-format per pillar:
+on a `Get-` command a typed `-Scope /` filters nothing. Every text is single-quoted with
+`[System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent` (OPIM-26),
+which doubles every kind of single quote the tokenizer knows -- the straight apostrophe and
+U+2018, U+2019, U+201A and U+201B -- not only `'`, so `Partner<U+2019>s Admins` stays one string.
+The word typed so far is a case-insensitive `StartsWith` prefix, never a wildcard: the engine hands
+it over as an opening quote, the UNESCAPED value and a closing quote (typographic delimiters
+arrive as straight ones), which the helper strips; a caller that passes the word as typed has its
+doubled quotes of any of the five kinds undone. The old form ends in the schedule id in
+parentheses, in a different format per pillar:
 
 - Directory roles: `'<role> -> <scope display name> (<id>)'`, the scope part omitted at the root
   scope `/`.
@@ -1366,13 +1378,15 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   ```
   `Write-Error -ErrorId ... -ErrorAction Stop` also works where the code reads the id with
   `.Split(',')[0]`.
-- **Name resolution is mocked at its own boundary.** A pillar cmdlet's test mocks
-  `Resolve-OPIMSchedule` (`Mock -ModuleName Omnicit.PIM`) and asserts the arguments it was called
-  with -- `Pillar`, `Name`, `Status`, `Scope` or `AccessType`, `FilterParameter` -- since the resolver
-  is where a wrong filter would activate the wrong post; `Resolve-OPIMSchedule.Tests.ps1` mocks the
-  `Get-OPIM*` listings instead, and `Find-OPIMScheduleMatch`, `Get-OPIMScheduleName`,
-  `New-OPIMScheduleNameError` and `Get-OPIMCompletionText` are pure and are called with typed
-  fixtures.
+- **Name resolution is tested at its own boundary, and through the real resolver.** Most of a pillar
+  cmdlet's argument-contract tests mock `Resolve-OPIMSchedule` (`Mock -ModuleName Omnicit.PIM`) and
+  assert the arguments it was called with -- `Pillar`, `Name`, `Status`, `Scope` or `AccessType`,
+  `FilterParameter` -- since the resolver is where a wrong filter would activate the wrong post.
+  The cmdlets' behaviour contexts (an ambiguous name sends 0 requests, a name that is already
+  deactivated, a failed listing) run the REAL resolver against mocked `Get-OPIM*` listings, which is
+  what proves what the whole command does; `Resolve-OPIMSchedule.Tests.ps1` mocks the listings
+  too. `Find-OPIMScheduleMatch`, `Get-OPIMScheduleName`, `New-OPIMScheduleNameError` and
+  `Get-OPIMCompletionText` are pure and are called with typed fixtures.
 - **Private functions** are called inside `InModuleScope Omnicit.PIM { ... }`. A public function's
   test needs only `-ModuleName Omnicit.PIM` on its mocks.
 - **Reset module-scoped caches** in `BeforeEach` when the function under test uses them -- not as a
@@ -1389,7 +1403,7 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
 - **Completer classes.** The completers call `Get-OPIM*` through
   `& ([scriptblock]::Create('Get-OPIMDirectoryRole'))`, which resolves the command through the
   normal pipeline where a mock can intercept it -- **do not revert that to a direct call.**
-  Measured on the display-name branch (Pester 6.2.0, PowerShell 7.6.6): in a fresh `pwsh` process a
+  Measured 2026-10-08 (Pester 6.2.0, PowerShell 7.6.6): in a fresh `pwsh` process a
   direct call from a class method IS intercepted, by `Mock -ModuleName` and by
   `InModuleScope { Mock }` alike, but in a second `./build.ps1 -Tasks test` in the same process the
   class methods stay bound to the FIRST module instance and no mock intercepts them any more; the

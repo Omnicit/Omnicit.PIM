@@ -39,7 +39,10 @@ function Disable-OPIMEntraIDGroup {
     Member or Owner. A group display name means the membership unless -AccessType Owner is given;
     a group you hold only as owner is then written as ActiveRoleNotFound, and the message names
     -AccessType Owner. The tab-completed form names its access type itself and needs no -AccessType,
-    but a form that -AccessType excludes is not found. Cannot be combined with -Group or -Identity.
+    but a form that -AccessType excludes is not found. Applies to a name, and cannot be combined
+    with piped objects (-Group) or -Identity: piping objects in together with -AccessType selects
+    the -GroupName parameter set, so an interactive host asks for -GroupName instead of failing to
+    bind.
     #>
     [Alias('Disable-PIMGroup')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'GroupName')]

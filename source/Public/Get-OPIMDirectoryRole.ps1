@@ -43,7 +43,7 @@ function Get-OPIMDirectoryRole {
     .OUTPUTS
     PSCustomObject tagged as Omnicit.PIM.DirectoryEligibilitySchedule,
     Omnicit.PIM.DirectoryAssignmentScheduleInstance, or Omnicit.PIM.DirectoryCombinedSchedule
-    (when -All, -Identity, or -Filter is used without -Activated).
+    (when -All, -Identity, -Filter, or -RoleName is used without -Activated).
     .PARAMETER All
     Return BOTH eligible and active role schedules for the current user in a single call.
     Objects are emitted with the Omnicit.PIM.DirectoryCombinedSchedule type for consistent

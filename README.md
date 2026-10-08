@@ -659,22 +659,27 @@ Enable-OPIMDirectoryRole 'Usage Summary Reports Reader (elig-001)'    # tab-comp
 - A display name is compared exactly and without regard to letter case. There are no wildcards
   (`Reader [Preview]` is just a name), and spaces at either end are not trimmed.
 - Tab completion offers the bare name whenever it is unique, and the longer form -- the name, the
-  scope or access type, and the schedule id -- when it is not. A name that contains an apostrophe is
-  completed with the apostrophe doubled, as PowerShell needs it.
+  scope or access type, and the schedule id -- when it is not. A name that contains an apostrophe,
+  straight or typographic, is completed with the apostrophe doubled, as PowerShell needs it.
 - **A name that matches more than one role or group is never resolved by guessing.** The command
-  writes `AmbiguousName`, lists the candidates and activates or deactivates nothing. `-Scope` picks
-  one: `'/'` or an administrative unit (its `/administrativeUnits/` path or its display name) for a
+  writes `AmbiguousName`, lists the candidates and activates or deactivates nothing. For a role
+  name, `-Scope` picks one on the cmdlets that have it (`Enable-`/`Disable-OPIMDirectoryRole`,
+  `Enable-`/`Disable-OPIMAzureRole` and `Get-OPIMAzureRole`; it does not combine with `-Identity`):
+  `'/'` or an administrative unit (its `/administrativeUnits/` path or its display name) for a
   directory role, the ARM scope for an Azure role. The scope is compared without regard to letter
   case, means exactly that scope, and is refused when it ends in a slash (only the root scope is
   written `'/'`). On `Get-OPIMAzureRole`, `-Scope '/'` still means every scope; on
-  `Enable-`/`Disable-OPIMAzureRole` it means a role at the root scope itself.
+  `Enable-`/`Disable-OPIMAzureRole` it means a role at the root scope itself. Everywhere else, and
+  for an ambiguous `-Identity`, give the tab-completed form of the one you mean.
 - **A group name means the membership.** `-AccessType Owner` names the ownership instead; a group you
   hold only as owner is `EligibleRoleNotFound` (`ActiveRoleNotFound` on `Disable-`), and the message
   says to add `-AccessType Owner`. Two groups that share a display name are `AmbiguousName`;
   `-AccessType` does not separate them, so give the tab-completed form of the one you mean.
 - A name that matches nothing is written as `EligibleRoleNotFound`, or `ActiveRoleNotFound` when
-  deactivating (and for `Get-OPIM* -Activated`). Deactivating a role that is already deactivated
-  says so in the message. These are ordinary non-terminating errors: the command is not stopped.
+  deactivating (and for `Get-OPIM* -Activated`). Deactivating a role that is eligible but not
+  active says so in the message (it is already deactivated, or its activation has not finished
+  yet), and a name that is active under another key names the active form. These are ordinary
+  non-terminating errors: the command is not stopped.
 - `-RoleName` / `-GroupName` on the `Enable-` cmdlets take several names. Each is resolved on its
   own, so a name that is ambiguous or unknown is written as an error and the next one still runs;
   `-Scope` or `-AccessType` applies to every name in the list.

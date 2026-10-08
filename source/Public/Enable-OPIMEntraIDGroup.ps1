@@ -63,7 +63,9 @@ function Enable-OPIMEntraIDGroup {
     a group you hold only as owner is then written as EligibleRoleNotFound, and the message names
     -AccessType Owner. It applies to every name in -GroupName. The tab-completed form names its
     access type itself and needs no -AccessType, but a form that -AccessType excludes is not found.
-    Cannot be combined with -Group or -Identity.
+    Applies to a name, and cannot be combined with piped objects (-Group) or -Identity: piping
+    objects in together with -AccessType selects the -GroupName parameter set, so an interactive
+    host asks for -GroupName instead of failing to bind.
     .PARAMETER Wait
     Wait until the group assignment is fully provisioned and active before returning.
     #>

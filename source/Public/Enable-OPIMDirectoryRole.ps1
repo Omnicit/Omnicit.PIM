@@ -70,7 +70,9 @@ function Enable-OPIMDirectoryRole {
     Picks one role when the name matches the role at more than one scope: '/' for the directory
     itself, or an administrative unit's directoryScopeId ('/administrativeUnits/' and its id) or its
     display name. Compared without regard to letter case; a scope that ends in '/' (other than '/') is
-    refused. Applies to every name in -RoleName, and cannot be combined with -Role or -Identity.
+    refused. Applies to every name in -RoleName, and cannot be combined with piped objects (-Role) or
+    -Identity: piping objects in together with -Scope selects the -RoleName parameter set, so an
+    interactive host asks for -RoleName instead of failing to bind.
     .PARAMETER Wait
     Wait until the directory role is fully provisioned before returning.
     #>

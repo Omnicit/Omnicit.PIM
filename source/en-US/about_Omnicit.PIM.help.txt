@@ -113,17 +113,21 @@ LONG DESCRIPTION
 
     A name that matches more than one role or group is refused with the error AmbiguousName,
     which lists the candidates. Nothing is activated or deactivated, and the first match is never
-    taken. Add -Scope to pick one: '/' or an administrative unit (its /administrativeUnits/ path or
-    its display name) for a directory role, the ARM scope for an Azure role. A scope that ends in
-    a slash is refused; only the root scope is written '/'. A group name means the membership, and
-    -AccessType Owner names the ownership. Two groups with the same display name are refused as
-    well: give the tab-completed form of the one you mean. An -Identity that matches more than one
-    schedule is refused the same way.
+    taken. For a role name, -Scope picks one on the cmdlets that have it (Enable-OPIMDirectoryRole,
+    Disable-OPIMDirectoryRole, Enable-OPIMAzureRole, Disable-OPIMAzureRole and Get-OPIMAzureRole;
+    it does not combine with -Identity): '/' or an administrative unit (its /administrativeUnits/
+    path or its display name) for a directory role, the ARM scope for an Azure role. A scope that
+    ends in a slash is refused; only the root scope is written '/'. A group name means the
+    membership, and -AccessType Owner names the ownership. Two groups with the same display name
+    are refused as well: give the tab-completed form of the one you mean, which is also the way
+    out everywhere else. An -Identity that matches more than one schedule is refused the same way.
 
     A name that matches nothing is written as EligibleRoleNotFound (ActiveRoleNotFound when
-    deactivating), and deactivating a role that is already deactivated says so. These are
-    non-terminating errors, so the command is not stopped. The Enable- cmdlets take several names;
-    each is resolved on its own, and -Scope or -AccessType applies to every one of them.
+    deactivating). Deactivating a role that is eligible but not active says so (it is already
+    deactivated, or its activation has not finished yet), and a name that is active under another
+    key names the active form. These are non-terminating errors, so the command is not stopped.
+    The Enable- cmdlets take several names; each is resolved on its own, and -Scope or -AccessType
+    applies to every one of them.
 
     ENABLE-OPIMMYROLE (alias: pim)
 

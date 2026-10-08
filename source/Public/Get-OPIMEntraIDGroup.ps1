@@ -50,7 +50,7 @@ function Get-OPIMEntraIDGroup {
     .OUTPUTS
     PSCustomObject tagged as Omnicit.PIM.GroupEligibilitySchedule,
     Omnicit.PIM.GroupAssignmentScheduleInstance, or Omnicit.PIM.GroupCombinedSchedule
-    (when -All, -Identity or -Filter is used without -Activated).
+    (when -All, -Identity, -Filter or -GroupName is used without -Activated).
     .PARAMETER All
     Return BOTH eligible and active group assignment schedules for the current user in a single call.
     Objects are emitted with the Omnicit.PIM.GroupCombinedSchedule type for consistent table

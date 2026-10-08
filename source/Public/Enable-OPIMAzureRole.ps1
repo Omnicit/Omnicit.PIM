@@ -66,7 +66,9 @@ function Enable-OPIMAzureRole {
     scopes below it, and it is compared without regard to letter case. Unlike on Get-OPIMAzureRole,
     where '/' means every scope, '/' here means only a role that is eligible at the root scope
     itself. A scope that ends in '/' (other than '/') is refused. Applies to every name in
-    -RoleName, and cannot be combined with -Role or -Identity.
+    -RoleName, and cannot be combined with piped objects (-Role) or -Identity: piping objects in
+    together with -Scope selects the -RoleName parameter set, so an interactive host asks for
+    -RoleName instead of failing to bind.
     .PARAMETER Wait
     Wait for the activation request to be provisioned and appear before returning.
     #>
