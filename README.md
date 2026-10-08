@@ -416,8 +416,13 @@ activates what you actually need rather than everything eligible.
 ### Default location
 
 ```
-$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1
+$HOME/.config/Omnicit.PIM/TenantMap.psd1
 ```
+
+On Windows `$HOME` is your user profile, so this is the file where it has always been,
+`$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1`. On Linux and macOS it sits under your home
+folder, where `$env:USERPROFILE` does not exist. Every cmdlet that reads the map takes
+`-TenantMapPath` to use another file.
 
 ### File format
 

@@ -101,7 +101,11 @@ LONG DESCRIPTION
       Remove-OPIMConfiguration   Delete an alias
 
     The TenantMap is stored at:
-      $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1
+      $HOME/.config/Omnicit.PIM/TenantMap.psd1
+
+    On Windows, $HOME is your user profile, so this is the same file as before,
+    $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1. On Linux and macOS it is under your home
+    folder. Every cmdlet that reads the map takes -TenantMapPath to use another file.
 
     NAMING A ROLE OR GROUP
 

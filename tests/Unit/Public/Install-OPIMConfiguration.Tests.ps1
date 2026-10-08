@@ -277,4 +277,42 @@ Describe 'Install-OPIMConfiguration' {
             Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
         }
     }
+
+    Context 'The default -TenantMapPath (OPIM-21)' {
+        BeforeAll {
+            $Param = (Get-Command Install-OPIMConfiguration).ScriptBlock.Ast.Body.ParamBlock.Parameters |
+                Where-Object { $_.Name.VariablePath.UserPath -eq 'TenantMapPath' }
+            $DefaultText = $Param.DefaultValue.Extent.Text
+            $ExpectedPath = if ($IsWindows) {
+                "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1"
+            } else {
+                "$HOME/.config/Omnicit.PIM/TenantMap.psd1"
+            }
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Test-Path { $script:SeenPaths.Add($Path); $false }
+        }
+        BeforeEach {
+            $script:SeenPaths = [System.Collections.Generic.List[string]]::new()
+        }
+
+        It 'builds the default from $HOME' {
+            $Param | Should -Not -BeNullOrEmpty
+            $DefaultText | Should -BeExactly "(Join-Path `$HOME '.config/Omnicit.PIM/TenantMap.psd1')"
+        }
+
+        It 'gives the same path as before on Windows and a path under $HOME elsewhere' {
+            $Actual = & ([scriptblock]::Create($DefaultText))
+            $Actual | Should -BeExactly $ExpectedPath
+        }
+
+        It 'reads that path when -TenantMapPath is not given' {
+            # -WhatIf, so the missing directory and file are not created; the Describe mocks New-Item and
+            # Set-Content as well, and the last two assertions prove nothing reached either.
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -WhatIf -ErrorAction SilentlyContinue
+            $script:SeenPaths | Should -Contain $ExpectedPath
+            $script:SeenPaths | Should -Contain (Split-Path $ExpectedPath -Parent)
+            Should -Invoke New-Item -ModuleName Omnicit.PIM -Times 0 -Scope It
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
+        }
+    }
 }

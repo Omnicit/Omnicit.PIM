@@ -38,7 +38,8 @@ function Install-OPIMConfiguration {
     .PARAMETER TenantId
     Azure Tenant ID (GUID) that the alias maps to. Must be a valid GUID format.
     .PARAMETER TenantMapPath
-    Path to the TenantMap.psd1 configuration file. Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
+    Path to the TenantMap.psd1 configuration file. Defaults to .config/Omnicit.PIM/TenantMap.psd1
+    under your home folder ($HOME; on Windows the same file as before, under $env:USERPROFILE).
     .PARAMETER InputObject
     Role, group, or Azure role eligibility objects piped from Get-OPIMDirectoryRole, Get-OPIMEntraIDGroup, or Get-OPIMAzureRole.
     A directory role is stored with its scope, as roleDefinitionId|directoryScopeId, so pim and unpim
@@ -56,7 +57,7 @@ function Install-OPIMConfiguration {
             ErrorMessage = "'{0}' does not look like a valid GUID.")]
         [string]$TenantId,
 
-        [string]$TenantMapPath = "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1",
+        [string]$TenantMapPath = (Join-Path $HOME '.config/Omnicit.PIM/TenantMap.psd1'),
 
         [Parameter(ValueFromPipeline)]
         $InputObject

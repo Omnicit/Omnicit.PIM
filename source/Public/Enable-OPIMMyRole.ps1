@@ -82,7 +82,8 @@ function Enable-OPIMMyRole {
     Name of the ticket system that issued the above ticket number, e.g. ServiceNow or Jira.
     .PARAMETER TenantMapPath
     Path to the TenantMap.psd1 file managed by Install-OPIMConfiguration.
-    Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
+    Defaults to .config/Omnicit.PIM/TenantMap.psd1 under your home folder ($HOME; on Windows the
+    same file as before, under $env:USERPROFILE).
     .PARAMETER Wait
     Wait until all directory role activations are fully provisioned before returning.
     .PARAMETER TimeoutSeconds
@@ -104,7 +105,7 @@ function Enable-OPIMMyRole {
         [string]$Justification,
         [string]$TicketNumber,
         [string]$TicketSystem,
-        [string]$TenantMapPath = "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1",
+        [string]$TenantMapPath = (Join-Path $HOME '.config/Omnicit.PIM/TenantMap.psd1'),
         [Switch]$Wait,
         [ValidateRange(1, 86400)][int]$TimeoutSeconds = 300,
         [Switch]$DeviceCode

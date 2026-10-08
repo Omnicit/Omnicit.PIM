@@ -1719,9 +1719,13 @@ version drift.
   An existing alias is updated with `Set-OPIMConfiguration`.
 - **`Export-OPIMTenantMap` (private) owns the PSD1 serialization** -- call it from `Install`, `Set`
   and `Remove` instead of inlining the StringBuilder block.
-- **The `-TenantMapPath` default is built from `$env:USERPROFILE`** in `Connect-OPIM`, the four
-  `*-OPIMConfiguration` cmdlets and `Enable`/`Disable-OPIMMyRole`. That variable is set on Windows
-  only, and this module is Core-only and cross-platform: never build a new path from it.
+- **The `-TenantMapPath` default is built from `$HOME`**, written exactly
+  `(Join-Path $HOME '.config/Omnicit.PIM/TenantMap.psd1')` (OPIM-21) in `Connect-OPIM`, the four
+  `*-OPIMConfiguration` cmdlets and `Enable`/`Disable-OPIMMyRole`; each cmdlet's unit test reads the
+  parameter's default text from the AST, so the parentheses and the forward slashes are part of the
+  contract. On Windows `Join-Path` turns the `/` into `\`, so the path is byte-identical to the old
+  `"$env:USERPROFILE\.config\..."` one. Never build a path from `$env:USERPROFILE`: it is set on
+  Windows only, and this module is Core-only and cross-platform.
 - **`Restore-GraphProperty` is a `filter`, not a `function`.** The QA gate enumerates commands with
   `-CommandType Function`, so a filter gets no unit-test-file or PSScriptAnalyzer check from it.
   Declare new commands with `function`.

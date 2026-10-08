@@ -19,7 +19,7 @@ function Export-OPIMTenantMap {
     Absolute path to the target .psd1 file.
 
     .EXAMPLE
-    Export-OPIMTenantMap -MapData $MapData -Path "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1"
+    Export-OPIMTenantMap -MapData $MapData -Path (Join-Path $HOME '.config/Omnicit.PIM/TenantMap.psd1')
     Serialize the in-memory tenant map hashtable to the default PSD1 configuration file.
     #>
     [CmdletBinding()]

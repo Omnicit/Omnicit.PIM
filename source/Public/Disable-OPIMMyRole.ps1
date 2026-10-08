@@ -77,7 +77,8 @@ function Disable-OPIMMyRole {
     other -AllActivated* switches.
     .PARAMETER TenantMapPath
     Path to the TenantMap.psd1 file managed by Install-OPIMConfiguration.
-    Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
+    Defaults to .config/Omnicit.PIM/TenantMap.psd1 under your home folder ($HOME; on Windows the
+    same file as before, under $env:USERPROFILE).
     .PARAMETER DeviceCode
     Sign in with a device code instead of the system browser. Passed to Connect-OPIM, which
     remembers the mode for the session; see Get-Help Connect-OPIM -Parameter DeviceCode.
@@ -91,7 +92,7 @@ function Disable-OPIMMyRole {
         [Switch]$AllActivatedDirectoryRoles,
         [Switch]$AllActivatedEntraIDGroups,
         [Switch]$AllActivatedAzureRoles,
-        [string]$TenantMapPath = "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1",
+        [string]$TenantMapPath = (Join-Path $HOME '.config/Omnicit.PIM/TenantMap.psd1'),
         [Switch]$DeviceCode
     )
 

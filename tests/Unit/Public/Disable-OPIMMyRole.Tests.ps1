@@ -1082,4 +1082,39 @@ Describe 'Disable-OPIMMyRole' {
             { Disable-OPIMMyRole -AllActivatedAzureRoles -Confirm:$false } | Should -Not -Throw
         }
     }
+
+    Context 'The default -TenantMapPath (OPIM-21)' {
+        BeforeAll {
+            $Param = (Get-Command Disable-OPIMMyRole).ScriptBlock.Ast.Body.ParamBlock.Parameters |
+                Where-Object { $_.Name.VariablePath.UserPath -eq 'TenantMapPath' }
+            $DefaultText = $Param.DefaultValue.Extent.Text
+            $ExpectedPath = if ($IsWindows) {
+                "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1"
+            } else {
+                "$HOME/.config/Omnicit.PIM/TenantMap.psd1"
+            }
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Test-Path { $script:SeenPaths.Add($Path); $false }
+        }
+        BeforeEach {
+            $script:SeenPaths = [System.Collections.Generic.List[string]]::new()
+        }
+
+        It 'builds the default from $HOME' {
+            $Param | Should -Not -BeNullOrEmpty
+            $DefaultText | Should -BeExactly "(Join-Path `$HOME '.config/Omnicit.PIM/TenantMap.psd1')"
+        }
+
+        It 'gives the same path as before on Windows and a path under $HOME elsewhere' {
+            $Actual = & ([scriptblock]::Create($DefaultText))
+            $Actual | Should -BeExactly $ExpectedPath
+        }
+
+        It 'reads that path when -TenantMapPath is not given' {
+            Disable-OPIMMyRole -TenantAlias 'contoso' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $script:SeenPaths | Should -Contain $ExpectedPath
+            $Errs[-1].FullyQualifiedErrorId | Should -BeLike 'TenantMapNotFound*'
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 0 -Scope It
+        }
+    }
 }
