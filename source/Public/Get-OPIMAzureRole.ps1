@@ -44,12 +44,15 @@ function Get-OPIMAzureRole {
     .PARAMETER Scope
     The Azure scope to query, such as a subscription, resource group, or resource path.
     Accepts pipeline input. Defaults to the root scope '/' which covers all subscriptions; '/' as
-    -Scope means every scope. A scope other than '/' means exactly that scope, not the scopes below
-    it, and is compared without regard to letter case. A scope that ends in a slash is refused,
-    since only the root scope is written '/'.
-    With -Activated (alone, or with -Identity) the instances are read at this scope, and only those
-    at exactly this scope are returned. With -All, with -RoleName, or with -Identity but not
-    -Activated, the roles are read at the root and only those at exactly this scope are kept.
+    -Scope means every scope. A scope that ends in a slash is refused, since only the root scope
+    is written '/'.
+    A plain listing (none of -Activated, -All, -RoleName or -Identity) hands the scope to Azure as
+    it is and returns what Azure returns for that scope; the module filters nothing there.
+    In the other modes the module filters by scope itself, and a scope other than '/' means exactly
+    that scope, not the scopes below it, compared without regard to letter case. With -Activated
+    (alone, or with -Identity) the instances are read at this scope and only those at exactly this
+    scope are returned. With -All, with -RoleName, or with -Identity but not -Activated, the roles
+    are read at the root and only those at exactly this scope are kept.
     (On Enable-OPIMAzureRole and Disable-OPIMAzureRole, '/' means only a role at the root scope itself.)
     .PARAMETER All
     Return BOTH eligible and active roles for the current user, read at scope '/' (-Scope narrows

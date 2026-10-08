@@ -857,13 +857,17 @@ makes no Graph call.
 | `Get-AzRoleAssignmentScheduleRequest` | `Enable-OPIMAzureRole -Wait` polling |
 
 Reads use the filter `asTarget()` at scope `/` unless `-Scope` names another. `Get-OPIMAzureRole`
-reads at `-Scope` only for a plain listing and for `-Activated` (with or without `-Identity`); with
-`-All`, `-RoleName` or `-Identity` (without `-Activated`) it always reads at `/` and keeps the posts
-whose `ScopeId` equals `-Scope` (a `-Scope` of `/` keeps all), so a `Name` is found among the
-listed posts and never requested by itself, which a normal user is refused at `/` (OPIM-23). The
-`-Scope` of `Enable-` and `Disable-OPIMAzureRole` does the same: it selects among the posts of the
-root listing and changes what is read in no way. An Azure schedule's id is its `Name`, not `id`; an
-activation sends `LinkedRoleEligibilityScheduleId = $Role.Name` (`Enable-OPIMAzureRole.ps1:147-155`).
+reads at `-Scope` for a plain listing (no switch, name or `-Identity`), which hands the scope to
+Azure as it is and filters nothing itself, and for `-Activated` (with or without `-Identity`),
+where the module also keeps only the instances whose `ScopeId` equals `-Scope`. With `-All`,
+`-RoleName` or `-Identity` (without `-Activated`) it always reads at `/` and keeps the posts whose
+`ScopeId` equals `-Scope` (a `-Scope` of `/` keeps all); `-RoleName` reads at `/` also with
+`-Activated`, since the resolver calls `Get-OPIMAzureRole -Activated` with no scope. So a `Name` is
+found among the listed posts and never requested by itself, which a normal user is refused at `/`
+(OPIM-23). The `-Scope` of `Enable-` and `Disable-OPIMAzureRole` does the same: it selects among the
+posts of the root listing and changes what is read in no way. An Azure schedule's id is its `Name`,
+not `id`; an activation sends `LinkedRoleEligibilityScheduleId = $Role.Name`
+(`Enable-OPIMAzureRole.ps1:147-155`).
 
 **PIM for Groups** (Graph, `identityGovernance/privilegedAccess/group/`):
 
@@ -931,8 +935,9 @@ expand `group,principal`.
   `Get-OPIMEntraIDGroup`; without `-Activated` both eligible and active are searched.
 - `-Scope` [string] on `Get-OPIMAzureRole` -- default `/`, which has always meant EVERY scope, so
   `/` is no filter here (unlike on `Enable-`/`Disable-OPIMAzureRole`, where it is the root scope
-  itself); any other scope is an exact, case-insensitive match. See **API Mapping** for where each
-  mode reads.
+  itself); any other scope is an exact, case-insensitive match in the modes the module filters
+  itself (`-Activated`, `-All`, `-RoleName`, `-Identity`), while a plain listing passes it to Azure
+  as it is. See **API Mapping** for where each mode reads.
 - `-AccessType` on `Get-OPIMEntraIDGroup` -- `member` or `owner`; with `-GroupName`, a display name
   means the membership unless `owner` is given.
 
@@ -1155,7 +1160,7 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   token -- and it is never the raw record itself.
   An `Az.Resources` error arrives in `$PSItem` as the cmdlet threw it; inspect
   `$PSItem.FullyQualifiedErrorId` (`.Split(',')[0]` where the id carries a suffix, as
-  `Get-OPIMAzureRole.ps1:139` does) and pass it to `$PSCmdlet.WriteError()` or rewrap it with
+  `Get-OPIMAzureRole.ps1:142` does) and pass it to `$PSCmdlet.WriteError()` or rewrap it with
   `Write-CmdletError`.
 - **Special error codes have converters.** `ConvertTo-ActiveDurationTooShortError` turns
   `ActiveDurationTooShort` (a deactivation within 5 minutes of the activation) into a readable
