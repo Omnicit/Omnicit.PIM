@@ -232,7 +232,7 @@ and `testhygiene`, `sourcehygiene`, `dochygiene` and `docsync` read files static
 
 # Full test suite -- the authoritative gate, and the command every CI leg runs.
 # QA tests + unit tests + per-function PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-08: 2,512 passed, 0 failed, 0 skipped; coverage 94.69% over 2,974 analysed
+# (measured 2026-10-08: 2,533 passed, 0 failed, 0 skipped; coverage 94.72% over 2,992 analysed
 #  commands; Pester 6.2.0)
 ./build.ps1 -Tasks test
 
@@ -249,7 +249,7 @@ The Sampler test task measures coverage against the **built** module output, not
 `build.yaml`'s `test` workflow does not include `build` (`build.yaml:63-70`; only the default
 workflow, `./build.ps1` with no `-Tasks`, runs both). Always run `-Tasks build` before `-Tasks test`
 after changing source files -- and never build while the tests are running. The coverage threshold
-is 80 % (`build.yaml:152`): measured on 2026-10-08, 2,816 of 2,974 commands are covered, 436 more
+is 80 % (`build.yaml:152`): measured on 2026-10-08, 2,834 of 2,992 commands are covered, 440 more
 than 80 % requires. The margin has been thin before. The MSAL reflection lines in
 `Get-OPIMMsalApplication` are no longer run by any unit test, since reaching them builds a real
 MSAL client (see **Testing Conventions**), and that took coverage from 83.7 % to 80.28 % -- four
@@ -526,7 +526,7 @@ pre-authentication shortcut, since every pillar cmdlet authenticates on first us
 first `Connect-OPIM` for Microsoft Graph, then -- only when an Azure pillar runs (an `-All*` Azure
 switch, a hashtable alias that lists `AzureRoles`, or the plain string form of an alias) --
 `Connect-OPIM -IncludeARM` for the same tenant, and only then the pillar cmdlets
-(`Enable-OPIMMyRole.ps1:167-188`, `Disable-OPIMMyRole.ps1:151-172`). Each sign-in runs with
+(`Enable-OPIMMyRole.ps1:176-197`, `Disable-OPIMMyRole.ps1:159-180`). Each sign-in runs with
 `-ErrorAction Stop` in a `try` whose catch scrubs first and writes the record. A failed Graph
 sign-in stops the command before anything is listed or changed. A failed Azure sign-in is written
 as a non-terminating error and skips the Azure pillar only -- except under the `Stop` error
