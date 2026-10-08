@@ -481,8 +481,9 @@ independently.
 A directory role is stored with its scope -- `/` for the whole directory, or
 `/administrativeUnits/{id}` for an administrative unit -- and `pim` and `unpim` activate and
 deactivate it only at that scope. An entry written by 0.5.x holds only the `roleDefinitionId` and
-now means the role at the root scope `/` only; for a role eligible only below the root, pipe the
-role to `Set-OPIMConfiguration` again to store its scope. An older module version (0.5.x) reading
+now means the role at the root scope `/` only; for a role eligible only below the root, pipe all
+the directory roles the alias should hold to `Set-OPIMConfiguration` again, which stores them with
+their scopes (Set replaces the alias's whole `DirectoryRoles` list). An older module version (0.5.x) reading
 an entry with a scope matches nothing for it: it activates and deactivates no directory role, and
 no Azure role stored from `-Activated`, for that entry. Keys are compared without regard to letter
 case, and each key is stored once.

@@ -838,7 +838,8 @@ over `source/` on 2026-10-08, listed as they are:
 | `Public/Disconnect-OPIM.ps1:30, 31` | `Disconnect-MgGraph`, `Disconnect-AzAccount` |
 
 `Get-OPIMCurrentTenantInfo` makes its call best-effort, and only under the module's own Graph
-session. `Wait-OPIMDirectoryRole` is not in the table: it polls in sequence through `Invoke-OPIMGraphRequest`.
+session. `Wait-OPIMDirectoryRole` is not in the table: it polls in sequence through
+`Invoke-OPIMGraphRequest`.
 `Invoke-OPIMDeviceCodeAuth` is not in it either: it reaches MSAL through the application object it
 is handed, not through the Graph SDK or an Az cmdlet.
 
