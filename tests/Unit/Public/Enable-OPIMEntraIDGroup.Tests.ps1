@@ -436,47 +436,202 @@ Describe 'Enable-OPIMEntraIDGroup' {
     }
 
     Context 'When -Wait is specified' {
+        # OPIM-14 (Scope 2): the wait polls only while the request is in progress, sleeps before each
+        # poll, stops at -TimeoutSeconds counted in UTC, writes the final status back, and reports each
+        # group on its own. Time is driven by the clock mock: every Get-Date read moves it by Step.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            $fakeGroup = [PSCustomObject]@{
-                id          = 'elig-001'
-                accessId    = 'member'
-                groupId     = 'group-001'
-                principalId = 'principal-001'
-                group       = [PSCustomObject]@{ displayName = 'Finance Team' }
+            $PostA = New-GroupPost -Id 'grp-elig-001' -GroupId 'g-1' -Name 'opim-s1-grp' -AccessId 'member'
+            $PostB = New-GroupPost -Id 'grp-elig-002' -GroupId 'g-2' -Name 'opim-s1-other' -AccessId 'member'
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule {
+                if ($Name -eq 'opim-s1-grp') { $PostA } else { $PostB }
             }
-            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeGroup }
+            # Plan.Post is the status the POST answers per groupId; Plan.Poll the statuses the polls of
+            # that request answer in turn, the last one repeating; 'Throw' fails the poll as Graph does.
+            $Plan = @{ Post = @{}; Poll = @{}; Count = @{} }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
-                return @{
-                    id     = 'req-poll-001'
-                    action = 'selfActivate'
-                    status = 'Provisioned'
-                    group  = @{ displayName = 'Finance Team' }
-                }
+                @{ id = "req-$($Body.groupId)"; action = 'selfActivate'; accessId = 'member'; groupId = $Body.groupId; principalId = 'principal-001'; status = $Plan.Post[$Body.groupId] }
             } -ParameterFilter { $Method -eq 'POST' }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
-                return @{ status = 'Provisioned' }
-            } -ParameterFilter { $Uri -like '*assignmentScheduleRequests/req-poll-001*' }
+                $GroupId = ($Uri -split '/req-')[-1]
+                $Seen = [int]$Plan.Count[$GroupId]
+                $Plan.Count[$GroupId] = $Seen + 1
+                # Runaway guard: after 50 polls answer a status no wait goes on for (an unknown one is
+                # a failure), so a wait that would never end fails its test instead of hanging the run.
+                if ($Seen -ge 50) { return @{ id = "req-$GroupId"; groupId = $GroupId; status = 'RunawayStop' } }
+                $List = @($Plan.Poll[$GroupId])
+                $Next = $List[[math]::Min($Seen, $List.Count - 1)]
+                if ($Next -eq 'Throw') {
+                    $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('denied'), 'Forbidden',
+                            [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+                }
+                @{ id = "req-$GroupId"; groupId = $GroupId; status = $Next }
+            } -ParameterFilter { $Uri -like '*/assignmentScheduleRequests/req-*' }
+            $Clock = @{ Now = [datetime]::new(2026, 10, 8, 12, 0, 0, [DateTimeKind]::Utc); Step = 1 }
+            Mock -ModuleName Omnicit.PIM Get-Date { $Clock.Now = $Clock.Now.AddSeconds($Clock.Step); $Clock.Now }
             Mock -ModuleName Omnicit.PIM Start-Sleep { }
         }
+        BeforeEach {
+            # Step 1 by default, so a wait that never ends on its own still reaches its deadline.
+            $Clock.Now = [datetime]::new(2026, 10, 8, 12, 0, 0, [DateTimeKind]::Utc)
+            $Clock.Step = 1
+            $Plan.Post.Clear(); $Plan.Poll.Clear(); $Plan.Count.Clear()
+            $Plan.Post['g-1'] = 'PendingProvisioning'; $Plan.Post['g-2'] = 'PendingProvisioning'
+            $Plan.Poll['g-1'] = @('Provisioned'); $Plan.Poll['g-2'] = @('Provisioned')
+        }
 
-        It 'calls Invoke-OPIMGraphRequest to poll the request status' {
-            Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -Wait
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
-                $Uri -like '*assignmentScheduleRequests/req-poll-001*'
+        It 'stops at -TimeoutSeconds, writes ActivationWaitTimedOut and returns nothing' {
+            # Deadline = first read (12:00:30) + 60 = 12:01:30. Check 12:01:00: poll once. Check
+            # 12:01:30: at the deadline, stop. One poll, never more.
+            $Clock.Step = 30
+            $Plan.Poll['g-1'] = @('PendingProvisioning')
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' -Wait -TimeoutSeconds 60 `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationWaitTimedOut,Enable-OPIMEntraIDGroup'
+            $Errs[-1].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::OperationTimeout)
+            $Errs[-1].Exception.Message | Should -BeExactly 'opim-s1-grp - member: the activation request has not completed within 60 seconds (last status: PendingProvisioning). The wait has ended; the request stays submitted and may still complete.'
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'ActivationWaitTimedOut*' }).Count | Should -Be 1
+            @($Warns).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Uri -like '*/assignmentScheduleRequests/req-*'
             }
         }
 
-        It 'returns a PSCustomObject tagged with Omnicit.PIM.GroupAssignmentScheduleRequest' {
-            $Result = Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -Wait
+        It 'writes the last polled status back onto the request it times out' {
+            $Clock.Step = 30
+            $Plan.Poll['g-1'] = @('PendingScheduleCreation')
+            $null = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' -Wait -TimeoutSeconds 60 -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationWaitTimedOut,Enable-OPIMEntraIDGroup'
+            $Errs[-1].Exception.Message | Should -BeLike '*(last status: PendingScheduleCreation)*'
+            $Errs[-1].TargetObject.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.GroupAssignmentScheduleRequest'
+            $Errs[-1].TargetObject.status | Should -BeExactly 'PendingScheduleCreation'
+        }
+
+        It 'waits 300 seconds when -TimeoutSeconds is not given' {
+            # Deadline = 12:00:30 + 300 = 12:05:30; checks at 12:01:00 ... 12:05:00 poll (9 polls).
+            $Clock.Step = 30
+            $Plan.Poll['g-1'] = @('PendingProvisioning')
+            $null = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' -Wait -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[-1].Exception.Message | Should -BeLike '*within 300 seconds*'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 9 -Exactly -Scope It -ParameterFilter {
+                $Uri -like '*/assignmentScheduleRequests/req-*'
+            }
+        }
+
+        It 'returns the request with the polled status written back' {
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' -Wait `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
             $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.GroupAssignmentScheduleRequest'
+            $Result.status | Should -BeExactly 'Provisioned'
+            @($Warns).Count | Should -Be 0
+            @($Errs).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Uri -like '*/assignmentScheduleRequests/req-g-1'
+            }
+        }
+
+        It 'sleeps 2 seconds before each poll' {
+            $Plan.Poll['g-1'] = @('PendingProvisioning', 'PendingProvisioning', 'Provisioned')
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' -Wait -ErrorAction SilentlyContinue
+            $Result.status | Should -BeExactly 'Provisioned'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 3 -Exactly -Scope It -ParameterFilter {
+                $Uri -like '*/assignmentScheduleRequests/req-*'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Start-Sleep -Times 3 -Exactly -Scope It -ParameterFilter { $Seconds -eq 2 }
+            Should -Invoke -ModuleName Omnicit.PIM Start-Sleep -Times 3 -Exactly -Scope It
+        }
+
+        It 'ends the wait at once for a request that waits for a decision, with one warning' {
+            $Plan.Poll['g-1'] = @('PendingApproval', 'Provisioned')
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' -Wait `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
+            $Result.status | Should -BeExactly 'PendingApproval'
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly 'opim-s1-grp - member: the activation request is PendingApproval. It waits for a decision and has not taken effect yet.'
+            @($Errs).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Uri -like '*/assignmentScheduleRequests/req-*'
+            }
+        }
+
+        It 'writes ActivationRequestFailed and returns nothing for a request the poll finds Denied' {
+            $Plan.Poll['g-1'] = @('Denied')
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' -Wait `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ActivationRequestFailed,Enable-OPIMEntraIDGroup'
+            $Errs[-1].Exception.Message | Should -BeExactly "opim-s1-grp - member: the activation request ended with status 'Denied' and did not take effect."
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'writes a failed poll as itself and still requests, polls and returns the next group' {
+            $Plan.Poll['g-1'] = @('Throw')
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp', 'opim-s1-other' -Wait `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Enable-OPIMEntraIDGroup' }).Count | Should -Be 1
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'Activation*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Uri -like '*/assignmentScheduleRequests/req-g-1'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Uri -like '*/assignmentScheduleRequests/req-g-2'
+            }
+            @($Result).Count | Should -Be 1
+            $Result.groupId | Should -BeExactly 'g-2'
+            $Result.status | Should -BeExactly 'Provisioned'
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'still waits for the next group after one times out' {
+            $Clock.Step = 30
+            $Plan.Poll['g-1'] = @('PendingProvisioning')
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp', 'opim-s1-other' -Wait -TimeoutSeconds 60 `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'ActivationWaitTimedOut,Enable-OPIMEntraIDGroup' }).Count | Should -Be 1
+            @($Result).Count | Should -Be 1
+            $Result.groupId | Should -BeExactly 'g-2'
+            $Result.status | Should -BeExactly 'Provisioned'
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'does not poll a request whose POST answered <Status>' -ForEach @(
+            @{ Status = 'Provisioned'; Warnings = 0 }
+            @{ Status = 'PendingApproval'; Warnings = 1 }
+        ) {
+            # Ruling P4: a final status, or one that waits for a person, needs no poll.
+            $Plan.Post['g-1'] = $Status
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' -Wait `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
+            $Result.status | Should -BeExactly $Status
+            @($Warns).Count | Should -Be $Warnings
+            @($Errs).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter {
+                $Uri -like '*/assignmentScheduleRequests/req-*'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Start-Sleep -Times 0 -Scope It
         }
 
         It 'does not poll when -Wait is not specified' {
-            Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)'
+            $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' -WarningAction SilentlyContinue
+            $Result.status | Should -BeExactly 'PendingProvisioning'
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter {
-                $Uri -like '*assignmentScheduleRequests/req-poll-001*'
+                $Uri -like '*/assignmentScheduleRequests/req-*'
             }
+        }
+
+        It 'refuses -TimeoutSeconds <Value> before anything is sent' -ForEach @(
+            @{ Value = 0 }
+            @{ Value = 86401 }
+        ) {
+            { Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' -Wait -TimeoutSeconds $Value } |
+                Should -Throw -ErrorId 'ParameterArgumentValidationError,Enable-OPIMEntraIDGroup'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It
         }
     }
 

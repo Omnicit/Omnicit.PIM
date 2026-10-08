@@ -77,7 +77,15 @@ function Enable-OPIMDirectoryRole {
     -Identity: piping objects in together with -Scope selects the -RoleName parameter set, so an
     interactive host asks for -RoleName instead of failing to bind.
     .PARAMETER Wait
-    Wait until the directory role is fully provisioned before returning.
+    Hand the requests to Wait-OPIMDirectoryRole -PassThru, which waits for each until it is
+    provisioned and its role assignment appears, up to -TimeoutSeconds, and returns the activated
+    assignments and the requests that ended without one. A request Graph has already refused is
+    reported here and not waited for.
+    .PARAMETER TimeoutSeconds
+    With -Wait, the most seconds to wait for each request, counted from the time Graph created it.
+    Defaults to 300. A request that waits for approval ends its wait at once, with a warning; one
+    still in progress at the limit is written as an ActivationWaitTimedOut error and stays
+    submitted.
     #>
     [Alias('Enable-PIMADRole', 'Enable-PIMRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
@@ -100,7 +108,8 @@ function Enable-OPIMDirectoryRole {
         [ValidateNotNullOrEmpty()]
         [ValidateScript({ $_ -eq '/' -or -not $_.EndsWith('/') }, ErrorMessage = "The scope '{0}' ends with '/'. Give it without the trailing slash; only the root scope is written '/'.")]
         [string]$Scope,
-        [Switch]$Wait
+        [Switch]$Wait,
+        [ValidateRange(1, 86400)][int]$TimeoutSeconds = 300
     )
     begin {
         Initialize-OPIMAuth
@@ -223,7 +232,7 @@ function Enable-OPIMDirectoryRole {
     }
     end {
         if ($_pendingWait.Count -gt 0) {
-            $_pendingWait | Wait-OPIMDirectoryRole -PassThru
+            $_pendingWait | Wait-OPIMDirectoryRole -PassThru -TimeoutSeconds $TimeoutSeconds
         }
     }
 }

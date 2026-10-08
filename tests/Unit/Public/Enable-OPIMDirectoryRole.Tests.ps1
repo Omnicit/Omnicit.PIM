@@ -490,6 +490,29 @@ Describe 'Enable-OPIMDirectoryRole' {
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)'
             Should -Invoke -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole -Times 0 -Scope It
         }
+
+        It 'passes -TimeoutSeconds to Wait-OPIMDirectoryRole -PassThru' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Wait -TimeoutSeconds 120
+            Should -Invoke -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $TimeoutSeconds -eq 120 -and $PassThru
+            }
+        }
+
+        It 'passes 300 seconds to Wait-OPIMDirectoryRole when -TimeoutSeconds is not given' {
+            Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Wait
+            Should -Invoke -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $TimeoutSeconds -eq 300
+            }
+        }
+
+        It 'refuses -TimeoutSeconds <Value> before anything is sent' -ForEach @(
+            @{ Value = 0 }
+            @{ Value = 86401 }
+        ) {
+            { Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Wait -TimeoutSeconds $Value } |
+                Should -Throw -ErrorId 'ParameterArgumentValidationError,Enable-OPIMDirectoryRole'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It
+        }
     }
 
     Context 'When API returns RoleAssignmentRequestPolicyValidationFailed with an unrecognized rule' {

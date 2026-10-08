@@ -70,7 +70,15 @@ function Enable-OPIMEntraIDGroup {
     objects in together with -AccessType selects the -GroupName parameter set, so an interactive
     host asks for -GroupName instead of failing to bind.
     .PARAMETER Wait
-    Wait until the group assignment is fully provisioned and active before returning.
+    Wait while the request is in progress before returning: the request status is read every 2
+    seconds, up to -TimeoutSeconds, and the group is then reported by the last status, which is
+    written back onto the returned request. A failed read is written as its own error for that group
+    only.
+    .PARAMETER TimeoutSeconds
+    With -Wait, the most seconds to wait for the request to finish, counted from the start of the
+    wait. Defaults to 300. A request that waits for approval ends the wait at once, with a warning;
+    one still in progress at the limit is written as an ActivationWaitTimedOut error and stays
+    submitted.
     #>
     [Alias('Enable-PIMGroup')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'GroupName')]
@@ -92,7 +100,8 @@ function Enable-OPIMEntraIDGroup {
         [Parameter(ParameterSetName = 'GroupName')]
         [ValidateSet('Member', 'Owner')]
         [string]$AccessType,
-        [Switch]$Wait
+        [Switch]$Wait,
+        [ValidateRange(1, 86400)][int]$TimeoutSeconds = 300
     )
     process {
         Initialize-OPIMAuth
@@ -194,19 +203,39 @@ function Enable-OPIMEntraIDGroup {
                 # Rehydrate group info from the eligibility schedule
                 if (-not $Response.group) { $Response['group'] = $Group.group }
 
-                if ($Wait) {
-                    $PollId = $Response.id
-                    do {
-                        Start-Sleep 2
-                        $Status = (Invoke-OPIMGraphRequest -Uri "v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests/$PollId").status
-                    } while ($Status -like 'Pending*')
-                }
-
                 # Convert to PSCustomObject so custom Format views apply (hashtable uses Key/Value formatter).
                 $Out = [PSCustomObject]$Response
                 $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleRequest')
                 $Label = (Get-OPIMScheduleName -Pillar Group -InputObject $Group).Label
-                Write-OPIMRequestOutcome -Request $Out -Status $Out.status -Name $Label -Cmdlet $PSCmdlet
+                $Status = [string]$Out.status
+                if ($Wait) {
+                    # OPIM-14: poll while the request is in progress, up to -TimeoutSeconds, counted in UTC.
+                    $Deadline = (Get-Date -AsUTC).AddSeconds($TimeoutSeconds)
+                    $PollUri = "v1.0/identityGovernance/privilegedAccess/group/assignmentScheduleRequests/$($Out.id)"
+                    $PollFailed = $false
+                    $TimedOut = $false
+                    while ((Get-OPIMRequestOutcome -Status $Status) -eq 'InProgress') {
+                        if ((Get-Date -AsUTC) -ge $Deadline) { $TimedOut = $true; break }
+                        Start-Sleep -Seconds 2
+                        try {
+                            $Status = [string](Invoke-OPIMGraphRequest -Uri $PollUri).status
+                        } catch {
+                            # A poll that fails is reported as itself for this group only.
+                            Remove-OPIMErrorRecord -Record $PSItem
+                            $PSCmdlet.WriteError($PSItem)
+                            $PollFailed = $true
+                            break
+                        }
+                    }
+                    if ($PollFailed) { continue }
+                    if ($TimedOut) {
+                        $Out.status = $Status
+                        $PSCmdlet.WriteError((New-OPIMRequestError -ErrorId ActivationWaitTimedOut -Name $Label `
+                            -Status $Status -TimeoutSeconds $TimeoutSeconds -Request $Out))
+                        continue
+                    }
+                }
+                Write-OPIMRequestOutcome -Request $Out -Status $Status -Name $Label -Cmdlet $PSCmdlet
             }
         }
     }

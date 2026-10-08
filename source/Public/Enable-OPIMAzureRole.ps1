@@ -73,7 +73,15 @@ function Enable-OPIMAzureRole {
     together with -Scope selects the -RoleName parameter set, so an interactive host asks for
     -RoleName instead of failing to bind.
     .PARAMETER Wait
-    Wait for the activation request to be provisioned and appear before returning.
+    Wait while the request is in progress before returning: the requests you made at the scope of
+    the role are read every 5 seconds, up to -TimeoutSeconds, and the role is then reported by the
+    last status Azure gives the request, on the request as last read. A failed read is written as
+    its own error for that role only.
+    .PARAMETER TimeoutSeconds
+    With -Wait, the most seconds to wait for the request to finish, counted from the start of the
+    wait. Defaults to 300. A request that waits for approval ends the wait at once, with a warning;
+    one still in progress at the limit is written as an ActivationWaitTimedOut error and stays
+    submitted.
     #>
     [Alias('Enable-PIMResourceRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
@@ -96,7 +104,8 @@ function Enable-OPIMAzureRole {
         [ValidateNotNullOrEmpty()]
         [ValidateScript({ $_ -eq '/' -or -not $_.EndsWith('/') }, ErrorMessage = "The scope '{0}' ends with '/'. Give it without the trailing slash; only the root scope is written '/'.")]
         [string]$Scope,
-        [Switch]$Wait
+        [Switch]$Wait,
+        [ValidateRange(1, 86400)][int]$TimeoutSeconds = 300
     )
     process {
         Initialize-OPIMAuth -IncludeARM
@@ -190,27 +199,50 @@ function Enable-OPIMAzureRole {
                     continue
                 }
 
+                $Label = (Get-OPIMScheduleName -Pillar Azure -InputObject $Role).Label
+                # An Az request's Status is read-only, so the request reported is the last one read:
+                # the response, or the polled request that carries the final status.
+                $Current = $Response
+                $Status = [string]$Response.Status
+                $TimedOut = $false
                 if ($Wait) {
-                    do {
-                        # SEC (EntraRBAC A19): the ARM gate before every round of the poll. Outside the
-                        # try below, whose catch ends the command: a refusal is written and stops only
-                        # the wait; the request above was already sent.
-                        $ArmRefusal = Get-OPIMArmRefusal
-                        if ($null -ne $ArmRefusal) { $PSCmdlet.WriteError($ArmRefusal); break }
+                    # OPIM-14: poll while the request is in progress, up to -TimeoutSeconds, counted in UTC.
+                    $Deadline = (Get-Date -AsUTC).AddSeconds($TimeoutSeconds)
+                    $PollFailed = $false
+                    while ((Get-OPIMRequestOutcome -Status $Status) -eq 'InProgress') {
+                        if ((Get-Date -AsUTC) -ge $Deadline) { $TimedOut = $true; break }
+                        Start-Sleep -Seconds 5
                         try {
-                            $RoleActivation = Get-AzRoleAssignmentScheduleRequest -Name $Response.Name -Scope $Response.Scope -ErrorAction Stop
+                            # SEC (EntraRBAC A19): the ARM gate before every round of the poll, inside
+                            # the try, so the catch reports a refusal as itself and ends the wait for
+                            # this role only; the request above was already sent.
+                            $ArmRefusal = Get-OPIMArmRefusal
+                            if ($null -ne $ArmRefusal) { throw $ArmRefusal }
+                            $Polled = @(Get-AzRoleAssignmentScheduleRequest -Scope $Response.Scope -Filter 'asRequestor()' -ErrorAction Stop |
+                                    Where-Object Name -EQ $Response.Name)
                         } catch {
                             # An ARM failure record can point at the request and its bearer token:
-                            # scrub it, then end the command with it as before.
+                            # scrub it, then report it as itself for this role only.
                             Remove-OPIMErrorRecord -Record $PSItem
-                            $PSCmdlet.ThrowTerminatingError($PSItem)
+                            $PSCmdlet.WriteError($PSItem)
+                            $PollFailed = $true
+                            break
                         }
-                    } while (-not $RoleActivation)
+                        # Not listed yet: the request is still in progress.
+                        if ($Polled.Count -eq 1) {
+                            $Current = $Polled[0]
+                            $Status = [string]$Current.Status
+                        }
+                    }
+                    if ($PollFailed) { continue }
                 }
-
-                $Response.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleRequest')
-                $Label = (Get-OPIMScheduleName -Pillar Azure -InputObject $Role).Label
-                Write-OPIMRequestOutcome -Request $Response -Status $Response.Status -Name $Label -Cmdlet $PSCmdlet
+                $Current.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleRequest')
+                if ($TimedOut) {
+                    $PSCmdlet.WriteError((New-OPIMRequestError -ErrorId ActivationWaitTimedOut -Name $Label `
+                        -Status $Status -TimeoutSeconds $TimeoutSeconds -Request $Current))
+                    continue
+                }
+                Write-OPIMRequestOutcome -Request $Current -Status $Status -Name $Label -Cmdlet $PSCmdlet
             }
         }
     }

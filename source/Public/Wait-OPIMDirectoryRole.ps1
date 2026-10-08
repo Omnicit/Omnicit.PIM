@@ -4,32 +4,49 @@ using namespace System.Management.Automation
 function Wait-OPIMDirectoryRole {
     <#
     .SYNOPSIS
-    Wait for an Azure AD PIM directory role activation request to fully provision.
+    Wait for Azure AD PIM directory role activation requests to finish.
     .DESCRIPTION
-    Polls the Microsoft Graph API until the role activation request reaches 'Provisioned' status
-    and the role assignment instance appears in the directory. Useful after Enable-OPIMDirectoryRole
-    when you need the role to be active before proceeding. The requests are polled in turn, in
-    sequence, through the module's own Graph transport; a request whose status is neither pending
-    nor Provisioned is written as a non-terminating error, and a request that has not completed
-    within -Timeout seconds of its creation ends the command with a terminating error.
+    Polls the Microsoft Graph API until each role activation request has finished. A request that
+    reaches 'Provisioned' is waited for until its role assignment instance appears in the directory;
+    a request Graph grants without one ('Granted', 'ScheduleCreated') is done at once. Useful after
+    Enable-OPIMDirectoryRole when you need the role to be active before proceeding. The requests are
+    polled in turn, in sequence, through the module's own Graph transport, and each one ends on its
+    own, with its last status written back onto the request object (added when it has none):
+    a request that waits for a decision, such as PendingApproval, ends its wait at once with a
+    warning; one that failed, was denied or was canceled is written as an ActivationRequestFailed
+    error; one still in progress -TimeoutSeconds after Graph created it (after the start of the
+    wait when the request carries no readable creation time) is written as an
+    ActivationWaitTimedOut error and stays submitted; and one whose status cannot be read is written
+    as that error. All of them are non-terminating, so one request never ends the wait for the
+    others. Times are compared in UTC.
     .EXAMPLE
     Enable-OPIMDirectoryRole -RoleName 'Global Administrator (...)' | Wait-OPIMDirectoryRole
     Enable a role and wait for it to be fully active.
     .EXAMPLE
     Get-OPIMDirectoryRole | Enable-OPIMDirectoryRole -Wait
     Enable all eligible roles and wait for each to be active (via the -Wait switch on Enable-OPIMDirectoryRole).
+    .EXAMPLE
+    Enable-OPIMDirectoryRole 'Global Administrator' | Wait-OPIMDirectoryRole -TimeoutSeconds 600 -PassThru
+    Enable a role, wait up to 10 minutes for it, and return the active assignment.
     .OUTPUTS
     System.Collections.Hashtable (tagged as Omnicit.PIM.DirectoryAssignmentScheduleInstance) when -PassThru is used.
     .PARAMETER RoleRequest
     Role activation request object piped from Enable-OPIMDirectoryRole. Contains the schedule request details used to poll for provisioning status.
     .PARAMETER Interval
     Polling interval in seconds between Graph API status checks. Default is 1 second.
-    .PARAMETER Timeout
-    Maximum number of seconds to wait for a role activation to complete before timing out. Default is 600 seconds (10 minutes).
+    .PARAMETER TimeoutSeconds
+    The most seconds to wait for each request, counted from the time Graph created it, or from the
+    start of the wait when the request carries no readable creation time. Default is 300 seconds (5
+    minutes), from 1 to 86400. A request still in progress at the limit is written as an
+    ActivationWaitTimedOut error, and the wait for the other requests goes on. The old name
+    -Timeout still works.
     .PARAMETER ThrottleLimit
     Accepted for compatibility and has no effect: the requests are polled in sequence. Default is 5.
     .PARAMETER PassThru
-    When specified, returns the activated role schedule instances (tagged as Omnicit.PIM.DirectoryAssignmentScheduleInstance) after all activations complete.
+    When specified, returns the activated role schedule instances (tagged as
+    Omnicit.PIM.DirectoryAssignmentScheduleInstance) of the requests that were provisioned, followed
+    by the request objects that ended without an instance (Granted, ScheduleCreated, or waiting for
+    a decision), each with its status written back.
     .PARAMETER NoSummary
     Skip the 1-second summary pause before returning results.
     #>
@@ -40,7 +57,7 @@ function Wait-OPIMDirectoryRole {
         [Parameter(Mandatory, ValueFromPipeline)]
         $RoleRequest,
         [double]$Interval = 1,
-        $Timeout = 600,
+        [Alias('Timeout')][ValidateRange(1, 86400)][int]$TimeoutSeconds = 300,
         $ThrottleLimit = 5,
         [Switch]$PassThru,
         [Switch]$NoSummary
@@ -48,17 +65,15 @@ function Wait-OPIMDirectoryRole {
     begin {
         Initialize-OPIMAuth
         [List[PSObject]]$RoleRequests = [List[PSObject]]::new()
-        # Bounded, so the per-request child id ($parentId + 1 + index) can never overflow Int32.
-        $parentId = Get-Random -Maximum 1000000
-        $effectiveTimeout = $Timeout
+        # Bounded, so the per-request child id ($ParentId + 1 + index) can never overflow Int32.
+        $ParentId = Get-Random -Maximum 1000000
     }
     process {
-        if ($RoleRequest.scheduleInfo.expiration.endDateTime) {
-            $localEndTime = [datetime]$RoleRequest.scheduleInfo.expiration.endDateTime
-            if ($localEndTime.ToUniversalTime() -lt [DateTime]::UtcNow) {
-                Write-CmdletError -Message ([System.Exception]::new("$($RoleRequest.RoleName) role end date already expired at $($localEndTime.ToLocalTime()). Skipping."))
-                return
-            }
+        # The end date is read as UTC and compared with UTC, whatever Kind or offset it arrives in.
+        $EndTime = ConvertTo-OPIMUtcDateTime -Value $RoleRequest.scheduleInfo.expiration.endDateTime
+        if ($null -ne $EndTime -and $EndTime -lt (Get-Date -AsUTC)) {
+            Write-CmdletError -Message ([System.Exception]::new("$($RoleRequest.RoleName) role end date already expired at $($EndTime.ToLocalTime()). Skipping."))
+            return
         }
         $RoleRequests.Add($RoleRequest)
     }
@@ -67,55 +82,97 @@ function Wait-OPIMDirectoryRole {
             Write-Verbose "[Wait-OPIMDirectoryRole] -ThrottleLimit $ThrottleLimit has no effect: the requests are polled in sequence."
         }
         if ($RoleRequests.Count -eq 0) { return }
-        $Pending = [System.Collections.Generic.List[PSObject]]::new($RoleRequests)
-        $Provisioned = [System.Collections.Generic.HashSet[string]]::new()
-        Write-Progress -Id $parentId -Activity 'Azure AD PIM Directory Role Activation'
+
+        # OPIM-14 / OPIM-16: each request has its own deadline, -TimeoutSeconds after its
+        # createdDateTime read as UTC, or after the start of the wait when it has none that can be read.
+        $WaitStart = Get-Date -AsUTC
+        $Tracked = @{}
+        foreach ($RequestItem in $RoleRequests) {
+            $Created = ConvertTo-OPIMUtcDateTime -Value $RequestItem.createdDateTime
+            $CountFrom = if ($null -ne $Created) { $Created } else { $WaitStart }
+            $Tracked[[string]$RequestItem.id] = @{
+                Label       = (Get-OPIMScheduleName -Pillar Directory -InputObject $RequestItem).Label
+                Deadline    = $CountFrom.AddSeconds($TimeoutSeconds)
+                Status      = [string]$RequestItem.status
+                Provisioned = $false
+            }
+        }
+        $Pending = [List[PSObject]]::new($RoleRequests)
+        $Activated = [List[PSObject]]::new()
+        $Finished = [List[PSObject]]::new()
+        Write-Progress -Id $ParentId -Activity 'Azure AD PIM Directory Role Activation'
         while ($Pending.Count -gt 0) {
             foreach ($RequestItem in @($Pending)) {
-                $Name    = $RequestItem.roleDefinition.displayName
-                $Created = [datetime]$RequestItem.createdDateTime
-                try {
-                    if (-not $Provisioned.Contains([string]$RequestItem.id)) {
-                        $StatusUri = "v1.0/roleManagement/directory/roleAssignmentScheduleRequests/filterByCurrentUser(on='principal')?`$select=status&`$filter=id eq '$($RequestItem.id)'"
-                        $Status = (Invoke-OPIMGraphRequest -Uri $StatusUri).value.status
-                        if ($Status -eq 'Provisioned') {
-                            $null = $Provisioned.Add([string]$RequestItem.id)
-                        } elseif ($Status -notlike 'Pending*') {
-                            # No -ErrorId: the same form as the expiry error in the process block (no new id).
-                            Write-CmdletError -Message ([System.Exception]::new("$Name`: Request failed with status $Status")) -TargetObject $RequestItem.id -Cmdlet $PSCmdlet
-                            $null = $Pending.Remove($RequestItem)
-                            continue
-                        }
+                $State = $Tracked[[string]$RequestItem.id]
+                if (-not $State.Provisioned) {
+                    $StatusUri = "v1.0/roleManagement/directory/roleAssignmentScheduleRequests/filterByCurrentUser(on='principal')?`$select=status&`$filter=id eq '$($RequestItem.id)'"
+                    try {
+                        $State.Status = [string](Invoke-OPIMGraphRequest -Uri $StatusUri).value.status
+                    } catch {
+                        # A poll that fails is reported as itself and ends the wait for this request only.
+                        Remove-OPIMErrorRecord -Record $PSItem
+                        $PSCmdlet.WriteError($PSItem)
+                        $null = $Pending.Remove($RequestItem)
+                        continue
                     }
-                    if ($Provisioned.Contains([string]$RequestItem.id)) {
-                        $InstanceUri = "v1.0/roleManagement/directory/roleAssignmentScheduleInstances/filterByCurrentUser(on='principal')?`$select=startDateTime&`$filter=roleAssignmentScheduleId eq '$($RequestItem.targetScheduleId)'"
-                        $Activated = (Invoke-OPIMGraphRequest -Uri $InstanceUri).value
-                        if ($Activated) {
-                            Write-Progress -ParentId $parentId -Id ($parentId + 1 + $RoleRequests.IndexOf($RequestItem)) -Activity $Name -Status "Activated at $(([datetime]@($Activated)[0].startDateTime).ToLocalTime())" -PercentComplete 100
-                            $null = $Pending.Remove($RequestItem)
-                            continue
-                        }
+                    # Write the status back onto the request; a request without one gets it added.
+                    $StatusProperty = $RequestItem.PSObject.Properties['status']
+                    if ($null -eq $StatusProperty) {
+                        $RequestItem | Add-Member -NotePropertyName status -NotePropertyValue $State.Status
+                    } elseif ($StatusProperty.IsSettable) {
+                        $StatusProperty.Value = $State.Status
                     }
-                } catch {
-                    Remove-OPIMErrorRecord -Record $PSItem
-                    $PSCmdlet.WriteError($PSItem)
-                    $null = $Pending.Remove($RequestItem)
-                    continue
+                    if ($State.Status -eq 'Provisioned') {
+                        $State.Provisioned = $true
+                    } elseif ((Get-OPIMRequestOutcome -Status $State.Status) -ne 'InProgress') {
+                        # Granted or ScheduleCreated (no instance to wait for), a request that waits for
+                        # a decision, or a failure: reported now, and the wait for it ends.
+                        $Reported = Write-OPIMRequestOutcome -Request $RequestItem -Status $State.Status -Name $State.Label -Cmdlet $PSCmdlet
+                        if ($null -ne $Reported) { $Finished.Add($Reported) }
+                        $null = $Pending.Remove($RequestItem)
+                        continue
+                    }
                 }
-                # The timeout compares UtcNow with createdDateTime exactly as before (OPIM-16, step 5a).
-                # Outside the try above, so its catch never turns the timeout into a per-request error.
-                if (([datetime]::UtcNow - $Created).TotalSeconds -gt $effectiveTimeout) {
-                    Write-CmdletError -Message ([System.Exception]::new("$Name`: Exceeded timeout of $effectiveTimeout seconds waiting for role request to complete")) -Category OperationTimeout -TargetObject $RequestItem.id -Cmdlet $PSCmdlet -Terminating
+                if ($State.Provisioned) {
+                    $InstanceUri = "v1.0/roleManagement/directory/roleAssignmentScheduleInstances/filterByCurrentUser(on='principal')?`$select=startDateTime&`$filter=roleAssignmentScheduleId eq '$($RequestItem.targetScheduleId)'"
+                    try {
+                        $Instances = (Invoke-OPIMGraphRequest -Uri $InstanceUri).value
+                    } catch {
+                        Remove-OPIMErrorRecord -Record $PSItem
+                        $PSCmdlet.WriteError($PSItem)
+                        $null = $Pending.Remove($RequestItem)
+                        continue
+                    }
+                    if ($Instances) {
+                        $StartedAt = ConvertTo-OPIMUtcDateTime -Value (@($Instances)[0].startDateTime)
+                        $ProgressStatus = if ($null -ne $StartedAt) { "Activated at $($StartedAt.ToLocalTime())" } else { 'Activated' }
+                        Write-Progress -ParentId $ParentId -Id ($ParentId + 1 + $RoleRequests.IndexOf($RequestItem)) -Activity $State.Label -Status $ProgressStatus -PercentComplete 100
+                        $Activated.Add($RequestItem)
+                        $null = $Pending.Remove($RequestItem)
+                        continue
+                    }
+                }
+                # Still in progress, or Provisioned with no instance yet: the wait for this request
+                # ends at its deadline, written as an error of its own (Ruling P3: non-terminating).
+                if ((Get-Date -AsUTC) -ge $State.Deadline) {
+                    $PSCmdlet.WriteError((New-OPIMRequestError -ErrorId ActivationWaitTimedOut -Name $State.Label `
+                        -Status $State.Status -TimeoutSeconds $TimeoutSeconds -Request $RequestItem))
+                    $null = $Pending.Remove($RequestItem)
                 }
             }
             if ($Pending.Count -gt 0) { Start-Sleep -Seconds $Interval }
         }
         if (-not $NoSummary) { Start-Sleep 1 }
-        Write-Progress -Id $parentId -Activity 'Azure AD PIM Directory Role Activation' -Completed
+        Write-Progress -Id $ParentId -Activity 'Azure AD PIM Directory Role Activation' -Completed
 
         if ($PassThru) {
-            Get-OPIMDirectoryRole -Activated |
-                Where-Object { $_.roleAssignmentScheduleId -in $RoleRequests.targetScheduleId }
+            # The instances of the provisioned requests, then the requests that ended without one.
+            if ($Activated.Count -gt 0) {
+                $ScheduleIds = @($Activated | ForEach-Object { [string]$_.targetScheduleId })
+                Get-OPIMDirectoryRole -Activated |
+                    Where-Object { $_.roleAssignmentScheduleId -in $ScheduleIds }
+            }
+            foreach ($Reported in $Finished) { $Reported }
         }
     }
 }

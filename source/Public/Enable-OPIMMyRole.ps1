@@ -82,6 +82,8 @@ function Enable-OPIMMyRole {
     Defaults to $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1.
     .PARAMETER Wait
     Wait until all directory role activations are fully provisioned before returning.
+    .PARAMETER TimeoutSeconds
+    With -Wait, the most seconds to wait for each directory role activation. Defaults to 300.
     .PARAMETER DeviceCode
     Sign in with a device code instead of the system browser. Passed to Connect-OPIM, which
     remembers the mode for the session; see Get-Help Connect-OPIM -Parameter DeviceCode.
@@ -101,6 +103,7 @@ function Enable-OPIMMyRole {
         [string]$TicketSystem,
         [string]$TenantMapPath = "$env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1",
         [Switch]$Wait,
+        [ValidateRange(1, 86400)][int]$TimeoutSeconds = 300,
         [Switch]$DeviceCode
     )
 
@@ -215,7 +218,7 @@ function Enable-OPIMMyRole {
                     }
                     if ($DirectoryRoles) {
                         Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($DirectoryRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                        $DirectoryRoles | Enable-OPIMDirectoryRole @ActivateParams -Wait:$Wait | ConvertTo-OPIMMyRoleResult
+                        $DirectoryRoles | Enable-OPIMDirectoryRole @ActivateParams -Wait:$Wait -TimeoutSeconds $TimeoutSeconds | ConvertTo-OPIMMyRoleResult
                     } else {
                         Write-Verbose 'No eligible directory roles matched the configured set.'
                     }
@@ -234,7 +237,7 @@ function Enable-OPIMMyRole {
             if ($ListRead) {
                 if ($DirectoryRoles) {
                     Write-Progress -Id 51807 -Activity 'Activating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- activating $($DirectoryRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                    $DirectoryRoles | Enable-OPIMDirectoryRole @ActivateParams -Wait:$Wait | ConvertTo-OPIMMyRoleResult
+                    $DirectoryRoles | Enable-OPIMDirectoryRole @ActivateParams -Wait:$Wait -TimeoutSeconds $TimeoutSeconds | ConvertTo-OPIMMyRoleResult
                 } else {
                     Write-Verbose 'No eligible directory roles found.'
                 }
