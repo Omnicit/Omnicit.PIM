@@ -758,11 +758,11 @@ a state without the key is `Untracked` and is never compared. The sign-in latch 
 `$script:_OPIMSignInLatch`. The tokens themselves live in the MSAL application's in-memory cache
 (`$script:_OPIMMsalApp`) and in the Graph SDK's context; see **SECURITY**.
 
-**`Disconnect-OPIM`** sets `$script:_OPIMAuthState`, `$script:_OPIMMsalApp`,
-`$script:_OPIMMsalAppTenantId` and `$script:_MyIDCache` to `$null` -- which forgets a device code
-mode with the rest of the state -- then calls `Disconnect-MgGraph` and `Disconnect-AzAccount`, each
-with `-ErrorAction SilentlyContinue` inside a `try` whose `catch` discards the error
-(`Disconnect-OPIM.ps1:26-32`). `Disconnect-MgGraph` ends whatever Graph session the process holds,
+**`Disconnect-OPIM`** sets `$script:_OPIMAuthState`, `$script:_OPIMMsalApp` and
+`$script:_OPIMMsalAppTenantId` to `$null` -- which forgets a device code mode with the rest of the
+state -- then calls `Disconnect-MgGraph` and `Disconnect-AzAccount`, each with
+`-ErrorAction SilentlyContinue` inside a `try` whose `catch` discards the error
+(`Disconnect-OPIM.ps1:26-31`). `Disconnect-MgGraph` ends whatever Graph session the process holds,
 which is why it is the way out of `GraphSessionChanged`; `Disconnect-AzAccount` likewise acts on the
 current Az context, whether or not the module established it.
 
@@ -824,13 +824,13 @@ over `source/` on 2026-10-08, listed as they are:
 | `Private/Initialize-OPIMAuth.ps1:441` | `Connect-MgGraph -AccessToken` |
 | `Private/Initialize-OPIMAuth.ps1:498` | `Get-AzAccessToken` (silent validation; the token is discarded) |
 | `Private/Initialize-OPIMAuth.ps1:553` | `Connect-AzAccount` (with `-UseDeviceAuthentication` in device code mode) |
-| `Public/Disconnect-OPIM.ps1:31, 32` | `Disconnect-MgGraph`, `Disconnect-AzAccount` |
+| `Public/Disconnect-OPIM.ps1:30, 31` | `Disconnect-MgGraph`, `Disconnect-AzAccount` |
 
 `Wait-OPIMDirectoryRole` is not in it: it polls in sequence through `Invoke-OPIMGraphRequest`.
 `Invoke-OPIMDeviceCodeAuth` is not in it either: it reaches MSAL through the application object it
 is handed, not through the Graph SDK or an Az cmdlet.
 
-Beside these, the module reads `Get-MgContext` (`Get-OPIMMsalApplication.ps1:46`, `Get-MyId.ps1:26`,
+Beside these, the module reads `Get-MgContext` (`Get-OPIMMsalApplication.ps1:46`,
 `Get-OPIMGraphSessionFingerprint.ps1:47`), reads `Get-AzContext`
 (`Initialize-OPIMAuth.ps1:492, 574`, and `Get-OPIMArmRefusal.ps1:64` before every `Az.Resources`
 call), calls `Update-AzConfig` (`Initialize-OPIMAuth.ps1:522, 533`), and calls the `Az.Resources`
@@ -1119,7 +1119,7 @@ configured directory role is activated and deactivated only at the scope its ent
   `$FakeRole`, `$ScheduleId`. Exceptions: automatic variables (`$PSCmdlet`, `$PSItem`, `$_`),
   preference variables (`$ErrorActionPreference`), boolean/null literals (`$null`, `$true`,
   `$false`), and the module-scope caches (`$script:_OPIMAuthState`, `$script:_OPIMMsalApp`,
-  `$script:_OPIMMsalAppTenantId`, `$script:_MyIDCache`, `$script:_OPIMSignInLatch`). Older code --
+  `$script:_OPIMMsalAppTenantId`, `$script:_OPIMSignInLatch`). Older code --
   `Wait-OPIMDirectoryRole` in particular -- still has camelCase locals; new and edited lines follow
   the rule.
 - **One function per file; filename must equal function name.**
@@ -1167,9 +1167,6 @@ configured directory role is activated and deactivated only at the scope its ent
   `$Filter` shadows the parameter; name the local variable `$OdataFilter`.
 - **ISO 8601 durations:** `[System.Xml.XmlConvert]::ToString([TimeSpan]::FromHours($Hours))`, which
   gives `PT1H`, as the three `Enable-OPIM*` cmdlets do.
-- **The current user's object id:** `Get-MyId` (private) resolves it through `v1.0/me` and caches
-  it in `$script:_MyIDCache`, keyed by user principal name. Use it rather than a new lookup. No
-  module function calls it today.
 - **PSScriptAnalyzer:** the QA gate requires zero findings, with the default rules, for every
   function's source file. A targeted suppression is acceptable only for a known false positive and
   only with a `Justification` string; **never suppress a rule that hides a real bug.** Six
@@ -1225,7 +1222,7 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   request no longer ends the wait for the others, though under `-ErrorAction Stop` it still ends the
   command), and a failed poll is written as itself. The expiry error in its `process` block is
   unchanged: `Write-CmdletError` without an `-ErrorId`.
-- **Private helpers** such as `Resolve-OPIMSchedule`, `Restore-GraphProperty` and `Get-MyId` may
+- **Private helpers** such as `Resolve-OPIMSchedule` and `Restore-GraphProperty` may
   `throw` on caller error, and `Invoke-OPIMGraphRequest` throws the converted Graph error by
   design: the caller is responsible for catching and routing it.
 - **Name errors have one owner.** `New-OPIMScheduleNameError` builds `AmbiguousName` (category
@@ -1354,7 +1351,7 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   scenarios (happy path, error cases, parameter sets) in `Context` blocks, with a `BeforeAll`
   inside each `Context` for shared arrangement; use `BeforeEach` only for state that must reset
   per `It`. `It` names start with a third-person singular verb: "calls", "returns", "writes",
-  "throws". Write the scope prefix in lower case, `$script:_MyIDCache`, never `$SCRIPT:`.
+  "throws". Write the scope prefix in lower case, `$script:_OPIMAuthState`, never `$SCRIPT:`.
 - **Every unit test file opens with the root form**, at the top of the file and outside every
   `Describe`. It imports the module BY NAME, never by path -- importing by path breaks the Sampler
   coverage measurement, which targets the built module -- and installs the transport tripwire
@@ -1452,8 +1449,8 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   function at the module boundary. Mock the raw SDK only where the test is about that layer itself
   or the function calls it directly: `Invoke-OPIMGraphRequest.Tests.ps1` (the wrapper, mocked
   inside `InModuleScope`), `Get-OPIMCurrentTenantInfo.Tests.ps1` (`Invoke-MgGraphRequest`, and
-  `Get-MgContext` to prove it is not read), `Get-MyId.Tests.ps1` and `Get-OPIMMsalApplication.Tests.ps1` (`Get-MgContext`,
-  which must THROW in the latter -- see below), `Get-OPIMGraphSessionFingerprint.Tests.ps1` and
+  `Get-MgContext` to prove it is not read), `Get-OPIMMsalApplication.Tests.ps1` (`Get-MgContext`,
+  which must THROW there -- see below), `Get-OPIMGraphSessionFingerprint.Tests.ps1` and
   `Get-OPIMGraphSessionState.Tests.ps1` (`Get-MgContext`), `Get-OPIMArmRefusal.Tests.ps1` and the
   ARM-gate contexts of the three `*-OPIMAzureRole` test files (`Get-AzContext`),
   `Initialize-OPIMAuth.Tests.ps1` (`Connect-MgGraph`, `Connect-AzAccount`, `Get-AzContext`,
@@ -1512,7 +1509,6 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
       InModuleScope Omnicit.PIM {
           $script:_OPIMAuthState = $null
           $script:_OPIMMsalApp   = $null
-          $script:_MyIDCache     = $null
       }
   }
   ```
@@ -1674,8 +1670,8 @@ version drift.
 ## Checklist: Adding a New Function
 
 1. **Create the file:** `source/Public/Verb-OPIMNoun.ps1` for a public function, or
-   `source/Private/<FunctionName>.ps1` for a private helper (several, such as `Get-MyId` and
-   `Write-CmdletError`, carry no OPIM prefix). Either way the filename must match the function
+   `source/Private/<FunctionName>.ps1` for a private helper (several, such as
+   `Convert-GraphHttpException` and `Write-CmdletError`, carry no OPIM prefix). Either way the filename must match the function
    name exactly. Declare it with `function`, not `filter` (see **Common Pitfalls**).
 2. **If public:** add it to `FunctionsToExport` in `source/Omnicit.PIM.psd1`, declare its
    `[OutputType()]`, declare any alias with `[Alias()]` on the function, and add the alias to
