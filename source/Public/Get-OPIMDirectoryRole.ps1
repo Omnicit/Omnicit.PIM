@@ -10,11 +10,17 @@ function Get-OPIMDirectoryRole {
     Without any switch: returns eligible (inactive) directory roles for the current user.
     With -Activated: returns currently active role assignment schedule instances.
     With -All: returns BOTH eligible and active schedules for the current user.
+    With -RoleName (the first positional argument): returns one role named by its display name, or by
+    the tab-completed form, as its eligible and its active post.
 
     -All and -Activated are mutually exclusive.
     .EXAMPLE
     Get-OPIMDirectoryRole
     List all eligible (inactive) directory roles for yourself.
+    .EXAMPLE
+    Get-OPIMDirectoryRole 'Usage Summary Reports Reader'
+    Retrieve a role by its display name: its eligible and its active post, if it has both. A name that
+    matches the role at more than one scope is refused with AmbiguousName.
     .EXAMPLE
     Get-OPIMDirectoryRole -Activated
     List all currently activated directory roles for yourself.
@@ -32,7 +38,8 @@ function Get-OPIMDirectoryRole {
       principalId eq '<guid>'       -- filter by a specific principal (requires elevated permissions)
     .EXAMPLE
     Get-OPIMDirectoryRole 'Global Administrator -> Directory (elig-001)'
-    Tab-complete and retrieve details for a role by name (dual-search: returns eligible and/or active).
+    Retrieve a role by the tab-completed form, with its schedule id in parentheses (dual-search:
+    returns eligible and/or active).
     .OUTPUTS
     PSCustomObject tagged as Omnicit.PIM.DirectoryEligibilitySchedule,
     Omnicit.PIM.DirectoryAssignmentScheduleInstance, or Omnicit.PIM.DirectoryCombinedSchedule
@@ -48,8 +55,10 @@ function Get-OPIMDirectoryRole {
     .PARAMETER RoleName
     The display name of the directory role, or the tab-completed form the argument completer offers.
     Returns the eligible and the active post of that role (only the active instance with -Activated);
-    several matches are refused with AmbiguousName, and none with EligibleRoleNotFound
-    (ActiveRoleNotFound with -Activated). -Identity and -Filter are ignored when -RoleName is given.
+    several matches (the role at more than one scope) are refused with AmbiguousName, which lists them;
+    give the tab-completed form of the one you mean, since this cmdlet has no -Scope. No match is
+    EligibleRoleNotFound (ActiveRoleNotFound with -Activated). A display name is compared exactly,
+    without regard to letter case. -Identity and -Filter are ignored when -RoleName is given.
     .PARAMETER Identity
     The schedule item ID used to retrieve a single specific role record by its unique identifier.
     The ID corresponds to the id property on objects returned by this cmdlet.

@@ -7,7 +7,11 @@ function Enable-OPIMAzureRole {
     Activate an Azure PIM eligible resource role.
     .DESCRIPTION
     Activates an eligible Azure RBAC role assignment for the current user. By default activates for 1 hour.
-    The RoleName parameter supports tab completion.
+    The role is named by its display name, or by the form tab completion offers for the RoleName
+    parameter ('Role -> Scope name (Name)'). A name that matches the role at more than one scope is
+    refused with AmbiguousName and nothing is activated: add -Scope to pick one. A name that matches
+    no eligible role is written as an EligibleRoleNotFound error. Several names are resolved one by
+    one, each on its own, so a name that fails does not stop the next one.
     .NOTES
     The default activation period is 1 hour. Override with -Hours. Make it persistent in your profile:
 
@@ -17,20 +21,32 @@ function Enable-OPIMAzureRole {
     Get-OPIMAzureRole | Enable-OPIMAzureRole
     Activate all eligible Azure roles for 1 hour.
     .EXAMPLE
+    Enable-OPIMAzureRole 'Reader' -Scope '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-app'
+    Activates Reader on that resource group only. Without -Scope, a role that is eligible at more than
+    one scope is refused with AmbiguousName.
+    .EXAMPLE
+    Enable-OPIMAzureRole 'Reader', 'Contributor' -Scope '/subscriptions/00000000-0000-0000-0000-000000000000'
+    Activates both roles at that subscription. Each name is resolved on its own.
+    .EXAMPLE
     Enable-OPIMAzureRole <tab>
-    Tab complete all eligible Azure roles.
+    Tab complete all eligible Azure roles. A name that is unique is offered bare; one that is not is
+    offered in the longer form.
     .EXAMPLE
     Get-OPIMAzureRole | Select-Object -First 1 | Enable-OPIMAzureRole -Hours 4
     Activate the first eligible Azure role for 4 hours.
     .PARAMETER Role
     Eligible Azure RBAC role schedule object piped from Get-OPIMAzureRole. Used when activating
-    by object rather than by tab-completed name. Mutually exclusive with -RoleName.
+    by object rather than by name. Mutually exclusive with -RoleName.
     .PARAMETER RoleName
-    Tab-completable name of the eligible Azure role in the format produced by the argument completer.
-    Accepts multiple values. Mutually exclusive with -Role.
+    The display name of the eligible Azure role (for example Reader), or the tab-completed form the
+    argument completer offers ('Role -> Scope name (Name)'). A display name is compared exactly,
+    without regard to letter case, and takes no wildcards. Accepts multiple values, each resolved on
+    its own; -Scope applies to every one of them. Several matches are refused with AmbiguousName.
+    Mutually exclusive with -Role.
     .PARAMETER Identity
     The schedule name from Get-OPIMAzureRole (the Name property) to activate directly without
-    tab completion. Mutually exclusive with -Role and -RoleName.
+    a role name. A name that matches more than one schedule is refused with AmbiguousName. Mutually
+    exclusive with -Role and -RoleName.
     .PARAMETER Justification
     Free-text justification for the activation request. May be required by your PIM policy.
     .PARAMETER TicketNumber
@@ -45,9 +61,12 @@ function Enable-OPIMAzureRole {
     Explicit end date and time for the activation. Takes precedence over -Hours when specified.
     Aliased as -NotAfter.
     .PARAMETER Scope
-    Picks one role when the name matches the role at more than one scope: '/' or an administrative
-    unit's id path or display name for a directory role, the ARM scope for an Azure role. Compared
-    without regard to letter case; a scope that ends in '/' (other than '/') is refused.
+    Picks one role when the name matches the role at more than one scope: the ARM scope of the
+    eligibility, such as a subscription or a resource group. It means exactly that scope, not the
+    scopes below it, and it is compared without regard to letter case. Unlike on Get-OPIMAzureRole,
+    where '/' means every scope, '/' here means only a role that is eligible at the root scope
+    itself. A scope that ends in '/' (other than '/') is refused. Applies to every name in
+    -RoleName, and cannot be combined with -Role or -Identity.
     .PARAMETER Wait
     Wait for the activation request to be provisioned and appear before returning.
     #>

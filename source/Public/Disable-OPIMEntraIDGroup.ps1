@@ -4,25 +4,42 @@ function Disable-OPIMEntraIDGroup {
     Deactivate an active PIM group membership or ownership.
     .DESCRIPTION
     Submits a selfDeactivate request for an active PIM for Groups assignment.
-    The GroupName parameter supports tab completion for currently active group memberships.
+    The group is named by its display name, or by the form tab completion offers for the GroupName
+    parameter for your currently active group assignments. A display name means the membership: add
+    -AccessType Owner for the ownership. Two groups with the same display name are refused with
+    AmbiguousName and nothing is deactivated. A name that matches no active assignment is written as
+    a (non-terminating) ActiveRoleNotFound error; when the assignment is eligible but not active, the
+    message says it is already deactivated.
     .EXAMPLE
     Get-OPIMEntraIDGroup -Activated | Disable-OPIMEntraIDGroup
     Deactivate all currently active PIM group assignments.
     .EXAMPLE
+    Disable-OPIMEntraIDGroup 'Finance Team'
+    Deactivates the membership of the group by its display name.
+    .EXAMPLE
+    Disable-OPIMEntraIDGroup 'Finance Team' -AccessType Owner
+    Deactivates the ownership of the group. Without -AccessType a group name means the membership.
+    .EXAMPLE
     Disable-OPIMEntraIDGroup <tab>
-    Tab complete active PIM group assignments.
+    Tab complete active PIM group assignments. A name that is unique is offered bare.
     .OUTPUTS
     System.Collections.Hashtable (tagged as Omnicit.PIM.GroupAssignmentScheduleRequest)
     .PARAMETER Group
     Active PIM group assignment schedule instance object piped from Get-OPIMEntraIDGroup -Activated.
     .PARAMETER GroupName
-    Name of the active PIM group assignment to deactivate. Supports tab completion to currently active group assignments.
+    The display name of the active PIM group assignment to deactivate, or the tab-completed form the
+    argument completer offers for your currently active group assignments. A display name means the
+    membership unless -AccessType says otherwise, is compared exactly, without regard to letter
+    case, and takes no wildcards. Several matches are refused with AmbiguousName.
     .PARAMETER Identity
     The schedule instance ID from Get-OPIMEntraIDGroup -Activated (the id property) to deactivate
-    directly without tab completion. Mutually exclusive with -Group and -GroupName.
+    directly without a name. An id that matches more than one instance is refused with
+    AmbiguousName. Mutually exclusive with -Group and -GroupName.
     .PARAMETER AccessType
-    Member or Owner. A group display name means the membership unless -AccessType Owner is given.
-    The tab-completed form names its access type itself.
+    Member or Owner. A group display name means the membership unless -AccessType Owner is given;
+    a group you hold only as owner is then written as ActiveRoleNotFound, and the message names
+    -AccessType Owner. The tab-completed form names its access type itself and needs no -AccessType,
+    but a form that -AccessType excludes is not found. Cannot be combined with -Group or -Identity.
     #>
     [Alias('Disable-PIMGroup')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'GroupName')]

@@ -4,7 +4,12 @@ function Enable-OPIMDirectoryRole {
     Activate an Azure AD PIM eligible directory role.
     .DESCRIPTION
     Activates an eligible directory role assignment for the current user. By default activates for 1 hour.
-    The RoleName parameter supports tab completion for available eligible roles.
+    The role is named by its display name, or by the form tab completion offers for the RoleName
+    parameter ('Role (id)', and 'Role -> Administrative unit (id)' below the root scope). A name that
+    matches the role at more than one scope is refused with AmbiguousName and nothing is activated:
+    add -Scope to pick one. A name that matches no eligible role is written as an EligibleRoleNotFound
+    error. Several names are resolved one by one, each on its own, so a name that fails does not stop
+    the next one.
     .NOTES
     The default activation period is 1 hour. Override with -Hours. Make it persistent in your profile:
 
@@ -14,8 +19,20 @@ function Enable-OPIMDirectoryRole {
     Get-OPIMDirectoryRole | Enable-OPIMDirectoryRole
     Activate all eligible directory roles for 1 hour.
     .EXAMPLE
+    Enable-OPIMDirectoryRole 'Usage Summary Reports Reader' -Justification 'Monthly report'
+    Activates the role by its display name. A name that matches the role at more than one scope is
+    refused with AmbiguousName; add -Scope '/' or -Scope with the administrative unit.
+    .EXAMPLE
+    Enable-OPIMDirectoryRole 'Usage Summary Reports Reader', 'Reports Reader' -Scope '/' -Hours 4
+    Activates both roles at the root scope for 4 hours. Each name is resolved on its own: one that is
+    ambiguous or unknown is written as an error, and the other is still activated.
+    .EXAMPLE
+    Enable-OPIMDirectoryRole 'Usage Summary Reports Reader (elig-001)'
+    The form tab completion offers, with the schedule id in parentheses, still works.
+    .EXAMPLE
     Enable-OPIMDirectoryRole <tab>
-    Tab complete all eligible directory roles.
+    Tab complete all eligible directory roles. A name that is unique is offered bare; one that is not
+    is offered in the longer form.
     .EXAMPLE
     Get-OPIMDirectoryRole | Select -First 1 | Enable-OPIMDirectoryRole -Hours 4
     Activate the first eligible role for 4 hours.
@@ -26,13 +43,16 @@ function Enable-OPIMDirectoryRole {
     System.Collections.Hashtable (tagged as Omnicit.PIM.DirectoryAssignmentScheduleRequest)
     .PARAMETER Role
     Eligible directory role schedule object piped from Get-OPIMDirectoryRole. Used when activating
-    by object rather than by tab-completed name. Mutually exclusive with -RoleName.
+    by object rather than by name. Mutually exclusive with -RoleName.
     .PARAMETER RoleName
-    Tab-completable name of the eligible directory role in the format produced by the argument completer.
-    Accepts multiple values. Mutually exclusive with -Role.
+    The display name of the eligible directory role, or the tab-completed form the argument completer
+    offers ('Role (id)'). A display name is compared exactly, without regard to letter case, and takes
+    no wildcards. Accepts multiple values, each resolved on its own; -Scope applies to every one of
+    them. Several matches are refused with AmbiguousName. Mutually exclusive with -Role.
     .PARAMETER Identity
     The schedule item ID from Get-OPIMDirectoryRole (the id property) to activate directly without
-    tab completion. Mutually exclusive with -Role and -RoleName.
+    a name. An id that matches more than one schedule is refused with AmbiguousName. Mutually
+    exclusive with -Role and -RoleName.
     .PARAMETER Justification
     Free-text justification for the activation request. May be required by your PIM policy.
     .PARAMETER TicketNumber
@@ -47,9 +67,10 @@ function Enable-OPIMDirectoryRole {
     Explicit end date and time for the activation. Takes precedence over -Hours when specified.
     Aliased as -NotAfter.
     .PARAMETER Scope
-    Picks one role when the name matches the role at more than one scope: '/' or an administrative
-    unit's id path or display name for a directory role, the ARM scope for an Azure role. Compared
-    without regard to letter case; a scope that ends in '/' (other than '/') is refused.
+    Picks one role when the name matches the role at more than one scope: '/' for the directory
+    itself, or an administrative unit's directoryScopeId ('/administrativeUnits/' and its id) or its
+    display name. Compared without regard to letter case; a scope that ends in '/' (other than '/') is
+    refused. Applies to every name in -RoleName, and cannot be combined with -Role or -Identity.
     .PARAMETER Wait
     Wait until the directory role is fully provisioned before returning.
     #>

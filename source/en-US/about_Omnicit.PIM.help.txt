@@ -100,6 +100,31 @@ LONG DESCRIPTION
     The TenantMap is stored at:
       $env:USERPROFILE\.config\Omnicit.PIM\TenantMap.psd1
 
+    NAMING A ROLE OR GROUP
+
+    The Get-, Enable- and Disable- cmdlets for roles and groups take the display name of the role
+    or group as -RoleName or -GroupName (the first positional argument), or the form that tab
+    completion offers. A display name is compared exactly, without regard to letter case, and
+    takes no wildcards. Tab completion offers the bare name whenever it is unique.
+
+      Enable-OPIMDirectoryRole 'Usage Summary Reports Reader' -Justification 'Monthly report'
+      Enable-OPIMEntraIDGroup 'Finance Team' -AccessType Owner
+      Enable-OPIMAzureRole 'Reader' -Scope '/subscriptions/00000000-0000-0000-0000-000000000000'
+
+    A name that matches more than one role or group is refused with the error AmbiguousName,
+    which lists the candidates. Nothing is activated or deactivated, and the first match is never
+    taken. Add -Scope to pick one: '/' or an administrative unit (its /administrativeUnits/ path or
+    its display name) for a directory role, the ARM scope for an Azure role. A scope that ends in
+    a slash is refused; only the root scope is written '/'. A group name means the membership, and
+    -AccessType Owner names the ownership. Two groups with the same display name are refused as
+    well: give the tab-completed form of the one you mean. An -Identity that matches more than one
+    schedule is refused the same way.
+
+    A name that matches nothing is written as EligibleRoleNotFound (ActiveRoleNotFound when
+    deactivating), and deactivating a role that is already deactivated says so. These are
+    non-terminating errors, so the command is not stopped. The Enable- cmdlets take several names;
+    each is resolved on its own, and -Scope or -AccessType applies to every one of them.
+
     ENABLE-OPIMMYROLE (alias: pim)
 
     The all-in-one activation command. Connects to Microsoft Graph (and Azure
@@ -153,6 +178,13 @@ EXAMPLES
 
     PS C:\> Get-OPIMDirectoryRole | Where-Object { $_.roleDefinition.displayName -eq 'Global Administrator' } | Enable-OPIMDirectoryRole -Wait
     Activates the Global Administrator directory role and waits until it is fully provisioned.
+
+    PS C:\> Enable-OPIMDirectoryRole 'Usage Summary Reports Reader' -Justification 'Monthly report'
+    Activates the directory role by its display name. A name that matches the role at more than
+    one scope is refused with AmbiguousName; add -Scope '/' or -Scope with the administrative unit.
+
+    PS C:\> Enable-OPIMEntraIDGroup 'Finance Team' -AccessType Owner
+    Activates the ownership of the group. Without -AccessType a group name means the membership.
 
     PS C:\> Get-OPIMAzureRole -Activated | Disable-OPIMAzureRole
     Deactivates all active Azure RBAC roles.

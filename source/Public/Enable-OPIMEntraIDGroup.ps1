@@ -4,13 +4,29 @@ function Enable-OPIMEntraIDGroup {
     Activate an eligible PIM group membership or ownership.
     .DESCRIPTION
     Submits a SelfActivate request for a PIM for Groups eligible assignment.
-    The GroupName parameter supports tab completion for available eligible groups.
+    The group is named by its display name, or by the form tab completion offers for the GroupName
+    parameter ('Group - member (id)'). A display name means the membership: add -AccessType Owner for
+    the ownership. Two groups with the same display name are refused with AmbiguousName and nothing
+    is activated; give the tab-completed form of the one you mean. A name that matches no eligible
+    assignment is written as an EligibleRoleNotFound error. Several names are resolved one by one,
+    each on its own, so a name that fails does not stop the next one.
     .EXAMPLE
     Get-OPIMEntraIDGroup | Enable-OPIMEntraIDGroup
     Activate all eligible PIM group assignments for 1 hour.
     .EXAMPLE
+    Enable-OPIMEntraIDGroup 'Finance Team' -Justification 'Project work'
+    Activates the membership of the group by its display name.
+    .EXAMPLE
+    Enable-OPIMEntraIDGroup 'Finance Team' -AccessType Owner
+    Activates the ownership of the group. Without -AccessType a group name means the membership.
+    .EXAMPLE
+    Enable-OPIMEntraIDGroup 'Finance Team - member (elig-001)'
+    The form tab completion offers, with the schedule id in parentheses, still works and names its
+    own access type.
+    .EXAMPLE
     Enable-OPIMEntraIDGroup <tab>
-    Tab complete all eligible PIM groups.
+    Tab complete all eligible PIM groups. A name that is unique is offered bare; one that is not is
+    offered in the longer form.
     .EXAMPLE
     Get-OPIMEntraIDGroup -AccessType member | Enable-OPIMEntraIDGroup -Hours 4 -Justification 'Project work'
     Activate all eligible group memberships for 4 hours with justification.
@@ -18,13 +34,17 @@ function Enable-OPIMEntraIDGroup {
     System.Collections.Hashtable (tagged as Omnicit.PIM.GroupAssignmentScheduleRequest)
     .PARAMETER Group
     Eligible group schedule object piped from Get-OPIMEntraIDGroup. Used when activating
-    by object rather than by tab-completed name. Mutually exclusive with -GroupName.
+    by object rather than by name. Mutually exclusive with -GroupName.
     .PARAMETER GroupName
-    Tab-completable name of the eligible group assignment in the format produced by the argument completer.
-    Accepts multiple values. Mutually exclusive with -Group.
+    The display name of the eligible group, or the tab-completed form the argument completer offers
+    ('Group - member (id)'). A display name means the membership unless -AccessType says otherwise,
+    is compared exactly, without regard to letter case, and takes no wildcards. Accepts multiple
+    values, each resolved on its own; -AccessType applies to every one of them. Several matches are
+    refused with AmbiguousName. Mutually exclusive with -Group.
     .PARAMETER Identity
     The schedule item ID from Get-OPIMEntraIDGroup (the id property) to activate directly without
-    tab completion. Mutually exclusive with -Group and -GroupName.
+    a name. An id that matches more than one schedule is refused with AmbiguousName. Mutually
+    exclusive with -Group and -GroupName.
     .PARAMETER Justification
     Free-text justification for the activation request. May be required by your PIM policy.
     .PARAMETER TicketNumber
@@ -39,8 +59,11 @@ function Enable-OPIMEntraIDGroup {
     Explicit end date and time for the activation. Takes precedence over -Hours when specified.
     Aliased as -NotAfter.
     .PARAMETER AccessType
-    Member or Owner. A group display name means the membership unless -AccessType Owner is given.
-    The tab-completed form names its access type itself.
+    Member or Owner. A group display name means the membership unless -AccessType Owner is given;
+    a group you hold only as owner is then written as EligibleRoleNotFound, and the message names
+    -AccessType Owner. It applies to every name in -GroupName. The tab-completed form names its
+    access type itself and needs no -AccessType, but a form that -AccessType excludes is not found.
+    Cannot be combined with -Group or -Identity.
     .PARAMETER Wait
     Wait until the group assignment is fully provisioned and active before returning.
     #>

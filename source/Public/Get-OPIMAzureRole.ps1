@@ -9,11 +9,20 @@ function Get-OPIMAzureRole {
     Without any switch: returns eligible (inactive) Azure roles for the current user.
     With -Activated: returns currently activated Azure role assignment schedule instances.
     With -All: returns BOTH eligible and active Azure roles for the current user.
+    With -RoleName (the first positional argument): returns one role named by its display name, or by
+    the tab-completed form, as its eligible and its active post.
 
     -All and -Activated are mutually exclusive.
     .EXAMPLE
     Get-OPIMAzureRole
     List all eligible (inactive) Azure roles for yourself.
+    .EXAMPLE
+    Get-OPIMAzureRole 'Reader'
+    Retrieve a role by its display name: its eligible and its active post, if it has both. A role that
+    is eligible at more than one scope is refused with AmbiguousName; add -Scope to pick one.
+    .EXAMPLE
+    Get-OPIMAzureRole 'Reader' -Scope '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-app'
+    Retrieve Reader at that resource group only.
     .EXAMPLE
     Get-OPIMAzureRole -Activated
     List all currently activated Azure roles for yourself.
@@ -31,14 +40,17 @@ function Get-OPIMAzureRole {
     Retrieve a specific role by its schedule Name across eligible and active (dual-search).
     .EXAMPLE
     Get-OPIMAzureRole 'Contributor -> My Subscription (elig-name)'
-    Tab-complete and retrieve details for a role by name (dual-search).
+    Retrieve a role by the tab-completed form, with its schedule Name in parentheses (dual-search).
     .PARAMETER Scope
     The Azure scope to query, such as a subscription, resource group, or resource path.
-    Accepts pipeline input. Defaults to the root scope '/' which covers all subscriptions.
-    When -Activated is used with a specific scope, only instances at that exact scope are returned.
-    With -All, -RoleName or -Identity the roles are read at the root and only those at exactly this
-    scope are returned, compared without regard to case; '/' means every scope. A scope that ends
-    in a slash is refused, since only the root scope is written '/'.
+    Accepts pipeline input. Defaults to the root scope '/' which covers all subscriptions; '/' as
+    -Scope means every scope. A scope other than '/' means exactly that scope, not the scopes below
+    it, and is compared without regard to letter case. A scope that ends in a slash is refused,
+    since only the root scope is written '/'.
+    With -Activated (alone, or with -Identity) the instances are read at this scope, and only those
+    at exactly this scope are returned. With -All, with -RoleName, or with -Identity but not
+    -Activated, the roles are read at the root and only those at exactly this scope are kept.
+    (On Enable-OPIMAzureRole and Disable-OPIMAzureRole, '/' means only a role at the root scope itself.)
     .PARAMETER All
     Return BOTH eligible and active roles for the current user, read at scope '/' (-Scope narrows
     them to one scope).

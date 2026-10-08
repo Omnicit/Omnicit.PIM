@@ -4,13 +4,21 @@ function Disable-OPIMDirectoryRole {
     Deactivate an active Azure AD PIM directory role.
     .DESCRIPTION
     Submits a SelfDeactivate request for an active directory role assignment.
-    The RoleName parameter supports tab completion for your currently active roles.
+    The role is named by its display name, or by the form tab completion offers for the RoleName
+    parameter for your currently active roles. A name that matches the role at more than one scope is
+    refused with AmbiguousName and nothing is deactivated: add -Scope to pick one. A name that matches
+    no active role is written as a (non-terminating) ActiveRoleNotFound error; when the role is
+    eligible but not active, the message says it is already deactivated.
     .EXAMPLE
     Get-OPIMDirectoryRole -Activated | Disable-OPIMDirectoryRole
     Deactivate all currently active directory roles.
     .EXAMPLE
+    Disable-OPIMDirectoryRole 'Usage Summary Reports Reader'
+    Deactivates the role by its display name. A name that matches the role at more than one scope is
+    refused with AmbiguousName; add -Scope '/' or -Scope with the administrative unit.
+    .EXAMPLE
     Disable-OPIMDirectoryRole <tab>
-    Tab complete active roles; type letters to filter.
+    Tab complete active roles; type letters to filter. A name that is unique is offered bare.
     .EXAMPLE
     Get-OPIMDirectoryRole -Activated | Select-Object -First 1 | Disable-OPIMDirectoryRole
     Deactivate the first active role.
@@ -19,14 +27,19 @@ function Disable-OPIMDirectoryRole {
     .PARAMETER Role
     Active directory role assignment schedule instance object piped from Get-OPIMDirectoryRole -Activated.
     .PARAMETER RoleName
-    Name of the active directory role to deactivate. Supports tab completion to currently active roles.
+    The display name of the active directory role to deactivate, or the tab-completed form the
+    argument completer offers for your currently active roles. A display name is compared exactly,
+    without regard to letter case, and takes no wildcards. Several matches are refused with
+    AmbiguousName.
     .PARAMETER Identity
     The schedule instance ID from Get-OPIMDirectoryRole -Activated (the id property) to deactivate
-    directly without tab completion. Mutually exclusive with -Role and -RoleName.
+    directly without a name. An id that matches more than one instance is refused with
+    AmbiguousName. Mutually exclusive with -Role and -RoleName.
     .PARAMETER Scope
-    Picks one role when the name matches the role at more than one scope: '/' or an administrative
-    unit's id path or display name for a directory role, the ARM scope for an Azure role. Compared
-    without regard to letter case; a scope that ends in '/' (other than '/') is refused.
+    Picks one role when the name matches the role at more than one scope: '/' for the directory
+    itself, or an administrative unit's directoryScopeId ('/administrativeUnits/' and its id) or its
+    display name. Compared without regard to letter case; a scope that ends in '/' (other than '/') is
+    refused. Cannot be combined with -Role or -Identity.
     #>
     [Alias('Disable-PIMADRole', 'Disable-PIMRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]

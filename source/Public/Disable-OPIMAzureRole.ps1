@@ -5,24 +5,39 @@ function Disable-OPIMAzureRole {
     Deactivate an active Azure PIM resource role.
     .DESCRIPTION
     Submits a SelfDeactivate request for an active Azure RBAC role assignment.
-    The RoleName parameter supports tab completion for currently active roles.
+    The role is named by its display name, or by the form tab completion offers for the RoleName
+    parameter for your currently active roles. A name that matches the role at more than one scope is
+    refused with AmbiguousName and nothing is deactivated: add -Scope to pick one. A name that
+    matches no active role is written as a (non-terminating) ActiveRoleNotFound error; when the role
+    is eligible but not active, the message says it is already deactivated.
     .EXAMPLE
     Get-OPIMAzureRole -Activated | Disable-OPIMAzureRole
     Deactivate all currently active Azure roles.
     .EXAMPLE
+    Disable-OPIMAzureRole 'Reader' -Scope '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-app'
+    Deactivates Reader on that resource group only. Without -Scope, a role that is active at more than
+    one scope is refused with AmbiguousName.
+    .EXAMPLE
     Disable-OPIMAzureRole <tab>
-    Tab complete active Azure roles.
+    Tab complete active Azure roles. A name that is unique is offered bare.
     .PARAMETER Role
     Active Azure RBAC role assignment schedule instance object piped from Get-OPIMAzureRole -Activated.
     .PARAMETER RoleName
-    Name of the active Azure role to deactivate. Supports tab completion to currently active roles.
+    The display name of the active Azure role to deactivate (for example Reader), or the tab-completed
+    form the argument completer offers for your currently active roles. A display name is compared
+    exactly, without regard to letter case, and takes no wildcards. Several matches are refused with
+    AmbiguousName.
     .PARAMETER Identity
     The schedule instance Name from Get-OPIMAzureRole -Activated (the Name property) to deactivate
-    directly without tab completion. Mutually exclusive with -Role and -RoleName.
+    directly without a role name. A name that matches more than one instance is refused with
+    AmbiguousName. Mutually exclusive with -Role and -RoleName.
     .PARAMETER Scope
-    Picks one role when the name matches the role at more than one scope: '/' or an administrative
-    unit's id path or display name for a directory role, the ARM scope for an Azure role. Compared
-    without regard to letter case; a scope that ends in '/' (other than '/') is refused.
+    Picks one role when the name matches the role at more than one scope: the ARM scope of the
+    active assignment, such as a subscription or a resource group. It means exactly that scope, not
+    the scopes below it, and it is compared without regard to letter case. Unlike on
+    Get-OPIMAzureRole, where '/' means every scope, '/' here means only a role that is active at the
+    root scope itself. A scope that ends in '/' (other than '/') is refused. Cannot be combined with
+    -Role or -Identity.
     #>
     [Alias('Disable-PIMResourceRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]

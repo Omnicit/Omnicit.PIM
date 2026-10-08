@@ -126,10 +126,20 @@ Get-OPIMDirectoryRole -Activated
 # List BOTH eligible and active in one call
 Get-OPIMDirectoryRole -All
 
-# Activate — tab-complete the role name
+# Retrieve one role by display name (its eligible and its active post)
+Get-OPIMDirectoryRole 'Usage Summary Reports Reader'
+
+# Activate by display name -- tab completion offers the names (see "Naming a role or group" below)
+Enable-OPIMDirectoryRole 'Usage Summary Reports Reader' -Justification 'Monthly report'
 Enable-OPIMDirectoryRole <tab>
 
+# A name that matches the role at more than one scope is refused (AmbiguousName); -Scope picks one
+Enable-OPIMDirectoryRole 'User Administrator' -Scope '/'
+
 # Activate using positional params: Role (pos 0), Justification (pos 1), Hours (pos 2)
+Enable-OPIMDirectoryRole 'Global Administrator' 'Incident response' 4
+
+# The tab-completed form, with the schedule ID in parentheses, still works
 Enable-OPIMDirectoryRole 'Global Administrator (elig-id)' 'Incident response' 4
 
 # Activate by schedule ID (from Get-OPIMDirectoryRole id property)
@@ -138,7 +148,8 @@ Enable-OPIMDirectoryRole -Identity 'elig-001'
 # Activate all eligible roles for 4 hours with a justification
 Get-OPIMDirectoryRole | Enable-OPIMDirectoryRole -Hours 4 -Justification 'Incident response'
 
-# Deactivate by schedule instance ID (from Get-OPIMDirectoryRole -Activated id property)
+# Deactivate by display name, or by schedule instance ID (from Get-OPIMDirectoryRole -Activated id property)
+Disable-OPIMDirectoryRole 'Usage Summary Reports Reader'
 Disable-OPIMDirectoryRole -Identity 'active-instance-001'
 
 # Deactivate all active roles
@@ -170,16 +181,25 @@ Get-OPIMAzureRole -Scope '/subscriptions/00000000-...'
 # List active roles at a specific scope (exact scope match only)
 Get-OPIMAzureRole -Activated -Scope '/subscriptions/00000000-...'
 
-# Activate — tab-complete the role name
+# Retrieve a role by display name (its eligible and its active post), at one scope if it has several
+Get-OPIMAzureRole 'Reader'
+Get-OPIMAzureRole 'Reader' -Scope '/subscriptions/00000000-0000-0000-0000-000000000000'
+
+# Activate by display name -- tab completion offers the names (see "Naming a role or group" below)
+Enable-OPIMAzureRole 'Reader' -Scope '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-app'
 Enable-OPIMAzureRole <tab>
 
 # Activate using positional params: Role (pos 0), Justification (pos 1), Hours (pos 2)
+Enable-OPIMAzureRole 'Contributor' 'Incident response' 4
+
+# The tab-completed form, with the schedule Name in parentheses, still works
 Enable-OPIMAzureRole 'Contributor -> My Subscription (elig-name)' 'Incident response' 4
 
 # Activate by schedule Name (the Name property from Get-OPIMAzureRole)
 Enable-OPIMAzureRole -Identity 'elig-schedule-name'
 
-# Deactivate by schedule instance Name (from Get-OPIMAzureRole -Activated)
+# Deactivate by display name, or by schedule instance Name (from Get-OPIMAzureRole -Activated)
+Disable-OPIMAzureRole 'Reader' -Scope '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-app'
 Disable-OPIMAzureRole -Identity 'active-schedule-name'
 
 # Deactivate all active roles
@@ -204,10 +224,20 @@ Get-OPIMEntraIDGroup -All
 # Filter by access type
 Get-OPIMEntraIDGroup -AccessType member
 
-# Activate — tab-complete the group name
+# Retrieve one group by display name (the membership; add -AccessType owner for the ownership)
+Get-OPIMEntraIDGroup 'Finance Team'
+
+# Activate by display name -- a group name means the membership; tab completion offers the names
+Enable-OPIMEntraIDGroup 'Finance Team' -Justification 'Project work'
 Enable-OPIMEntraIDGroup <tab>
 
+# Activate the ownership instead
+Enable-OPIMEntraIDGroup 'Finance Team' -AccessType Owner
+
 # Activate using positional params: Group (pos 0), Justification (pos 1), Hours (pos 2)
+Enable-OPIMEntraIDGroup 'Finance Team' 'Project work' 2
+
+# The tab-completed form, with the schedule ID in parentheses, still works
 Enable-OPIMEntraIDGroup 'Finance Team - member (elig-id)' 'Project work' 2
 
 # Activate by schedule ID (from Get-OPIMEntraIDGroup id property)
@@ -216,7 +246,8 @@ Enable-OPIMEntraIDGroup -Identity 'elig-001'
 # Activate all eligible group assignments
 Get-OPIMEntraIDGroup | Enable-OPIMEntraIDGroup -Hours 2 -Justification 'Project work'
 
-# Deactivate by schedule instance ID (from Get-OPIMEntraIDGroup -Activated id property)
+# Deactivate by display name (add -AccessType Owner for the ownership), or by schedule instance ID
+Disable-OPIMEntraIDGroup 'Finance Team'
 Disable-OPIMEntraIDGroup -Identity 'active-instance-001'
 
 # Deactivate all active group assignments
@@ -531,22 +562,22 @@ are under [Short Aliases](#short-aliases).
 
 ### Directory roles (4)
 
-- `Get-OPIMDirectoryRole` -- lists your eligible directory roles; `-Activated` lists the active ones and `-All` both.
-- `Enable-OPIMDirectoryRole` -- activates an eligible directory role, for 1 hour unless `-Hours` or `-Until` says otherwise.
-- `Disable-OPIMDirectoryRole` -- deactivates an active directory role.
+- `Get-OPIMDirectoryRole` -- lists your eligible directory roles; `-Activated` lists the active ones and `-All` both; a role's display name as the first argument retrieves that role.
+- `Enable-OPIMDirectoryRole` -- activates an eligible directory role named by its display name (or the tab-completed form), for 1 hour unless `-Hours` or `-Until` says otherwise; `-Scope` picks one when the name matches the role at more than one scope.
+- `Disable-OPIMDirectoryRole` -- deactivates an active directory role named by its display name (or the tab-completed form); `-Scope` picks one when the name matches at more than one scope.
 - `Wait-OPIMDirectoryRole` -- waits for a directory role activation request to finish provisioning.
 
 ### Groups (3)
 
-- `Get-OPIMEntraIDGroup` -- lists your eligible PIM for Groups assignments, membership and ownership; `-Activated` and `-All` work as above.
-- `Enable-OPIMEntraIDGroup` -- activates an eligible group membership or ownership.
-- `Disable-OPIMEntraIDGroup` -- deactivates an active group membership or ownership.
+- `Get-OPIMEntraIDGroup` -- lists your eligible PIM for Groups assignments, membership and ownership; `-Activated` and `-All` work as above; a group's display name as the first argument retrieves its membership, or its ownership with `-AccessType owner`.
+- `Enable-OPIMEntraIDGroup` -- activates an eligible group membership or ownership named by its display name (or the tab-completed form); a name means the membership unless `-AccessType Owner` is given.
+- `Disable-OPIMEntraIDGroup` -- deactivates an active group membership or ownership named the same way; `-AccessType Owner` picks the ownership.
 
 ### Azure roles (3)
 
-- `Get-OPIMAzureRole` -- lists your eligible Azure resource roles, at the root scope unless `-Scope` names another; `-Activated` and `-All` work as above.
-- `Enable-OPIMAzureRole` -- activates an eligible Azure resource role.
-- `Disable-OPIMAzureRole` -- deactivates an active Azure resource role.
+- `Get-OPIMAzureRole` -- lists your eligible Azure resource roles, at the root scope unless `-Scope` names another; `-Activated` and `-All` work as above; a role's display name as the first argument retrieves that role.
+- `Enable-OPIMAzureRole` -- activates an eligible Azure resource role named by its display name (or the tab-completed form); `-Scope` picks one when the name matches the role at more than one scope.
+- `Disable-OPIMAzureRole` -- deactivates an active Azure resource role named the same way; `-Scope` picks one when the name matches at more than one scope.
 
 ### Sign-in and configuration (8)
 
@@ -600,16 +631,59 @@ All three `Enable-OPIM*` cmdlets accept positional arguments in this order:
 
 | Position | Parameter | Example |
 |---|---|---|
-| 0 | `-RoleName` / `-GroupName` | `'Global Administrator (elig-id)'` |
+| 0 | `-RoleName` / `-GroupName` | `'Global Administrator'` |
 | 1 | `-Justification` | `'Incident response'` |
 | 2 | `-Hours` | `4` |
 
 ```powershell
 # Explicit
-Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-id)' -Justification 'Incident' -Hours 4
+Enable-OPIMDirectoryRole -RoleName 'Global Administrator' -Justification 'Incident' -Hours 4
 
 # Positional (identical result)
-Enable-OPIMDirectoryRole 'Global Administrator (elig-id)' 'Incident' 4
+Enable-OPIMDirectoryRole 'Global Administrator' 'Incident' 4
+```
+
+---
+
+## Naming a role or group
+
+`-RoleName` / `-GroupName` (the first positional argument of every `Enable-OPIM*`, `Disable-OPIM*`
+and `Get-OPIM*` role and group cmdlet) take the **display name** of the role or group, or the form
+tab completion offers. Both work everywhere:
+
+```powershell
+Enable-OPIMDirectoryRole 'Usage Summary Reports Reader'               # display name
+Enable-OPIMDirectoryRole 'Usage Summary Reports Reader (elig-001)'    # tab-completed form, with the schedule id
+```
+
+- A display name is compared exactly and without regard to letter case. There are no wildcards
+  (`Reader [Preview]` is just a name), and spaces at either end are not trimmed.
+- Tab completion offers the bare name whenever it is unique, and the longer form -- the name, the
+  scope or access type, and the schedule id -- when it is not. A name that contains an apostrophe is
+  completed with the apostrophe doubled, as PowerShell needs it.
+- **A name that matches more than one role or group is never resolved by guessing.** The command
+  writes `AmbiguousName`, lists the candidates and activates or deactivates nothing. `-Scope` picks
+  one: `'/'` or an administrative unit (its `/administrativeUnits/` path or its display name) for a
+  directory role, the ARM scope for an Azure role. The scope is compared without regard to letter
+  case, means exactly that scope, and is refused when it ends in a slash (only the root scope is
+  written `'/'`). On `Get-OPIMAzureRole`, `-Scope '/'` still means every scope; on
+  `Enable-`/`Disable-OPIMAzureRole` it means a role at the root scope itself.
+- **A group name means the membership.** `-AccessType Owner` names the ownership instead; a group you
+  hold only as owner is `EligibleRoleNotFound` (`ActiveRoleNotFound` on `Disable-`), and the message
+  says to add `-AccessType Owner`. Two groups that share a display name are `AmbiguousName`;
+  `-AccessType` does not separate them, so give the tab-completed form of the one you mean.
+- A name that matches nothing is written as `EligibleRoleNotFound`, or `ActiveRoleNotFound` when
+  deactivating (and for `Get-OPIM* -Activated`). Deactivating a role that is already deactivated
+  says so in the message. These are ordinary non-terminating errors: the command is not stopped.
+- `-RoleName` / `-GroupName` on the `Enable-` cmdlets take several names. Each is resolved on its
+  own, so a name that is ambiguous or unknown is written as an error and the next one still runs;
+  `-Scope` or `-AccessType` applies to every name in the list.
+
+```powershell
+Enable-OPIMDirectoryRole 'Usage Summary Reports Reader', 'Reports Reader' -Hours 4
+Enable-OPIMEntraIDGroup 'Finance Team' -AccessType Owner
+Enable-OPIMAzureRole 'Reader' -Scope '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-app'
+Get-OPIMAzureRole 'Reader' -Scope '/subscriptions/00000000-0000-0000-0000-000000000000'
 ```
 
 ---
@@ -634,7 +708,9 @@ The same applies to `Get-OPIMEntraIDGroup` and `Get-OPIMAzureRole`.
 ## Using -Identity for direct activation/deactivation
 
 Every `Enable-OPIM*` and `Disable-OPIM*` cmdlet accepts `-Identity` to target a specific schedule
-by ID without needing tab completion:
+by ID instead of by name (see [Naming a role or group](#naming-a-role-or-group)). An id that matches
+more than one schedule is refused with `AmbiguousName`, like a name, and nothing is activated or
+deactivated:
 
 ```powershell
 # Get the ID of an eligible role

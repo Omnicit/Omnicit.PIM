@@ -10,11 +10,21 @@ function Get-OPIMEntraIDGroup {
     Without any switch: returns eligible (inactive) group assignments for the current user.
     With -Activated: returns currently active group assignment schedule instances.
     With -All: returns BOTH eligible and active group assignments for the current user.
+    With -GroupName (the first positional argument): returns one group named by its display name, or
+    by the tab-completed form, as its eligible and its active post. A display name means the
+    membership unless -AccessType owner is given.
 
     -All and -Activated are mutually exclusive.
     .EXAMPLE
     Get-OPIMEntraIDGroup
     List all eligible PIM group memberships/ownerships for yourself.
+    .EXAMPLE
+    Get-OPIMEntraIDGroup 'Finance Team'
+    Retrieve the membership of a group by its display name: its eligible and its active post, if it
+    has both.
+    .EXAMPLE
+    Get-OPIMEntraIDGroup 'Finance Team' -AccessType owner
+    Retrieve the ownership of the group instead.
     .EXAMPLE
     Get-OPIMEntraIDGroup -Activated
     List all currently active PIM group memberships/ownerships.
@@ -35,7 +45,8 @@ function Get-OPIMEntraIDGroup {
       principalId eq '<guid>'   -- filter by a specific principal
     .EXAMPLE
     Get-OPIMEntraIDGroup 'Finance Team - member (elig-001)'
-    Tab-complete and retrieve details for a group assignment by name (dual-search).
+    Retrieve a group assignment by the tab-completed form, with its schedule id in parentheses
+    (dual-search). The form names its access type itself.
     .OUTPUTS
     PSCustomObject tagged as Omnicit.PIM.GroupEligibilitySchedule,
     Omnicit.PIM.GroupAssignmentScheduleInstance, or Omnicit.PIM.GroupCombinedSchedule
@@ -67,7 +78,8 @@ function Get-OPIMEntraIDGroup {
       -Filter "principalId eq '<guid>'"
     .PARAMETER AccessType
     Limits results to a specific access type. Accepts member or owner. When omitted both
-    membership and ownership schedules are returned. Applies to all modes including -All.
+    membership and ownership schedules are returned, except with -GroupName, where a display name
+    means the membership and -AccessType owner picks the ownership. Applies to all modes including -All.
     #>
     [Alias('Get-PIMGroup')]
     [CmdletBinding(DefaultParameterSetName = 'Default')]
