@@ -182,7 +182,10 @@ EXAMPLES
     Activates all eligible directory roles for 4 hours.
 
     PS C:\> Get-OPIMDirectoryRole | Where-Object { $_.roleDefinition.displayName -eq 'Global Administrator' } | Enable-OPIMDirectoryRole -Wait
-    Activates the Global Administrator directory role and waits until it is fully provisioned.
+    Activates the Global Administrator directory role and waits until it is fully provisioned,
+    up to -TimeoutSeconds (default 300). The -Wait of Enable-OPIMEntraIDGroup and
+    Enable-OPIMAzureRole, and Wait-OPIMDirectoryRole, take the same limit; a request still in
+    progress at the limit is written as an ActivationWaitTimedOut error and stays submitted.
 
     PS C:\> Enable-OPIMDirectoryRole 'Usage Summary Reports Reader' -Justification 'Monthly report'
     Activates the directory role by its display name. A name that matches the role at more than

@@ -155,8 +155,9 @@ Disable-OPIMDirectoryRole -Identity 'active-instance-001'
 # Deactivate all active roles
 Get-OPIMDirectoryRole -Activated | Disable-OPIMDirectoryRole
 
-# Activate and wait for provisioning before continuing
+# Activate and wait for provisioning before continuing (up to -TimeoutSeconds per role, default 300)
 Get-OPIMDirectoryRole | Enable-OPIMDirectoryRole -Wait
+Enable-OPIMDirectoryRole 'Usage Summary Reports Reader' -Wait -TimeoutSeconds 600
 ```
 
 ### Azure Resource (RBAC) Roles
@@ -283,7 +284,7 @@ pim -TenantAlias contoso
 # Activate using a named tenant alias looked up in TenantMap.psd1, for 4 hours
 pim -TenantAlias contoso -Hours 4 -Justification 'Incident response'
 
-# Wait until directory role activations are fully provisioned
+# Wait until directory role activations are fully provisioned (up to -TimeoutSeconds, default 300)
 pim -TenantAlias corp -Wait
 
 # Activate ALL eligible roles without a stored alias (confirmation required per category)
@@ -565,7 +566,7 @@ are under [Short Aliases](#short-aliases).
 - `Get-OPIMDirectoryRole` -- lists your eligible directory roles; `-Activated` lists the active ones and `-All` both; a role's display name as the first argument retrieves that role.
 - `Enable-OPIMDirectoryRole` -- activates an eligible directory role named by its display name (or the tab-completed form), for 1 hour unless `-Hours` or `-Until` says otherwise; `-Scope` picks one when the name matches the role at more than one scope.
 - `Disable-OPIMDirectoryRole` -- deactivates an active directory role named by its display name (or the tab-completed form); `-Scope` picks one when the name matches at more than one scope.
-- `Wait-OPIMDirectoryRole` -- waits for a directory role activation request to finish provisioning.
+- `Wait-OPIMDirectoryRole` -- waits for each directory role activation request to finish provisioning, up to `-TimeoutSeconds` (default 300; the old `-Timeout` still works).
 
 ### Groups (3)
 
@@ -701,6 +702,13 @@ Azure gives it. A request that failed, was denied or was canceled is an `Activat
 error and returns nothing, and one that waits for approval or is still being provisioned is returned
 with a warning, since it has not taken effect yet. A status the module does not know counts as a
 failure, never as a success; a deactivation succeeds only when it ends `Revoked`.
+
+With `-Wait`, the `Enable-OPIM*` role and group cmdlets read the status again, with a pause between
+reads, for as long as the request is still being worked on and at most `-TimeoutSeconds` (default
+300), and then report the request by its last status, written back onto the object they return. A
+request that waits for approval ends the wait at once, with a warning. One still in progress at the
+limit is an `ActivationWaitTimedOut` error and returns nothing; the request stays submitted. Each
+role or group is reported on its own, so one that fails or times out never stops the next.
 
 ---
 

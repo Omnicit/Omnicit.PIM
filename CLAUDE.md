@@ -169,8 +169,8 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   `CHANGELOG.md`, the git diff against `origin/main` and the BUILT manifest (see **CHANGELOG and
   Version**); module import and removal; for every function the module defines -- public and
   private alike, since the cases are enumerated from inside the module with
-  `Get-Command -CommandType Function` (49 on 2026-10-08, counted from the files: the 18 under
-  `source/Public` and 31 functions in the 32 files under `source/Private`, where the filter
+  `Get-Command -CommandType Function` (50 on 2026-10-08, counted from the files: the 18 under
+  `source/Public` and 32 functions in the 33 files under `source/Private`, where the filter
   `Restore-GraphProperty` is the one that does not count) -- a unit test file under `tests/`, a
   clean `Invoke-ScriptAnalyzer` run on its source file, and help quality: `.SYNOPSIS`, a
   `.DESCRIPTION` over 40 characters, at least one `.EXAMPLE`, every parameter described; an
@@ -589,9 +589,10 @@ sign-in (no state, or a state with only `DeviceCode`, as in unit tests that mock
 `Disable-OPIMAzureRole` and the activation request of `Enable-OPIMAzureRole` the caller throws the
 record inside the `try` that holds the `Az.Resources` call, so the cmdlet's own catch scrubs it and
 writes it as itself. Before every round of the `Enable-OPIMAzureRole -Wait` poll the gate stands
-OUTSIDE the poll's `try` on purpose, since that catch ends the command: a refusal there is written
-as a non-terminating error and ends only the wait -- the activation request was already sent, and
-the cmdlet still returns it.
+INSIDE the poll's `try`, directly before `Get-AzRoleAssignmentScheduleRequest`, and that catch
+scrubs the record, writes it as itself and ends the wait for that role only: nothing is returned
+for it -- the activation request was already sent and stays submitted -- and the next role still
+runs.
 
 **Graph tokens come from MSAL.NET, reached by reflection.** `Get-OPIMMsalApplication` finds the
 `Microsoft.Identity.Client` assembly (4.x or 5.x) that `Microsoft.Graph.Authentication` loads into
@@ -854,7 +855,7 @@ makes no Graph call.
 | `Get-AzRoleEligibilitySchedule` | Eligible (inactive) RBAC roles |
 | `Get-AzRoleAssignmentScheduleInstance` | Active RBAC assignments (`AssignmentType` `Activated`) |
 | `New-AzRoleAssignmentScheduleRequest` | Activate (`SelfActivate`) or deactivate (`SelfDeactivate`) |
-| `Get-AzRoleAssignmentScheduleRequest` | `Enable-OPIMAzureRole -Wait` polling |
+| `Get-AzRoleAssignmentScheduleRequest` | `Enable-OPIMAzureRole -Wait` polling: `-Filter 'asRequestor()'` at the request's scope, keeping the item whose `Name` is the request's |
 
 Reads use the filter `asTarget()` at scope `/` unless `-Scope` names another. `Get-OPIMAzureRole`
 reads at `-Scope` for a plain listing (no switch, name or `-Identity`), which hands the scope to
@@ -901,9 +902,18 @@ expand `group,principal`.
 - `-Hours` [int] -- default 1; users override it through `$PSDefaultParameterValues`.
 - `-NotBefore` [DateTime] -- activation start, default now.
 - `-Until` [DateTime] (alias `-NotAfter`) -- explicit end; takes precedence over `-Hours`.
-- `-Wait` [switch] -- on all three. Directory roles hand the requests to `Wait-OPIMDirectoryRole`;
-  Azure roles poll `Get-AzRoleAssignmentScheduleRequest`; groups poll the request's status while it
-  is `Pending*`.
+- `-Wait` [switch] and `-TimeoutSeconds` [int] (1-86400, default 300) -- on all three, and on
+  `Enable-OPIMMyRole`, which hands both to `Enable-OPIMDirectoryRole`. Directory roles hand the
+  requests to `Wait-OPIMDirectoryRole -PassThru -TimeoutSeconds` (whose old `-Timeout` is an alias);
+  Azure roles poll `Get-AzRoleAssignmentScheduleRequest` every 5 seconds; groups poll the request
+  every 2 seconds. All three poll only while `Get-OPIMRequestOutcome` says `InProgress` -- a request
+  whose answer is already final is not polled -- with a sleep before each poll, up to
+  `-TimeoutSeconds` counted in UTC (`Get-Date -AsUTC`): from the start of the wait for groups and
+  Azure, from each request's `createdDateTime` (read by `ConvertTo-OPIMUtcDateTime`) for directory
+  roles. A request awaiting a decision ends the wait at once, returned with a warning. Each request
+  is reported on its own, with its last status written back: `ActivationRequestFailed` for a
+  failure, `ActivationWaitTimedOut` at the limit (nothing returned for it; it stays submitted), and a
+  failed poll written as itself -- all non-terminating, so the next role or group still runs.
 - `-WhatIf` / `-Confirm` through `[CmdletBinding(SupportsShouldProcess)]`.
 - An already-active object piped in (from `Get-OPIM* -All`) is skipped with a verbose message.
 
@@ -1124,9 +1134,12 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `throw $ArmRefusal` in `Get-`, `Enable-` and `Disable-OPIMAzureRole`: a throw inside the `try`
   that holds the `Az.Resources` call, which that try's own catch scrubs and writes as itself, so it
   never leaves the cmdlet (see **Authentication Architecture**). `Wait-OPIMDirectoryRole` holds no
-  `throw`: it writes a failed request with `Write-CmdletError` (non-terminating) and ends a timeout
-  with `Write-CmdletError -Terminating`, both without an `-ErrorId`, so their
-  `FullyQualifiedErrorId` is the bare command name `Wait-OPIMDirectoryRole`.
+  `throw`, and every outcome is per request and non-terminating: a failed request is
+  `ActivationRequestFailed` (through `Write-OPIMRequestOutcome`), a request still in progress at its
+  deadline is `ActivationWaitTimedOut` (Ruling P3: the timeout used to end the command; one slow
+  request no longer ends the wait for the others, though under `-ErrorAction Stop` it still ends the
+  command), and a failed poll is written as itself. The expiry error in its `process` block is
+  unchanged: `Write-CmdletError` without an `-ErrorId`.
 - **Private helpers** such as `Resolve-OPIMSchedule`, `Restore-GraphProperty` and `Get-MyId` may
   `throw` on caller error, and `Invoke-OPIMGraphRequest` throws the converted Graph error by
   design: the caller is responsible for catching and routing it.
@@ -1434,11 +1447,17 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
 - **`Wait-OPIMDirectoryRole` is tested at the module boundary like every other cmdlet.** It polls
   in sequence through `Invoke-OPIMGraphRequest`, so its tests mock that wrapper per URI (the
   `roleAssignmentScheduleRequests` status query and the `roleAssignmentScheduleInstances` query)
-  and need no stand-in; the `-PassThru` test runs. Its polling contexts call the REAL
-  `Write-CmdletError` and read errors through `-ErrorVariable` and the thrown timeout: Pester 6
-  throws "No mock ... matched" for a call no `-ParameterFilter` matches instead of passing it to
-  the real command, so a filtered `Write-CmdletError` mock cannot let the terminating timeout
-  through. Only the expiry-only context, which never polls, mocks `Write-CmdletError`.
+  and need no stand-in; the `-PassThru` test runs. Its tests read every outcome through
+  `-ErrorVariable`, `-WarningVariable` and the request objects themselves, and mock no
+  `Write-CmdletError`.
+- **The waits are tested on a mocked clock.** `Wait-OPIMDirectoryRole` and the `-Wait` polls of
+  `Enable-OPIMEntraIDGroup` and `Enable-OPIMAzureRole` read the time with `Get-Date -AsUTC`, never
+  `[DateTime]::UtcNow`, so a test drives every deadline with
+  `Mock -ModuleName Omnicit.PIM Get-Date { $Clock.Now = $Clock.Now.AddSeconds($Clock.Step); $Clock.Now }`
+  and mocks `Start-Sleep` in every test that reaches a poll. Give the clock a step of at least one
+  second even where the test expects the wait to end on its own, so a regression (or a mutant)
+  that never ends the loop still reaches the deadline instead of hanging the run; the poll counts
+  then follow exactly from the step and `-TimeoutSeconds`.
 - **`-ErrorVariable` collects more than the command's own error.** The engine fills it from every
   nested frame's error stream, so a mock that throws can leave several entries -- wrapper
   exceptions first -- before the record the command itself wrote, which is the LAST entry.
