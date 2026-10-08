@@ -153,8 +153,16 @@ function Set-OPIMConfiguration {
         Write-Verbose "Updating tenant alias '$TenantAlias' in $TenantMapPath"
 
         # -- Get tenant display name for the confirmation prompt (best-effort) ---
+        # OPIM-45: the display name of the module's sign-in tenant, shown only when that is the tenant
+        # this alias is written with. Set needs no sign-in: it keeps the stored tenant (OPIM-20).
         $TenantInfo = Get-OPIMCurrentTenantInfo
-        $TenantDisplayName = if ($TenantInfo.DisplayName) { $TenantInfo.DisplayName } else { 'N/A' }
+        [string]$SessionTenantId = $TenantInfo.TenantId
+        $TenantDisplayName = if ($TenantInfo.DisplayName -and $SessionTenantId -and
+            [string]::Equals([string]$ResolvedTenantId, $SessionTenantId, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $TenantInfo.DisplayName
+        } else {
+            'N/A'
+        }
 
         $MapData[$TenantAlias] = $Entry
 

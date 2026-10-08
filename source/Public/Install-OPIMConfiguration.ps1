@@ -36,7 +36,12 @@ function Install-OPIMConfiguration {
     Short alias for the tenant (e.g. 'contoso'). Used with Enable-OPIMMyRoles -TenantAlias to select the tenant.
     Must not already exist in the TenantMap file. Use Set-OPIMConfiguration to update an existing alias.
     .PARAMETER TenantId
-    Azure Tenant ID (GUID) that the alias maps to. Must be a valid GUID format.
+    Azure Tenant ID (GUID) that the alias maps to. Must be a valid GUID format. When omitted, the
+    tenant Omnicit.PIM is signed in to is used (Connect-OPIM, or the first role or group command);
+    without a sign-in of the module the command writes the error TenantIdNotResolvable and stores
+    nothing. A Microsoft Graph session started with Connect-MgGraph outside the module is never
+    used. A TenantId that differs from the signed-in tenant writes a warning, and the confirmation
+    shows the tenant's display name only for the signed-in tenant.
     .PARAMETER TenantMapPath
     Path to the TenantMap.psd1 configuration file. Defaults to .config/Omnicit.PIM/TenantMap.psd1
     under your home folder ($HOME; on Windows the same file as before, under $env:USERPROFILE).
@@ -112,30 +117,38 @@ function Install-OPIMConfiguration {
         if ($SeenKeys[$Pillar].Add($Key)) { $StoredKeys[$Pillar].Add($Key) }
     }
     end {
-        # -- Resolve TenantId from active Graph session when not supplied ------
+        # -- Resolve TenantId from the module's own sign-in when not supplied ---
+        # OPIM-45: the tenant of the module's sign-in (its Graph token), never the tenant of a Graph
+        # session another Connect-MgGraph started; without a sign-in of the module, refuse.
         $TenantInfo = Get-OPIMCurrentTenantInfo
+        [string]$SessionTenantId = $TenantInfo.TenantId
         if (-not $TenantId) {
-            if (-not $TenantInfo.TenantId) {
+            if (-not $SessionTenantId) {
+                $Message = 'No -TenantId was supplied and Omnicit.PIM holds no sign-in. ' +
+                    'Either give -TenantId, or run Connect-OPIM first. ' +
+                    'A session started with Connect-MgGraph outside the module is not used.'
                 $Err = [System.Management.Automation.ErrorRecord]::new(
-                    [System.InvalidOperationException]::new(
-                        'No -TenantId was supplied and no active Graph session was found. ' +
-                        'Either provide -TenantId explicitly or connect via Connect-OPIM first.'),
+                    [System.InvalidOperationException]::new($Message),
                     'TenantIdNotResolvable',
                     [System.Management.Automation.ErrorCategory]::InvalidOperation,
                     $null
                 )
-                $Err.ErrorDetails = [System.Management.Automation.ErrorDetails]::new(
-                    'No -TenantId was supplied and no active Graph session was found. ' +
-                    'Either provide -TenantId explicitly or connect via Connect-OPIM first.')
+                $Err.ErrorDetails = [System.Management.Automation.ErrorDetails]::new($Message)
                 $PSCmdlet.WriteError($Err)
                 return
             }
-            $TenantId = $TenantInfo.TenantId
-            Write-Verbose "TenantId auto-resolved from active Graph session: $TenantId"
-        } elseif ($TenantInfo.TenantId -and $TenantId -ne $TenantInfo.TenantId) {
-            Write-Warning "The provided TenantId ($TenantId) differs from the currently connected tenant ($($TenantInfo.TenantId)). Confirm you are configuring the correct tenant."
+            $TenantId = $SessionTenantId
+            Write-Verbose "TenantId taken from the sign-in of Omnicit.PIM: $TenantId"
+        } elseif ($SessionTenantId -and -not [string]::Equals($TenantId, $SessionTenantId, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Write-Warning "The provided TenantId ($TenantId) differs from the tenant Omnicit.PIM is signed in to ($SessionTenantId). Confirm you are configuring the correct tenant."
         }
-        $TenantDisplayName = if ($TenantInfo.DisplayName) { $TenantInfo.DisplayName } else { 'N/A' }
+        # The display name belongs to the session tenant, so it is shown only for that tenant.
+        $TenantDisplayName = if ($TenantInfo.DisplayName -and $SessionTenantId -and
+            [string]::Equals($TenantId, $SessionTenantId, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $TenantInfo.DisplayName
+        } else {
+            'N/A'
+        }
 
         # -- Ensure TenantMap directory and file exist -------------------------
         $TenantMapDir = Split-Path $TenantMapPath -Parent

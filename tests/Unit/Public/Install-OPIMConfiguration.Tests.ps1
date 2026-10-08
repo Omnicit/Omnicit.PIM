@@ -18,6 +18,16 @@ Describe 'Install-OPIMConfiguration' {
             return [PSCustomObject]@{ TenantId = '00000000-0000-0000-0000-000000000001'; DisplayName = 'Mock Tenant' }
         }
         $PSDefaultParameterValues['Install-OPIMConfiguration:Confirm'] = $false
+
+        # The "What if:" text of ShouldProcess goes to the host, not to a stream, so it is read back from
+        # a transcript of the call.
+        function Get-WhatIfText {
+            param([scriptblock]$Command)
+            $Path = Join-Path $TestDrive 'whatif-transcript.txt'
+            $null = Start-Transcript -LiteralPath $Path -Force
+            try { $null = & $Command } finally { $null = Stop-Transcript }
+            [System.IO.File]::ReadAllText($Path)
+        }
     }
     AfterAll {
         $null = $PSDefaultParameterValues.Remove('Install-OPIMConfiguration:Confirm')
@@ -310,12 +320,11 @@ Describe 'Install-OPIMConfiguration' {
         }
     }
 
-    Context 'When TenantId is not provided but an active Graph session exists' {
+    Context 'When TenantId is not provided and the module holds a sign-in (OPIM-45)' {
+        # Get-OPIMCurrentTenantInfo returns the tenant of the module's own sign-in (the Describe mock:
+        # ...001, 'Mock Tenant'); its own tests prove it never takes a foreign Graph context.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-OPIMCurrentTenantInfo {
-                return [PSCustomObject]@{ TenantId = 'cccccccc-0000-0000-0000-000000000003'; DisplayName = 'Auto Tenant' }
-            }
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
             Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
             Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
@@ -324,38 +333,94 @@ Describe 'Install-OPIMConfiguration' {
             $script:writtenContent = $null
         }
 
-        It 'resolves the TenantId from the Graph session and writes it into the PSD1' {
-            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            $script:writtenContent | Should -Match 'cccccccc-0000-0000-0000-000000000003'
+        It 'writes the tenant of the module sign-in and no error' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errors -WarningVariable Warns -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+            $Errors.Count | Should -Be 0
+            $Warns.Count | Should -Be 0
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000001'"
         }
 
-        It 'does not write an error when TenantId is omitted but a session exists' {
-            $Errors = @()
-            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errors -ErrorAction SilentlyContinue
-            $Errors.Count | Should -Be 0
+        It 'shows the display name of that tenant in the confirmation' {
+            $Text = Get-WhatIfText { Install-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Text | Should -Match ([regex]::Escape("Add alias 'contoso' for tenant 'Mock Tenant' (00000000-0000-0000-0000-000000000001)"))
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
         }
     }
 
-    Context 'When TenantId is not provided and there is no active Graph session' {
+    Context 'When TenantId is not provided and the module holds no sign-in (OPIM-45)' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Get-OPIMCurrentTenantInfo {
-                return [PSCustomObject]@{ TenantId = $null; DisplayName = $null }
+                return [PSCustomObject]@{ TenantId = $null; DisplayName = '' }
             }
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
             Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
         }
 
-        It 'writes a non-terminating error with error id TenantIdNotResolvable' {
-            $Errors = @()
+        It 'writes one TenantIdNotResolvable error that names the missing module sign-in' {
             Install-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errors -ErrorAction SilentlyContinue
-            $Errors.Count | Should -BeGreaterThan 0
-            $Errors[0].FullyQualifiedErrorId | Should -Match 'TenantIdNotResolvable'
+            $Errors.Count | Should -Be 1
+            $Errors[0].FullyQualifiedErrorId | Should -BeLike 'TenantIdNotResolvable*'
+            $Errors[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidOperation)
+            $Errors[0].Exception.Message | Should -Match 'Omnicit\.PIM holds no sign-in'
+            $Errors[0].Exception.Message | Should -Match 'give -TenantId'
+            $Errors[0].Exception.Message | Should -Match 'Connect-OPIM'
+            $Errors[0].Exception.Message | Should -Match 'Connect-MgGraph outside the module is not used'
+            $Errors[0].ErrorDetails.Message | Should -BeExactly $Errors[0].Exception.Message
         }
 
-        It 'does not call Set-Content when TenantId cannot be resolved' {
+        It 'writes nothing when the tenant cannot be resolved' {
             Install-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction SilentlyContinue
             Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
+            Should -Invoke New-Item -ModuleName Omnicit.PIM -Times 0 -Scope It
+            Should -Invoke Get-OPIMCurrentTenantInfo -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
+        }
+
+        It 'writes the given -TenantId without a session' {
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+            $script:writtenContent = $null
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000099' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errors -WarningVariable Warns -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+            $Errors.Count | Should -Be 0
+            $Warns.Count | Should -Be 0
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000099'"
+        }
+    }
+
+    Context 'When -TenantId differs from the tenant of the module sign-in (OPIM-45)' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'writes a warning that names both tenants, and the given tenant' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000099' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WarningVariable Warns -WarningAction SilentlyContinue
+            $Warns.Count | Should -Be 1
+            $Warns[0].Message | Should -Match '00000000-0000-0000-0000-000000000099'
+            $Warns[0].Message | Should -Match '00000000-0000-0000-0000-000000000001'
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000099'"
+        }
+
+        It 'shows N/A instead of the display name of the session tenant in the confirmation' {
+            $Text = Get-WhatIfText { Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000099' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf -WarningAction SilentlyContinue }
+            $Text | Should -Match ([regex]::Escape("Add alias 'contoso' for tenant 'N/A' (00000000-0000-0000-0000-000000000099)"))
+            $Text | Should -Not -Match 'Mock Tenant'
+        }
+
+        It 'shows the display name and writes no warning when -TenantId is the session tenant in another letter case' {
+            Mock -ModuleName Omnicit.PIM Get-OPIMCurrentTenantInfo {
+                return [PSCustomObject]@{ TenantId = 'aaaaaaaa-0000-0000-0000-00000000000a'; DisplayName = 'Mock Tenant' }
+            }
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId 'AAAAAAAA-0000-0000-0000-00000000000A' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WarningVariable Warns -WarningAction SilentlyContinue
+            $Warns.Count | Should -Be 0
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'AAAAAAAA-0000-0000-0000-00000000000A'"
+            $Text = Get-WhatIfText { Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId 'AAAAAAAA-0000-0000-0000-00000000000A' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf -WarningAction SilentlyContinue }
+            $Text | Should -Match ([regex]::Escape("for tenant 'Mock Tenant' (AAAAAAAA-0000-0000-0000-00000000000A)"))
         }
     }
 

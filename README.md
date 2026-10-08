@@ -49,10 +49,13 @@ The Microsoft Graph PowerShell SDK keeps one session per PowerShell process. If 
 the same process runs `Connect-MgGraph` after Omnicit.PIM signed in, the role, group and sign-in
 commands refuse to send their calls under that session (`GraphSessionChanged`) instead of
 switching it back. Run `Disconnect-OPIM`, which also disconnects that other session, and sign in
-again -- or use a new PowerShell window. The configuration commands are the exception, by design:
-`Install-OPIMConfiguration` and `Set-OPIMConfiguration` read whatever Graph session is active --
-`Install-OPIMConfiguration` takes its tenant when you omit `-TenantId`, and both read the tenant's
-display name for the confirmation prompt.
+again -- or use a new PowerShell window. The configuration commands do not sign in, and they take a
+tenant only from Omnicit.PIM's own sign-in, never from a session started with `Connect-MgGraph`
+outside the module: `Install-OPIMConfiguration` without `-TenantId` stores the tenant Omnicit.PIM is
+signed in to, and without such a sign-in refuses with `TenantIdNotResolvable` and stores nothing.
+`Set-OPIMConfiguration` keeps the tenant stored for the alias. Both show the tenant's display name
+in the confirmation prompt only for the tenant they write, and only while Omnicit.PIM's own Graph
+session is active; otherwise it reads `N/A`.
 
 A command whose sign-in at its start was refused sends nothing more, even when it carries on past
 the error: every request it would still make is refused with `SignInRefused`. A sign-in refused

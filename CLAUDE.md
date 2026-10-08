@@ -551,11 +551,17 @@ retry. `Changed` is the terminating `GraphSessionChanged`, raised before any cac
 other session's calls to this module's tenant -- so the user runs `Disconnect-OPIM`, which
 disconnects that session too, and signs in again. `Absent` (no session at all, for example after
 `Disconnect-MgGraph`) means the cached token does not count: the function signs in and connects
-again. The configuration cmdlets are outside the gate by design: `Install-OPIMConfiguration` and
-`Set-OPIMConfiguration` do not authenticate and read the ACTIVE Graph context through
-`Get-OPIMCurrentTenantInfo` (raw `Get-MgContext`, and `Invoke-MgGraphRequest` for
-`v1.0/organization`) -- `Install` to take its tenant when `-TenantId` is omitted, both for the
-display name in the confirmation prompt -- so they run under whatever session is active.
+again. The configuration cmdlets do not authenticate and stand outside the gate, but they take a
+tenant only from the module's own sign-in, never from a Graph context another `Connect-MgGraph`
+started (OPIM-45). `Get-OPIMCurrentTenantInfo` returns the auth state's `TokenTenantId` whatever
+`Get-OPIMGraphSessionState` says -- `$null` while the module holds no sign-in: no state, a state
+that is not a dictionary, or the device-code-only state -- and calls no `Get-MgContext` itself. It
+reads the tenant's display name (a raw `Invoke-MgGraphRequest` for `v1.0/organization`) only when
+the session state is `Own` and the organization's `id` is that tenant, else returns `''`.
+`Install-OPIMConfiguration` without `-TenantId` takes that tenant, and without one writes
+`TenantIdNotResolvable` and stores nothing; `Set-OPIMConfiguration` keeps the stored tenant and
+needs no sign-in. Both show the display name in the confirmation prompt only for the tenant they
+write, and `N/A` for any other.
 
 **A refused sign-in closes the transport for its command (EntraRBAC A19).** Outside any `try` a
 cmdlet carries on past a terminating error `Initialize-OPIMAuth` raises, and would then send under
@@ -814,7 +820,7 @@ over `source/` on 2026-10-08, listed as they are:
 | File:line (under `source/`) | Call |
 |---|---|
 | `Private/Invoke-OPIMGraphRequest.ps1:198, 236, 273` | `Invoke-MgGraphRequest` -- the wrapper itself |
-| `Private/Get-OPIMCurrentTenantInfo.ps1:44` | `Invoke-MgGraphRequest` for `v1.0/organization` (best-effort tenant display name) |
+| `Private/Get-OPIMCurrentTenantInfo.ps1:60` | `Invoke-MgGraphRequest` for `v1.0/organization` (best-effort tenant display name, under the module's own Graph session only) |
 | `Private/Initialize-OPIMAuth.ps1:441` | `Connect-MgGraph -AccessToken` |
 | `Private/Initialize-OPIMAuth.ps1:498` | `Get-AzAccessToken` (silent validation; the token is discarded) |
 | `Private/Initialize-OPIMAuth.ps1:553` | `Connect-AzAccount` (with `-UseDeviceAuthentication` in device code mode) |
@@ -825,7 +831,7 @@ over `source/` on 2026-10-08, listed as they are:
 is handed, not through the Graph SDK or an Az cmdlet.
 
 Beside these, the module reads `Get-MgContext` (`Get-OPIMMsalApplication.ps1:46`, `Get-MyId.ps1:26`,
-`Get-OPIMCurrentTenantInfo.ps1:30`, `Get-OPIMGraphSessionFingerprint.ps1:47`), reads `Get-AzContext`
+`Get-OPIMGraphSessionFingerprint.ps1:47`), reads `Get-AzContext`
 (`Initialize-OPIMAuth.ps1:492, 574`, and `Get-OPIMArmRefusal.ps1:64` before every `Az.Resources`
 call), calls `Update-AzConfig` (`Initialize-OPIMAuth.ps1:522, 533`), and calls the `Az.Resources`
 cmdlets listed under **API Mapping**.
@@ -1077,7 +1083,7 @@ completion authenticates and calls Graph or ARM on the prompt path. Keep that ca
 
 | Cmdlet | Operation | Notes |
 |---|---|---|
-| `Install-OPIMConfiguration` | Create | Mandatory `-TenantAlias`; `-TenantId` (resolved from the active Graph context when omitted); accepts pipeline input from `Get-OPIM*`. Error if the alias exists. `ConfirmImpact = 'High'`. |
+| `Install-OPIMConfiguration` | Create | Mandatory `-TenantAlias`; `-TenantId` (the tenant of the module's own sign-in when omitted, never a Graph context started outside the module; `TenantIdNotResolvable` without a sign-in); accepts pipeline input from `Get-OPIM*`. Error if the alias exists. `ConfirmImpact = 'High'`. |
 | `Get-OPIMConfiguration` | Read | Optional `-TenantAlias` filter. Returns `Omnicit.PIM.TenantConfiguration` objects. |
 | `Set-OPIMConfiguration` | Update | Mandatory `-TenantAlias`; optional `-TenantId`; accepts pipeline input from `Get-OPIM*`. Error if the alias is missing. `ConfirmImpact = 'High'`. |
 | `Remove-OPIMConfiguration` | Delete | Mandatory `-TenantAlias`. Error if the alias or the file is missing. `ConfirmImpact = 'High'`. |
@@ -1440,8 +1446,8 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `Initialize-OPIMAuth` step-up and refresh calls, its error conversion -- instead of testing the
   function at the module boundary. Mock the raw SDK only where the test is about that layer itself
   or the function calls it directly: `Invoke-OPIMGraphRequest.Tests.ps1` (the wrapper, mocked
-  inside `InModuleScope`), `Get-OPIMCurrentTenantInfo.Tests.ps1` (`Invoke-MgGraphRequest` and
-  `Get-MgContext`), `Get-MyId.Tests.ps1` and `Get-OPIMMsalApplication.Tests.ps1` (`Get-MgContext`,
+  inside `InModuleScope`), `Get-OPIMCurrentTenantInfo.Tests.ps1` (`Invoke-MgGraphRequest`, and
+  `Get-MgContext` to prove it is not read), `Get-MyId.Tests.ps1` and `Get-OPIMMsalApplication.Tests.ps1` (`Get-MgContext`,
   which must THROW in the latter -- see below), `Get-OPIMGraphSessionFingerprint.Tests.ps1` and
   `Get-OPIMGraphSessionState.Tests.ps1` (`Get-MgContext`), `Get-OPIMArmRefusal.Tests.ps1` and the
   ARM-gate contexts of the three `*-OPIMAzureRole` test files (`Get-AzContext`),

@@ -16,6 +16,16 @@ Describe 'Set-OPIMConfiguration' {
             return [PSCustomObject]@{ TenantId = '00000000-0000-0000-0000-000000000001'; DisplayName = 'Mock Tenant' }
         }
         $PSDefaultParameterValues['Set-OPIMConfiguration:Confirm'] = $false
+
+        # The "What if:" text of ShouldProcess goes to the host, not to a stream, so it is read back from
+        # a transcript of the call.
+        function Get-WhatIfText {
+            param([scriptblock]$Command)
+            $Path = Join-Path $TestDrive 'whatif-transcript.txt'
+            $null = Start-Transcript -LiteralPath $Path -Force
+            try { $null = & $Command } finally { $null = Stop-Transcript }
+            [System.IO.File]::ReadAllText($Path)
+        }
     }
     AfterAll {
         $null = $PSDefaultParameterValues.Remove('Set-OPIMConfiguration:Confirm')
@@ -405,6 +415,82 @@ Describe 'Set-OPIMConfiguration' {
             Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
             $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000001'"
             $script:writtenContent | Should -Match 'kept-azure-001'
+        }
+    }
+
+    Context 'The display name in the confirmation (OPIM-45)' {
+        # The Describe mock of Get-OPIMCurrentTenantInfo returns the tenant of the module's sign-in,
+        # ...001, with the display name 'Mock Tenant'. Set shows that name only for the tenant it writes.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    contoso  = @{ TenantId = '00000000-0000-0000-0000-000000000001' }
+                    fabrikam = @{ TenantId = '00000000-0000-0000-0000-000000000002' }
+                }
+            }
+        }
+
+        It 'shows the display name when the alias keeps the tenant of the module sign-in' {
+            $Text = Get-WhatIfText { Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Text | Should -Match ([regex]::Escape("Update alias 'contoso' -> tenant 'Mock Tenant' (00000000-0000-0000-0000-000000000001)"))
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
+        }
+
+        It 'shows N/A when -TenantId names another tenant than the module sign-in' {
+            $Text = Get-WhatIfText { Set-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000099' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Text | Should -Match ([regex]::Escape("Update alias 'contoso' -> tenant 'N/A' (00000000-0000-0000-0000-000000000099)"))
+            $Text | Should -Not -Match 'Mock Tenant'
+        }
+
+        It 'shows N/A when the alias keeps another tenant than the module sign-in' {
+            $Text = Get-WhatIfText { Set-OPIMConfiguration -TenantAlias 'fabrikam' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Text | Should -Match ([regex]::Escape("Update alias 'fabrikam' -> tenant 'N/A' (00000000-0000-0000-0000-000000000002)"))
+            $Text | Should -Not -Match 'Mock Tenant'
+        }
+    }
+
+    Context 'When the module holds no sign-in (OPIM-45)' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMCurrentTenantInfo {
+                return [PSCustomObject]@{ TenantId = $null; DisplayName = '' }
+            }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    contoso = @{
+                        TenantId       = '00000000-0000-0000-0000-000000000001'
+                        DirectoryRoles = @('old-role-def-001|/')
+                    }
+                }
+            }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+
+            $script:noSessionRole = [PSCustomObject]@{
+                id               = 'elig-001'
+                roleDefinitionId = 'role-def-001'
+                directoryScopeId = '/'
+            }
+            $script:noSessionRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'writes the piped objects and keeps the stored tenant' {
+            $script:noSessionRole | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errors -WarningVariable Warns -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+            $Errors.Count | Should -Be 0
+            $Warns.Count | Should -Be 0
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000001'"
+            $script:writtenContent | Should -Match ([regex]::Escape("DirectoryRoles = @('role-def-001|/')"))
+        }
+
+        It 'shows N/A in the confirmation' {
+            $Text = Get-WhatIfText { $script:noSessionRole | Set-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Text | Should -Match ([regex]::Escape("Update alias 'contoso' -> tenant 'N/A' (00000000-0000-0000-0000-000000000001)"))
         }
     }
 
