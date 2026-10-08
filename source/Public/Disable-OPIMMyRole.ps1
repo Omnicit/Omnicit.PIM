@@ -8,9 +8,11 @@ function Disable-OPIMMyRole {
     Install-OPIMConfiguration) or an explicit -AllActivated* switch.
 
     When -TenantAlias is used, only roles and groups explicitly defined in the tenant configuration
-    are deactivated. For each configured item that is not currently active a verbose message is
-    written and the item is skipped without error. Categories not listed in the configuration are
-    skipped with a verbose message. A directory role is deactivated only at the scope its entry
+    are deactivated -- except for an alias in the old string form ('alias' = 'tenant id'), which
+    lists no categories and deactivates every active directory role, group and Azure role. For
+    each configured item that is not currently active a verbose message is written and the item
+    is skipped without error. Categories not listed in the configuration are skipped with a
+    verbose message. A directory role is deactivated only at the scope its entry
     names (roleDefinitionId|directoryScopeId); an entry written by 0.5.x holds the roleDefinitionId
     alone and means the role at the root scope '/' only, and an old and a new entry for the same
     role and scope are read once. Each configured item is matched against every active role or
@@ -58,11 +60,12 @@ function Disable-OPIMMyRole {
     .PARAMETER TenantAlias
     Short alias for the target tenant matched against TenantMap.psd1. Run Install-OPIMConfiguration
     to create or update tenant aliases. Only categories explicitly listed in the configuration are
-    deactivated; categories without configuration are skipped. Configured items that are not
-    currently active are written to the verbose stream and skipped. A directory role is deactivated
-    only at its configured scope, and an entry without a scope means the role at '/' only. A
-    configured item that matches more than one active role or group is written as the error
-    AmbiguousName and none of the matches is deactivated.
+    deactivated; categories without configuration are skipped. An alias in the old string form
+    ('alias' = 'tenant id') is the exception and deactivates everything active. Configured items
+    that are not currently active are written to the verbose stream and skipped. A directory role
+    is deactivated only at its configured scope, and an entry without a scope means the role at
+    '/' only. A configured item that matches more than one active role or group is written as the
+    error AmbiguousName and none of the matches is deactivated.
     .PARAMETER AllActivated
     Deactivate all currently active directory roles, Entra ID group assignments, and Azure RBAC
     roles. Requires confirmation per category. Use -Confirm:$false to suppress prompts.

@@ -13,6 +13,11 @@ function Set-OPIMConfiguration {
     list for a category, use Remove-OPIMConfiguration followed by Install-OPIMConfiguration, or
     edit the TenantMap.psd1 file directly.
 
+    An alias in the old string form ('alias' = 'tenant id') is rewritten in the table form, with
+    its tenant kept. From then on pim and unpim act only on the categories it lists, no longer on
+    everything eligible or active, so an alias updated without piped roles or groups activates
+    nothing.
+
     All file operations support -WhatIf and -Confirm.
 
     Use Install-OPIMConfiguration to create a new alias. Set-OPIMConfiguration requires the alias

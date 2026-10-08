@@ -443,8 +443,9 @@ Each entry is a nested hashtable under the alias key. The only required field is
 The role/group arrays are optional, and `pim` and `unpim` act only on what they list: a category
 whose array is missing is skipped, with a verbose message, so an entry with no arrays activates
 **nothing**. To activate everything eligible, use the `-AllEligible*` switches of `pim`
-(`Enable-OPIMMyRole`) instead; an alias written in the old string form, `'alias' = '<tenant id>'`,
-also activates everything eligible.
+(`Enable-OPIMMyRole`) instead. The exception is an alias written in the old string form,
+`'alias' = '<tenant id>'`: `pim` activates everything eligible for it and `unpim` deactivates
+everything active, until `Set-OPIMConfiguration` rewrites it in the table form.
 
 ```powershell
 @{
