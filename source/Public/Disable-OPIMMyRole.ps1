@@ -10,7 +10,12 @@ function Disable-OPIMMyRole {
     When -TenantAlias is used, only roles and groups explicitly defined in the tenant configuration
     are deactivated. For each configured item that is not currently active a verbose message is
     written and the item is skipped without error. Categories not listed in the configuration are
-    skipped with a verbose message.
+    skipped with a verbose message. Each configured item is matched against every active role or
+    group: an item that matches more than one is refused with AmbiguousName, which lists the active
+    roles or groups it matches, and none of them is deactivated; the next item still runs. To
+    deactivate one of them, use Disable-OPIMDirectoryRole, Disable-OPIMEntraIDGroup or
+    Disable-OPIMAzureRole with its tab-completed form. Only activations are active here: a permanent
+    assignment is no activation and is never deactivated.
 
     When an -AllActivated* switch is used without -TenantAlias, all currently active assignments
     in the selected categories are deactivated. Confirmation is required -- use -WhatIf to preview
@@ -51,7 +56,9 @@ function Disable-OPIMMyRole {
     Short alias for the target tenant matched against TenantMap.psd1. Run Install-OPIMConfiguration
     to create or update tenant aliases. Only categories explicitly listed in the configuration are
     deactivated; categories without configuration are skipped. Configured items that are not
-    currently active are written to the verbose stream and skipped.
+    currently active are written to the verbose stream and skipped. A configured item that matches
+    more than one active role or group is written as the error AmbiguousName and none of the
+    matches is deactivated.
     .PARAMETER AllActivated
     Deactivate all currently active directory roles, Entra ID group assignments, and Azure RBAC
     roles. Requires confirmation per category. Use -Confirm:$false to suppress prompts.
@@ -188,9 +195,13 @@ function Disable-OPIMMyRole {
                     if ($Config -is [hashtable] -and $Config.DirectoryRoles) {
                         Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($Config.DirectoryRoles.Count) configured role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
                         foreach ($ConfiguredRoleId in $Config.DirectoryRoles) {
-                            $ActiveRole = $ActiveDirectoryRoles | Where-Object { $_.roleDefinitionId -eq $ConfiguredRoleId } | Select-Object -First 1
-                            if ($ActiveRole) {
-                                $ActiveRole | Disable-OPIMDirectoryRole | ConvertTo-OPIMMyRoleResult
+                            $ActiveMatches = @($ActiveDirectoryRoles | Where-Object { $_.roleDefinitionId -eq $ConfiguredRoleId })
+                            if ($ActiveMatches.Count -gt 1) {
+                                # OPIM-17: an entry that matches several active posts names none of them.
+                                $PSCmdlet.WriteError((New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Directory `
+                                    -Name $ConfiguredRoleId -Status Active -Candidate $ActiveMatches -Configuration))
+                            } elseif ($ActiveMatches.Count -eq 1) {
+                                $ActiveMatches[0] | Disable-OPIMDirectoryRole | ConvertTo-OPIMMyRoleResult
                             } else {
                                 Write-Verbose "Directory role '$ConfiguredRoleId' is not currently activated. No deactivation needed."
                             }
@@ -247,9 +258,13 @@ function Disable-OPIMMyRole {
                     if ($Config -is [hashtable] -and $Config.EntraIDGroups) {
                         Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($Config.EntraIDGroups.Count) configured group(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
                         foreach ($ConfiguredGroupKey in $Config.EntraIDGroups) {
-                            $ActiveGroup = $ActiveGroups | Where-Object { "$($_.groupId)_$($_.accessId)" -eq $ConfiguredGroupKey } | Select-Object -First 1
-                            if ($ActiveGroup) {
-                                $ActiveGroup | Disable-OPIMEntraIDGroup | ConvertTo-OPIMMyRoleResult
+                            $ActiveMatches = @($ActiveGroups | Where-Object { "$($_.groupId)_$($_.accessId)" -eq $ConfiguredGroupKey })
+                            if ($ActiveMatches.Count -gt 1) {
+                                # OPIM-17: an entry that matches several active posts names none of them.
+                                $PSCmdlet.WriteError((New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Group `
+                                    -Name $ConfiguredGroupKey -Status Active -Candidate $ActiveMatches -Configuration))
+                            } elseif ($ActiveMatches.Count -eq 1) {
+                                $ActiveMatches[0] | Disable-OPIMEntraIDGroup | ConvertTo-OPIMMyRoleResult
                             } else {
                                 Write-Verbose "Entra ID group '$ConfiguredGroupKey' is not currently activated. No deactivation needed."
                             }
@@ -313,12 +328,16 @@ function Disable-OPIMMyRole {
                     if ($Config -is [hashtable] -and $Config.AzureRoles) {
                         Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($Config.AzureRoles.Count) configured role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
                         foreach ($EligibleRole in $ConfiguredEligible) {
-                            $ActiveRole = $ActiveAzureRoles | Where-Object {
-                                $_.RoleDefinitionId -eq $EligibleRole.RoleDefinitionId -and
-                                $_.ScopeId -eq $EligibleRole.ScopeId
-                            } | Select-Object -First 1
-                            if ($ActiveRole) {
-                                $ActiveRole | Disable-OPIMAzureRole | ConvertTo-OPIMMyRoleResult
+                            $ActiveMatches = @($ActiveAzureRoles | Where-Object {
+                                    $_.RoleDefinitionId -eq $EligibleRole.RoleDefinitionId -and
+                                    $_.ScopeId -eq $EligibleRole.ScopeId
+                                })
+                            if ($ActiveMatches.Count -gt 1) {
+                                # OPIM-17: an entry that matches several active posts names none of them.
+                                $PSCmdlet.WriteError((New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Azure `
+                                    -Name $EligibleRole.Name -Status Active -Candidate $ActiveMatches -Configuration))
+                            } elseif ($ActiveMatches.Count -eq 1) {
+                                $ActiveMatches[0] | Disable-OPIMAzureRole | ConvertTo-OPIMMyRoleResult
                             } else {
                                 Write-Verbose "Azure role '$($EligibleRole.RoleDefinitionDisplayName)' on '$($EligibleRole.ScopeDisplayName)' is not currently activated. No deactivation needed."
                             }

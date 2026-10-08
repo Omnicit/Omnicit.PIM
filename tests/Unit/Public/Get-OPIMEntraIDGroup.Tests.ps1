@@ -61,12 +61,15 @@ Describe 'Get-OPIMEntraIDGroup' {
                 return @{
                     value = @(
                         @{
-                            id          = 'active-001'
-                            accessId    = 'member'
-                            groupId     = 'group-001'
-                            principalId = 'principal-001'
-                            group       = @{ displayName = 'PIM Admins' }
-                            principal   = @{ displayName = 'Jane Doe' }
+                            id             = 'active-001'
+                            accessId       = 'member'
+                            assignmentType = 'Activated'
+                            memberType     = 'Direct'
+                            endDateTime    = '2026-10-08T12:00:00Z'
+                            groupId        = 'group-001'
+                            principalId    = 'principal-001'
+                            group          = @{ displayName = 'PIM Admins' }
+                            principal      = @{ displayName = 'Jane Doe' }
                         }
                     )
                 }
@@ -117,6 +120,100 @@ Describe 'Get-OPIMEntraIDGroup' {
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
                 $Uri -like '*assignmentScheduleInstances*' -and $Uri -like '*filterByCurrentUser*'
             }
+        }
+    }
+
+    Context 'When the instances hold a permanent assignment beside an activation (OPIM-17)' {
+        # assignmentScheduleInstances lists a time-bound activation (assignmentType activated) and a
+        # permanent assignment (assigned) alike. Only the activation is the user's to deactivate, so
+        # only it is listed. Graph's own spelling is kept in the fakes; the comparison ignores case.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                return @{
+                    value = @(
+                        @{
+                            id = 'active-g1'; accessId = 'member'; assignmentType = 'activated'; memberType = 'direct'
+                            endDateTime = '2026-10-08T12:00:00Z'; groupId = 'group-001'; principalId = 'principal-001'
+                            group = @{ displayName = 'PIM Admins' }; principal = @{ displayName = 'Jane Doe' }
+                        },
+                        @{
+                            id = 'perm-g1'; accessId = 'member'; assignmentType = 'assigned'; memberType = 'direct'
+                            endDateTime = $null; groupId = 'group-002'; principalId = 'principal-001'
+                            group = @{ displayName = 'Permanent Members' }; principal = @{ displayName = 'Jane Doe' }
+                        },
+                        @{
+                            id = 'active-g2'; accessId = 'owner'; assignmentType = 'Activated'; memberType = 'direct'
+                            endDateTime = '2026-10-08T12:00:00Z'; groupId = 'group-001'; principalId = 'principal-001'
+                            group = @{ displayName = 'PIM Admins' }; principal = @{ displayName = 'Jane Doe' }
+                        }
+                    )
+                }
+            } -ParameterFilter { $Uri -like '*assignmentScheduleInstances*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                return @{
+                    value = @(
+                        @{
+                            id = 'elig-g1'; accessId = 'member'; memberType = 'direct'; groupId = 'group-001'
+                            principalId = 'principal-001'; group = @{ displayName = 'PIM Admins' }; principal = @{ displayName = 'Jane Doe' }
+                        }
+                    )
+                }
+            } -ParameterFilter { $Uri -like '*eligibilitySchedules*' }
+        }
+
+        It 'returns only the activations with -Activated, the lower case spelling included' {
+            $Result = @(Get-OPIMEntraIDGroup -Activated)
+            ($Result | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'active-g1,active-g2'
+        }
+
+        It 'lists only the activations in the Active rows of -All' {
+            $Result = @(Get-OPIMEntraIDGroup -All)
+            ($Result | Where-Object Status -EQ 'Active' | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'active-g1,active-g2'
+        }
+
+        It 'leaves the Eligible rows of -All as they are' {
+            $Result = @(Get-OPIMEntraIDGroup -All)
+            ($Result | Where-Object Status -EQ 'Eligible' | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'elig-g1'
+        }
+
+        It 'lists only the activations in the Active rows of -Identity' {
+            $Result = @(Get-OPIMEntraIDGroup -Identity 'active-g1')
+            ($Result | Where-Object Status -EQ 'Active' | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'active-g1,active-g2'
+            ($Result | Where-Object Status -EQ 'Eligible' | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'elig-g1'
+        }
+
+        It 'lists only the activations in the Active rows of -Filter' {
+            $Result = @(Get-OPIMEntraIDGroup -Filter "groupId eq 'group-001'")
+            ($Result | Where-Object Status -EQ 'Active' | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'active-g1,active-g2'
+            ($Result | Where-Object Status -EQ 'Eligible' | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'elig-g1'
+        }
+
+        It 'lists only the activations with -Activated -Identity' {
+            $Result = @(Get-OPIMEntraIDGroup -Activated -Identity 'active-g1')
+            ($Result | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'active-g1,active-g2'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Exactly -Scope It -ParameterFilter {
+                $Uri -like '*eligibilitySchedules*'
+            }
+        }
+
+        It 'lists only the activations with -Activated -Filter' {
+            $Result = @(Get-OPIMEntraIDGroup -Activated -Filter "groupId eq 'group-001'")
+            ($Result | ForEach-Object { $_.id }) -join ',' | Should -BeExactly 'active-g1,active-g2'
+        }
+
+        It 'returns nothing when the only instance is a permanent assignment' {
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                return @{
+                    value = @(
+                        @{
+                            id = 'perm-g2'; accessId = 'member'; assignmentType = 'assigned'; groupId = 'group-002'
+                            group = @{ displayName = 'Permanent Members' }
+                        }
+                    )
+                }
+            } -ParameterFilter { $Uri -like '*assignmentScheduleInstances*' }
+            @(Get-OPIMEntraIDGroup -Activated).Count | Should -Be 0
         }
     }
 
@@ -275,12 +372,15 @@ Describe 'Get-OPIMEntraIDGroup' {
                 return @{
                     value = @(
                         @{
-                            id          = 'active-001'
-                            accessId    = 'member'
-                            groupId     = 'group-001'
-                            principalId = 'principal-001'
-                            group       = @{ displayName = 'PIM Admins' }
-                            principal   = @{ displayName = 'Jane Doe' }
+                            id             = 'active-001'
+                            accessId       = 'member'
+                            assignmentType = 'Activated'
+                            memberType     = 'Direct'
+                            endDateTime    = '2026-10-08T12:00:00Z'
+                            groupId        = 'group-001'
+                            principalId    = 'principal-001'
+                            group          = @{ displayName = 'PIM Admins' }
+                            principal      = @{ displayName = 'Jane Doe' }
                         }
                     )
                 }

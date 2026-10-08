@@ -14,7 +14,9 @@ function New-OPIMScheduleNameError {
     access type and the caller offers it, and otherwise the tab-completed form. With -Status Both
     an eligible and an active post for one name are two states of the same thing, so the candidates
     differ in scope (or access type) when they do within each state. It never names one of the
-    candidates as the answer.
+    candidates as the answer. With -Configuration the value is an entry of a tenant alias, not a
+    name: the message says so, and the hint names the Disable- cmdlet of the pillar and its
+    tab-completed form, since an entry offers neither -Scope nor -AccessType.
 
     EligibleRoleNotFound and ActiveRoleNotFound (category ObjectNotFound) say that no eligible (or
     active) post matches the name, and add what the caller found out: the access type the name
@@ -61,6 +63,14 @@ function New-OPIMScheduleNameError {
     use one of them (to deactivate it, or to list it with -Activated). It takes the place of
     -AlreadyInactive: a post that is active is never also called deactivated.
 
+    .PARAMETER Configuration
+    For AmbiguousName: the value is a configured entry of a tenant alias (TenantMap.psd1), not a name
+    typed by the user. The message says "configured entry" instead of "name", and the hint reads
+    "Deactivate the one you mean with" the Disable- cmdlet of the pillar (Disable-OPIMDirectoryRole,
+    Disable-OPIMEntraIDGroup or Disable-OPIMAzureRole) "and its tab-completed form, as listed.",
+    whatever filter parameters the caller offers. It changes nothing in the records that find
+    nothing.
+
     .EXAMPLE
     New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Azure -Name 'Reader' -Candidate $Found -FilterParameter Scope
 
@@ -80,12 +90,14 @@ function New-OPIMScheduleNameError {
         [ValidateSet('member', 'owner')][string]$OtherAccessType,
         [AllowEmptyCollection()][object[]]$OtherScope = @(),
         [switch]$AlreadyInactive,
-        [AllowEmptyCollection()][object[]]$ActiveForm = @()
+        [AllowEmptyCollection()][object[]]$ActiveForm = @(),
+        [switch]$Configuration
     )
     $Noun = @{ Directory = 'directory role'; Group = 'group assignment'; Azure = 'Azure role' }[$Pillar]
     $Listing = @{ Directory = 'Get-OPIMDirectoryRole'; Group = 'Get-OPIMEntraIDGroup'; Azure = 'Get-OPIMAzureRole' }[$Pillar]
+    $Disabler = @{ Directory = 'Disable-OPIMDirectoryRole'; Group = 'Disable-OPIMEntraIDGroup'; Azure = 'Disable-OPIMAzureRole' }[$Pillar]
     $State = @{ Eligible = 'eligible'; Active = 'active'; Both = 'eligible or active' }[$Status]
-    $What = if ($Identity) { 'identity' } else { 'name' }
+    $What = if ($Identity) { 'identity' } elseif ($Configuration -and $ErrorId -eq 'AmbiguousName') { 'configured entry' } else { 'name' }
     $Describe = {
         param($Post)
         $Names = Get-OPIMScheduleName -Pillar $Pillar -InputObject $Post
@@ -111,7 +123,11 @@ function New-OPIMScheduleNameError {
             }
             $true
         }
-        $Hint = if ($Pillar -ne 'Group' -and $FilterParameter -contains 'Scope' -and (& $Distinct 'ScopeId')) {
+        $Hint = if ($Configuration) {
+            # A configured entry offers no -Scope and no -AccessType: the user deactivates the one
+            # they mean with the Disable- cmdlet itself, by its old form as listed.
+            "Deactivate the one you mean with $Disabler and its tab-completed form, as listed."
+        } elseif ($Pillar -ne 'Group' -and $FilterParameter -contains 'Scope' -and (& $Distinct 'ScopeId')) {
             'They differ in scope: add -Scope with the scope of the one you mean, or give its tab-completed form as listed.'
         } elseif ($Pillar -eq 'Group' -and $FilterParameter -contains 'AccessType' -and (& $Distinct 'AccessId')) {
             'They differ in access type: add -AccessType Member or -AccessType Owner, or give its tab-completed form as listed.'

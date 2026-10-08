@@ -683,6 +683,211 @@ Describe 'Disable-OPIMMyRole' {
         }
     }
 
+    Context 'When a configured entry matches several active posts (OPIM-17)' {
+        # Every configured entry is matched against every active post -- no first match. An entry that
+        # matches more than one names none of them: it is written as AmbiguousName and deactivates
+        # nothing, and the next entry still runs. The listings return what -Activated returns: only
+        # activations.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    dirambig = @{ TenantId = '00000000-0000-0000-0000-000000000006'; DirectoryRoles = @('role-def-001', 'role-def-002') }
+                    dirone   = @{ TenantId = '00000000-0000-0000-0000-000000000006'; DirectoryRoles = @('role-def-002') }
+                    grpambig = @{ TenantId = '00000000-0000-0000-0000-000000000006'; EntraIDGroups = @('group-001_member', 'group-002_member') }
+                    grpone   = @{ TenantId = '00000000-0000-0000-0000-000000000006'; EntraIDGroups = @('group-002_member') }
+                    azambig  = @{ TenantId = '00000000-0000-0000-0000-000000000006'; AzureRoles = @('elig-az-001', 'elig-az-002') }
+                    azone    = @{ TenantId = '00000000-0000-0000-0000-000000000006'; AzureRoles = @('elig-az-002') }
+                }
+            }
+
+            # memberType, assignmentType and endDateTime are set as Graph sets them: the types'
+            # ScriptProperties of those names read $this.<name>.
+            $DirectoryRoot = [PSCustomObject]@{
+                id = 'active-dir-a1'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'
+                memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T12:00:00Z'
+                roleDefinition = [PSCustomObject]@{ displayName = 'Global Administrator' }
+            }
+            $DirectoryAu = [PSCustomObject]@{
+                id = 'active-dir-a2'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/administrativeUnits/au-001'
+                directoryScope = [PSCustomObject]@{ displayName = 'Sales AU' }
+                memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T12:00:00Z'
+                roleDefinition = [PSCustomObject]@{ displayName = 'Global Administrator' }
+            }
+            $DirectoryOther = [PSCustomObject]@{
+                id = 'active-dir-c'; roleDefinitionId = 'role-def-002'; directoryScopeId = '/'
+                memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T12:00:00Z'
+                roleDefinition = [PSCustomObject]@{ displayName = 'User Administrator' }
+            }
+            foreach ($Post in @($DirectoryRoot, $DirectoryAu, $DirectoryOther)) {
+                $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleInstance')
+            }
+            $GroupFirst = [PSCustomObject]@{
+                id = 'active-grp-a1'; groupId = 'group-001'; accessId = 'member'
+                memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T12:00:00Z'
+                group = [PSCustomObject]@{ displayName = 'PIM Admins' }
+            }
+            $GroupSecond = [PSCustomObject]@{
+                id = 'active-grp-a2'; groupId = 'group-001'; accessId = 'member'
+                memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T14:00:00Z'
+                group = [PSCustomObject]@{ displayName = 'PIM Admins' }
+            }
+            $GroupOther = [PSCustomObject]@{
+                id = 'active-grp-c'; groupId = 'group-002'; accessId = 'member'
+                memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T12:00:00Z'
+                group = [PSCustomObject]@{ displayName = 'Ops Group' }
+            }
+            foreach ($Post in @($GroupFirst, $GroupSecond, $GroupOther)) {
+                $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleInstance')
+            }
+            $EligibleOne = [PSCustomObject]@{
+                Name = 'elig-az-001'; ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'ProdSub'
+                RoleDefinitionId = 'role-az-001'; RoleDefinitionDisplayName = 'Contributor'
+            }
+            $EligibleTwo = [PSCustomObject]@{
+                Name = 'elig-az-002'; ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'ProdSub'
+                RoleDefinitionId = 'role-az-002'; RoleDefinitionDisplayName = 'Reader'
+            }
+            $AzureFirst = [PSCustomObject]@{
+                Name = 'az-active-a1'; ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'ProdSub'
+                RoleDefinitionId = 'role-az-001'; RoleDefinitionDisplayName = 'Contributor'
+            }
+            $AzureSecond = [PSCustomObject]@{
+                Name = 'az-active-a2'; ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'ProdSub'
+                RoleDefinitionId = 'role-az-001'; RoleDefinitionDisplayName = 'Contributor'
+            }
+            $AzureOther = [PSCustomObject]@{
+                Name = 'az-active-c'; ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'ProdSub'
+                RoleDefinitionId = 'role-az-002'; RoleDefinitionDisplayName = 'Reader'
+            }
+            foreach ($Post in @($EligibleOne, $EligibleTwo)) { $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule') }
+            foreach ($Post in @($AzureFirst, $AzureSecond, $AzureOther)) { $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance') }
+
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @($DirectoryRoot, $DirectoryAu, $DirectoryOther) } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @($GroupFirst, $GroupSecond, $GroupOther) } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($EligibleOne, $EligibleTwo) } -ParameterFilter { -not $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($AzureFirst, $AzureSecond, $AzureOther) } -ParameterFilter { $Activated }
+        }
+
+        Context 'a directory role entry' {
+            It 'deactivates none of the posts that the entry matches' {
+                Disable-OPIMMyRole -TenantAlias 'dirambig' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction SilentlyContinue
+                Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 0 -Exactly -Scope It -ParameterFilter {
+                    $Role.roleDefinitionId -eq 'role-def-001'
+                }
+            }
+
+            It 'writes one AmbiguousName that names both posts and says configured entry' {
+                $Out = Disable-OPIMMyRole -TenantAlias 'dirambig' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction Continue 2>&1
+                $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Written.Count | Should -Be 1
+                $Written[0].FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
+                $Written[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidArgument)
+                $Written[0].Exception.Message | Should -BeExactly (
+                    "The configured entry 'role-def-001' matches 2 active directory roles, so it names none of them: " +
+                    "'Global Administrator (active-dir-a1)' at scope '/'; " +
+                    "'Global Administrator -> Sales AU (active-dir-a2)' at scope '/administrativeUnits/au-001'. " +
+                    'Deactivate the one you mean with Disable-OPIMDirectoryRole and its tab-completed form, as listed.')
+            }
+
+            It 'goes on with the next entry, which matches one post, and deactivates that post' {
+                Disable-OPIMMyRole -TenantAlias 'dirambig' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction SilentlyContinue
+                Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Role.id -eq 'active-dir-c'
+                }
+            }
+
+            It 'deactivates the one post that an entry matches, and writes no error' {
+                $Out = Disable-OPIMMyRole -TenantAlias 'dirone' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction Continue 2>&1
+                @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+                Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Role.id -eq 'active-dir-c'
+                }
+            }
+        }
+
+        Context 'a group entry' {
+            It 'deactivates none of the posts that the entry matches' {
+                Disable-OPIMMyRole -TenantAlias 'grpambig' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction SilentlyContinue
+                Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMEntraIDGroup -Times 0 -Exactly -Scope It -ParameterFilter {
+                    $Group.groupId -eq 'group-001'
+                }
+            }
+
+            It 'writes one AmbiguousName that names both posts and says configured entry' {
+                $Out = Disable-OPIMMyRole -TenantAlias 'grpambig' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction Continue 2>&1
+                $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Written.Count | Should -Be 1
+                $Written[0].FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
+                $Written[0].Exception.Message | Should -BeExactly (
+                    "The configured entry 'group-001_member' matches 2 active group assignments, so it names none of them: " +
+                    "'PIM Admins - member (active-grp-a1)'; 'PIM Admins - member (active-grp-a2)'. " +
+                    'Deactivate the one you mean with Disable-OPIMEntraIDGroup and its tab-completed form, as listed.')
+            }
+
+            It 'goes on with the next entry, which matches one post, and deactivates that post' {
+                Disable-OPIMMyRole -TenantAlias 'grpambig' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction SilentlyContinue
+                Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMEntraIDGroup -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMEntraIDGroup -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Group.id -eq 'active-grp-c'
+                }
+            }
+
+            It 'deactivates the one post that an entry matches, and writes no error' {
+                $Out = Disable-OPIMMyRole -TenantAlias 'grpone' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction Continue 2>&1
+                @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+                Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMEntraIDGroup -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Group.id -eq 'active-grp-c'
+                }
+            }
+        }
+
+        Context 'an Azure role entry' {
+            It 'deactivates none of the posts that the entry matches' {
+                Disable-OPIMMyRole -TenantAlias 'azambig' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction SilentlyContinue
+                Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 0 -Exactly -Scope It -ParameterFilter {
+                    $Role.RoleDefinitionId -eq 'role-az-001'
+                }
+            }
+
+            It 'writes one AmbiguousName that names the eligible role and both posts and says configured entry' {
+                $Out = Disable-OPIMMyRole -TenantAlias 'azambig' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction Continue 2>&1
+                $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Written.Count | Should -Be 1
+                $Written[0].FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
+                $Written[0].Exception.Message | Should -BeExactly (
+                    "The configured entry 'elig-az-001' matches 2 active Azure roles, so it names none of them: " +
+                    "'Contributor -> ProdSub (az-active-a1)' at scope '/subscriptions/sub-001'; " +
+                    "'Contributor -> ProdSub (az-active-a2)' at scope '/subscriptions/sub-001'. " +
+                    'Deactivate the one you mean with Disable-OPIMAzureRole and its tab-completed form, as listed.')
+            }
+
+            It 'goes on with the next entry, which matches one post, and deactivates that post' {
+                Disable-OPIMMyRole -TenantAlias 'azambig' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction SilentlyContinue
+                Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Role.Name -eq 'az-active-c'
+                }
+            }
+
+            It 'deactivates the one post that an entry matches, and writes no error' {
+                $Out = Disable-OPIMMyRole -TenantAlias 'azone' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction Continue 2>&1
+                @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+                Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Role.Name -eq 'az-active-c'
+                }
+            }
+        }
+
+        It 'writes the ambiguity as an error and ends the command under -ErrorAction Stop, before anything is deactivated' {
+            { Disable-OPIMMyRole -TenantAlias 'dirambig' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction Stop } |
+                Should -Throw -ExpectedMessage "The configured entry 'role-def-001' matches 2*"
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 0 -Exactly -Scope It
+        }
+    }
+
     Context 'When called with -TenantAlias pointing to a hashtable config with no category lists' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Connect-OPIM {}

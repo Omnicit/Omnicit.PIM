@@ -945,12 +945,24 @@ expand `group,principal`.
   active post carries the same label under another key, when it names that active form instead.
 - An eligible-only object piped in is skipped with a verbose message.
 - `-WhatIf` / `-Confirm` through `[CmdletBinding(SupportsShouldProcess)]`.
+- `Disable-OPIMMyRole -TenantAlias` matches every configured entry of a hashtable alias against
+  every active post (the `-Activated` listings, so activations only) -- never the first match. An
+  entry that matches more than one is refused: `AmbiguousName`, built by
+  `New-OPIMScheduleNameError ... -Configuration` (the message says "configured entry", and the hint
+  names `Disable-OPIM<Noun>` and the tab-completed form) and written non-terminating, and none of
+  its matches is deactivated; the next entry still runs (OPIM-17).
 
 **`Get-OPIM*`:**
 
-- `-Activated` [switch] -- active instances instead of eligibility schedules.
+- `-Activated` [switch] -- active, time-bound activations (`assignmentType` Activated) only -- no
+  permanent assignments, on all three pillars -- instead of eligibility schedules. Graph lists a
+  permanent assignment (`Assigned`) among the instances; `Get-OPIMDirectoryRole` and
+  `Get-OPIMEntraIDGroup` drop it before any scope lookup (OPIM-17), since the user cannot
+  self-deactivate it, and `Get-OPIMAzureRole` already keeps only `AssignmentType` `Activated`.
+  The resolver lists through `-Activated`, so a name never finds a permanent assignment either.
 - `-All` [switch] -- BOTH eligible and active in one call, tagged `Omnicit.PIM.*CombinedSchedule`
-  with a `Status` column. Mutually exclusive with `-Activated`.
+  with a `Status` column; the active rows are activations only, as with `-Activated`. Mutually
+  exclusive with `-Activated`.
 - `-RoleName` / `-GroupName` (position 0) -- a display name or the old tab-completed form, resolved
   like on the `Enable-` cmdlets (`Status` `Both`, or `Active` with `-Activated`): the eligible and
   the active post of the name, or only the active one with `-Activated`. Several matches are
@@ -1165,7 +1177,9 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `ThrowTerminatingError`, and the pillar cmdlet's catch writes them (non-terminating), so a name
   that cannot be resolved ends neither the pipeline nor the next name. `IdentityNotFound` stays the
   id for an `-Identity` that matches nothing; an `-Identity` that matches several is written as
-  `AmbiguousName` (the message says "identity"), and the cmdlet returns without acting.
+  `AmbiguousName` (the message says "identity"), and the cmdlet returns without acting. An entry of
+  a tenant alias that matches several active posts is written by `Disable-OPIMMyRole` as the same
+  `AmbiguousName`, built with `-Configuration` (the message says "configured entry").
 - **Request status has one owner.** `Get-OPIMRequestOutcome` classifies a status (Succeeded,
   InProgress, AwaitingDecision, Failed; table in its help; `-Deactivate` for SelfDeactivate, whose
   success is `Revoked`); `Write-OPIMRequestOutcome` writes the status back onto the request and

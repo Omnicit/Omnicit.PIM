@@ -121,7 +121,12 @@ LONG DESCRIPTION
     ends in a slash is refused; only the root scope is written '/'. A group name means the
     membership, and -AccessType Owner names the ownership. Two groups with the same display name
     are refused as well: give the tab-completed form of the one you mean, which is also the way
-    out everywhere else. An -Identity that matches more than one schedule is refused the same way.
+    out everywhere else. An -Identity that matches more than one schedule is refused the same way,
+    and so is an entry of a tenant alias that matches more than one active role or group when
+    Disable-OPIMMyRole (unpim) reads it: that entry deactivates none of them.
+
+    -Activated lists your activations only: the active, time-bound assignments. A permanent
+    assignment is no activation and cannot be deactivated by you, so it is not listed.
 
     A name that matches nothing is written as EligibleRoleNotFound (ActiveRoleNotFound when
     deactivating). Deactivating a role that is eligible but not active says so (it is already
