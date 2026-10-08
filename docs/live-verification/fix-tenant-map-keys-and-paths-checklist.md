@@ -271,7 +271,7 @@ $Role = @(Get-OPIMDirectoryRole -ErrorAction Stop | Where-Object { $_.roleDefini
 if ($Role.Count -ne 1) { throw "Expected one eligible Usage Summary Reports Reader, found $($Role.Count)." }
 $AtUnit = [PSCustomObject]@{ roleDefinitionId = $Role[0].roleDefinitionId; directoryScopeId = '/administrativeUnits/00000000-0000-0000-0000-000000000001' }
 $AtUnit.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
-$AtUnit | Install-OPIMConfiguration -TenantAlias 's15b-au' -TenantMapPath $Map -Confirm:$false
+if (-not (Import-PowerShellDataFile -LiteralPath $Map).ContainsKey('s15b-au')) { $AtUnit | Install-OPIMConfiguration -TenantAlias 's15b-au' -TenantMapPath $Map -Confirm:$false }
 $Before = @(Get-OPIMDirectoryRole -Activated -ErrorAction Stop).Count
 $All = @(Enable-OPIMMyRole -TenantAlias 's15b-au' -TenantMapPath $Map -Justification 'Omnicit.PIM live verification (opim-s15b)' 2>&1 3>&1)
 $Out = @($All | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
@@ -336,9 +336,11 @@ $Map = Join-Path (Get-Location).Path 'docs/live-verification/raw/opim-s15b/Tenan
 $Target = Get-OpimLiveTarget
 $Role = @(Get-OPIMDirectoryRole -ErrorAction Stop | Where-Object { $_.roleDefinition.displayName -eq 'Message Center Privacy Reader' })
 if ($Role.Count -ne 1) { throw "Expected one eligible Message Center Privacy Reader, found $($Role.Count)." }
-$Lines = [System.Collections.Generic.List[string]]::new([string[]](Get-Content -LiteralPath $Map))
-$Lines.Insert($Lines.LastIndexOf('}'), "    's15b-old' = @{ TenantId = '$($Target.TenantId)'; DirectoryRoles = @('$($Role[0].roleDefinitionId)') }")
-Set-Content -LiteralPath $Map -Value $Lines -Encoding utf8NoBOM
+if (-not (Import-PowerShellDataFile -LiteralPath $Map).ContainsKey('s15b-old')) {
+    $Lines = [System.Collections.Generic.List[string]]::new([string[]](Get-Content -LiteralPath $Map))
+    $Lines.Insert($Lines.LastIndexOf('}'), "    's15b-old' = @{ TenantId = '$($Target.TenantId)'; DirectoryRoles = @('$($Role[0].roleDefinitionId)') }")
+    Set-Content -LiteralPath $Map -Value $Lines -Encoding utf8NoBOM
+}
 "The entry holds no scope: $(-not ([string]@((Import-PowerShellDataFile -LiteralPath $Map)['s15b-old'].DirectoryRoles)[0]).Contains('|'))"
 $All1 = @(Enable-OPIMMyRole -TenantAlias 's15b-old' -TenantMapPath $Map -Justification 'Omnicit.PIM live verification (opim-s15b)' 2>&1 3>&1)
 $Out1 = @($All1 | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
@@ -374,9 +376,11 @@ if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built
 if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
 $Map = Join-Path (Get-Location).Path 'docs/live-verification/raw/opim-s15b/TenantMap.psd1'
 $Target = Get-OpimLiveTarget
-$Lines = [System.Collections.Generic.List[string]]::new([string[]](Get-Content -LiteralPath $Map))
-$Lines.Insert($Lines.LastIndexOf('}'), "    's15b-str' = '$($Target.TenantId)'")
-Set-Content -LiteralPath $Map -Value $Lines -Encoding utf8NoBOM
+if (-not (Import-PowerShellDataFile -LiteralPath $Map).ContainsKey('s15b-str')) {
+    $Lines = [System.Collections.Generic.List[string]]::new([string[]](Get-Content -LiteralPath $Map))
+    $Lines.Insert($Lines.LastIndexOf('}'), "    's15b-str' = '$($Target.TenantId)'")
+    Set-Content -LiteralPath $Map -Value $Lines -Encoding utf8NoBOM
+}
 Get-OPIMDirectoryRole -ErrorAction Stop | Where-Object { $_.roleDefinition.displayName -eq 'Usage Summary Reports Reader' } | Set-OPIMConfiguration -TenantAlias 's15b-str' -TenantMapPath $Map -Confirm:$false
 $Entry = (Import-PowerShellDataFile -LiteralPath $Map)['s15b-str']
 "The alias is now a table: $($Entry -is [hashtable])"
