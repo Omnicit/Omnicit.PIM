@@ -199,6 +199,10 @@ Enable-OPIMAzureRole 'Contributor -> My Subscription (elig-name)' 'Incident resp
 # Activate by schedule Name (the Name property from Get-OPIMAzureRole)
 Enable-OPIMAzureRole -Identity 'elig-schedule-name'
 
+# Schedule an activation: -NotBefore is sent to Azure as the start (a time without an offset is
+# local time), and a start in the future is reported as a scheduled activation (ScheduleCreated)
+Enable-OPIMAzureRole 'Reader' -Scope '/subscriptions/00000000-0000-0000-0000-000000000000' -NotBefore '4pm' -Until '6pm'
+
 # Deactivate by display name, or by schedule instance Name (from Get-OPIMAzureRole -Activated)
 Disable-OPIMAzureRole 'Reader' -Scope '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-app'
 Disable-OPIMAzureRole -Identity 'active-schedule-name'

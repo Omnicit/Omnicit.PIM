@@ -31,6 +31,10 @@ function Enable-OPIMAzureRole {
     Enable-OPIMAzureRole 'Reader', 'Contributor' -Scope '/subscriptions/00000000-0000-0000-0000-000000000000'
     Activates both roles at that subscription. Each name is resolved on its own.
     .EXAMPLE
+    Enable-OPIMAzureRole 'Reader' -Scope '/subscriptions/00000000-0000-0000-0000-000000000000' -NotBefore '4pm' -Until '6pm'
+    Schedules Reader at that subscription from 4pm to 6pm local time today. The start is sent to Azure
+    in UTC, and the request comes back as a scheduled activation (ScheduleCreated).
+    .EXAMPLE
     Enable-OPIMAzureRole <tab>
     Tab complete all eligible Azure roles. A name that is unique is offered bare; one that is not is
     offered in the longer form.
@@ -59,7 +63,9 @@ function Enable-OPIMAzureRole {
     .PARAMETER Hours
     Activation duration in hours. Defaults to 1. Ignored when -Until is specified.
     .PARAMETER NotBefore
-    Date and time when the role activation begins. Defaults to the current date and time.
+    Date and time when the role activation begins, sent to Azure. Defaults to now. A time without an
+    offset, such as '4pm', is local time. A start in the future makes a scheduled activation
+    (ScheduleCreated), reported as a success.
     .PARAMETER Until
     Explicit end date and time for the activation. Takes precedence over -Hours when specified.
     Aliased as -NotAfter.
@@ -170,12 +176,18 @@ function Enable-OPIMAzureRole {
 
             if ($Until) {
                 $RoleActivateParams.ExpirationType         = 'AfterDateTime'
-                $RoleActivateParams.ExpirationEndDateTime  = $Until
+                $RoleActivateParams.ExpirationEndDateTime  = $Until.ToUniversalTime()
                 [string]$RoleExpireTime = $Until
             } else {
                 $RoleActivateParams.ExpirationType        = 'AfterDuration'
                 $RoleActivateParams.ExpirationDuration    = [XmlConvert]::ToString([TimeSpan]::FromHours($Hours))
                 [string]$RoleExpireTime = $NotBefore.AddHours($Hours)
+            }
+
+            # OPIM-15: the start is sent only when -NotBefore was given; without it ARM starts the
+            # activation now, as before. Times go to ARM in UTC (a time without an offset is local).
+            if ($PSBoundParameters.ContainsKey('NotBefore')) {
+                $RoleActivateParams.ScheduleInfoStartDateTime = $NotBefore.ToUniversalTime()
             }
 
             if ($TicketNumber) { $RoleActivateParams.TicketNumber = $TicketNumber }

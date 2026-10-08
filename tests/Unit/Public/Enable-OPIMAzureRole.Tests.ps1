@@ -192,10 +192,10 @@ Describe 'Enable-OPIMAzureRole' {
             }
         }
 
-        It 'passes the -Until value as ExpirationEndDateTime' {
+        It 'passes the -Until value as ExpirationEndDateTime, in UTC' {
             Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)' -Until $script:UntilDateTime
-            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Scope It -ParameterFilter {
-                $ExpirationEndDateTime -eq $script:UntilDateTime
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $ExpirationEndDateTime -eq $script:UntilDateTime.ToUniversalTime() -and $ExpirationEndDateTime.Kind -eq 'Utc'
             }
         }
 
@@ -203,6 +203,102 @@ Describe 'Enable-OPIMAzureRole' {
             Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)' -Until $script:UntilDateTime
             Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Scope It -ParameterFilter {
                 -not $ExpirationDuration
+            }
+        }
+    }
+
+    Context 'When -NotBefore and -Until are given (OPIM-15)' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
+            $Post = New-AzurePost -Name 'azure-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one'
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { $Post }
+            # The answer is read when the request is made, so a test can pick the status it wants.
+            $Answer = @{ Status = 'Provisioned' }
+            Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest {
+                [PSCustomObject]@{ Name = 'request-001'; Scope = $Scope; RequestType = 'SelfActivate'; Status = $Answer.Status }
+            }
+            # A time typed without an offset (such as '4pm') has Kind Unspecified and means local time.
+            $script:StartUnspecified = [datetime]::new(2026, 10, 9, 16, 0, 0, [System.DateTimeKind]::Unspecified)
+            $script:StartUtc = [datetime]::new(2026, 10, 9, 14, 0, 0, [System.DateTimeKind]::Utc)
+            $script:UntilUnspecified = [datetime]::new(2026, 10, 9, 18, 0, 0, [System.DateTimeKind]::Unspecified)
+            $script:StartAsLocal = [datetime]::SpecifyKind($script:StartUnspecified, [System.DateTimeKind]::Local).ToUniversalTime()
+        }
+
+        It 'sends a -NotBefore without an offset as ScheduleInfoStartDateTime, as local time in UTC' {
+            Enable-OPIMAzureRole -RoleName 'Reader' -NotBefore $script:StartUnspecified
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $PesterBoundParameters.ContainsKey('ScheduleInfoStartDateTime') -and
+                $ScheduleInfoStartDateTime -eq $script:StartAsLocal -and
+                $ScheduleInfoStartDateTime.Kind -eq 'Utc'
+            }
+        }
+
+        It 'sends a -NotBefore that is already UTC unchanged' {
+            Enable-OPIMAzureRole -RoleName 'Reader' -NotBefore $script:StartUtc
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $ScheduleInfoStartDateTime -eq $script:StartUtc -and $ScheduleInfoStartDateTime.Kind -eq 'Utc'
+            }
+        }
+
+        It 'sends a -NotBefore of Kind Local in UTC' {
+            $StartLocal = [datetime]::SpecifyKind($script:StartUnspecified, [System.DateTimeKind]::Local)
+            Enable-OPIMAzureRole -RoleName 'Reader' -NotBefore $StartLocal
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $ScheduleInfoStartDateTime -eq $script:StartAsLocal -and $ScheduleInfoStartDateTime.Kind -eq 'Utc'
+            }
+        }
+
+        It 'does not send ScheduleInfoStartDateTime when -NotBefore is not given' {
+            Enable-OPIMAzureRole -RoleName 'Reader'
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                -not $PesterBoundParameters.ContainsKey('ScheduleInfoStartDateTime')
+            }
+        }
+
+        It 'sends an -Until without an offset as ExpirationEndDateTime, as local time in UTC' {
+            Enable-OPIMAzureRole -RoleName 'Reader' -Until $script:UntilUnspecified
+            $script:ExpectedEnd = [datetime]::SpecifyKind($script:UntilUnspecified, [System.DateTimeKind]::Local).ToUniversalTime()
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $ExpirationType -eq 'AfterDateTime' -and
+                $ExpirationEndDateTime -eq $script:ExpectedEnd -and
+                $ExpirationEndDateTime.Kind -eq 'Utc'
+            }
+        }
+
+        It 'sends both times, in UTC, when -NotBefore and -Until are given together' {
+            Enable-OPIMAzureRole -RoleName 'Reader' -NotBefore $script:StartUnspecified -Until $script:UntilUnspecified
+            $script:ExpectedEnd = [datetime]::SpecifyKind($script:UntilUnspecified, [System.DateTimeKind]::Local).ToUniversalTime()
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $ScheduleInfoStartDateTime -eq $script:StartAsLocal -and $ScheduleInfoStartDateTime.Kind -eq 'Utc' -and
+                $ExpirationEndDateTime -eq $script:ExpectedEnd -and $ExpirationEndDateTime.Kind -eq 'Utc'
+            }
+        }
+
+        It 'keeps the duration and sends the start when -NotBefore and -Hours are given' {
+            Enable-OPIMAzureRole -RoleName 'Reader' -NotBefore $script:StartUtc -Hours 2
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $ExpirationType -eq 'AfterDuration' -and $ExpirationDuration -eq 'PT2H' -and
+                $ScheduleInfoStartDateTime -eq $script:StartUtc -and
+                -not $PesterBoundParameters.ContainsKey('ExpirationEndDateTime')
+            }
+        }
+
+        It 'reports a scheduled activation (ScheduleCreated) as a success' {
+            $Answer.Status = 'ScheduleCreated'
+            $Result = Enable-OPIMAzureRole -RoleName 'Reader' -NotBefore ([datetime]::UtcNow.AddHours(2)) `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 1
+            $Result.Status | Should -BeExactly 'ScheduleCreated'
+            @($Warns).Count | Should -Be 0
+            @($Errs).Count | Should -Be 0
+            $Answer.Status = 'Provisioned'
+        }
+
+        It 'sends the same start with every request when several names are given' {
+            Enable-OPIMAzureRole -RoleName 'Reader', 'Contributor' -NotBefore $script:StartUtc
+            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 2 -Exactly -Scope It -ParameterFilter {
+                $ScheduleInfoStartDateTime -eq $script:StartUtc -and $ScheduleInfoStartDateTime.Kind -eq 'Utc'
             }
         }
     }

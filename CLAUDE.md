@@ -868,7 +868,8 @@ found among the listed posts and never requested by itself, which a normal user 
 (OPIM-23). The `-Scope` of `Enable-` and `Disable-OPIMAzureRole` does the same: it selects among the
 posts of the root listing and changes what is read in no way. An Azure schedule's id is its `Name`,
 not `id`; an activation sends `LinkedRoleEligibilityScheduleId = $Role.Name`
-(`Enable-OPIMAzureRole.ps1:147-155`).
+(`Enable-OPIMAzureRole.ps1:167-191`), `ScheduleInfoStartDateTime` (UTC) when `-NotBefore` is given
+(without it Azure starts the activation now), and `ExpirationEndDateTime` in UTC (OPIM-15).
 
 **PIM for Groups** (Graph, `identityGovernance/privilegedAccess/group/`):
 
