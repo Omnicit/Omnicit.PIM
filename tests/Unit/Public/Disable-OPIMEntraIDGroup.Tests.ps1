@@ -788,5 +788,11 @@ Describe 'Disable-OPIMEntraIDGroup' {
             $AccessTypeHelp | Should -Match 'does not end at its end time'
             $AccessTypeHelp | Should -Match 'Activate an ownership only of a group that has another owner'
         }
+
+        It 'says only what was seen about a service principal as an owner and promises no remedy' {
+            $AccessTypeHelp | Should -Match 'Adding a service principal as a direct owner of the group did not change this in testing'
+            $AccessTypeHelp | Should -Not -Match 'until another owner exists'
+            $AccessTypeHelp | Should -Not -Match 'does not count'
+        }
     }
 }

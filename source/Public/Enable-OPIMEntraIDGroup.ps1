@@ -79,12 +79,11 @@ function Enable-OPIMEntraIDGroup {
     Applies to a name, and cannot be combined with piped objects (-Group) or -Identity: piping
     objects in together with -AccessType selects the -GroupName parameter set, so an interactive
     host asks for -GroupName instead of failing to bind.
-    An ownership you hold as the group's only owner does not end. PIM for Groups refuses to
-    deactivate it (Disable-OPIMEntraIDGroup writes the Graph error CannotDeleteLastAdminAssignment)
-    and the ownership does not end at its end time either: it stays active until another owner
-    exists and the ownership is removed. A service principal added as a direct owner does not count,
-    since Graph still counts you as the last owner. Activate an ownership only of a group that has
-    another owner.
+    An ownership you hold as the group's only owner cannot be deactivated and does not end. PIM for
+    Groups refuses to deactivate it (Disable-OPIMEntraIDGroup writes the Graph error
+    CannotDeleteLastAdminAssignment), and the ownership does not end at its end time either. Adding
+    a service principal as a direct owner of the group did not change this in testing. Activate an
+    ownership only of a group that has another owner.
     .PARAMETER Wait
     Wait while the request is in progress before returning: the request status is read every 2
     seconds, up to -TimeoutSeconds, and the group is then reported by the last status, which is

@@ -244,7 +244,8 @@ Enable-OPIMEntraIDGroup <tab>
 
 # Activate the ownership instead -- only of a group that has another owner. If you are the group's
 # only owner, PIM for Groups refuses to deactivate the ownership (CannotDeleteLastAdminAssignment)
-# and it does not end at its end time; a service principal added as an owner does not count
+# and it does not end at its end time; adding a service principal as a direct owner of the group
+# did not change this in testing
 Enable-OPIMEntraIDGroup 'Finance Team' -AccessType Owner
 
 # Activate using positional params: Group (pos 0), Justification (pos 1), Hours (pos 2)

@@ -49,9 +49,9 @@ function Disable-OPIMEntraIDGroup {
     bind.
     When you are the group's only owner, PIM for Groups refuses to deactivate your ownership: the
     command writes the Graph error CannotDeleteLastAdminAssignment (non-terminating) and the ownership
-    stays active. It does not end at its end time either, but stays until another owner exists and
-    the ownership is removed. A service principal added as a direct owner does not count, since Graph
-    still counts you as the last owner. Activate an ownership only of a group that has another owner.
+    stays active. It does not end at its end time either. Adding a service principal as a direct
+    owner of the group did not change this in testing. Activate an ownership only of a group that
+    has another owner.
     #>
     [Alias('Disable-PIMGroup')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'GroupName')]
