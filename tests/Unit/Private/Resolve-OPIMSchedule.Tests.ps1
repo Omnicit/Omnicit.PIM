@@ -697,7 +697,7 @@ Describe 'Resolve-OPIMSchedule' {
             $Record = & $Capture @{ Pillar = $Pillar; Name = $EligibleKeyForm; Status = 'Active' }
             $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Resolve-OPIMSchedule'
             $Record.Exception.Message | Should -Not -BeLike '*already deactivated*'
-            $Record.Exception.Message | Should -BeLike "*It is active as '$ActiveForm'; deactivate it by that name or by its display name*"
+            $Record.Exception.Message | Should -BeLike "*It is active as '$ActiveForm'; use that name or its display name*"
             # The eligible list was read, so the guard was reached.
             Should -Invoke -CommandName $Lister -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It -ParameterFilter { -not $Activated -and $ErrorAction -eq 'Stop' }
         }

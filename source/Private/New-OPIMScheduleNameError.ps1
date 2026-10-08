@@ -58,8 +58,8 @@ function New-OPIMScheduleNameError {
     .PARAMETER ActiveForm
     For ActiveRoleNotFound: the active posts that carry the label of the eligible post the name
     matches, under another key. The message names their old tab-completed forms, so the user can
-    deactivate by one of them. It takes the place of -AlreadyInactive: a post that is active is
-    never also called deactivated.
+    use one of them (to deactivate it, or to list it with -Activated). It takes the place of
+    -AlreadyInactive: a post that is active is never also called deactivated.
 
     .EXAMPLE
     New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Azure -Name 'Reader' -Candidate $Found -FilterParameter Scope
@@ -137,11 +137,11 @@ function New-OPIMScheduleNameError {
             $How = if ($Forms.Count -gt 1) {
                 'one of those names'
             } elseif ($Pillar -eq 'Group' -and $Forms[0].AccessId -eq 'owner') {
-                'that name or by its display name with -AccessType Owner'
+                'that name or its display name with -AccessType Owner'
             } else {
-                'that name or by its display name'
+                'that name or its display name'
             }
-            $Parts.Add("It is active as $Quoted; deactivate it by $How.")
+            $Parts.Add("It is active as $Quoted; use $How.")
         } elseif ($AlreadyInactive) {
             $Parts.Add('It is eligible but not active: it is already deactivated, or its activation has not finished yet.')
         }

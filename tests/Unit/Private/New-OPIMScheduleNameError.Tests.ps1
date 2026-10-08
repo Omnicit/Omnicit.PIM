@@ -429,7 +429,7 @@ Describe 'New-OPIMScheduleNameError' {
             }
             $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound'
             $Record.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
-            $Record.Exception.Message | Should -BeLike "*It is active as '$Form'; deactivate it by that name or by its display name.*"
+            $Record.Exception.Message | Should -BeLike "*It is active as '$Form'; use that name or its display name.*"
             $Record.Exception.Message | Should -Not -BeLike '*already deactivated*'
             $Record.Exception.Message | Should -Not -BeLike '*or use tab completion*'
         }
@@ -440,7 +440,7 @@ Describe 'New-OPIMScheduleNameError' {
                 New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Directory -Name 'Usage Summary Reports Reader (elig-001)' `
                     -Status Active -ActiveForm @($Fakes.DirectoryActive, $Fakes.DirectoryActiveAu)
             }
-            $Record.Exception.Message | Should -BeLike "*It is active as 'Usage Summary Reports Reader (inst-001)', 'Usage Summary Reports Reader -> Sales AU (inst-002)'; deactivate it by one of those names.*"
+            $Record.Exception.Message | Should -BeLike "*It is active as 'Usage Summary Reports Reader (inst-001)', 'Usage Summary Reports Reader -> Sales AU (inst-002)'; use one of those names.*"
         }
 
         It 'says the display name needs -AccessType Owner for a group held as owner' {
@@ -449,7 +449,7 @@ Describe 'New-OPIMScheduleNameError' {
                 New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Group -Name 'opim-grp - owner (grp-elig-002)' `
                     -Status Active -ActiveForm @($Fakes.GroupOwnerActive)
             }
-            $Record.Exception.Message | Should -BeLike "*It is active as 'opim-grp - owner (grp-inst-002)'; deactivate it by that name or by its display name with -AccessType Owner.*"
+            $Record.Exception.Message | Should -BeLike "*It is active as 'opim-grp - owner (grp-inst-002)'; use that name or its display name with -AccessType Owner.*"
         }
 
         It 'does not say -AccessType Owner for a group held as member' {
