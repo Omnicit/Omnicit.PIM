@@ -604,10 +604,11 @@ Describe 'Enable-OPIMDirectoryRole' {
             $Errors.Count | Should -BeGreaterThan 0
         }
 
-        It 'sets error details with a hint to use the -NotAfter parameter' {
+        It 'sets error details with a hint to use -Hours or -Until' {
             $Errors = @()
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -ErrorVariable Errors -ErrorAction SilentlyContinue
-            $Errors[-1].Exception.Message | Should -BeLike '*-NotAfter*'
+            $Errors[-1].Exception.Message | Should -BeLike '*Use -Hours, or -Until on the Enable-OPIM`* cmdlets, to ask for a shorter activation.'
+            $Errors[-1].Exception.Message | Should -Not -BeLike '*-NotAfter*'
         }
     }
 

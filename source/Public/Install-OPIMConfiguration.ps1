@@ -17,8 +17,10 @@ function Install-OPIMConfiguration {
     All file operations support -WhatIf and -Confirm.
     .EXAMPLE
     Install-OPIMConfiguration -TenantAlias contoso -TenantId '00000000-0000-0000-0000-000000000000'
-    Add a new tenant alias mapping in TenantMap.psd1. Activating with 'pim -TenantAlias contoso'
-    will activate ALL eligible roles/groups for that tenant (no filter stored).
+    Add a new tenant alias mapping in TenantMap.psd1, with no roles or groups stored yet.
+    'pim -TenantAlias contoso' then activates nothing for that tenant: it skips every category the
+    entry does not list, with a verbose message. Pipe roles or groups to Set-OPIMConfiguration to
+    add them, or use pim -AllEligible to activate everything eligible.
     .EXAMPLE
     Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>' -WhatIf
     Preview what the TenantMap write would do without making changes.

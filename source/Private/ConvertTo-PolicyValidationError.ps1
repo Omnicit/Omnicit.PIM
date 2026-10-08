@@ -66,7 +66,7 @@ function ConvertTo-PolicyValidationError {
     }
 
     if ($AllMsgs -match 'ExpirationRule') {
-        $ExpMsg = 'Your PIM policy requires a shorter expiration. Use -NotAfter to specify an earlier time.'
+        $ExpMsg = 'Your PIM policy requires a shorter expiration. Use -Hours, or -Until on the Enable-OPIM* cmdlets, to ask for a shorter activation.'
         Write-CmdletError `
             -Message ([System.Exception]::new($ExpMsg, $CaughtError.Exception)) `
             -ErrorId 'RoleAssignmentRequestPolicyValidationFailed' `

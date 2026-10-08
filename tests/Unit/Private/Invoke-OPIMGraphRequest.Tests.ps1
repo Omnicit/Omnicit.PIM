@@ -1284,8 +1284,8 @@ Describe 'Invoke-OPIMGraphRequest' {
                 $script:_OPIMTestLinks = @($Links)
                 $Caught = $null
                 try { $null = Invoke-OPIMGraphRequest -Uri $FirstUri -All } catch { $Caught = $PSItem }
-                $Caught | Should -Not -BeNullOrEmpty -Because 'a link to another host leaves the list incomplete'
-                $Caught.Exception.Message | Should -BeExactly 'Page 2: Microsoft Graph returned a next link to another host than the first request, so it was not followed and the list is incomplete.'
+                $Caught | Should -Not -BeNullOrEmpty -Because 'a link that is not followed leaves the list incomplete'
+                $Caught.Exception.Message | Should -BeExactly 'Page 2: Microsoft Graph returned a next link that is not an https link on the host of the first request, so it was not followed and the list is incomplete.'
                 $Caught.Exception.Message | Should -Not -Match 'evil|example|skiptoken|://|\.com'
                 $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::SecurityError)
                 # No error id: the record's id is only the name of the command that raised it.
@@ -1309,7 +1309,7 @@ Describe 'Invoke-OPIMGraphRequest' {
                 )
                 $Caught = $null
                 try { $null = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All } catch { $Caught = $PSItem }
-                $Caught.Exception.Message | Should -BeExactly 'Page 3: Microsoft Graph returned a next link to another host than the first request, so it was not followed and the list is incomplete.'
+                $Caught.Exception.Message | Should -BeExactly 'Page 3: Microsoft Graph returned a next link that is not an https link on the host of the first request, so it was not followed and the list is incomplete.'
                 $Caught.Exception.PageNumber | Should -Be 3
                 (@($Caught.Exception.PartialValue) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1,2'
                 $Caught.Exception.NextLink | Should -BeExactly 'https://evil.example.com/v1.0/x?$skiptoken=3'

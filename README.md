@@ -26,12 +26,15 @@ Import-Module Omnicit.PIM
 
 ## Authentication
 
-All `Get-/Enable-/Disable-OPIM*` cmdlets authenticate automatically on first use — a browser
-window opens once, the token is cached via MSAL for the session, and subsequent calls are
-idempotent. You never need to call `Connect-MgGraph` or `Connect-AzAccount` manually.
+All `Get-/Enable-/Disable-OPIM*` cmdlets authenticate automatically on first use. The first
+Microsoft Graph sign-in opens the system browser, or shows a device code with `-DeviceCode` (see
+below); the token is cached via MSAL for the session, and later calls reuse it without a new prompt
+while it can be refreshed silently. The Azure role cmdlets also need Azure's own sign-in, through
+the Az module, which prompts separately the first time (see below). You never need to call
+`Connect-MgGraph` or `Connect-AzAccount` manually.
 
 `Connect-OPIM` is the module's optional pre-authentication command. Use it when you want the
-browser prompt at a predictable time or need to target a specific tenant:
+sign-in prompt at a predictable time or need to target a specific tenant:
 
 ```powershell
 Connect-OPIM                                          # home tenant at the first sign-in, then the session's tenant
@@ -271,8 +274,12 @@ Get-OPIMEntraIDGroup -Activated | Disable-OPIMEntraIDGroup
 `Enable-OPIMMyRole` (aliases: `pim`, `Enable-OPIMMyRoles`) is the all-in-one activation command.
 `Disable-OPIMMyRole` (aliases: `unpim`, `Disable-OPIMMyRoles`) is its counterpart for deactivation.
 
-Both commands reuse an existing authenticated session — if you have already called `Connect-OPIM`
-or run any `Get-OPIM*` cmdlet, no additional browser prompt is shown.
+Both commands reuse an existing sign-in: after `Connect-OPIM` or any role or group cmdlet, they
+start no new Microsoft Graph sign-in while its token can still be used or refreshed silently. When
+Azure roles are part of the run, Azure needs its own sign-in, which is reused only when it was
+already made for the same tenant and account (`Connect-OPIM -IncludeARM`, or an earlier Azure role
+cmdlet). With `-DeviceCode`, a sign-in that needs a prompt shows a device code instead of opening
+the browser -- one for Microsoft Graph and, when Azure signs in, a second one for Azure.
 
 Output is a unified table across all three role types:
 
@@ -431,8 +438,12 @@ folder, where `$env:USERPROFILE` does not exist. Every cmdlet that reads the map
 
 ### File format
 
-Each entry is a nested hashtable under the alias key. The only required field is `TenantId`;
-the role/group arrays are optional — omit them and `pim` will activate **all** eligible items:
+Each entry is a nested hashtable under the alias key. The only required field is `TenantId`.
+The role/group arrays are optional, and `pim` and `unpim` act only on what they list: a category
+whose array is missing is skipped, with a verbose message, so an entry with no arrays activates
+**nothing**. To activate everything eligible, use the `-AllEligible*` switches of `pim`
+(`Enable-OPIMMyRole`) instead; an alias written in the old string form, `'alias' = '<tenant id>'`,
+also activates everything eligible.
 
 ```powershell
 @{
@@ -443,7 +454,7 @@ the role/group arrays are optional — omit them and `pim` will activate **all**
         EntraIDGroups  = @('00000000-0000-0000-0000-000000000006_member')  # groupId_accessId
         AzureRoles     = @('schedule-name-from-get-opimazurerole')
     }
-    # Alias 'partner' — no role list: activates ALL eligible items at login
+    # Alias 'partner' -- no role lists: pim and unpim skip every category (nothing is activated)
     'partner' = @{
         TenantId = 'yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy'
     }
@@ -474,7 +485,7 @@ are compared without regard to letter case, and each key is stored once.
 ### Creating and managing entries
 
 ```powershell
-# Add a new tenant alias with no role defaults (activates all eligible at runtime)
+# Add a new tenant alias with no role lists yet (pim activates nothing for it until you add some)
 Install-OPIMConfiguration -TenantAlias contoso -TenantId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
 
 # Add a second tenant
@@ -498,7 +509,10 @@ Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>' -WhatIf
 Pipe `Get-OPIM*` output (optionally filtered with `Where-Object`) to store exactly which
 roles/groups `pim` should activate for a tenant. Both eligible (`default`) and activated
 (`-Activated`) objects are accepted — useful for piping your currently active roles as the
-default set. `-TenantMap` is implied; `-TenantAlias` and `-TenantId` are required.
+default set. `-TenantAlias` is required. `-TenantId` is optional on `Install-OPIMConfiguration`:
+without it the tenant Omnicit.PIM is signed in to is stored, and without such a sign-in nothing is
+stored (`TenantIdNotResolvable`). The file written is the default tenant map unless
+`-TenantMapPath` names another.
 
 An active Azure role is stored as the eligibility it was activated from, so `pim` finds it among
 your eligible roles and activates it at that eligibility's own scope. An active Azure role that
@@ -588,8 +602,10 @@ Get-OPIMEntraIDGroup -AccessType member |
 # Activate only the stored roles in corp tenant
 pim -TenantAlias corp -Hours 8 -Justification 'Daily operations'
 
-# Activate everything eligible in partner tenant (no stored role list)
-pim -TenantAlias partner -Hours 2 -Justification 'Partner review'
+# Activate everything eligible in the partner tenant (it has no stored role lists, so use the
+# -AllEligible switch; an alias without role lists activates nothing)
+Connect-OPIM -TenantAlias partner
+pim -AllEligible -Hours 2 -Justification 'Partner review'
 ```
 
 ---
@@ -749,8 +765,10 @@ when that list cannot be read they write that error and send nothing. A role or 
 twice in one command is requested once, with a warning for the second.
 
 With `-Wait`, the `Enable-OPIM*` role and group cmdlets wait for at most `-TimeoutSeconds` (default
-300) and then report the request by its last status, written back onto the request (a directory
-role returns its role assignment once that appears). Groups and Azure roles read the status
+300) and then report the request by its last status. For a directory role or a group that status is
+written back onto the request (a directory role returns its role assignment once that appears); an
+Azure role returns the request as Azure last gave it, since the `Status` of an Az request object is
+read-only. Groups and Azure roles read the status
 again, with a pause between reads, only while the request is still being worked on, counting from
 the start of the wait. Directory roles hand every request that has not failed to
 `Wait-OPIMDirectoryRole`, which reads each one at least once, waits for the role assignment to

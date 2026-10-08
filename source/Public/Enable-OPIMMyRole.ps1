@@ -8,8 +8,10 @@ function Enable-OPIMMyRole {
     Install-OPIMConfiguration) or an explicit -AllEligible* switch.
 
     When -TenantAlias is used, only roles and groups explicitly defined in the tenant configuration
-    are activated. Categories not listed in the configuration are skipped with a warning. Use
-    Set-OPIMConfiguration to add roles to a tenant alias. A directory role is activated only at the
+    are activated. Categories not listed in the configuration are skipped with a verbose message,
+    so an entry that lists none activates nothing. Use Set-OPIMConfiguration to add roles to a
+    tenant alias. An alias in the old string form ('alias' = 'tenant id') lists no categories and
+    activates every eligible role and group. A directory role is activated only at the
     scope its entry names (roleDefinitionId|directoryScopeId); an entry written by 0.5.x holds the
     roleDefinitionId alone and means the role at the root scope '/' only.
 
@@ -57,7 +59,7 @@ function Enable-OPIMMyRole {
     .PARAMETER TenantAlias
     Short alias for the target tenant matched against TenantMap.psd1. Run Install-OPIMConfiguration
     to create or update tenant aliases. Only categories explicitly listed in the configuration are
-    activated; categories without configuration are skipped with a warning. A directory role is
+    activated; categories without configuration are skipped with a verbose message. A directory role is
     activated only at its configured scope, and an entry without a scope means the role at '/' only.
     .PARAMETER AllEligible
     Activate all eligible directory roles, Entra ID group assignments, and Azure RBAC roles.

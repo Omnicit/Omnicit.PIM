@@ -366,7 +366,7 @@ function Invoke-OPIMGraphRequest {
                 [string]::Equals($NextParsed.Host, $FirstHost, [System.StringComparison]::OrdinalIgnoreCase)
             if (-not $SameHost) {
                 $Foreign = [System.Exception]::new(
-                    "Page $($PageNumber + 1): Microsoft Graph returned a next link to another host than the first request, so it was not followed and the list is incomplete.")
+                    "Page $($PageNumber + 1): Microsoft Graph returned a next link that is not an https link on the host of the first request, so it was not followed and the list is incomplete.")
                 $Foreign | Add-Member -NotePropertyName PartialValue -NotePropertyValue $AllValues.ToArray() -Force
                 $Foreign | Add-Member -NotePropertyName NextLink -NotePropertyValue $NextUri -Force
                 $Foreign | Add-Member -NotePropertyName PageNumber -NotePropertyValue ($PageNumber + 1) -Force
