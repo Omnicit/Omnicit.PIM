@@ -160,6 +160,87 @@ Describe 'Install-OPIMConfiguration' {
         }
     }
 
+    Context 'When an active Azure role is piped (OPIM-22)' {
+        # An active instance from Get-OPIMAzureRole -Activated (or an active row of -All) is stored by
+        # the eligibility schedule it was activated from, the Name pim compares with -- or refused.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+
+            $script:azEligible = [PSCustomObject]@{
+                Name             = 'elig-az-001'
+                RoleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/role-def-az-001'
+                ScopeId          = '/subscriptions/sub-001'
+            }
+            $script:azEligible.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
+            $script:azActive = [PSCustomObject]@{
+                Name                            = 'az-active-001'
+                LinkedRoleEligibilityScheduleId = '/subscriptions/sub-001/providers/Microsoft.Authorization/roleEligibilitySchedules/elig-az-001'
+                RoleDefinitionId                = '/providers/Microsoft.Authorization/roleDefinitions/role-def-az-001'
+                RoleDefinitionDisplayName       = 'Contributor'
+                ScopeId                         = '/subscriptions/sub-001'
+                ScopeDisplayName                = 'ProdSub'
+            }
+            $script:azActive.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+            $script:azUnlinked = [PSCustomObject]@{
+                Name                            = 'az-active-002'
+                LinkedRoleEligibilityScheduleId = $null
+                RoleDefinitionId                = '/providers/Microsoft.Authorization/roleDefinitions/role-def-az-002'
+                RoleDefinitionDisplayName       = 'Reader'
+                ScopeId                         = '/subscriptions/sub-001'
+                ScopeDisplayName                = 'ProdSub'
+            }
+            $script:azUnlinked.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+            $script:azOther = [PSCustomObject]@{
+                Name             = 'elig-az-003'
+                RoleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/role-def-az-003'
+                ScopeId          = '/subscriptions/sub-001'
+            }
+            $script:azOther.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
+            $script:grpForAz = [PSCustomObject]@{ id = 'elig-grp-az-001'; groupId = 'group-001'; accessId = 'member' }
+            $script:grpForAz.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupEligibilitySchedule')
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'stores the eligibility the active role was activated from, not the instance Name' {
+            $script:azActive | Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:writtenContent | Should -Match "AzureRoles\s+=\s+@\('elig-az-001'\)"
+            $script:writtenContent | Should -Not -Match 'az-active-001'
+        }
+
+        It 'stores the key once when the eligible role and its active instance are piped' {
+            $script:azEligible, $script:azActive | Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:writtenContent | Should -Not -BeNullOrEmpty
+            [regex]::Matches($script:writtenContent, [regex]::Escape("'elig-az-001'")).Count | Should -Be 1
+        }
+
+        It 'writes one LinkedEligibilityNotFound for an active role that names no eligibility, and stores the other piped objects' {
+            $script:azUnlinked, $script:azOther, $script:grpForAz | Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'LinkedEligibilityNotFound*' }).Count | Should -BeGreaterThan 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeLike 'LinkedEligibilityNotFound*'
+            $Errs[-1].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+            $Errs[-1].Exception.Message | Should -BeLike "The active Azure role 'Reader' at scope 'ProdSub' names no eligibility*"
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
+            $script:writtenContent | Should -Match "AzureRoles\s+=\s+@\('elig-az-003'\)"
+            $script:writtenContent | Should -Match "EntraIDGroups\s+=\s+@\('group-001_member'\)"
+            $script:writtenContent | Should -Not -Match 'az-active-002'
+        }
+
+        It 'writes the refusal once to the error stream' {
+            $Out = $script:azOther, $script:azUnlinked | Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeLike 'LinkedEligibilityNotFound*'
+            $script:writtenContent | Should -Match "AzureRoles\s+=\s+@\('elig-az-003'\)"
+        }
+    }
+
     Context 'When an unrecognised InputObject type is piped' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

@@ -42,9 +42,11 @@ function Set-OPIMConfiguration {
     or Get-OPIMAzureRole. The piped category replaces the stored list; categories not supplied via pipeline
     retain their existing values. A directory role is stored with its scope, as
     roleDefinitionId|directoryScopeId, so pim and unpim act on it only at that scope; a group is stored as
-    groupId_accessId, and an Azure role as the Name of its eligibility schedule. Each key is stored once,
-    without regard to letter case, in the order first piped. Objects not matching a known Omnicit.PIM type
-    are silently ignored.
+    groupId_accessId, and an Azure role as the Name of its eligibility schedule. An active Azure role (from
+    Get-OPIMAzureRole -Activated, or an active row of -All) is stored by the eligibility schedule it was
+    activated from; one that names none is written as the error LinkedEligibilityNotFound and not stored,
+    and the other piped objects still are. Each key is stored once, without regard to letter case, in the
+    order first piped. Objects not matching a known Omnicit.PIM type are silently ignored.
     #>
     [Alias('Set-PIMConfig')]
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
@@ -93,7 +95,15 @@ function Set-OPIMConfiguration {
             }
         }
         if (-not $Pillar) { return }
-        $Key = ConvertTo-OPIMTenantMapKey -Pillar $Pillar -InputObject $InputObject
+        # OPIM-22: an active Azure role that names no eligibility is refused by the key helper with
+        # LinkedEligibilityNotFound; it is written and skipped, and the other piped objects are stored.
+        try {
+            $Key = ConvertTo-OPIMTenantMapKey -Pillar $Pillar -InputObject $InputObject -ErrorAction Stop
+        } catch {
+            Remove-OPIMErrorRecord -Record $PSItem
+            $PSCmdlet.WriteError($PSItem)
+            return
+        }
         if ($SeenKeys[$Pillar].Add($Key)) { $StoredKeys[$Pillar].Add($Key) }
     }
     end {

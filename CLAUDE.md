@@ -1087,7 +1087,9 @@ completion authenticates and calls Graph or ARM on the prompt path. Keep that ca
 called by `Install`, `Set` and `Remove`; never inline it.
 
 **The stored keys (OPIM-10, A13).** `DirectoryRoles` holds `roleDefinitionId|directoryScopeId`,
-`EntraIDGroups` holds `groupId_accessId`, and `AzureRoles` the eligibility schedule's `Name`. The
+`EntraIDGroups` holds `groupId_accessId`, and `AzureRoles` the eligibility schedule's `Name` -- for
+an active Azure role piped from `-Activated` (or an active row of `-All`), the eligibility it was
+activated from, the last segment of its `LinkedRoleEligibilityScheduleId` (OPIM-22). The
 private `ConvertTo-OPIMTenantMapKey` is the single owner of these formats and of how a stored entry
 is read: `-InputObject` returns a post's key and `-Entry` an entry as the key to compare with, where
 a directory entry without `|` -- the form 0.5.x wrote -- means the role at `/` only, never every
@@ -1224,6 +1226,13 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `AmbiguousName` (the message says "identity"), and the cmdlet returns without acting. An entry of
   a tenant alias that matches several active posts is written by `Disable-OPIMMyRole` as the same
   `AmbiguousName`, built with `-Configuration` (the message says "configured entry").
+- **`LinkedEligibilityNotFound` has one owner.** `ConvertTo-OPIMTenantMapKey` builds it (category
+  `ObjectNotFound`, the instance as its target) and throws it with `ThrowTerminatingError` when an
+  active Azure role names no eligibility it was activated from (an empty or missing
+  `LinkedRoleEligibilityScheduleId`), so the role cannot be stored in the tenant map (OPIM-22); build
+  it nowhere else. `Install-OPIMConfiguration` and `Set-OPIMConfiguration` call the helper with
+  `-ErrorAction Stop` in a `try` whose catch scrubs first, writes the record (non-terminating) and
+  skips only that piped object; the others are still stored.
 - **Request status has one owner.** `Get-OPIMRequestOutcome` classifies a status (Succeeded,
   InProgress, AwaitingDecision, Failed; table in its help; `-Deactivate` for SelfDeactivate, whose
   success is `Revoked`); `Write-OPIMRequestOutcome` writes the status back onto the request and

@@ -453,7 +453,7 @@ The file is safe to edit manually — it is standard PowerShell data file syntax
 |---|---|---|
 | Directory Role | `"{roleDefinitionId}\|{directoryScopeId}"` | `"$($_.roleDefinitionId)\|$($_.directoryScopeId)"` |
 | Entra ID Group | `"{groupId}_{accessId}"` | `"$($_.groupId)_$($_.accessId)"` |
-| Azure Role | Schedule name | `$_.Name` |
+| Azure Role | Eligibility schedule name | `$_.Name`; for an active role from `-Activated`, the eligibility it was activated from (the last segment of `$_.LinkedRoleEligibilityScheduleId`) |
 
 These identifiers are stable across eligibility renewals. The `accessId` in the group key is
 either `member` or `owner`, so you can store member and owner eligibility for the same group
@@ -495,6 +495,10 @@ roles/groups `pim` should activate for a tenant. Both eligible (`default`) and a
 (`-Activated`) objects are accepted — useful for piping your currently active roles as the
 default set. `-TenantMap` is implied; `-TenantAlias` and `-TenantId` are required.
 
+An active Azure role is stored by the eligibility it was activated from, so `pim` finds it among
+your eligible roles. An active Azure role that names no eligibility is refused with the error
+`LinkedEligibilityNotFound` and is not stored; the other piped objects still are.
+
 ```powershell
 # Store all eligible directory roles for this tenant
 Get-OPIMDirectoryRole |
@@ -517,6 +521,10 @@ Get-OPIMEntraIDGroup -AccessType member |
 Get-OPIMAzureRole |
     Where-Object { $_.RoleDefinitionDisplayName -like 'Contributor*' } |
     Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>'
+
+# Store your currently active Azure roles (each by the eligibility it was activated from)
+Get-OPIMAzureRole -Activated |
+    Install-OPIMConfiguration -TenantAlias fabrikam -TenantId '<guid>'
 
 # Update directory roles and groups incrementally using Set-OPIMConfiguration
 Get-OPIMDirectoryRole |

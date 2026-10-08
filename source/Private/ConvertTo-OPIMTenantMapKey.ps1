@@ -7,8 +7,8 @@ function ConvertTo-OPIMTenantMapKey {
     The single owner of the key format of the tenant map and of how a stored entry is read; build
     or read a key nowhere else. Install-OPIMConfiguration and Set-OPIMConfiguration store the key
     of every piped post, and Enable-OPIMMyRole and Disable-OPIMMyRole compare the key of every
-    listed post with the configured entries, read through -Entry. It is pure: it reads what it is
-    given and calls nothing.
+    listed post with the configured entries, read through -Entry. It reads what it is given and
+    calls nothing.
 
     The keys are, per pillar:
 
@@ -21,6 +21,15 @@ function ConvertTo-OPIMTenantMapKey {
     alone; read through -Entry it means the role at the root scope '/' only, never every scope of
     the role. Every other entry is returned as it is. Compare keys with
     [System.StringComparison]::OrdinalIgnoreCase: a scope compares without regard to letter case.
+
+    An active Azure role (an instance from Get-OPIMAzureRole -Activated, or an active row of
+    -All) is stored by the eligibility schedule it was activated from (OPIM-22): the last
+    segment of its LinkedRoleEligibilityScheduleId, which is the Name of that eligibility and so
+    the key Enable-OPIMMyRole compares with. An object is such an instance when it carries the
+    type Omnicit.PIM.AzureAssignmentScheduleInstance or a LinkedRoleEligibilityScheduleId
+    property; an Az.Resources eligibility schedule has no such property. An instance that names
+    no eligibility is refused: the terminating error LinkedEligibilityNotFound (category
+    ObjectNotFound, the instance as its target), whose single owner this function is.
 
     .PARAMETER Pillar
     Directory, Group or Azure: the list the post or the entry belongs to.
@@ -43,6 +52,12 @@ function ConvertTo-OPIMTenantMapKey {
     ConvertTo-OPIMTenantMapKey -Pillar Directory -Entry 'role-def-001'
 
     Returns 'role-def-001|/': an entry without a scope means the role at the root scope only.
+
+    .EXAMPLE
+    Get-OPIMAzureRole -Activated | ForEach-Object { ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem }
+
+    Returns, for each active Azure role, the Name of the eligibility schedule it was activated
+    from, and throws LinkedEligibilityNotFound for one that names none.
     #>
     [CmdletBinding(DefaultParameterSetName = 'Object')]
     [OutputType([string])]
@@ -61,6 +76,29 @@ function ConvertTo-OPIMTenantMapKey {
     switch ($Pillar) {
         'Directory' { "$($InputObject.roleDefinitionId)|$($InputObject.directoryScopeId)" }
         'Group'     { "$($InputObject.groupId)_$($InputObject.accessId)" }
-        'Azure'     { [string]$InputObject.Name }
+        'Azure' {
+            [bool]$IsInstance = $InputObject.PSTypeNames -contains 'Omnicit.PIM.AzureAssignmentScheduleInstance' -or
+                                $null -ne $InputObject.PSObject.Properties['LinkedRoleEligibilityScheduleId']
+            if (-not $IsInstance) {
+                [string]$InputObject.Name
+            } else {
+                # OPIM-22: the linked id is an ARM id ending in /roleEligibilitySchedules/<name>, or the bare
+                # name; its last segment is the eligibility's Name.
+                [string]$Linked = ([string]$InputObject.LinkedRoleEligibilityScheduleId).Split('/')[-1]
+                if ([string]::IsNullOrWhiteSpace($Linked)) {
+                    $RoleLabel  = if ($InputObject.RoleDefinitionDisplayName) { $InputObject.RoleDefinitionDisplayName } else { $InputObject.RoleDefinitionId }
+                    $ScopeLabel = if ($InputObject.ScopeDisplayName) { $InputObject.ScopeDisplayName } else { $InputObject.ScopeId }
+                    $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new(
+                                "The active Azure role '$RoleLabel' at scope '$ScopeLabel' names no eligibility it was activated " +
+                                'from (its LinkedRoleEligibilityScheduleId is empty), so it is not stored. Pipe the eligible ' +
+                                'role from Get-OPIMAzureRole instead.'),
+                            'LinkedEligibilityNotFound',
+                            [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                            $InputObject))
+                }
+                $Linked
+            }
+        }
     }
 }
