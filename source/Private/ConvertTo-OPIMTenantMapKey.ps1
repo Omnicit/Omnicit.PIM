@@ -27,7 +27,9 @@ function ConvertTo-OPIMTenantMapKey {
     An active Azure role (an instance from Get-OPIMAzureRole -Activated, or an active row of
     -All) is stored as the eligibility schedule it was activated from plus its own scope
     (OPIM-22): the last segment of its LinkedRoleEligibilityScheduleId -- the Name of that
-    eligibility, which ARM returns as a bare name -- then '|' and the instance's ScopeId. An
+    eligibility; ARM returned the link as a full ARM id at the role's own scope when measured
+    live, Microsoft's reference sample shows a bare name, and both forms are read -- then '|'
+    and the instance's ScopeId. An
     object is such an instance when it carries the type
     Omnicit.PIM.AzureAssignmentScheduleInstance or a LinkedRoleEligibilityScheduleId property; an
     Az.Resources eligibility schedule has no such property. pim activates an eligibility at the
@@ -111,10 +113,11 @@ function ConvertTo-OPIMTenantMapKey {
                 # scope is stored under, so a reader can match both forms.
                 if ($WithScope) { "$($InputObject.Name)|$($InputObject.ScopeId)" } else { [string]$InputObject.Name }
             } else {
-                # OPIM-22: the linked id is the bare name of the eligibility (as ARM returns it, and as
-                # Enable-OPIMAzureRole sends it), or an ARM id,
-                # <eligibility scope>/providers/Microsoft.Authorization/roleEligibilitySchedules/<name>; its last
-                # segment is the eligibility's Name.
+                # OPIM-22: the linked id is an ARM id,
+                # <eligibility scope>/providers/Microsoft.Authorization/roleEligibilitySchedules/<name> (as ARM
+                # returned it live, at the role's own scope), or the bare name of the eligibility (as Microsoft's
+                # reference sample shows it, and as Enable-OPIMAzureRole sends it); its last segment is the
+                # eligibility's Name.
                 [string]$LinkedId = $InputObject.LinkedRoleEligibilityScheduleId
                 [string]$Linked = $LinkedId.Split('/')[-1]
                 $RoleLabel  = if ($InputObject.RoleDefinitionDisplayName) { $InputObject.RoleDefinitionDisplayName } else { $InputObject.RoleDefinitionId }

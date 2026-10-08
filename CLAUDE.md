@@ -1111,8 +1111,9 @@ called by `Install`, `Set` and `Remove`; never inline it.
 `roleDefinitionId|directoryScopeId`, `EntraIDGroups` holds `groupId_accessId`, and `AzureRoles` the
 eligibility schedule's `Name` -- or, for an active Azure role piped from `-Activated` (or an active
 row of `-All`), `Name|ScopeId`: the eligibility it was activated from (the last segment of its
-`LinkedRoleEligibilityScheduleId`, which ARM returns as a bare name) and the instance's OWN
-`ScopeId`. A role can be activated at a narrower scope than its eligibility, and `pim` activates an
+`LinkedRoleEligibilityScheduleId`, which ARM returned as a full ARM id at the role's own scope when
+measured live on 2026-10-08, while Microsoft's reference sample shows a bare name; both are read)
+and the instance's OWN `ScopeId`. A role can be activated at a narrower scope than its eligibility, and `pim` activates an
 eligibility at the eligibility's own scope, so an eligible post matches an Azure entry only when the
 entry equals its `Name` or its `-WithScope` key `Name|ScopeId`: an entry from a narrower activation
 matches nothing and activates nothing, never the wider eligibility (SECURITY 4). The private
