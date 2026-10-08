@@ -304,7 +304,8 @@ foreach ($Try in 1, 2) {
     try { $Out = @(Enable-OPIMAzureRole 'Reader' -Justification 'opim-s14 live verification' -Hours 1 -ErrorVariable Errors -ErrorAction SilentlyContinue) } catch { $Errors += $PSItem; $Out = @() }
     $Own = @($Errors | Where-Object { $_.FullyQualifiedErrorId -like 'AmbiguousName,*' })
     $Message = if ($Own) { $Own[-1].Exception.Message } else { '' }
-    "Call ${Try}: output $($Out.Count); errors $($Errors.Count), the last $(@($Errors)[-1].FullyQualifiedErrorId); candidates named $(([regex]::Matches($Message, ' at scope ')).Count); suggests -Scope: $($Message.Contains('-Scope')); names opim-s1-rg and opim-s1-rg2: $($Message.Contains('-> opim-s1-rg (') -and $Message.Contains('-> opim-s1-rg2 ('))"
+    $NamesBoth = $Message.Contains('-> opim-s1-rg (') -and $Message.Contains('-> opim-s1-rg2 (')
+    "Call ${Try}: output $($Out.Count); errors $($Errors.Count), the last $(@($Errors)[-1].FullyQualifiedErrorId); candidates named $(([regex]::Matches($Message, ' at scope ')).Count); suggests -Scope: $($Message.Contains('-Scope')); names opim-s1-rg and opim-s1-rg2: $NamesBoth"
 }
 "Active Azure roles before: $Before; after: $(@(Get-OPIMAzureRole -Activated -ErrorAction Stop).Count)"
 ```
