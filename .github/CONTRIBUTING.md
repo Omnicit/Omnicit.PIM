@@ -42,7 +42,7 @@ If that fails with `Requested value 'V2' was not found` (a PSResourceGet compati
 - **Keep version tokens out of commit messages, PR titles and PR bodies.** Every merge to `main`
   publishes a preview to the public PowerShell Gallery, and a version cannot be deleted from it
   once published. See `CLAUDE.md` "CHANGELOG and Version".
-- **PowerShell 7.2+, Core only.** Do not build a new path from `$env:USERPROFILE` -- it is set on
+- **PowerShell 7.4+, Core only.** Do not build a new path from `$env:USERPROFILE` -- it is set on
   Windows only, and this module targets `CompatiblePSEditions = 'Core'`.
 
 ## Source file rules
@@ -73,19 +73,20 @@ If that fails with `Requested value 'V2' was not found` (a PSResourceGet compati
   `tests/QA/testhygiene.tests.ps1` fails a unit test file that does not wire the tripwire in that
   way.
 - **Mock at the module boundary**, with `Mock -ModuleName Omnicit.PIM`: `Initialize-OPIMAuth` in
-  every test that touches auth, Graph, or Azure, and the module's own transport wrapper,
-  `Invoke-OPIMGraphRequest`, rather than the `Invoke-MgGraphRequest` call beneath it. Mock the
-  `Az.Resources` cmdlets the same way for Azure:
+  every test that touches auth, Graph, or Azure, and the module's own transports --
+  `Invoke-OPIMGraphRequest` for Graph and `Invoke-OPIMArmRequest` for Azure -- rather than the
+  `Invoke-MgGraphRequest` or `Invoke-WebRequest` call beneath them (`Invoke-WebRequest` is mocked
+  only in the ARM transport's own test file). The module calls no Az command, so mock none:
   ```powershell
   Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
   Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest { @{ value = @() } }
+  Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { [pscustomobject]@{ value = @() } }
   ```
   Nothing in CI or in tests authenticates for real. A missing mock is caught by the transport
   tripwire: it records and refuses any unmocked call that reaches a real transport command, such
-  as `Invoke-MgGraphRequest`, `Connect-AzAccount` or an `Az.Resources` schedule command, and fails
-  the test file. Inside a `ForEach-Object -Parallel` block, where no mock reaches, register a
-  stand-in response instead. Run the tests in a fresh pwsh process. See `CLAUDE.md` "Testing
-  Conventions".
+  as `Invoke-MgGraphRequest`, AzAuth's `Get-AzToken` or `Invoke-WebRequest`, and fails the test
+  file. Inside a `ForEach-Object -Parallel` block, where no mock reaches, register a stand-in
+  response instead. Run the tests in a fresh pwsh process. See `CLAUDE.md` "Testing Conventions".
 
 ## Everything else
 

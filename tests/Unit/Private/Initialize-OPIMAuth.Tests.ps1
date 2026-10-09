@@ -1062,30 +1062,6 @@ namespace OPIMTest {
                 $script:InteractiveApp = $null
             }
         }
-
-        Context 'When the ARM sign-in runs' {
-            It 'calls no Az.Accounts command in <Mode>' -ForEach @(
-                @{ Mode = 'device code mode'; DeviceCode = $true }
-                @{ Mode = 'the system browser'; DeviceCode = $false }
-            ) {
-                Mock -ModuleName Omnicit.PIM Connect-AzAccount {}
-                Mock -ModuleName Omnicit.PIM Get-AzContext {}
-                Mock -ModuleName Omnicit.PIM Get-AzAccessToken {}
-                Mock -ModuleName Omnicit.PIM Update-AzConfig {}
-                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
-                $State.DeviceCode = $DeviceCode
-                InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
-                    param($State)
-                    $script:_OPIMAuthState = $State
-                    Initialize-OPIMAuth -IncludeARM
-                }
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
-                Should -Invoke -ModuleName Omnicit.PIM Connect-AzAccount -Times 0 -Scope It
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzContext -Times 0 -Scope It
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzAccessToken -Times 0 -Scope It
-                Should -Invoke -ModuleName Omnicit.PIM Update-AzConfig -Times 0 -Scope It
-            }
-        }
     }
 
     Context 'When -DeviceCode is set and no auth state exists' {
@@ -2315,9 +2291,6 @@ namespace OPIMTest {
             InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; ArmToken = $ArmToken; TenantA = $TenantA } {
                 param($Token, $ArmToken, $TenantA)
                 $script:_OPIMTestToken = $Token
-                # Mocked here only, for the -Times 0 guard below beside its positive control (one
-                # Connect-MgGraph): no other test of this context reads it.
-                Mock Get-AzContext {}
                 function Invoke-SignedInCommand {
                     Initialize-OPIMAuth -TenantId $TenantA
                     $script:_OPIMAuthState.ArmToken = $ArmToken
@@ -2327,7 +2300,6 @@ namespace OPIMTest {
                 $Arm.FullyQualifiedErrorId | Should -BeExactly 'TenantMismatch'
                 $Arm.TargetObject | Should -BeExactly $TenantA
                 Should -Invoke Connect-MgGraph -Times 1 -Exactly -Scope It
-                Should -Invoke Get-AzContext -Times 0 -Scope It
             }
         }
 

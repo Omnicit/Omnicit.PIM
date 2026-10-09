@@ -62,14 +62,14 @@ and a version tag do. See **CHANGELOG and Version**.
 
 ## Project Overview
 
-`Omnicit.PIM` is a PowerShell 7.2+ module, Core-only (`CompatiblePSEditions = @('Core')`), for
+`Omnicit.PIM` is a PowerShell 7.4+ module, Core-only (`CompatiblePSEditions = @('Core')`), for
 Privileged Identity Management SELF-activation: the signed-in user lists, activates and deactivates
 their own eligible assignments in three pillars:
 
 - **Directory roles** -- Microsoft Entra ID roles, through Microsoft Graph.
 - **Azure resource roles** -- Azure RBAC roles, through Azure Resource Manager, which the module
-  calls with its own transport after an AzAuth sign-in (AzAuth 2.9.0 needs PowerShell 7.4; see
-  **Dependencies**).
+  calls with its own transport after an AzAuth sign-in (AzAuth 2.9.0 needs PowerShell 7.4, which is
+  why the module does; see **Dependencies**).
 - **PIM for Groups** -- Entra ID group membership and ownership, through Microsoft Graph.
 
 The command prefix is `OPIM` (`Get-OPIMDirectoryRole`, `Enable-OPIMAzureRole`, ...). Short aliases
@@ -184,7 +184,16 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   clean `Invoke-ScriptAnalyzer` run on its source file, and help quality: `.SYNOPSIS`, a
   `.DESCRIPTION` over 40 characters, at least one `.EXAMPLE`, every parameter described; an
   `[OutputType()]` on every EXPORTED function; and a `README.md` that names every exported cmdlet
-  and no `Verb-OPIM` name that is not an exported function or alias.
+  and no `Verb-OPIM` name that is not an exported function or alias. Its `Runtime dependencies`
+  tests read the BUILT manifest: it declares exactly `AzAuth` and `Microsoft.Graph.Authentication`,
+  each floor equal to its exact pin in `RequiredModules.psd1` (never `latest`), which names no Az
+  module; the install loops of the package and the publish job each name exactly the declared set;
+  its `PowerShellVersion` is at least 7.4, and at least what each declared dependency's own manifest
+  requires at its pinned version (read with `Get-Module -ListAvailable`, which imports nothing); and
+  the built module, imported by path in a clean `pwsh -NoProfile` process, loads both dependencies
+  and no `Az` or `Az.*` module. A dependency on an Az module turns that test red either way: where
+  an Az module can be found, the import loads it and the Az list is not empty; where none can be
+  found, the import fails.
 - **`testhygiene.tests.ps1`** -- the transport tripwire, held by presence: in every
   `tests/Unit/**/*.Tests.ps1` the root `BeforeAll` calls `Install-OPIMTransportTripwire` after
   `Import-Module`, and the root `AfterAll` calls `Assert-OPIMTransportTripwire` in a `try` with no
@@ -220,7 +229,23 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   through any module function it calls -- every `catch` starts with
   `Remove-OPIMErrorRecord -Record $PSItem`, with floors on the files and catches scanned and the
   exact catch count of `Invoke-OPIMGraphRequest.ps1` as its named control. The six completer
-  classes are outside that call closure (see **Error Handling**).
+  classes are outside that call closure (see **Error Handling**). And the Az boundary (decision
+  A7): on the AST of every `.ps1`, `.psm1` and `.psd1` under `source/`, the manifest included, it
+  refuses three shapes -- a command whose static name matches `-Az` or is qualified with an Az
+  module, other than AzAuth's `Get-AzToken` (bare or `AzAuth\`-qualified), the one entry of its
+  allow list; a quoted string that parses as such a call (the form a command takes through
+  `[scriptblock]::Create('...')` or `Invoke-Expression`), an expandable string that builds such a
+  name included (`& "Connect-AzAccount$Suffix"`); and an Az module (`Az`, `Az.Accounts`,
+  `Az.Resources`, ...) named as a quoted string or a bareword, or in `#requires -Modules`. A
+  comment or help text is no AST node, so prose may name an Az command. Its positive controls are a
+  known-answer `It` that runs the detector, `Get-SourceHygieneAzFinding`, over a text holding every
+  refused shape and both allowed calls, and the named control: the two `Get-AzToken` calls of
+  `Initialize-OPIMAuth.ps1`; floors on the files parsed and the command nodes walked guard the walk
+  itself. Its comment states its KNOWN LIMITS, which review has to catch: a command name assembled
+  at run time, an Az command named by a bareword argument (`Get-Command Connect-AzAccount`), an
+  Az alias without `-Az` in its name, called bare, and the `.ps1xml` files under `source/`, which
+  the scan does not read although the Types and Format files hold script blocks that run at
+  property access and at formatting.
 - **`dochygiene.tests.ps1`** -- over every tracked file under `docs/`, `specs/`, `source/` and
   `tests/`, plus `README.md` and `CHANGELOG.md`: object ids (only placeholders under `docs/` and
   `specs/`; elsewhere no version-4 id outside a pinned register of four public constants), email
@@ -240,6 +265,8 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
 
 The QA files sit outside the tripwire on purpose: they call help, the analyzer and pure maps only,
 and `testhygiene`, `sourcehygiene`, `dochygiene` and `docsync` read files statically.
+`module.tests.ps1`'s clean-process import imports the built module in a child `pwsh` and lists the
+loaded modules; it calls no command of the module.
 
 ---
 
@@ -258,13 +285,13 @@ and `testhygiene`, `sourcehygiene`, `dochygiene` and `docsync` read files static
 
 # Full test suite -- the authoritative gate, and the command every CI leg runs.
 # QA tests + unit tests + per-function PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-09: 3,036 passed, 0 failed, 0 skipped; coverage 95.76% over 3,468 analysed
+# (measured 2026-10-10: 3,003 passed, 0 failed, 0 skipped; coverage 95.79% over 3,468 analysed
 #  commands; Pester 6.2.0)
 ./build.ps1 -Tasks test
 
 # Import from source for quick local development
-# (needs Az.Resources and Microsoft.Graph.Authentication on PSModulePath, and AzAuth for an
-#  Azure sign-in; prepend output/RequiredModules if needed)
+# (needs Microsoft.Graph.Authentication and AzAuth, the manifest's RequiredModules, on
+#  PSModulePath; prepend output/RequiredModules if needed)
 Import-Module ./source/Omnicit.PIM.psd1 -Force
 
 # Import the built module
@@ -275,11 +302,11 @@ The Sampler test task measures coverage against the **built** module output, not
 `build.yaml`'s `test` workflow does not include `build` (`build.yaml:63-70`; only the default
 workflow, `./build.ps1` with no `-Tasks`, runs both). Always run `-Tasks build` before `-Tasks test`
 after changing source files -- and never build while the tests are running. The coverage threshold
-is 80 % (`build.yaml:152`): measured on 2026-10-09, 3,321 of 3,468 commands are covered, 546 more
+is 80 % (`build.yaml:152`): measured on 2026-10-10, 3,322 of 3,468 commands are covered, 547 more
 than the 2,775 that 80 % requires. The margin was once only four commands: the MSAL reflection
 lines in `Get-OPIMMsalApplication` stopped being run by any unit test, since reaching them builds a
 real MSAL client (see **Testing Conventions**), and that took coverage from 83.7 % to 80.28 % --
-four commands above the line. It is 546 today, but a change that adds untested commands can still
+four commands above the line. It is 547 today, but a change that adds untested commands can still
 bring it close.
 
 **The build stamps the version GitVersion computes, and a local build needs GitVersion to do it.**
@@ -294,10 +321,9 @@ NOT CI GREEN.** `RequiredModules.psd1` asks for the newest release of every buil
 (InvokeBuild, PSScriptAnalyzer, Pester, ModuleBuilder, Configuration, Metadata,
 ChangelogManagement, Sampler, Sampler.GitHubTasks), but a local tree is resolved once and then left
 alone, while every CI run resolves afresh on a clean runner. The RUNTIME modules are the
-exception: `Az.Resources` 9.0.3 and `Microsoft.Graph.Authentication` 2.36.0 are pinned there,
-equal to the manifest's floors, and the package and publish jobs install exactly those versions,
-read from that file; `AzAuth` 2.9.0 is pinned there too, for the build and the tests only (see
-**Dependencies**). So a full local pass proves the suite against whatever
+exception: `Microsoft.Graph.Authentication` 2.36.0 and `AzAuth` 2.9.0 are pinned there, equal to
+the manifest's floors, and the package and publish jobs install exactly those versions, read from
+that file (see **Dependencies**). So a full local pass proves the suite against whatever
 build tooling happens to be on disk, not against what the merge gate will run. Refresh before
 trusting a local run, especially before opening or updating a PR:
 
@@ -660,9 +686,11 @@ which the catch around the request scrubs and writes as itself. In the `Enable-O
 poll that catch ends the wait for that role only: nothing is returned for it -- the activation
 request was already sent and stays submitted -- and the next role still runs.
 
-**Graph tokens come from MSAL.NET, reached by reflection.** `Get-OPIMMsalApplication` finds the
-`Microsoft.Identity.Client` assembly (4.x or 5.x) that `Microsoft.Graph.Authentication` loads into
-its own `AssemblyLoadContext`, falling back to loading the DLL from that module's folder
+**Graph tokens come from MSAL.NET, reached by reflection.** `Get-OPIMMsalApplication` takes the
+first `Microsoft.Identity.Client` assembly (4.x or 5.x) in any registered `AssemblyLoadContext` --
+normally the copy `Microsoft.Graph.Authentication` loads into its own; AzAuth ships its own (4.83.1
+in AzAuth 2.9.0, beside 4.82.1 in Microsoft.Graph.Authentication 2.36.0), which can be found first
+once it is loaded -- falling back to loading the DLL from Microsoft.Graph.Authentication's folder
 (`Get-OPIMMsalApplication.ps1:57-76`). It builds a public client application for the Microsoft
 Graph Command Line Tools public client id -- no app registration -- with the authority
 `https://login.microsoftonline.com/<tenant>` and the redirect URI `http://localhost` (`:93-140`).
@@ -974,9 +1002,11 @@ where a next link's skip token would sit.
 session. `Wait-OPIMDirectoryRole` is not in the table: it polls in sequence through
 `Invoke-OPIMGraphRequest`.
 `Invoke-OPIMDeviceCodeAuth` is not in it either: it reaches MSAL through the application object it
-is handed, not through the Graph SDK or AzAuth. No Az command is called anywhere under `source/`;
-the `#requires -module Az.Resources` lines of the three `*-OPIMAzureRole` files and the manifest's
-`Az.Resources` entry stay until the Az modules leave the dependencies (Sprint 2 step 1b).
+is handed, not through the Graph SDK or AzAuth. No Az command is called anywhere under `source/`,
+no Az module is required by a `#requires` line or declared in the manifest, and the Az boundary in
+`tests/QA/sourcehygiene.tests.ps1` refuses every Az call, string that runs one and Az module name it
+can see in the source text under `source/` (see its known limits in the QA gate list under
+**Module Layout**).
 
 Beside these, the module reads `Get-MgContext` (`Get-OPIMMsalApplication.ps1:46`,
 `Get-OPIMGraphSessionFingerprint.ps1:47`), and it reads no Az context.
@@ -1054,12 +1084,12 @@ category `InvalidArgument`, no target object), sends nothing for it and goes on 
 and is never counted as requested. An Azure schedule's id is its `Name`,
 not `id`; an activation is a PUT at the eligibility's own scope whose body names the principal,
 the role definition, `requestType` `SelfActivate` and `linkedRoleEligibilityScheduleId = $Role.Name`
-(`Enable-OPIMAzureRole.ps1:220-253`), with `scheduleInfo.startDateTime` (UTC) only when `-NotBefore`
+(`Enable-OPIMAzureRole.ps1:219-252`), with `scheduleInfo.startDateTime` (UTC) only when `-NotBefore`
 is given (without it Azure starts the activation now) and `scheduleInfo.expiration` as an ISO 8601
 `AfterDuration`, or as `AfterDateTime` with its `endDateTime` in UTC under `-Until` (OPIM-15); a
 justification and ticket information are added only when given. A deactivation sends
 `principalId`, `roleDefinitionId` and `requestType` `SelfDeactivate` and nothing else -- no
-`linkedRoleEligibilityScheduleId` (OPIM-24) and no schedule (`Disable-OPIMAzureRole.ps1:120-133`):
+`linkedRoleEligibilityScheduleId` (OPIM-24) and no schedule (`Disable-OPIMAzureRole.ps1:119-132`):
 ARM documents the link for an activation only, and the request names the active instance by the
 scope in its path, its principal and its role definition.
 
@@ -1484,7 +1514,7 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `ArmTransportError` and the text `"HTTP <n>: <message>"`. It chains no exception, its category is
   `OperationStopped` and its target the request path. A cmdlet inspects
   `$PSItem.FullyQualifiedErrorId` (`.Split(',')[0]` where the id carries a suffix, as
-  `Get-OPIMAzureRole.ps1:146` does) and passes the record to `$PSCmdlet.WriteError()` or rewraps it
+  `Get-OPIMAzureRole.ps1:145` does) and passes the record to `$PSCmdlet.WriteError()` or rewraps it
   with `Write-CmdletError`.
 - **Special error codes have converters.** `ConvertTo-ActiveDurationTooShortError` turns
   `ActiveDurationTooShort` (a deactivation within 5 minutes of the activation) into a readable
@@ -1581,24 +1611,25 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   throw) whose `finally` uninstalls -- but not the exact block, so copy the block rather than write
   your own. The tripwire suite itself dot-sources `"$PSScriptRoot/OPIMTransportTripwire.ps1"`.
 - **The transport tripwire** (`tests/Unit/TestHelpers/OPIMTransportTripwire.ps1`) replaces the
-  sixteen commands through which module code reaches, or once reached, a tenant or the network --
-  the four `Microsoft.Graph.Authentication` commands, AzAuth's `Get-AzToken`, `Connect-AzAccount`,
-  `Disconnect-AzAccount`, `Get-AzContext`, `Get-AzAccessToken`, `Update-AzConfig`, the four
-  `Az.Resources` schedule commands, `Invoke-WebRequest` and `Invoke-RestMethod` -- with functions
-  that record the call (parameter NAMES only, never a value) and throw, and the root `AfterAll`
-  fails the file on any record, so a module `catch` that swallows the throw cannot hide it. A
-  cmdlet is replaced by a global function built from its metadata (`Cmdlet`; `Get-AzToken` among
-  them, measured 2026-10-09 on AzAuth 2.9.0 -- AzAuth is not a module dependency yet, so the helper
-  imports it inside Pester when it is not loaded, which is load-bearing only when module
-  autoloading is off), and the `Az.Accounts` cmdlets, which implement `IDynamicParameters`, carry
-  their dynamic parameters as static ones so a call such as `Update-AzConfig -EnableLoginByWam`
-  binds before it is recorded (`DynamicCmdlet`); the `Az.Resources` commands are functions, so
-  theirs live in Omnicit.PIM's module scope, where they do not shadow the imported function
-  (`ModuleFunction`). Module code calls none of the nine Az commands any more; they stay on the
-  tripwire until the Az modules leave the dependencies (Sprint 2 step 1b). A
-  `Mock -ModuleName Omnicit.PIM` outranks every form, so the mocks below work unchanged, and the
-  replacements refuse whether or not the process holds a Graph or Az context -- run the suite in a
-  fresh `pwsh` process all the same.
+  seven commands through which module code reaches, or could reach, a tenant or the network --
+  the four `Microsoft.Graph.Authentication` commands, AzAuth's `Get-AzToken`, `Invoke-WebRequest`
+  and `Invoke-RestMethod` -- with functions that record the call (parameter NAMES only, never a
+  value) and throw, and the root `AfterAll` fails the file on any record, so a module `catch` that
+  swallows the throw cannot hide it. All seven are compiled cmdlets without `IDynamicParameters`,
+  and each is replaced the one way the helper knows (`Cmdlet`): by a global function built from its
+  metadata, measured 2026-10-06 on Microsoft.Graph.Authentication 2.36.0 and, for `Get-AzToken`,
+  2026-10-09 on AzAuth 2.9.0. The helper checks that form before it builds a replacement and throws
+  when a command no longer has it. AzAuth is a `RequiredModule`, so it is loaded whenever
+  Omnicit.PIM was imported first; the helper still imports it inside Pester when it is not loaded,
+  which is load-bearing only when module autoloading is off. No Az module command is on the list:
+  module code calls none, and the Az boundary in `tests/QA/sourcehygiene.tests.ps1` refuses every
+  call of one it can see in the source text under `source/` (see its known limits in the QA gate
+  list under **Module Layout**). A reintroduced Az call is therefore not refused at run time --
+  where the Az modules are installed, as in a local profile, a unit test would reach the real
+  command -- and the Az boundary fails the same run when it can see the call. A
+  `Mock -ModuleName Omnicit.PIM` outranks every replacement, so the mocks below work unchanged, and
+  the replacements refuse whether or not the process holds a Graph or Az context -- run the suite in
+  a fresh `pwsh` process all the same.
 - **A `ForEach-Object -Parallel` block is mocked through the stand-in.** `source/` holds no such
   block today (testhygiene's named list is empty); this is the form a future one is tested with.
   No Pester mock and no global function reaches such a runspace, so the tripwire puts a generated
@@ -1620,13 +1651,10 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `Get-OPIMParallelTransportStandInCall` returns the calls (`Command`, `Caller`, `Parameters`);
   assert on it, which also proves the parallel path was reached.
 - **Never mock around the tripwire with a function of your own.** It never works as a mock.
-  Defined in the module scope, or globally under one of the twelve names the tripwire replaces
-  with a global function, it displaces the replacement, and the root `AfterAll` fails the file
-  with "no longer resolves to the tripwire from the module scope". Defined globally under one of
-  the four `Az.Resources` names, whose replacements live in the module scope, it is never reached
-  by module code, which still hits the replacement, and the file fails on the record. Use
-  `Mock -ModuleName Omnicit.PIM`, which outranks the replacement without removing it, or the
-  stand-in inside a `-Parallel` block.
+  Defined in the module scope, or globally under one of the seven names the tripwire replaces with
+  a global function, it displaces the replacement, and the root `AfterAll` fails the file with "no
+  longer resolves to the tripwire from the module scope". Use `Mock -ModuleName Omnicit.PIM`, which
+  outranks the replacement without removing it, or the stand-in inside a `-Parallel` block.
 - **Always mock `Initialize-OPIMAuth`** -- every pillar cmdlet and `Wait-OPIMDirectoryRole` calls it
   first (see **Authentication Architecture**), so without the mock the test would start a real
   sign-in; the tripwire records and refuses its first transport call and fails the file, but only
@@ -1666,13 +1694,11 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `Invoke-MgGraphRequest` mock throws a record pointing at a request with an `Authorization`
   header, and the two paging failures -- where the real wrapper, its scrub and
   `Convert-GraphHttpException` run underneath the cmdlet. `Get-AzToken` is mocked only in
-  `Initialize-OPIMAuth.Tests.ps1` and the tripwire suite. Where a test mocks an Az command --
-  `Initialize-OPIMAuth.Tests.ps1`, `Get-OPIMArmRefusal.Tests.ps1`, `Disconnect-OPIM.Tests.ps1` and
-  the three `*-OPIMAzureRole` test files -- it does so only to prove, with `-Times 0`, that the
-  command is no longer called, in the `It` or context whose assertion it serves. The one other Az
-  mock is in the tripwire suite: its `Update-AzConfig` binding case mocks the command with a
-  `-ParameterFilter` on `-EnableLoginByWam` to prove that the replacement binds that dynamic
-  parameter of the real cmdlet.
+  `Initialize-OPIMAuth.Tests.ps1` and the tripwire suite. No test mocks an Az command: module code
+  calls none, so there is nothing to answer, and the Az boundary in
+  `tests/QA/sourcehygiene.tests.ps1` holds that absence from the source text, within its known
+  limits. The `-Times 0` mocks that once proved it ran only while the Az modules were installed,
+  since Pester's `Mock` throws for a command it cannot resolve.
 - **Mock `Invoke-OPIMArmRequest`, not `Invoke-WebRequest`**, scoped to the module and to the call
   with a `-ParameterFilter` on `$Method` and `$Path`. The three `*-OPIMAzureRole` cmdlets send every
   ARM request through it, so their tests answer it with what the transport returns -- the parsed
@@ -1889,31 +1915,30 @@ with the team may be in Swedish.
 
 | Module | Version | Used for |
 |---|---|---|
-| `Az.Resources` | 9.0.3 | Declared for Azure RBAC PIM (`Get`/`Enable`/`Disable-OPIMAzureRole`), which no code calls any more; Sprint 2 step 1b removes it |
-| `Microsoft.Graph.Authentication` | 2.36.0 | `Connect-MgGraph -AccessToken`, `Invoke-MgGraphRequest` (inside the wrapper), and the MSAL assembly `Get-OPIMMsalApplication` reflects into |
+| `Microsoft.Graph.Authentication` | 2.36.0 | `Connect-MgGraph -AccessToken`, `Invoke-MgGraphRequest` (inside the wrapper), and the MSAL assembly `Get-OPIMMsalApplication` normally reflects into |
+| `AzAuth` | 2.9.0 | `Get-AzToken`, the Azure Resource Manager sign-in in `Initialize-OPIMAuth` (`-Interactive`, or `-DeviceCode` in device code mode); it ships an MSAL of its own, which `Get-OPIMMsalApplication` can find first (see **Authentication Architecture**) |
 
 The manifest declares both as `RequiredModules` (`source/Omnicit.PIM.psd1:54-57`), where a
-`ModuleVersion` is a FLOOR, never an exact pin. `RequiredModules.psd1` (`:33-34`) pins the same two
+`ModuleVersion` is a FLOOR, never an exact pin. `RequiredModules.psd1` (`:38-39`) pins the same two
 versions EXACTLY for the build, the tests and the workflow's package and publish installs, which
-read them from that file and refuse a missing or `latest` value. Keep the two files equal; every
-other entry in `RequiredModules.psd1` but `AzAuth` is build tooling and stays `latest`.
-`Az.Resources` 9.0.3 is the floor -- not the 5.6.0 that older documents cite.
+read them from that file and refuse a missing or `latest` value. Keep the two files equal --
+`tests/QA/module.tests.ps1` holds each floor equal to its pin and both install loops equal to the
+declared set; every other entry in `RequiredModules.psd1` is build tooling and stays `latest`.
 
-`AzAuth` 2.9.0, whose `Get-AzToken` signs in to Azure Resource Manager, is what the Azure role
-cmdlets actually run on; the `Az.Resources` row above is the dependency the manifest still declares,
-which no code under `source/` calls any more. AzAuth is pinned exactly in `RequiredModules.psd1`
-(`:35-38`) for the build and the tests only: the manifest gains it in Sprint 2 step 1b, together
-with the removal of the Az modules, so the package and publish jobs do not install it yet, and a
-user installs it by hand -- the about topic's `DEPENDENCIES` and README's dependency table name it.
-AzAuth 2.9.0 requires PowerShell 7.4 (its own manifest's `PowerShellVersion`), while this module's
-manifest still says 7.2: step 1b must raise the manifest's `PowerShellVersion` to 7.4 when AzAuth
-becomes a `RequiredModule`.
+AzAuth 2.9.0 requires PowerShell 7.4 (its own manifest's `PowerShellVersion`), and so does this
+module (`PowerShellVersion = '7.4'`, `source/Omnicit.PIM.psd1:36`), so that on PowerShell 7.2 or
+7.3 the import is refused with Omnicit.PIM's own requirement named. AzAuth's floor alone would also
+stop the import there, through `RequiredModules`. `tests/QA/module.tests.ps1` holds the built
+manifest's `PowerShellVersion` at 7.4 or more and at least at every declared dependency's own.
 
-`Az.Accounts` is not declared; it is installed as a dependency of the `Az.Resources` package (a local
-ModuleFast resolve gave 5.5.3 beside it on 2026-10-05, while CI's PSResourceGet resolve gave 5.3.3 --
-run 37458342720, 2026-10-06, step "Report resolved dependency versions" -- so the tripwire's
-`DynamicCmdlet` replacements carry version-dependent parameters). `Connect-AzAccount`,
-`Get-AzContext`, `Get-AzAccessToken`, `Update-AzConfig` and `Disconnect-AzAccount` come from it.
+No Az module is declared, resolved or installed: not in the manifest, not in `RequiredModules.psd1`
+and not in the workflow's install loops. None is needed for a test either. The module calls,
+declares and loads no Az module (A7), and two tests hold that: the Az boundary in
+`tests/QA/sourcehygiene.tests.ps1` refuses every Az call, Az module name and `#requires` of one it
+can see in the source text (see its known limits under **Module Layout**), and the clean-process
+import in `tests/QA/module.tests.ps1` proves that importing the built module loads none. So no
+test mocks an Az command with `-Times 0`, which would need the Az modules installed for Pester to
+resolve it.
 
 Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses raw
 `Invoke-MgGraphRequest` (through `Invoke-OPIMGraphRequest`) to avoid typed SDK coupling and SDK
@@ -1989,13 +2014,15 @@ version drift.
   new code calls the wrapper instead.
 - **Call no Az command.** Azure Resource Manager is reached only through `Invoke-OPIMArmRequest`,
   whose `Invoke-WebRequest` carries the ARM token as a SecureString with `-SkipHttpErrorCheck`, and
-  signed in to only through AzAuth's `Get-AzToken` in `Initialize-OPIMAuth`. The
-  `#requires -module Az.Resources` lines and the manifest's `Az.Resources` entry stay until Sprint 2
-  step 1b removes the Az modules; they are not calls.
+  signed in to only through AzAuth's `Get-AzToken` in `Initialize-OPIMAuth`. The Az boundary in
+  `tests/QA/sourcehygiene.tests.ps1` refuses every Az call it can see under `source/` -- also one
+  run from a string -- and every Az module named there, in a `#requires` line or the manifest; its
+  known limits are listed under **Module Layout**, and review has to catch those shapes. Do not
+  answer it with an entry in its allow list, since a new Az dependency is a design decision.
 - **`ErrorRecord.ErrorDetails` requires `[ErrorDetails]::new()`** -- see **Error Handling**.
 - **Never use bare `throw` in public functions** -- see **Error Handling**.
 - **A local `$Filter` shadows the `-Filter` parameter** -- name it `$OdataFilter`.
-- **PowerShell 7.2+ Core only** (`CompatiblePSEditions = @('Core')`). Do not suggest Windows
+- **PowerShell 7.4+ Core only** (`CompatiblePSEditions = @('Core')`). Do not suggest Windows
   PowerShell 5.x or Desktop-compatible code.
 - **`Install-OPIMConfiguration` is create-only** and has no `-Force` parameter; do not add one back.
   An existing alias is updated with `Set-OPIMConfiguration`.

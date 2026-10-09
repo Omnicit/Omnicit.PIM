@@ -1,6 +1,5 @@
 using namespace System.Xml
 
-#requires -module Az.Resources
 function Enable-OPIMAzureRole {
     <#
     .SYNOPSIS

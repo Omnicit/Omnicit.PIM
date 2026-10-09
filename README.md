@@ -17,6 +17,10 @@ A PowerShell module for self-service activation and deactivation of PIM roles an
 
 ## Installation
 
+Omnicit.PIM needs PowerShell 7.4 or later (Core only). It declares two dependencies,
+Microsoft.Graph.Authentication and AzAuth, which `Install-Module` installs with it; no Az PowerShell
+module is needed.
+
 ```powershell
 Install-Module Omnicit.PIM
 Import-Module Omnicit.PIM
@@ -117,6 +121,23 @@ the module's next Azure sign-in rebuilds it or the process ends.
 ```powershell
 Disconnect-OPIM
 ```
+
+### Azure sign-in and AzAuth's credential
+
+AzAuth keeps one credential per PowerShell process, and it is shared with any `Get-AzToken` call
+you make yourself. Omnicit.PIM makes AzAuth rebuild it (AzAuth's `-Force`) on the first Azure
+sign-in of a session -- also after `Disconnect-OPIM`, and after a token the module refused or
+dropped -- so a credential left in the process by another sign-in is not reused for the first
+token, and again on every forced refresh after Azure Resource Manager rejects a token.
+Omnicit.PIM reuses its own Azure token, without asking AzAuth, only while it is for the session's
+tenant and account and has more than 5 minutes left. Whatever AzAuth answers, every token is
+checked against the tenant (`tid`) and the account (`oid`) of the Microsoft Graph session before
+anything is sent with it.
+
+`Disconnect-OPIM` cannot clear AzAuth's credential: it ends with the PowerShell process, or is
+rebuilt at the module's next Azure sign-in. Omnicit.PIM creates, reads and ends no Az context, so an
+Az PowerShell session you started yourself is left alone, and `Disconnect-OPIM` does not sign it
+out.
 
 ---
 
@@ -897,11 +918,12 @@ time-bound assignments. An always-on assignment is not listed.
 
 | Dependency | Purpose |
 |---|---|
-| `Microsoft.Graph.Authentication` 2.36+ | Directory roles and Entra ID group PIM (raw `Invoke-MgGraphRequest`) |
-| `Az.Resources` 9.0.3+ | Azure resource (RBAC) roles |
-| `AzAuth` 2.9.0 | The Azure sign-in; it needs PowerShell 7.4 or later |
+| PowerShell 7.4 or later | Core only; AzAuth 2.9.0 requires 7.4 |
+| `Microsoft.Graph.Authentication` 2.36.0+ | Directory roles and Entra ID group PIM (raw `Invoke-MgGraphRequest`), and the Microsoft Graph sign-in |
+| `AzAuth` 2.9.0+ | The Azure Resource Manager sign-in (`Get-AzToken`) |
 
----
+No Az PowerShell module is required or loaded; the module sends every Azure Resource Manager
+request itself.
 
 ---
 

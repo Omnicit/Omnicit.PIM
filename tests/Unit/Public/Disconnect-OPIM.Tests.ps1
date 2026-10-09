@@ -11,13 +11,6 @@ AfterAll {
 }
 
 Describe 'Disconnect-OPIM' {
-    # The module calls no Az command: the Azure Resource Manager token lives only in the auth state,
-    # so clearing the state is the whole Azure disconnect. Disconnect-AzAccount is mocked only so that
-    # a call to it is counted here instead of failing the file on the tripwire.
-    BeforeAll {
-        Mock -ModuleName Omnicit.PIM Disconnect-AzAccount {}
-    }
-
     Context 'When called successfully' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Disconnect-MgGraph {}
@@ -26,11 +19,6 @@ Describe 'Disconnect-OPIM' {
         It 'calls Disconnect-MgGraph once' {
             Disconnect-OPIM
             Should -Invoke -ModuleName Omnicit.PIM Disconnect-MgGraph -Times 1 -Exactly -Scope It
-        }
-
-        It 'calls no Az command' {
-            Disconnect-OPIM
-            Should -Invoke -ModuleName Omnicit.PIM Disconnect-AzAccount -Times 0 -Scope It
         }
 
         It 'produces no output' {
@@ -56,7 +44,6 @@ Describe 'Disconnect-OPIM' {
             InModuleScope Omnicit.PIM {
                 $script:_OPIMAuthState | Should -BeNullOrEmpty
             }
-            Should -Invoke -ModuleName Omnicit.PIM Disconnect-AzAccount -Times 0 -Scope It
         }
     }
 
@@ -91,7 +78,6 @@ Describe 'Disconnect-OPIM' {
                 $script:_OPIMMsalAppTenantId | Should -BeNullOrEmpty
             }
             Should -Invoke -ModuleName Omnicit.PIM Disconnect-MgGraph -Times 1 -Exactly -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM Disconnect-AzAccount -Times 0 -Scope It
         }
     }
 

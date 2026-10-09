@@ -33,7 +33,7 @@ Copyright = '(c) Omnicit. All rights reserved.'
 Description = 'Entra ID Privileged Identity Management (PIM) Self Activation Commands for Directory Roles, Azure Resources, and Entra ID Groups'
 
 # Minimum version of the PowerShell engine required by this module
-PowerShellVersion = '7.2'
+PowerShellVersion = '7.4'
 
 # Name of the PowerShell host required by this module
 # PowerShellHostName = ''
@@ -52,8 +52,8 @@ PowerShellVersion = '7.2'
 
 # Modules that must be imported into the global environment prior to importing this module
     RequiredModules  = @(
-        @{ ModuleName = 'Az.Resources'; ModuleVersion = '9.0.3' }
         @{ ModuleName = 'Microsoft.Graph.Authentication'; ModuleVersion = '2.36.0' }
+        @{ ModuleName = 'AzAuth'; ModuleVersion = '2.9.0' }
     )
 
 # Assemblies that must be loaded prior to importing this module

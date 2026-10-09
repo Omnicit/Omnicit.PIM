@@ -10,27 +10,17 @@
 # failure into a record of its own, ArmTransportError). The record is what the AfterAll check reads.
 # It holds parameter NAMES only -- never a value, which may be a secret or a token.
 #
-# The five Az.Accounts and the four Az.Resources commands stay on the list although module code no
-# longer calls them: Az.Resources is still a declared dependency, and a call that came back would be
-# refused here, until the Az modules leave the dependencies (Sprint 2 step 1b).
+# No Az module command is on the list: module code calls none, and the Az boundary gate in
+# tests/QA/sourcehygiene.tests.ps1 refuses any call of one under source/ outright.
 #
-# Three forms, measured 2026-10-06 (Microsoft.Graph.Authentication 2.36.0, Az.Accounts 5.5.3,
-# Az.Resources 9.0.3) and, for AzAuth's Get-AzToken, 2026-10-09 (AzAuth 2.9.0, a compiled cmdlet
-# without IDynamicParameters):
+# One form for every replacement, measured 2026-10-06 (Microsoft.Graph.Authentication 2.36.0) and,
+# for AzAuth's Get-AzToken, 2026-10-09 (AzAuth 2.9.0, a compiled cmdlet without IDynamicParameters):
 #   Cmdlet         A global function built from the cmdlet's metadata. A function outranks a cmdlet,
 #                  and a Pester Mock -ModuleName (an alias in the module scope) outranks both.
-#                  AzAuth is not a dependency of Omnicit.PIM yet, so the definition builder imports
-#                  it first (it runs inside the root BeforeAll, where an import is allowed).
-#   DynamicCmdlet  The Az.Accounts cmdlets implement IDynamicParameters. A Pester mock of a function
-#                  cannot evaluate a dynamicparam block, so the replacement carries the parameters
-#                  GetDynamicParameters() returns as STATIC parameters -- otherwise a call such as
-#                  Update-AzConfig -EnableLoginByWam fails to bind before the record is written.
-#                  The dynamic parameter set depends on the Az.Accounts version: CI's PSResourceGet
-#                  resolved 5.3.3 (2026-10-06), where four of the five cmdlets return none, and the
-#                  replacement materializes whatever the loaded version returns.
-#   ModuleFunction The Az.Resources commands are functions. A global replacement would shadow the
-#                  imported function and its removal brings it back only through module autoloading,
-#                  so this replacement lives in Omnicit.PIM's module scope instead.
+#                  AzAuth is a RequiredModule of Omnicit.PIM, so it is loaded whenever the module
+#                  was imported first; the definition builder still imports it when it is not
+#                  loaded, so the helper stands on its own (it runs inside the root BeforeAll,
+#                  where an import is allowed).
 # And for ForEach-Object -Parallel runspaces, where no global function or mock reaches: a generated
 # stand-in Microsoft.Graph.Authentication module at the front of PSModulePath, recording into
 # AppDomain data that every runspace in the process shares.
@@ -41,7 +31,7 @@
 function Get-OPIMTransportTripwireName {
     <#
     .SYNOPSIS
-    The sixteen commands through which module code reaches, or once reached, a tenant or the network,
+    The seven commands through which module code reaches, or could reach, a tenant or the network,
     with the module that owns the real command and the form of its replacement.
     #>
     [CmdletBinding()]
@@ -49,22 +39,13 @@ function Get-OPIMTransportTripwireName {
     param()
     $Graph = 'Microsoft.Graph.Authentication'
     [ordered]@{
-        'Invoke-MgGraphRequest'                = [pscustomobject]@{ Module = $Graph; Form = 'Cmdlet' }
-        'Connect-MgGraph'                      = [pscustomobject]@{ Module = $Graph; Form = 'Cmdlet' }
-        'Disconnect-MgGraph'                   = [pscustomobject]@{ Module = $Graph; Form = 'Cmdlet' }
-        'Get-MgContext'                        = [pscustomobject]@{ Module = $Graph; Form = 'Cmdlet' }
-        'Get-AzToken'                          = [pscustomobject]@{ Module = 'AzAuth'; Form = 'Cmdlet' }
-        'Connect-AzAccount'                    = [pscustomobject]@{ Module = 'Az.Accounts'; Form = 'DynamicCmdlet' }
-        'Disconnect-AzAccount'                 = [pscustomobject]@{ Module = 'Az.Accounts'; Form = 'DynamicCmdlet' }
-        'Get-AzContext'                        = [pscustomobject]@{ Module = 'Az.Accounts'; Form = 'DynamicCmdlet' }
-        'Get-AzAccessToken'                    = [pscustomobject]@{ Module = 'Az.Accounts'; Form = 'DynamicCmdlet' }
-        'Update-AzConfig'                      = [pscustomobject]@{ Module = 'Az.Accounts'; Form = 'DynamicCmdlet' }
-        'Get-AzRoleEligibilitySchedule'        = [pscustomobject]@{ Module = 'Az.Resources'; Form = 'ModuleFunction' }
-        'Get-AzRoleAssignmentScheduleInstance' = [pscustomobject]@{ Module = 'Az.Resources'; Form = 'ModuleFunction' }
-        'Get-AzRoleAssignmentScheduleRequest'  = [pscustomobject]@{ Module = 'Az.Resources'; Form = 'ModuleFunction' }
-        'New-AzRoleAssignmentScheduleRequest'  = [pscustomobject]@{ Module = 'Az.Resources'; Form = 'ModuleFunction' }
-        'Invoke-WebRequest'                    = [pscustomobject]@{ Module = 'Microsoft.PowerShell.Utility'; Form = 'Cmdlet' }
-        'Invoke-RestMethod'                    = [pscustomobject]@{ Module = 'Microsoft.PowerShell.Utility'; Form = 'Cmdlet' }
+        'Invoke-MgGraphRequest' = [pscustomobject]@{ Module = $Graph; Form = 'Cmdlet' }
+        'Connect-MgGraph'       = [pscustomobject]@{ Module = $Graph; Form = 'Cmdlet' }
+        'Disconnect-MgGraph'    = [pscustomobject]@{ Module = $Graph; Form = 'Cmdlet' }
+        'Get-MgContext'         = [pscustomobject]@{ Module = $Graph; Form = 'Cmdlet' }
+        'Get-AzToken'           = [pscustomobject]@{ Module = 'AzAuth'; Form = 'Cmdlet' }
+        'Invoke-WebRequest'     = [pscustomobject]@{ Module = 'Microsoft.PowerShell.Utility'; Form = 'Cmdlet' }
+        'Invoke-RestMethod'     = [pscustomobject]@{ Module = 'Microsoft.PowerShell.Utility'; Form = 'Cmdlet' }
     }
 }
 
@@ -96,8 +77,10 @@ function New-OPIMTransportTripwireDefinition {
     $Names = Get-OPIMTransportTripwireName
     foreach ($Name in @($Names.Keys)) {
         $Spec = $Names[$Name]
-        # Load-bearing only when module autoloading is off: with it on, the Get-Command below loads
-        # AzAuth from PSModulePath by itself.
+        # AzAuth is a RequiredModule of Omnicit.PIM, so it is already loaded whenever the module was
+        # imported first. The import stays for a run of this helper without it, and is load-bearing
+        # only when module autoloading is off: with it on, the Get-Command below loads AzAuth from
+        # PSModulePath by itself.
         if ($Spec.Module -eq 'AzAuth' -and -not (Get-Module -Name AzAuth)) {
             Import-Module -Name AzAuth -ErrorAction Stop
         }
@@ -109,39 +92,16 @@ function New-OPIMTransportTripwireDefinition {
         }
         $Command = $Found[0]
 
-        $Dynamic = $null
         $FormHolds = $false
         if ($Spec.Form -eq 'Cmdlet') {
             $FormHolds = ($Command -is [System.Management.Automation.CmdletInfo]) -and
             -not [System.Management.Automation.IDynamicParameters].IsAssignableFrom($Command.ImplementingType)
-        } elseif ($Spec.Form -eq 'DynamicCmdlet') {
-            if (($Command -is [System.Management.Automation.CmdletInfo]) -and
-                [System.Management.Automation.IDynamicParameters].IsAssignableFrom($Command.ImplementingType)) {
-                try {
-                    $Dynamic = ([System.Management.Automation.IDynamicParameters][Activator]::CreateInstance($Command.ImplementingType)).GetDynamicParameters()
-                } catch {
-                    $Dynamic = $null
-                }
-                $FormHolds = $Dynamic -is [System.Management.Automation.RuntimeDefinedParameterDictionary]
-            }
-        } elseif ($Spec.Form -eq 'ModuleFunction') {
-            if ($Command -is [System.Management.Automation.FunctionInfo]) {
-                $Ast = $Command.ScriptBlock.Ast
-                if ($Ast -is [System.Management.Automation.Language.FunctionDefinitionAst]) { $Ast = $Ast.Body }
-                $FormHolds = $null -eq $Ast.DynamicParamBlock
-            }
         }
         if (-not $FormHolds) {
-            throw ('Transport tripwire: {0} is no longer a {1} (the form measured on 2026-10-06; found a {2}), so its replacement cannot be built that way. Measure again before extending the tripwire.' -f $Name, $Spec.Form, $Command.CommandType)
+            throw ('Transport tripwire: {0} is no longer a {1} (the form measured for it; found a {2}), so its replacement cannot be built that way. Measure again before extending the tripwire.' -f $Name, $Spec.Form, $Command.CommandType)
         }
 
         $Metadata = [System.Management.Automation.CommandMetadata]::new($Command)
-        if ($Spec.Form -eq 'DynamicCmdlet') {
-            foreach ($P in $Dynamic.Values) {
-                if ($Metadata.Parameters.ContainsKey($P.Name)) { continue }
-                $Metadata.Parameters.Add($P.Name, [System.Management.Automation.ParameterMetadata]::new($P.Name, $P.ParameterType))
-            }
-        }
         $Binding = [System.Management.Automation.ProxyCommand]::GetCmdletBindingAttribute($Metadata)
         $ParamBlock = [System.Management.Automation.ProxyCommand]::GetParamBlock($Metadata)
 
@@ -270,11 +230,7 @@ function Install-OPIMTransportTripwire {
     $global:OPIMTransportTripwireHits = [System.Collections.Generic.List[object]]::new()
     $global:OPIMTransportTripwireDefinitions = $Definitions
     foreach ($Definition in $Definitions.Values) {
-        if ($Definition.Form -eq 'ModuleFunction') {
-            & $Module { param($N, $T) Set-Item -Path ('function:script:' + $N) -Value ([scriptblock]::Create($T)) } $Definition.Name $Definition.Text
-        } else {
-            Set-Item -Path ('function:global:' + $Definition.Name) -Value ([scriptblock]::Create($Definition.Text))
-        }
+        Set-Item -Path ('function:global:' + $Definition.Name) -Value ([scriptblock]::Create($Definition.Text))
     }
 
     # The -Parallel runspace form: a stand-in Microsoft.Graph.Authentication first on PSModulePath.
@@ -349,12 +305,12 @@ function Uninstall-OPIMTransportTripwire {
     param()
     # Remove-Item honours no scope qualifier on the function: drive: 'function:global:X' removes
     # nothing and raises no error, with or without -Force (measured in Omnicit.EntraRBAC 2026-10-05,
-    # PowerShell 7.6). An unqualified path removes the NEAREST definition up the scope chain, which
-    # from here is the global replacement and from inside the module the module-scope one -- so a
-    # name is removed only while its nearest definition IS a replacement. That guard is what stops
-    # the module-scope removal from deleting the REAL Az.Resources function, which is the nearest
-    # definition there once the replacement is gone. The check below then reads from here AND from
-    # the module's scope, so a replacement left behind is reported, not silently kept.
+    # PowerShell 7.6). An unqualified path removes the NEAREST definition up the scope chain, so a
+    # name is removed only while its nearest definition IS a replacement. Every replacement is a
+    # global function; the pass from inside the module is a guard that removes a marked function
+    # left in the module scope and nothing else there (a Mock -ModuleName is an alias, never a
+    # replacement). The check below then reads from here AND from the module's scope, so a
+    # replacement left behind is reported, not silently kept.
     $Names = @((Get-OPIMTransportTripwireName).Keys)
     $Module = Get-Module -Name Omnicit.PIM | Select-Object -First 1
     foreach ($Name in $Names) {

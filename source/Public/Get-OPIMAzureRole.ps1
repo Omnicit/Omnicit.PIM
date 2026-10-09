@@ -1,4 +1,3 @@
-#requires -module Az.Resources
 function Get-OPIMAzureRole {
     <#
     .SYNOPSIS

@@ -1,5 +1,5 @@
 ---
-description: "Use when writing, reviewing, or debugging Pester tests for Omnicit.PIM. The conventions live in CLAUDE.md, section Testing Conventions: importing the module by name, module-scoped mocks of Initialize-OPIMAuth, Invoke-OPIMGraphRequest and Az.Resources cmdlets, pipeline input objects, type-tagged output, and ShouldProcess testing. Never call live APIs in tests."
+description: "Use when writing, reviewing, or debugging Pester tests for Omnicit.PIM. The conventions live in CLAUDE.md, section Testing Conventions: importing the module by name, module-scoped mocks of Initialize-OPIMAuth, Invoke-OPIMGraphRequest and Invoke-OPIMArmRequest, pipeline input objects, type-tagged output, and ShouldProcess testing. Never call live APIs in tests."
 applyTo: "tests/**/*.ps1"
 ---
 

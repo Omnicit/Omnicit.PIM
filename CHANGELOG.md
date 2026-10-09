@@ -12,15 +12,19 @@ commit.
 
 Azure roles (`Get-`, `Enable-` and `Disable-OPIMAzureRole`, and the Azure part of `pim` and `unpim`)
 now sign in with AzAuth and send their requests themselves instead of through the Az modules'
-commands. They need AzAuth 2.9.0 installed and PowerShell 7.4 or later; the module does not declare
-AzAuth yet, and the Az modules stay listed as dependencies. The Azure sign-in, in the system browser
-or with a device code, no longer reuses or ends an Az context of yours: a `Connect-AzAccount`
-session is left alone. Its token must be for the Graph session's tenant and account, else
-`TenantMismatch` or the new `AccountMismatch`, and nothing is sent. Output keeps its property names,
-but Az's .NET type names are gone: a script that tested `-is` against an Az type checks
-`$Obj.PSObject.TypeNames -contains 'Omnicit.PIM.AzureEligibilitySchedule'` (or another
-`Omnicit.PIM.Azure*` name) instead. `Disconnect-OPIM` clears the module's Azure token, but not
-AzAuth's own sign-in in the PowerShell process.
+commands. The Azure sign-in, in the system browser or with a device code, no longer reuses or ends
+an Az context of yours: a `Connect-AzAccount` session is left alone. Its token must be for the Graph
+session's tenant and account, else `TenantMismatch` or the new `AccountMismatch`, and nothing is
+sent. Output keeps its property names, but Az's .NET type names are gone: a script that tested `-is`
+against an Az type checks `$Obj.PSObject.TypeNames -contains 'Omnicit.PIM.AzureEligibilitySchedule'`
+(or another `Omnicit.PIM.Azure*` name) instead. `Disconnect-OPIM` clears the module's Azure token,
+but not AzAuth's own sign-in in the PowerShell process.
+
+Omnicit.PIM no longer depends on the Az modules. Installing it brings AzAuth (2.9.0 or later) and
+Microsoft.Graph.Authentication instead of Az.Resources and Az.Accounts, and importing it loads no Az
+module. A script that used an Az.Resources or Az.Accounts command only because this module brought
+it along must now install and import that module itself. The module now requires PowerShell 7.4 or
+later, which AzAuth needs: on PowerShell 7.2 or 7.3 it no longer imports.
 
 ## [0.6.0] - 2026-10-09
 

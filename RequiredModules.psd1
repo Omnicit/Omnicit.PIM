@@ -28,13 +28,14 @@
 
     # Runtime dependencies. The module under test imports them, so the build and the tests need
     # them, and the workflow installs exactly these versions before Publish-PSResource validates
-    # the manifest (.github/workflows/build-and-test.yml). Keep them equal to the manifest's
-    # RequiredModules floors.
-    'Az.Resources'                    = '9.0.3'
+    # the manifest (.github/workflows/build-and-test.yml). Pinned exactly, never 'latest'
+    # (OPIM-36), and equal to the manifest's RequiredModules floors; tests/QA/module.tests.ps1
+    # holds both rules. No Az module is listed: the module calls, declares and loads none (A7).
+    # tests/QA/module.tests.ps1 holds that this file lists none ('Should resolve no Az module for
+    # the build or the tests') and that importing the built module loads none (its clean-process
+    # import); tests/QA/sourcehygiene.tests.ps1 holds that source/ calls and declares none, as far
+    # as its Az boundary can see in the source text.
     'Microsoft.Graph.Authentication'  = '2.36.0'
-    # AzAuth signs in to Azure Resource Manager (Get-AzToken). Pinned exactly, never 'latest'
-    # (OPIM-36). The build and the tests need it; the manifest gains it with the removal of the Az
-    # modules from the dependencies, so the package and publish jobs do not install it yet.
     'AzAuth'                          = '2.9.0'
 
 

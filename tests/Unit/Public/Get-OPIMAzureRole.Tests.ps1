@@ -1151,18 +1151,17 @@ Describe 'Get-OPIMAzureRole' {
     }
 
     Context 'When any mode reads' {
-        # G15: after the move to the module's own transport no Az command is called.
+        # G15: every mode reads through the module's own transport. That no Az command is called is
+        # held by the Az boundary gate in tests/QA/sourcehygiene.tests.ps1.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $EligResponse = New-ArmResponse (New-ArmItem Eligibility -Name 'azure-001' -Role 'Reader')
             $InstResponse = New-ArmResponse (New-ArmItem Instance -Name 'azure-act-001' -Role 'Reader')
             Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EligResponse } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $InstResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {}
-            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance {}
         }
 
-        It 'calls no Az command and reads through the transport (<Name>)' -ForEach @(
+        It 'reads through the transport (<Name>)' -ForEach @(
             @{ Name = 'eligible'; Parameters = @{}; Reads = 1 }
             @{ Name = '-Activated'; Parameters = @{ Activated = $true }; Reads = 1 }
             @{ Name = '-All'; Parameters = @{ All = $true }; Reads = 2 }
@@ -1171,8 +1170,6 @@ Describe 'Get-OPIMAzureRole' {
             @{ Name = '-Scope'; Parameters = @{ Scope = '/subscriptions/sub-001' }; Reads = 1 }
         ) {
             $null = Get-OPIMAzureRole @Parameters -ErrorAction SilentlyContinue
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 0 -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times $Reads -Exactly -Scope It
         }
 
