@@ -14,8 +14,15 @@ function ConvertTo-PolicyValidationError {
     Returns $false when the error is not a recognised policy violation so the caller
     can re-emit the original error.
 
+    The record is the one Convert-OPIMArmHttpException (Azure Resource Manager) or
+    Convert-GraphHttpException (Microsoft Graph) built: its FullyQualifiedErrorId is the service's
+    error.code and its exception message carries error.message (for ARM also error.details), with no
+    inner exception. The keywords are searched in the id and the message only; an inner exception is
+    never read.
+
     .PARAMETER CaughtError
-    The ErrorRecord caught in the activation catch block.
+    The ErrorRecord caught in the activation catch block, as built by Convert-OPIMArmHttpException
+    or Convert-GraphHttpException.
 
     .PARAMETER ResourceType
     Human-readable noun used in the error message (e.g. 'role' or 'group').
@@ -48,12 +55,10 @@ function ConvertTo-PolicyValidationError {
         $Cmdlet
     )
 
-    # Build a combined message string that covers both the error ID and message body,
-    # plus the inner exception message when present (Az.Resources wraps the detail there).
+    # The combined text of the error ID and the message body: the service's error.code and error.message
+    # (and error.details for ARM), as Convert-OPIMArmHttpException and Convert-GraphHttpException put them
+    # into the record. No inner exception is read -- neither of them chains one.
     $AllMsgs = "$($CaughtError.FullyQualifiedErrorId) $($CaughtError.Exception.Message)"
-    if ($CaughtError.Exception.InnerException) {
-        $AllMsgs += ' ' + $CaughtError.Exception.InnerException.Message
-    }
 
     if ($AllMsgs -match 'JustificationRule') {
         $JustMsg = "Your PIM policy requires a justification for this $ResourceType. Use the -Justification parameter."
