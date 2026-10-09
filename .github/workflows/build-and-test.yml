@@ -103,14 +103,14 @@ jobs:
         run: ./build.ps1 -ResolveDependency -Tasks build
 
       - name: Report resolved dependency versions
-        # RequiredModules.psd1 asks for 'latest' on every build tool and pins only the two runtime
-        # dependencies -- see "Build and Test Commands" in CLAUDE.md. That makes a newly released
-        # version of any build tool a possible cause of a red build, so the run has to say which
-        # versions it actually resolved; without this the only way to find out is to guess and
-        # re-run. Runs on failure too (`if: always()`), since a build that broke on a dependency is
-        # exactly the run whose versions are worth reading. It only reports: it must never fail the
-        # job, so a missing directory prints a line instead of throwing under this step's 'stop'
-        # preference.
+        # RequiredModules.psd1 asks for 'latest' on every build tool and pins only the runtime
+        # dependencies (AzAuth and Microsoft.Graph.Authentication) -- see "Build and Test Commands"
+        # in CLAUDE.md. That makes a newly released version of any build tool a possible cause of
+        # a red build, so the run has to say which versions it actually resolved; without this the
+        # only way to find out is to guess and re-run. Runs on failure too (`if: always()`), since
+        # a build that broke on a dependency is exactly the run whose versions are worth reading.
+        # It only reports: it must never fail the job, so a missing directory prints a line instead
+        # of throwing under this step's 'stop' preference.
         #
         # A module folder holds one directory per installed version, but it can hold more. The
         # bootstrapper unpacks a .nupkg into the module folder ITSELF, alongside the version

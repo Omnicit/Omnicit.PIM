@@ -22,12 +22,13 @@ source/Public/${input:functionName}.ps1
 Also read the private helpers it may call:
 
 - `source/Private/Invoke-OPIMGraphRequest.ps1`
+- `source/Private/Invoke-OPIMArmRequest.ps1`
 - `source/Private/Resolve-OPIMSchedule.ps1`
 - `source/Private/Convert-GraphHttpException.ps1`
 
 Identify:
 - All parameters and parameter sets
-- Which external APIs are called (`Invoke-OPIMGraphRequest`, `Get-AzRole*`, `New-AzRole*`, etc.)
+- Which external APIs are called (`Invoke-OPIMGraphRequest` for Graph, `Invoke-OPIMArmRequest` for Azure)
 - The output type name(s) tagged on returned objects (e.g. `Omnicit.PIM.DirectoryEligibilitySchedule`)
 - Whether the function supports `-WhatIf` (`SupportsShouldProcess`)
 - Whether it accepts pipeline input
@@ -131,13 +132,21 @@ Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
 
 > Without `-ParameterFilter`, all Graph calls (including scope-rehydration second calls) share the same mock, which causes unexpected failures in multi-call scenarios.
 
-### Mocking -- Azure RBAC (Az.Resources)
+### Mocking -- Azure RBAC (the module's ARM transport)
+
+The three `*-OPIMAzureRole` cmdlets send every Azure request through `Invoke-OPIMArmRequest`. Mock it, never `Invoke-WebRequest`, always with `-ModuleName Omnicit.PIM` and a `-ParameterFilter` on `$Method` and `$Path`, and return the parsed ARM JSON the transport returns:
 
 ```powershell
-Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule        { return @() }
-Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance { return @() }
-Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest  { }
+Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { throw "No mock answers the ARM call $Method $Path" }
+Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest {
+    [pscustomobject]@{ value = @() }
+} -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest {
+    [pscustomobject]@{ value = @() }
+} -ParameterFilter { $Method -eq 'PUT' -and $Path -like '*/roleAssignmentScheduleRequests/*' }
 ```
+
+A read passes no `-Method`, so filter it on `$Path` alone; a request that changes something passes `-Method PUT`. The ARM response fixtures live in `tests/Unit/TestHelpers/ArmResponse/`. The module calls no Az command, so no Az command is mocked.
 
 ### Mocking -- Private helpers
 
@@ -203,7 +212,7 @@ It 'writes a non-terminating error on API failure' {
 
 ### Common pitfalls
 
-- **Never** call `Connect-MgGraph` or `Connect-AzAccount` in tests, and always mock `Initialize-OPIMAuth`.
+- **Never** call `Connect-MgGraph` or AzAuth's `Get-AzToken` in tests, and always mock `Initialize-OPIMAuth`.
 - **ISO 8601 durations** in request body assertions: `PT1H`, not `01:00:00`.
 - Import the module by name (`Import-Module Omnicit.PIM -Force`), never by a path into `source/`.
 

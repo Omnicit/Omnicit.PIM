@@ -518,6 +518,19 @@ Import-Module -Name $Manifest -Force
         @($Result.Dependencies) | Should -Be @('AzAuth', 'Microsoft.Graph.Authentication') -Because 'the import must load the declared dependencies, or an empty Az list proves nothing'
         @($Result.Az) | Should -BeNullOrEmpty -Because 'importing Omnicit.PIM must load no Az module'
     }
+
+    It 'Should require at least PowerShell 7.4, and at least what every declared dependency requires' {
+        $Own = [version]$script:BuiltManifest.PowerShellVersion
+        $Own | Should -BeGreaterOrEqual ([version]'7.4') -Because 'AzAuth 2.9.0 requires PowerShell 7.4; a lower floor lets the module import where its Azure sign-in cannot load'
+        foreach ($Entry in $script:BuiltManifest.RequiredModules) {
+            # -ListAvailable reads the manifest from disk and imports nothing.
+            $Dependency = @(Get-Module -Name $Entry.ModuleName -ListAvailable | Where-Object { $_.Version -eq [version]$Entry.ModuleVersion })[0]
+            $Dependency | Should -Not -BeNullOrEmpty -Because ('{0} {1} must be resolved for the build' -f $Entry.ModuleName, $Entry.ModuleVersion)
+            if ($Dependency.PowerShellVersion) {
+                $Own | Should -BeGreaterOrEqual $Dependency.PowerShellVersion -Because ('{0} {1} requires PowerShell {2}' -f $Entry.ModuleName, $Entry.ModuleVersion, $Dependency.PowerShellVersion)
+            }
+        }
+    }
 }
 
 BeforeDiscovery {
