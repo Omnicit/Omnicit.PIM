@@ -323,7 +323,7 @@ Describe 'Get-OPIMArmRefusal' {
                     [pscustomobject]@{ Site = '{0}:{1} {2}' -f $Function.Name, $Command.Extent.StartLineNumber, $Command.GetCommandName(); Gated = $Gated }
                 }
             }
-            @($Calls).Count | Should -Be 7 -Because 'the walk must reach the four reads in Get-OPIMAzureRole, the two activation and deactivation requests and the -Wait poll'
+            @($Calls).Count | Should -Be 3 -Because 'the walk must reach the activation and deactivation requests and the -Wait poll, the Az.Resources calls left now that Get-OPIMAzureRole reads through the transport'
             @($Calls | Where-Object { -not $_.Gated } | ForEach-Object Site) | Should -BeNullOrEmpty
         }
     }

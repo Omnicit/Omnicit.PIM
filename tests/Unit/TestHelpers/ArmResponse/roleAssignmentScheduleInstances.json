@@ -1,0 +1,86 @@
+{
+  "value": [
+    {
+      "properties": {
+        "originRoleAssignmentId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/opim-fixture-rg/providers/Microsoft.Authorization/roleAssignments/77777777-7777-7777-7777-777777777777",
+        "linkedRoleEligibilityScheduleId": "55555555-5555-5555-5555-555555555555",
+        "linkedRoleEligibilityScheduleInstanceId": "99999999-9999-9999-9999-999999999999",
+        "assignmentType": "Activated",
+        "scope": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/opim-fixture-rg",
+        "roleDefinitionId": "/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/roleDefinitions/44444444-4444-4444-4444-444444444444",
+        "principalId": "33333333-3333-3333-3333-333333333333",
+        "principalType": "User",
+        "status": "Provisioned",
+        "roleAssignmentScheduleId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/opim-fixture-rg/providers/Microsoft.Authorization/RoleAssignmentSchedules/cccccccc-cccc-cccc-cccc-cccccccccccc",
+        "startDateTime": "2020-09-09T21:35:27.91Z",
+        "endDateTime": "2020-09-10T05:35:17.91Z",
+        "memberType": "Direct",
+        "createdOn": "2020-09-09T21:35:27.91Z",
+        "condition": "@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:ContainerName] StringEqualsIgnoreCase 'foo_storage_container'",
+        "conditionVersion": "1.0",
+        "expandedProperties": {
+          "scope": {
+            "id": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/opim-fixture-rg",
+            "displayName": "opim-fixture-rg",
+            "type": "resourcegroup"
+          },
+          "roleDefinition": {
+            "id": "/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/roleDefinitions/44444444-4444-4444-4444-444444444444",
+            "displayName": "Reader",
+            "type": "BuiltInRole"
+          },
+          "principal": {
+            "id": "33333333-3333-3333-3333-333333333333",
+            "displayName": "User Account",
+            "email": "user@contoso.com",
+            "type": "User"
+          }
+        }
+      },
+      "name": "55555555-5555-5555-5555-555555555557",
+      "id": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/opim-fixture-rg/providers/Microsoft.Authorization/RoleAssignmentScheduleInstances/55555555-5555-5555-5555-555555555557",
+      "type": "Microsoft.Authorization/RoleAssignmentScheduleInstances"
+    },
+    {
+      "properties": {
+        "originRoleAssignmentId": "/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/roleAssignments/77777777-7777-7777-7777-777777777778",
+        "linkedRoleEligibilityScheduleId": "55555555-5555-5555-5555-555555555556",
+        "linkedRoleEligibilityScheduleInstanceId": "99999999-9999-9999-9999-999999999998",
+        "assignmentType": "Assigned",
+        "scope": "/subscriptions/22222222-2222-2222-2222-222222222222",
+        "roleDefinitionId": "/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/roleDefinitions/44444444-4444-4444-4444-444444444444",
+        "principalId": "33333333-3333-3333-3333-333333333333",
+        "principalType": "User",
+        "status": "Provisioned",
+        "roleAssignmentScheduleId": "/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/RoleAssignmentSchedules/cccccccc-cccc-cccc-cccc-cccccccccccd",
+        "startDateTime": "2020-09-09T21:37:27.91Z",
+        "endDateTime": null,
+        "memberType": "Direct",
+        "createdOn": "2020-09-09T21:37:27.91Z",
+        "condition": null,
+        "conditionVersion": null,
+        "expandedProperties": {
+          "scope": {
+            "id": "/subscriptions/22222222-2222-2222-2222-222222222222",
+            "displayName": "Fixture Subscription",
+            "type": "subscription"
+          },
+          "roleDefinition": {
+            "id": "/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/roleDefinitions/44444444-4444-4444-4444-444444444444",
+            "displayName": "Reader",
+            "type": "BuiltInRole"
+          },
+          "principal": {
+            "id": "33333333-3333-3333-3333-333333333333",
+            "displayName": "User Account",
+            "email": "user@contoso.com",
+            "type": "User"
+          }
+        }
+      },
+      "name": "55555555-5555-5555-5555-555555555558",
+      "id": "/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/RoleAssignmentScheduleInstances/55555555-5555-5555-5555-555555555558",
+      "type": "Microsoft.Authorization/RoleAssignmentScheduleInstances"
+    }
+  ]
+}

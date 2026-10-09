@@ -4,7 +4,8 @@ function Get-OPIMAzureRole {
     .SYNOPSIS
     Get eligible or activated Azure PIM resource roles for the current user.
     .DESCRIPTION
-    Retrieves eligible or active Azure RBAC role assignment schedules using Az.Resources cmdlets.
+    Retrieves eligible or active Azure RBAC role assignment schedules through the module's own Azure
+    Resource Manager transport.
 
     Without any switch: returns eligible (inactive) Azure roles for the current user.
     With -Activated: returns currently activated Azure role assignment schedule instances.
@@ -110,6 +111,13 @@ function Get-OPIMAzureRole {
 
         $OdataFilter = 'asTarget()'
 
+        # The ARM paths of the two lists, api-version 2020-10-01. {0} is the scope prefix: '' for the
+        # root scope '/', so a root path starts with '/providers' and never with '//providers', and
+        # the scope itself for any other. {1} is the filter. The transport gates every request, so
+        # there is no gate here.
+        $EligPath = '{0}/providers/Microsoft.Authorization/roleEligibilitySchedules?$filter={1}&api-version=2020-10-01'
+        $InstPath = '{0}/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?$filter={1}&api-version=2020-10-01'
+
         # An explicit -Scope narrows a lookup to the posts at exactly that scope. The default '/' is no
         # filter: this cmdlet has always read it as every scope.
         $ScopeFilter = if ($Scope -ne '/') { $Scope }
@@ -119,16 +127,12 @@ function Get-OPIMAzureRole {
 
         if ($IsDual) {
             # Return both eligible and active with AzureCombinedSchedule type for consistent formatting.
-            # OPIM-23: a Name is found among the posts the asTarget() listing returns and is never asked
-            # for with -Name, since a GET by Name at '/' is refused for a normal user
+            # OPIM-23: a Name is found among the posts the asTarget() listing returns and is never put
+            # in a path, since a GET by Name at '/' is refused for a normal user
             # (InsufficientPermissions). Both reads are made at the root; -Scope narrows what they return.
-            $EligParams   = @{ Scope = '/'; Filter = $OdataFilter; ErrorAction = 'Stop' }
-            $ActiveParams = @{ Scope = '/'; Filter = $OdataFilter; ErrorAction = 'Stop' }
             try {
-                # SEC (EntraRBAC A19): the ARM gate, inside the try so the catch reports a refusal as itself.
-                $ArmRefusal = Get-OPIMArmRefusal
-                if ($null -ne $ArmRefusal) { throw $ArmRefusal }
-                Get-AzRoleEligibilitySchedule @EligParams |
+                (Invoke-OPIMArmRequest -Path ($EligPath -f '', $OdataFilter) -All).value |
+                    ConvertFrom-OPIMArmSchedule -Kind EligibilitySchedule |
                     Where-Object { -not $Identity -or $_.Name -eq $Identity } |
                     Where-Object { -not $ScopeFilter -or [string]::Equals($_.ScopeId, $ScopeFilter, [System.StringComparison]::OrdinalIgnoreCase) } |
                     ForEach-Object {
@@ -140,7 +144,7 @@ function Get-OPIMAzureRole {
             } catch {
                 Remove-OPIMErrorRecord -Record $PSItem
                 if ($PSItem.FullyQualifiedErrorId.Split(',')[0] -eq 'InsufficientPermissions') {
-                    # OPIM-11: the rewrap keeps no reference to the raw Az record -- no inner
+                    # OPIM-11: the rewrap keeps no reference to the raw record -- no inner
                     # exception, and the scope as its target object instead of the caught record.
                     $Message = "You do not have sufficient rights to view eligible roles at scope (/). This typically requires Owner or UserAccessAdministrator rights."
                     Write-CmdletError -Message ([System.Exception]::new($Message)) `
@@ -154,9 +158,8 @@ function Get-OPIMAzureRole {
                 }
             }
             try {
-                $ArmRefusal = Get-OPIMArmRefusal
-                if ($null -ne $ArmRefusal) { throw $ArmRefusal }
-                Get-AzRoleAssignmentScheduleInstance @ActiveParams |
+                (Invoke-OPIMArmRequest -Path ($InstPath -f '', $OdataFilter) -All).value |
+                    ConvertFrom-OPIMArmSchedule -Kind AssignmentScheduleInstance |
                     Where-Object AssignmentType -EQ 'Activated' |
                     Where-Object { -not $Identity -or $_.Name -eq $Identity } |
                     Where-Object { -not $ScopeFilter -or [string]::Equals($_.ScopeId, $ScopeFilter, [System.StringComparison]::OrdinalIgnoreCase) } |
@@ -183,13 +186,11 @@ function Get-OPIMAzureRole {
             return
         }
 
+        $Prefix = if ($Scope -eq '/') { '' } else { $Scope }
         try {
-            # SEC (EntraRBAC A19): the ARM gate for both reads below, inside the try so the catch
-            # reports a refusal as itself.
-            $ArmRefusal = Get-OPIMArmRefusal
-            if ($null -ne $ArmRefusal) { throw $ArmRefusal }
             if ($Activated) {
-                Get-AzRoleAssignmentScheduleInstance -Scope $Scope -Filter $OdataFilter -ErrorAction Stop |
+                (Invoke-OPIMArmRequest -Path ($InstPath -f $Prefix, $OdataFilter) -All).value |
+                    ConvertFrom-OPIMArmSchedule -Kind AssignmentScheduleInstance |
                     Where-Object AssignmentType -EQ 'Activated' |
                     Where-Object { -not $ScopeFilter -or [string]::Equals($_.ScopeId, $ScopeFilter, [System.StringComparison]::OrdinalIgnoreCase) } |
                     Where-Object { -not $Identity -or $_.Name -eq $Identity } |
@@ -199,7 +200,8 @@ function Get-OPIMAzureRole {
                     }
             } else {
                 # No -Identity here: a Name without -Activated is a dual search above.
-                Get-AzRoleEligibilitySchedule -Scope $Scope -Filter $OdataFilter -ErrorAction Stop |
+                (Invoke-OPIMArmRequest -Path ($EligPath -f $Prefix, $OdataFilter) -All).value |
+                    ConvertFrom-OPIMArmSchedule -Kind EligibilitySchedule |
                     ForEach-Object {
                         $_.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
                         $_
@@ -211,7 +213,7 @@ function Get-OPIMAzureRole {
                 $PSCmdlet.WriteError($PSItem)
                 return
             }
-            # OPIM-11: no reference to the raw Az record -- no inner exception, and the scope as the
+            # OPIM-11: no reference to the raw record -- no inner exception, and the scope as the
             # target object instead of the caught record.
             $Message = "Insufficient permissions to list roles at scope ($Scope). If you are trying to view all users' roles, use -All (requires Owner or UserAccessAdministrator)."
             Write-CmdletError -Message ([System.Exception]::new($Message)) `

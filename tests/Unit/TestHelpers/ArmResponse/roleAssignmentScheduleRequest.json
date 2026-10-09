@@ -1,0 +1,52 @@
+{
+  "properties": {
+    "targetRoleAssignmentScheduleId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+    "targetRoleAssignmentScheduleInstanceId": null,
+    "scope": "/subscriptions/22222222-2222-2222-2222-222222222222",
+    "roleDefinitionId": "/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/roleDefinitions/44444444-4444-4444-4444-444444444444",
+    "principalId": "33333333-3333-3333-3333-333333333333",
+    "principalType": "User",
+    "requestType": "SelfActivate",
+    "status": "Provisioned",
+    "approvalId": null,
+    "scheduleInfo": {
+      "startDateTime": "2020-09-09T21:35:27.91Z",
+      "expiration": {
+        "type": "AfterDuration",
+        "endDateTime": null,
+        "duration": "PT8H"
+      }
+    },
+    "ticketInfo": {
+      "ticketNumber": null,
+      "ticketSystem": null
+    },
+    "justification": null,
+    "requestorId": "33333333-3333-3333-3333-333333333333",
+    "createdOn": "2020-09-09T21:35:27.91Z",
+    "condition": "@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:ContainerName] StringEqualsIgnoreCase 'foo_storage_container'",
+    "conditionVersion": "1.0",
+    "linkedRoleEligibilityScheduleId": "55555555-5555-5555-5555-555555555556",
+    "expandedProperties": {
+      "scope": {
+        "id": "/subscriptions/22222222-2222-2222-2222-222222222222",
+        "displayName": "Fixture Subscription",
+        "type": "subscription"
+      },
+      "roleDefinition": {
+        "id": "/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/roleDefinitions/44444444-4444-4444-4444-444444444444",
+        "displayName": "Reader",
+        "type": "BuiltInRole"
+      },
+      "principal": {
+        "id": "33333333-3333-3333-3333-333333333333",
+        "displayName": "User Account",
+        "email": "user@contoso.com",
+        "type": "User"
+      }
+    }
+  },
+  "name": "66666666-6666-6666-6666-666666666666",
+  "id": "/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/RoleAssignmentScheduleRequests/66666666-6666-6666-6666-666666666666",
+  "type": "Microsoft.Authorization/RoleAssignmentScheduleRequests"
+}
