@@ -2181,8 +2181,8 @@ namespace OPIMTest {
                     $Result.Arm = Get-OPIMArmRefusal
                     $Result
                 }
-                # OPIM-08: the ARM gate also compares the Az context with the session's tenant.
-                Mock Get-AzContext { [PSCustomObject]@{ Tenant = [PSCustomObject]@{ Id = 'aaaaaaaa-0000-0000-0000-00000000000a' } } }
+                # OPIM-08, A3: the ARM gate reads the session's ARM token, never an Az context; this
+                # Graph-only sign-in holds none, so the gate has nothing to refuse.
                 $script:_OPIMTestToken = $Other
                 $First = Invoke-RefusedCommand
                 $First.Graph.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
@@ -2195,22 +2195,25 @@ namespace OPIMTest {
             }
         }
 
-        It 'refuses the ARM call of a signed-in command whose Az context is for another tenant' {
-            # Acceptance (OPIM-08): the state the real sign-in wrote, and an Az context for another
-            # tenant, give TenantMismatch at the ARM gate before any ARM call.
+        It 'refuses the ARM call of a signed-in command whose ARM token is for another tenant' {
+            # Acceptance (OPIM-08, A3): the state the real sign-in wrote, holding an ARM token for
+            # another tenant, gives TenantMismatch at the ARM gate before any ARM call. The gate reads
+            # the token's own tid, never an Az context.
             $Token = New-OPIMTestAccessToken -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
-                param($Token, $TenantA)
+            $ArmToken = [System.Net.NetworkCredential]::new('', (New-OPIMTestAccessToken -TenantId $TenantB)).SecurePassword
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; ArmToken = $ArmToken; TenantA = $TenantA } {
+                param($Token, $ArmToken, $TenantA)
                 $script:_OPIMTestToken = $Token
-                Mock Get-AzContext { [PSCustomObject]@{ Tenant = [PSCustomObject]@{ Id = 'bbbbbbbb-0000-0000-0000-00000000000b' } } }
                 function Invoke-SignedInCommand {
                     Initialize-OPIMAuth -TenantId $TenantA
+                    $script:_OPIMAuthState.ArmToken = $ArmToken
                     Get-OPIMArmRefusal
                 }
                 $Arm = Invoke-SignedInCommand
                 $Arm.FullyQualifiedErrorId | Should -BeExactly 'TenantMismatch'
                 $Arm.TargetObject | Should -BeExactly $TenantA
                 Should -Invoke Connect-MgGraph -Times 1 -Exactly -Scope It
+                Should -Invoke Get-AzContext -Times 0 -Scope It
             }
         }
 

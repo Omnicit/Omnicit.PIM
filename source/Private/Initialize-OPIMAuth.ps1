@@ -60,7 +60,7 @@ function Initialize-OPIMAuth {
     also when it cannot be read) and its oid the account of the session's Graph token
     (AccountMismatch otherwise, also when either cannot be read). Only then is it kept, as a
     SecureString in the auth state and in memory only, never on disk, with its expiry, tenant and
-    account, for the ARM transport to send. A cached ARM token is reused silently only when it was
+    account, for Invoke-OPIMArmRequest to send. A cached ARM token is reused silently only when it was
     issued for the same tenant and the same account and has more than 5 minutes left. A new Graph
     token for another tenant or another account drops the cached ARM token, so the next -IncludeARM
     acquires a new one. A failed Get-AzToken ends this function with the terminating
@@ -513,7 +513,7 @@ function Initialize-OPIMAuth {
     # A2/A6: Azure is signed in by AzAuth, separately from Graph (the Microsoft Graph Command Line Tools
     # app is not authorised for ARM), for the tenant of the session's Graph token, interactively or with a
     # device code by the session's mode. The token is kept as a SecureString in the auth state and never
-    # written to disk; the ARM transport sends it.
+    # written to disk; Invoke-OPIMArmRequest sends it.
     if ($IncludeARM) {
         [string]$ArmTenant = [string]$script:_OPIMAuthState.TokenTenantId
         if (-not $ArmTenant) {
