@@ -157,7 +157,7 @@ Describe 'Invoke-OPIMArmRequest' {
             }
         }
 
-        It 'serializes -Body to a JSON payload with the json content type' {
+        It 'serializes -Body to a JSON payload with the json content type, in UTF-8' {
             InModuleScope Omnicit.PIM {
                 Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 201; Content = '{"id":"x"}' } }
                 $null = Invoke-OPIMArmRequest -Method PUT -Path '/x?api-version=2020-10-01' -Body @{ properties = @{ principalId = 'p1'; scheduleInfo = @{ expiration = @{ type = 'AfterDuration' } } } }
@@ -165,7 +165,7 @@ Describe 'Invoke-OPIMArmRequest' {
                     $Method -eq 'PUT' -and
                     ($Body | ConvertFrom-Json).properties.principalId -eq 'p1' -and
                     ($Body | ConvertFrom-Json).properties.scheduleInfo.expiration.type -eq 'AfterDuration' -and
-                    $ContentType -eq 'application/json'
+                    $ContentType -ceq 'application/json; charset=utf-8'
                 }
             }
         }
@@ -1058,7 +1058,8 @@ Describe 'Invoke-OPIMArmRequest' {
                     # Hang guard: a deadline that no longer binds fails here instead of paging forever.
                     if ($script:Call -gt 40) { throw 'hang guard: the per-CALL deadline did not end the walk' }
                     if ($script:Call % 2 -eq 1) {
-                        [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"p"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skip=1"}'; Headers = @{} }
+                        # A link of its own for every page: a link already followed is a failed read.
+                        [PSCustomObject]@{ StatusCode = 200; Content = ('{{"value":[{{"id":"p"}}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skip={0}"}}' -f $script:Call); Headers = @{} }
                     } else {
                         [PSCustomObject]@{ StatusCode = 429; Content = '{"error":{"code":"TooManyRequests"}}'; Headers = @{ 'Retry-After' = @('120') } }
                     }
@@ -1081,7 +1082,8 @@ Describe 'Invoke-OPIMArmRequest' {
                     # Hang guard: a deadline that no longer binds fails here instead of paging forever.
                     if ($script:Call -gt 40) { throw 'hang guard: the per-CALL deadline did not end the walk' }
                     if ($script:Call % 2 -eq 1) {
-                        [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"p"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skip=1"}'; Headers = @{} }
+                        # A link of its own for every page: a link already followed is a failed read.
+                        [PSCustomObject]@{ StatusCode = 200; Content = ('{{"value":[{{"id":"p"}}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skip={0}"}}' -f $script:Call); Headers = @{} }
                     } else {
                         [PSCustomObject]@{ StatusCode = 429; Content = '{"error":{"code":"TooManyRequests"}}'; Headers = @{ 'Retry-After' = @('120') } }
                     }
@@ -1620,6 +1622,7 @@ $R
             @{ Name = 'a path that starts with user info'; Path = '@evil.example.com/providers/x?api-version=2020-10-01' }
             @{ Name = 'a path that extends the host name'; Path = '.evil.example.com/providers/x?api-version=2020-10-01' }
             @{ Name = 'a path with a port and user info'; Path = ':8443@evil.example.com/providers/x?api-version=2020-10-01' }
+            @{ Name = 'a path that names another port on the session''s host'; Path = ':8443/providers/x?api-version=2020-10-01' }
             @{ Name = 'a path without a leading slash'; Path = 'providers/x?api-version=2020-10-01' }
             @{ Name = 'a path that makes the uri unparsable'; Path = ':notaport/providers/x?api-version=2020-10-01' }
         ) {
@@ -1666,6 +1669,16 @@ $R
             }
         }
 
+        It 'sends a path that names the default https port of the session''s host' {
+            # Control for the port refusal: the port is compared, not merely refused when written.
+            Mock -ModuleName Omnicit.PIM Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":["sent"]}' } }
+            $Result = InModuleScope Omnicit.PIM { Invoke-OPIMArmRequest -Path ':443/providers/x?api-version=2020-10-01' }
+            @($Result.value) | Should -Be @('sent')
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-WebRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Uri.Host -eq 'management.azure.com' -and $Uri.Port -eq 443
+            }
+        }
+
         It 'sends nothing and returns nothing outside any try under -ErrorAction SilentlyContinue' {
             Mock -ModuleName Omnicit.PIM Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":["sent"]}' } }
             $Run = Invoke-OutsideAnyTry -Script '$R = Invoke-OPIMArmRequest -Path ''@evil.example.com/providers/x?api-version=2020-10-01'' -ErrorAction SilentlyContinue; $R'
@@ -1676,10 +1689,11 @@ $R
     }
 
     Context 'When a 2xx body cannot be read' {
-        # A 2xx body that does not parse, and with -All a page with no body at all, is a failed read:
-        # ArmTransportError, category InvalidResult, the caller's path as its target -- never a partial
-        # or a duplicated list, and never a second request for the same link. Without -All an empty body
-        # is still no content ($null). The mock answers request n with the n-th body of
+        # A 2xx body that does not parse, and with -All a page with no body at all, a page without value
+        # or a next link to a page already requested, is a failed read: ArmTransportError, category
+        # InvalidResult, the caller's path as its target -- never a partial or a duplicated list, and
+        # never a second request for the same page. Without -All an empty body is still no content
+        # ($null). The mock answers request n with the n-th body of
         # $script:_OPIMTestBodies, records every uri, and past the list answers a last page with no next
         # link, so a walk that goes wrong ends instead of hanging.
         BeforeAll {
@@ -1714,6 +1728,16 @@ $R
                 Bodies = @('') }
             @{ Name = 'an unparsable single response'; All = $false; Sends = 1; Message = 'Azure Resource Manager returned a body that could not be read.'
                 Bodies = @('<html>not json</html>') }
+            @{ Name = 'a first page without value under -All'; All = $true; Sends = 1; Message = 'Page 1: Azure Resource Manager returned a body that could not be read, so the list is incomplete.'
+                Bodies = @('{"items":[{"id":"a"}]}') }
+            @{ Name = 'a later page without value'; All = $true; Sends = 2; Message = 'Page 2: Azure Resource Manager returned a body that could not be read, so the list is incomplete.'
+                Bodies = @('{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=2"}', '{"items":[{"id":"b"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=3"}') }
+            @{ Name = 'a later page whose next link points back to the first page'; All = $true; Sends = 2; Message = 'Page 2: Azure Resource Manager returned a body that could not be read, so the list is incomplete.'
+                Bodies = @('{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=2"}', '{"value":[{"id":"b"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01"}') }
+            @{ Name = 'a later page whose next link points back to the first page in other letter case'; All = $true; Sends = 2; Message = 'Page 2: Azure Resource Manager returned a body that could not be read, so the list is incomplete.'
+                Bodies = @('{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=2"}', '{"value":[{"id":"b"}],"nextLink":"https://management.azure.com/SUBSCRIPTIONS?api-version=2022-12-01"}') }
+            @{ Name = 'a later page whose next link points to itself'; All = $true; Sends = 2; Message = 'Page 2: Azure Resource Manager returned a body that could not be read, so the list is incomplete.'
+                Bodies = @('{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=2"}', '{"value":[{"id":"b"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=2"}') }
         ) {
             InModuleScope Omnicit.PIM -Parameters @{ Bodies = $Bodies } { param($Bodies) $script:_OPIMTestBodies = @($Bodies) }
             $R = InModuleScope Omnicit.PIM -Parameters @{ All = $All } {
@@ -1740,6 +1764,13 @@ $R
                 Bodies = @('{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=2"}', '{"value":[{"id":"b"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=3"}', '<html>not json</html>') }
             @{ Name = 'an empty first page under -All'; All = $true; Sends = 1; Bodies = @('') }
             @{ Name = 'an unparsable single response'; All = $false; Sends = 1; Bodies = @('<html>not json</html>') }
+            @{ Name = 'a first page without value under -All'; All = $true; Sends = 1; Bodies = @('{"items":[{"id":"a"}]}') }
+            @{ Name = 'a later page without value'; All = $true; Sends = 2
+                Bodies = @('{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=2"}', '{"items":[{"id":"b"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=3"}') }
+            @{ Name = 'a later page whose next link points back to the first page'; All = $true; Sends = 2
+                Bodies = @('{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=2"}', '{"value":[{"id":"b"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01"}') }
+            @{ Name = 'a later page whose next link points to itself'; All = $true; Sends = 2
+                Bodies = @('{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=2"}', '{"value":[{"id":"b"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=2"}') }
         ) {
             InModuleScope Omnicit.PIM -Parameters @{ Bodies = $Bodies } { param($Bodies) $script:_OPIMTestBodies = @($Bodies) }
             $Switch = if ($All) { ' -All' } else { '' }
@@ -1757,6 +1788,65 @@ $R
                 Invoke-OPIMArmRequest -Path '/x?api-version=2020-10-01' | Should -BeNullOrEmpty
                 @($script:_OPIMTestSent).Count | Should -Be 1
             }
+        }
+    }
+
+    Context 'When a write is answered with no body' {
+        # A 2xx answer to a PUT, POST or PATCH with no body says nothing of what ARM made of the request,
+        # so it is a failed read: ArmTransportError, category InvalidResult, the caller's path as its
+        # target, and nothing returned. The request may have been accepted, and the message says so.
+        BeforeAll {
+            $NoBodyMessage = 'Azure Resource Manager returned no body for the request, so its answer could not be read; the request may have been accepted.'
+        }
+
+        It 'fails a <Method> answered <Status> with <Name> inside a try, and returns nothing' -ForEach @(
+            @{ Method = 'PUT'; Status = 201; Name = 'an empty body'; Content = '' }
+            @{ Method = 'PUT'; Status = 200; Name = 'a body of white space'; Content = "  `r`n" }
+            @{ Method = 'POST'; Status = 202; Name = 'an empty body'; Content = '' }
+            @{ Method = 'PATCH'; Status = 200; Name = 'an empty body'; Content = '' }
+        ) {
+            Mock -ModuleName Omnicit.PIM Invoke-WebRequest { [PSCustomObject]@{ StatusCode = $Status; Content = $Content } }
+            $R = InModuleScope Omnicit.PIM -Parameters @{ Method = $Method } {
+                param($Method)
+                $Result = $null
+                $Caught = $null
+                try { $Result = Invoke-OPIMArmRequest -Method $Method -Path '/x/providers/y/z?api-version=2020-10-01' -Body @{ properties = @{} } } catch { $Caught = $PSItem }
+                @{ Result = $Result; Caught = $Caught }
+            }
+            $R.Result | Should -BeNullOrEmpty
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'ArmTransportError'
+            $R.Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+            $R.Caught.Exception.Message | Should -BeExactly $NoBodyMessage
+            $R.Caught.TargetObject | Should -BeExactly '/x/providers/y/z?api-version=2020-10-01'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-WebRequest -Times 1 -Exactly -Scope It
+        }
+
+        It 'fails a PUT answered with no body outside any try under -ErrorAction SilentlyContinue, and returns nothing' {
+            Mock -ModuleName Omnicit.PIM Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 201; Content = '' } }
+            $Run = Invoke-OutsideAnyTry -Script '$R = Invoke-OPIMArmRequest -Method PUT -Path ''/x?api-version=2020-10-01'' -Body @{ properties = @{} } -ErrorAction SilentlyContinue; $R'
+            $Run.Output.Count | Should -Be 0
+            $Run.ErrorIds | Should -Be @('ArmTransportError')
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-WebRequest -Times 1 -Exactly -Scope It
+        }
+
+        It 'returns $null for a <Method> answered with no body' -ForEach @(
+            @{ Method = 'GET' }
+            @{ Method = 'DELETE' }
+        ) {
+            # Control: only a write has an answer that must be read.
+            Mock -ModuleName Omnicit.PIM Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '' } }
+            $R = InModuleScope Omnicit.PIM -Parameters @{ Method = $Method } {
+                param($Method)
+                Invoke-OPIMArmRequest -Method $Method -Path '/x?api-version=2020-10-01'
+            }
+            $R | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-WebRequest -Times 1 -Exactly -Scope It
+        }
+
+        It 'returns the answer of a PUT that carries a body' {
+            Mock -ModuleName Omnicit.PIM Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 201; Content = '{"name":"r1"}' } }
+            $R = InModuleScope Omnicit.PIM { Invoke-OPIMArmRequest -Method PUT -Path '/x?api-version=2020-10-01' -Body @{ properties = @{} } }
+            $R.name | Should -BeExactly 'r1'
         }
     }
 

@@ -23,17 +23,19 @@ function Invoke-OPIMArmRequest {
     (TokenTenantId), no ArmToken, or an empty SecureString -- it is refused after the gate and before
     anything is sent, with ArmTokenAcquisitionFailed. Run Connect-OPIM -IncludeARM to sign in to Azure.
     Nor does a request ever leave the session's ARM host: the uri of every request -- the host and the
-    caller's path, or a page's path -- must parse as an absolute https uri on that host, or it is
-    refused before anything is sent, with a terminating error with no error id (category
-    SecurityError) whose message names neither the path nor any host. The records this function raises
-    for a single request name the path without its query string as their target.
+    caller's path, or a page's path -- must parse as an absolute https uri on that host and on the
+    port of the session's ARM url, or it is refused before anything is sent, with a terminating error
+    with no error id (category SecurityError) whose message names neither the path nor any host. The
+    records this function raises for a single request name the path without its query string as their
+    target.
 
     Invoke-WebRequest is called with -SkipHttpErrorCheck so HTTP errors do not throw. Each response is
     normalized to a { StatusCode; Content; Headers } object before the status logic runs; the header
     collection stays inside this wrapper and only its Retry-After entry is ever read. The wrapper
-    returns the parsed JSON content for a 2xx response ($null when the body is empty, as for a 204). A
-    2xx body that does not parse is a failed read: ArmTransportError, category InvalidResult, with the
-    caller's path as its target.
+    returns the parsed JSON content for a 2xx response ($null when the body of a GET or a DELETE is
+    empty, as for a 204). A 2xx body that does not parse is a failed read: ArmTransportError, category
+    InvalidResult, with the caller's path as its target. So is a 2xx answer with no body to a PUT, POST
+    or PATCH: the request may have been accepted, but its answer cannot be read.
     On a 401 it calls Initialize-OPIMAuth -IncludeARM -ForceRefresh and retries exactly once; the
     refresh budget is shared across the whole call, so a token that expires part-way through a -All
     read gets exactly one forced refresh for the entire walk, not one per page. Any other non-2xx
@@ -46,11 +48,12 @@ function Invoke-OPIMArmRequest {
     session's ARM host, and is then requested by its path and query on that host. Any other link
     would carry the session's ARM token elsewhere: it is never sent, and the call ends with a
     terminating error with no error id (category SecurityError) whose message names neither the link
-    nor its host. Every page, the first included, must carry a body that parses: an ARM list always
-    answers with a value array, so a page with no body or a body that does not parse is a failed read
-    (ArmTransportError, category InvalidResult, the caller's path as its target, a message naming the
-    page by its number), never an empty or a shorter list. Nothing is ever returned for a list that
-    was not read to its end, and no next link is requested twice.
+    nor its host. Every page, the first included, must carry a body that parses into an object with a
+    value property: an ARM list always answers with a value array, so a page with no body, a body that
+    does not parse or one without value is a failed read (ArmTransportError, category InvalidResult,
+    the caller's path as its target, a message naming the page by its number), never an empty or a
+    shorter list. So is a next link to a page this call already requested, the first page included:
+    no page is requested twice. Nothing is ever returned for a list that was not read to its end.
 
     A 429, and a 503 that carries a Retry-After header, are retried with a bounded backoff: the
     Retry-After value is honoured in either RFC 9110 form (delta-seconds or an HTTP-date), with an
@@ -78,7 +81,7 @@ function Invoke-OPIMArmRequest {
 
     .PARAMETER Body
     Optional request body hashtable, serialized with ConvertTo-Json -Depth 100 into the request body
-    with content type application/json.
+    with content type application/json; charset=utf-8.
 
     .PARAMETER All
     Follow nextLink/@nextLink paging on GET list responses and return a single object whose value
@@ -118,6 +121,7 @@ function Invoke-OPIMArmRequest {
         'https://management.azure.com'
     }
     $ArmBaseHost = ([uri]$ArmBaseUrl).Host
+    $ArmBasePort = ([uri]$ArmBaseUrl).Port
 
     function Invoke-OPIMArmSingle ([string]$CallPath, [string]$CallMethod, [hashtable]$CallBody, [string]$BaseUrl) {
         # The path without its query: what the verbose line and the target of this function's records
@@ -155,16 +159,18 @@ function Invoke-OPIMArmRequest {
         }
 
         # SEC: the request stays on the session's ARM host. The caller's path is appended to the host, so
-        # a path such as '@other.host/...' or '.other.host/...' would move the uri, and the token, to
-        # another host. The uri is built and checked here, before every send -- the first attempt, each
-        # retry and every page -- with the same three terms as a next link: absolute, https, and the
-        # session's ARM host ($ArmBaseHost, of the wrapper this function is nested in). The checked uri
-        # is the one sent. No error id, as the next-link refusal; the message names neither the path nor
-        # any host. ThrowTerminatingError ends the call even under SilentlyContinue; the return stays.
+        # a path such as '@other.host/...', '.other.host/...' or ':8443/...' would move the uri, and the
+        # token, to another host or port. The uri is built and checked here, before every send -- the
+        # first attempt, each retry and every page -- with the same terms as a next link: absolute,
+        # https, and the session's ARM host ($ArmBaseHost, of the wrapper this function is nested in),
+        # and on the port of the session's ARM url ($ArmBasePort, 443) as well. The checked uri is the
+        # one sent. No error id, as the next-link refusal; the message names neither the path nor any
+        # host. ThrowTerminatingError ends the call even under SilentlyContinue; the return stays.
         $CallUri = $null
         $OnArmHost = [uri]::TryCreate("$BaseUrl$CallPath", [UriKind]::Absolute, [ref]$CallUri) -and
             $CallUri.Scheme -eq 'https' -and
-            [string]::Equals($CallUri.Host, $ArmBaseHost, [System.StringComparison]::OrdinalIgnoreCase)
+            [string]::Equals($CallUri.Host, $ArmBaseHost, [System.StringComparison]::OrdinalIgnoreCase) -and
+            $CallUri.Port -eq $ArmBasePort
         if (-not $OnArmHost) {
             Write-CmdletError -Message ([System.Exception]::new(
                     'No Azure Resource Manager request was sent: the request path does not stay on the session''s Azure Resource Manager host.')) `
@@ -184,7 +190,9 @@ function Invoke-OPIMArmRequest {
         }
         if ($CallBody) {
             $InvokeParams.Body        = ($CallBody | ConvertTo-Json -Depth 100)
-            $InvokeParams.ContentType = 'application/json'
+            # The charset names the encoding of the body, so a justification outside ASCII reaches ARM
+            # as written: without one, an older Invoke-WebRequest can encode a string body as ISO-8859-1.
+            $InvokeParams.ContentType = 'application/json; charset=utf-8'
         }
         $TransportFailed = $false
         try {
@@ -464,13 +472,27 @@ function Invoke-OPIMArmRequest {
         return
     }
 
+    # A write is answered with what it wrote. A 2xx answer to a PUT, POST or PATCH with no body says
+    # nothing of what ARM made of the request -- it may have been accepted -- so it is a failed read,
+    # never "no content". The caller's path as the target.
+    if ([string]::IsNullOrWhiteSpace($Response.Content) -and $Method -in 'PUT', 'POST', 'PATCH') {
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('Azure Resource Manager returned no body for the request, so its answer could not be read; the request may have been accepted.'),
+            'ArmTransportError',
+            [System.Management.Automation.ErrorCategory]::InvalidResult,
+            $Path)
+        # Carrying on would hand back nothing, as though the request had no answer to read.
+        return
+    }
+
     # Every 2xx body is parsed into a FRESH variable inside a try whose catch only scrubs and sets a
     # flag, read straight after the try: a throw inside the catch would resume after the try under
     # -ErrorAction SilentlyContinue with no try up the call stack, and a failed assignment would leave a
     # reused variable holding the previous page. Without -All an empty body is no content ($null, as
-    # for a 204), but a body that does not parse is a failed read. With -All the first page must carry
-    # a body that parses as well: an ARM list always answers with a value array, so an empty answer is
-    # a failed read, never an empty list.
+    # for a 204 to a DELETE or a GET), but a body that does not parse is a failed read. With -All the
+    # first page must carry a body that parses into an object with a value property: an ARM list always
+    # answers with a value array, so an empty answer, or one without value, is a failed read, never an
+    # empty list.
     $Parsed = $null
     $ReadFailed = $false
     if ($Response.Content) {
@@ -481,7 +503,7 @@ function Invoke-OPIMArmRequest {
             $ReadFailed = $true
         }
     }
-    if ($ReadFailed -or ($All -and $null -eq $Parsed)) {
+    if ($ReadFailed -or ($All -and ($null -eq $Parsed -or $null -eq $Parsed.PSObject.Properties['value']))) {
         $ReadMessage = if ($All) {
             'Page 1: Azure Resource Manager returned a body that could not be read, so the list is incomplete.'
         } else {
@@ -507,6 +529,11 @@ function Invoke-OPIMArmRequest {
     else { $null }
     # The number of pages read so far; the message of a refused link names the page it would have read.
     [int]$PageNumber = 1
+    # The path and query of every page requested in this call, the first included. A next link back to
+    # a page already requested would read it again: a duplicated list, or a walk that never ends.
+    # The first page was sent on the uri this builds, so the cast cannot fail here.
+    $RequestedPages = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $null = $RequestedPages.Add(([uri]"$ArmBaseUrl$Path").PathAndQuery)
 
     while ($NextLink) {
         $NextParsed = $null
@@ -527,6 +554,17 @@ function Invoke-OPIMArmRequest {
         }
         # The link's path and query on the session's own host: never the link's own host or port.
         $NextPath = $NextParsed.PathAndQuery
+        if (-not $RequestedPages.Add($NextPath)) {
+            # The page that carried the link points back into the list, so its body cannot be read as
+            # the next part of it. The caller's path as the target, never the link. return, never
+            # break: break would hand back the pages so far as the whole collection.
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("Page $PageNumber`: Azure Resource Manager returned a body that could not be read, so the list is incomplete."),
+                'ArmTransportError',
+                [System.Management.Automation.ErrorCategory]::InvalidResult,
+                $Path)
+            return
+        }
         # Each page gets its own per-REQUEST wait budget and shares the per-CALL deadline, so the paging
         # path backs off exactly like the single-request path.
         $PageResponse = Invoke-OPIMArmWithBackoff -CallPath $NextPath -CallMethod $Method -CallBody $Body `
@@ -542,9 +580,10 @@ function Invoke-OPIMArmRequest {
             return
         }
         $PageNumber++
-        # A FRESH variable for every page, parsed as the first page is: a page that does not parse, or
-        # carries no body at all, is a failed read. Reusing the previous page's variable added that
-        # page's items again and requested its next link again -- a duplicated list, or an endless walk.
+        # A FRESH variable for every page, parsed as the first page is: a page that does not parse,
+        # carries no body at all, or has no value property, is a failed read. Reusing the previous
+        # page's variable added that page's items again and requested its next link again -- a
+        # duplicated list, or an endless walk.
         $Page = $null
         $PageReadFailed = $false
         if ($PageResponse.Content) {
@@ -555,7 +594,7 @@ function Invoke-OPIMArmRequest {
                 $PageReadFailed = $true
             }
         }
-        if ($PageReadFailed -or $null -eq $Page) {
+        if ($PageReadFailed -or $null -eq $Page -or $null -eq $Page.PSObject.Properties['value']) {
             # The caller's path as the target, never the next link, whose query can carry a skip token.
             throw [System.Management.Automation.ErrorRecord]::new(
                 [System.Exception]::new("Page $PageNumber`: Azure Resource Manager returned a body that could not be read, so the list is incomplete."),
