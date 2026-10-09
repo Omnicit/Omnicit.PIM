@@ -332,6 +332,7 @@ Describe 'ReleaseTag.ps1' {
             $script:TagRun | Should -Match '-PublishedByThisJob \$env:PublishedByThisJob'
             $script:TagRun | Should -Match '-ReleaseExists \$ReleaseExists'
             $script:TagRun | Should -Match '-RemoteTag \$RemoteTag'
+            $script:TagRun | Should -Match '-Prerelease \$env:PublishPrerelease'
         }
 
         It 'returns on Skip before it creates anything' {

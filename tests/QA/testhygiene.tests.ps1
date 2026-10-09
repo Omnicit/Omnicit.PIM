@@ -22,13 +22,22 @@ BeforeAll {
     #      (a name in a variable, Get-Command, a script block made from a string, Invoke-Expression),
     #      and there every Get-MgContext mock throws. (b) Initialize-OPIMAuth, which calls it, runs
     #      unmocked only where no Get-MgContext mock returns, or Get-OPIMMsalApplication is mocked too.
-    #      Any string that parses as a call counts, a sentence or a -Because text that begins with the
-    #      name too; only a Mock or Should target, a block name and a -Tag are read as names.
-    #      What it does not follow: a Mock or a call in AfterAll, AfterEach or a helper function;
-    #      & ${function:name} and the function: drive; a name set in one block and run in another;
-    #      the callers of Initialize-OPIMAuth (Connect-OPIM, the wrapper's retries, the pillar
-    #      cmdlets); names built at run time. A name given as Describe or Context data is read
-    #      against that block's own BeforeAll and BeforeEach only, not the Its inside it.
+    #      Any string that parses as a call of the command counts: the name alone, a sentence that
+    #      begins with it, or one in which it stands as its own word (a name directly followed by
+    #      '.' or ':' does not parse as the command and is not caught). Only a direct string argument
+    #      of Mock, Should, Should-Invoke, Should-NotInvoke or Assert-MockCalled (a Mock or Should
+    #      -Invoke target, a plain -Because 'text'), a block name and a -Tag are read as names; a
+    #      -Because text built in parentheses (a -f format) or a sentence held in a variable or
+    #      passed elsewhere is parsed like any other string.
+    #      What it does not follow: a Mock set in AfterAll or AfterEach, a Mock a helper function
+    #      sets when it is called, and the places a helper function is called from (a call written
+    #      in any of them is scanned); & ${function:name} and the function: drive; a name set in one
+    #      block and run in another; the callers of Initialize-OPIMAuth (Connect-OPIM, the wrapper's
+    #      retries, the pillar cmdlets); names built at run time. A runnable string in Describe or
+    #      Context data is read against that block's own BeforeAll and BeforeEach only, not a Mock
+    #      written inside a nested It. Any Mock of Get-OPIMMsalApplication counts as a guard, even
+    #      one whose -ParameterFilter never matches or that has no -ModuleName outside InModuleScope
+    #      (which does not intercept a call made inside the module): the real command stays reachable.
     #
     # The gate reads files statically: it imports nothing and runs no module code. The QA gate
     # files are outside the tripwire on purpose: they call help, the analyzer and pure maps only.
@@ -54,9 +63,9 @@ BeforeAll {
     $script:MsalName = 'Get-OPIMMsalApplication'
     $script:InitializeName = 'Initialize-OPIMAuth'
 
-    # Pester commands whose string arguments name a command without running it: the target of a
-    # Mock or of Should -Invoke (also Pester 6's Should-Invoke and Should-NotInvoke), a -Because
-    # text (R3).
+    # Pester commands whose direct string arguments name a command without running it: the target
+    # of a Mock or of Should -Invoke (also Pester 6's Should-Invoke and Should-NotInvoke), a plain
+    # -Because text. A string inside a parenthesised expression (a -f format) is not direct (R3).
     $script:ReferenceOnlyCommands = @('Mock', 'Should', 'Assert-MockCalled', 'Should-Invoke', 'Should-NotInvoke')
 
     # Pester blocks. Only the block's name and its -Tag are read as names; every other string argument
@@ -919,7 +928,7 @@ Describe 'Get-OPIMMsalApplication' {
             "line 6: $Reason"
             "line 7: $Reason"
         )
-        @(Get-TestHygieneMsalFinding -Ast (& $Parse $ReferenceOnly) -Allowed $false).Count | Should -Be 0 -Because 'a Mock, Should -Invoke or Should-Invoke target, a block name, a -Because text and a file path name the command without running it'
+        @(Get-TestHygieneMsalFinding -Ast (& $Parse $ReferenceOnly) -Allowed $false).Count | Should -Be 0 -Because 'a Mock, Should -Invoke or Should-Invoke target, a block name, a Should reason text and a file path name the command without running it'
         @(Get-TestHygieneMsalFinding -Ast (& $Parse $Indirect) -Allowed $true).Count | Should -Be 0 -Because 'in a named file only the Get-MgContext rule applies'
     }
 
