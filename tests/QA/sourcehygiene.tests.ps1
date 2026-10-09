@@ -122,12 +122,14 @@ BeforeAll {
     #
     # 'Transport' is anything that can put a credential on the wire or fail with a record of a
     # request that carried one: the module's Graph wrapper and the raw Graph call, the two web
-    # cmdlets, the two sign-ins and the silent ARM token check, and the four Az.Resources schedule
-    # cmdlets, which are ARM requests whose failure records can carry the request.
+    # cmdlets, the sign-ins (the two Connect- commands and AzAuth's Get-AzToken) and the silent ARM
+    # token check, the module's own ARM wrapper (Invoke-OPIMArmRequest), and the four Az.Resources
+    # schedule cmdlets, which are ARM requests whose failure records can carry the request.
     # =====================================================================================
     $script:TransportCommands = @(
         'Invoke-OPIMGraphRequest', 'Invoke-MgGraphRequest', 'Invoke-WebRequest', 'Invoke-RestMethod',
-        'Connect-MgGraph', 'Connect-AzAccount', 'Get-AzAccessToken',
+        'Connect-MgGraph', 'Connect-AzAccount', 'Get-AzAccessToken', 'Get-AzToken',
+        'Invoke-OPIMArmRequest',
         'Get-AzRoleEligibilitySchedule', 'Get-AzRoleAssignmentScheduleInstance',
         'New-AzRoleAssignmentScheduleRequest', 'Get-AzRoleAssignmentScheduleRequest'
     )
