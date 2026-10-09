@@ -51,6 +51,48 @@ BeforeAll {
             $Shell.Dispose()
         }
     }
+
+    # The Kiota form of a failed Graph request (OPIM-28, EntraRBAC #75). When Kiota's RetryHandler in
+    # the Graph SDK's pipeline gives up, the SDK raises an AggregateException around a
+    # Microsoft.Kiota.Abstractions.ApiException, which has no .Response member: its HTTP facts are
+    # ResponseStatusCode and ResponseHeaders. The type comes from the Kiota assembly that ships with the
+    # loaded Microsoft.Graph.Authentication, so a renamed member turns these tests red instead of
+    # leaving the wrapper's read silently inert. Nothing here sends a request.
+    $GraphModuleBase = (Get-Module Microsoft.Graph.Authentication | Select-Object -First 1).ModuleBase
+    $KiotaDll = $null
+    if ($GraphModuleBase) {
+        $KiotaDll = Get-ChildItem -LiteralPath $GraphModuleBase -Recurse -File -Filter 'Microsoft.Kiota.Abstractions.dll' -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+    }
+    $script:KiotaApiExceptionType = $null
+    if ($KiotaDll) {
+        $script:KiotaApiExceptionType = [System.Reflection.Assembly]::LoadFrom($KiotaDll.FullName).GetType('Microsoft.Kiota.Abstractions.ApiException')
+    }
+
+    # Builds the failure as the SDK raises it when its retry handler gives up:
+    # AggregateException(ApiException). -NestingDepth 0 returns the ApiException itself.
+    function New-KiotaFailure {
+        param(
+            [Parameter(Mandatory)][string]$Message,
+            [int]$StatusCode = 0,
+            [hashtable]$Header,
+            [int]$NestingDepth = 1
+        )
+        $Api = [Activator]::CreateInstance($script:KiotaApiExceptionType, @($Message))
+        if ($StatusCode) { $Api.ResponseStatusCode = $StatusCode }
+        if ($Header) {
+            $Headers = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.IEnumerable[string]]]::new()
+            foreach ($Key in $Header.Keys) { $Headers[$Key] = [string[]]@($Header[$Key]) }
+            $Api.ResponseHeaders = $Headers
+        }
+        $Wrapped = [System.Exception]$Api
+        for ($Level = 0; $Level -lt $NestingDepth; $Level++) {
+            $Wrapped = [System.AggregateException]::new(
+                'Too many retries performed. More than 3 retries encountered while sending the request.',
+                [System.Exception[]]@($Wrapped))
+        }
+        $Wrapped
+    }
 }
 
 AfterAll {
@@ -384,6 +426,138 @@ Describe 'Invoke-OPIMGraphRequest' {
                 Should -Invoke Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
                     $ForceRefresh -eq $true
                 }
+            }
+        }
+    }
+
+    Context 'When a 401 arrives in either form the Graph SDK raises (OPIM-28)' {
+        # The status of a failure is read from the Kiota form (ResponseStatusCode, anywhere in the
+        # exception chain) and from the .Response form (an HttpResponseException's response). The
+        # messages below name none of the four token texts the wrapper also matches, so only the
+        # status can start the refresh.
+        BeforeAll {
+            $script:KiotaRejectedMessage = 'HTTP request failed with status code: Unauthorized.{"error":{"code":"InvalidToken","message":"The presented access token is not from a trusted issuer."}}'
+            InModuleScope Omnicit.PIM {
+                Mock Initialize-OPIMAuth {}
+                Mock Invoke-MgGraphRequest {
+                    $script:_KiotaCalls++
+                    if ($script:_KiotaCalls -le @($script:_KiotaQueue).Count) {
+                        $Next = $script:_KiotaQueue[$script:_KiotaCalls - 1]
+                        if ($Next -is [System.Management.Automation.ErrorRecord]) { $PSCmdlet.ThrowTerminatingError($Next) }
+                        throw $Next
+                    }
+                    @{ value = @(@{ id = 'after-refresh' }) }
+                }
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com' }
+                $script:_KiotaCalls = 0
+                $script:_KiotaQueue = @()
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_KiotaCalls = $null
+                $script:_KiotaQueue = $null
+            }
+        }
+
+        It 'pins the Kiota ApiException member contract the status read is written against' {
+            $script:KiotaApiExceptionType | Should -Not -BeNullOrEmpty -Because 'Microsoft.Kiota.Abstractions.dll must be found under the loaded Microsoft.Graph.Authentication; without it nothing below proves anything'
+            $Names = $script:KiotaApiExceptionType.GetProperties().Name
+            $Names | Should -Contain 'ResponseStatusCode'
+            $Names | Should -Contain 'ResponseHeaders'
+            $Names | Should -Not -Contain 'Response'
+            $script:KiotaApiExceptionType.GetProperty('ResponseStatusCode').PropertyType.FullName | Should -Be 'System.Int32'
+            $script:KiotaApiExceptionType.GetProperty('ResponseHeaders').PropertyType.Name | Should -Be 'IDictionary`2'
+        }
+
+        It 'refreshes once and sends again on a 401 in the Kiota form' {
+            $Rejected = New-KiotaFailure -StatusCode 401 -Message $script:KiotaRejectedMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Rejected) } {
+                param($Queue)
+                $script:_KiotaQueue = $Queue
+                (Invoke-OPIMGraphRequest -Uri 'v1.0/me').value[0].id | Should -Be 'after-refresh'
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter { $ForceRefresh }
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+            }
+        }
+
+        It 'reads the status of the Kiota form at a nesting depth of 10' {
+            # AggregateException.InnerException IS InnerExceptions[0]; a walk that followed both would
+            # enqueue every level twice and stop at its visit ceiling long before depth 10.
+            $Rejected = New-KiotaFailure -StatusCode 401 -Message $script:KiotaRejectedMessage -NestingDepth 10
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Rejected) } {
+                param($Queue)
+                $script:_KiotaQueue = $Queue
+                (Invoke-OPIMGraphRequest -Uri 'v1.0/me').value[0].id | Should -Be 'after-refresh'
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter { $ForceRefresh }
+            }
+        }
+
+        It 'refreshes once and sends again on a 401 in the .Response form' {
+            $Rejected = New-ScrubFixture -Status 401 -Content '{"error":{"code":"InvalidToken","message":"The presented access token is not from a trusted issuer."}}'
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Rejected.Record) } {
+                param($Queue)
+                $script:_KiotaQueue = $Queue
+                (Invoke-OPIMGraphRequest -Uri 'v1.0/me').value[0].id | Should -Be 'after-refresh'
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter { $ForceRefresh }
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+            }
+            $Rejected.Request.Headers.Contains('Authorization') | Should -BeFalse
+        }
+
+        It 'refreshes only once per request when the retry is rejected again' {
+            $First = New-KiotaFailure -StatusCode 401 -Message $script:KiotaRejectedMessage
+            $Second = New-KiotaFailure -StatusCode 401 -Message $script:KiotaRejectedMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($First, $Second) } {
+                param($Queue)
+                $script:_KiotaQueue = $Queue
+                { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } | Should -Throw -ErrorId 'InvalidToken'
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter { $ForceRefresh }
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+            }
+        }
+
+        It 'does not refresh a 403 in the Kiota form' {
+            $Forbidden = New-KiotaFailure -StatusCode 403 -Message 'HTTP request failed with status code: Forbidden.{"error":{"code":"Forbidden","message":"Access denied."}}'
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Forbidden) } {
+                param($Queue)
+                $script:_KiotaQueue = $Queue
+                { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } | Should -Throw -ErrorId 'Forbidden'
+                Should -Invoke Initialize-OPIMAuth -Times 0 -Scope It
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+            }
+        }
+
+        It 'surfaces the Graph error when a chain member carries a non-numeric ResponseStatusCode' {
+            # The status is read with -as [int]: a cast would throw on the failure path and replace
+            # the Graph error with a conversion error.
+            $Odd = [System.Exception]::new('{"error":{"code":"Forbidden","message":"Access denied."}}')
+            Add-Member -InputObject $Odd -NotePropertyName ResponseStatusCode -NotePropertyValue 'not-a-number'
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Odd) } {
+                param($Queue)
+                $script:_KiotaQueue = $Queue
+                { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } | Should -Throw -ErrorId 'Forbidden'
+                Should -Invoke Initialize-OPIMAuth -Times 0 -Scope It
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+            }
+        }
+
+        It 'takes the claims step-up, not the refresh, for a claims challenge in the Kiota form' {
+            # Depth 0: the claims text is read from the top-level message.
+            $Challenge = New-KiotaFailure -StatusCode 401 -NestingDepth 0 -Message (
+                'HTTP request failed with status code: Unauthorized. WWW-Authenticate: Bearer ' +
+                'error="insufficient_claims", claims="eyJhY2Nlc3NfdG9rZW4iOnsiYWNycyI6eyJlc3NlbnRpYWwiOnRydWUsInZhbHVlIjoiYzEifX19"')
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Challenge) } {
+                param($Queue)
+                $script:_KiotaQueue = $Queue
+                (Invoke-OPIMGraphRequest -Uri 'v1.0/me').value[0].id | Should -Be 'after-refresh'
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter { $ClaimsChallenge -match 'acrs' }
+                Should -Invoke Initialize-OPIMAuth -Times 0 -Scope It -ParameterFilter { $ForceRefresh }
             }
         }
     }

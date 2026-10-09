@@ -152,10 +152,11 @@ BeforeAll {
         Initialize-OPIMAuth was wrapped: 20 transport-reaching files under source/ holding 30 of the
         52 catch clauses in source/. The named control,
         source/Private/Invoke-OPIMGraphRequest.ps1, is asserted with its EXACT count instead (8: the three in its nested
-        Get-ClaimsFromException; the first attempt, the claims retry, the status read and the
-        refresh retry, all four in its nested Invoke-OPIMGraphSingle; and the paging catch of -All,
-        OPIM-13), so a catch that stops being seen fails there with a clear cause instead of
-        quietly shrinking a total.
+        Get-ClaimsFromException; the one in its nested Get-GraphResponseFact, which reads a
+        failure's status in both forms the Graph SDK raises (OPIM-28); the first attempt, the
+        claims retry and the refresh retry, all three in its nested Invoke-OPIMGraphSingle; and
+        the paging catch of -All, OPIM-13), so a catch that stops being seen fails there with a
+        clear cause instead of quietly shrinking a total.
     #>
     $script:ScrubTransportFileFloor = 18
     $script:ScrubCatchFloor = 28

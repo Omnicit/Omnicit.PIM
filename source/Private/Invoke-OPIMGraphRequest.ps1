@@ -22,7 +22,12 @@ function Invoke-OPIMGraphRequest {
          b. Calls Initialize-OPIMAuth -ClaimsChallenge to perform a one-time interactive
             step-up authentication.
          c. Retries the original request exactly once.
-       A second 401 (after a successful step-up) is surfaced as a normal error.
+       A second 401 (after a successful step-up) is surfaced as a normal error. A 401 without a
+       challenge, or a message that names a rejected or expired token, calls Initialize-OPIMAuth
+       -ForceRefresh instead and retries exactly once. The status is read from either form the Graph
+       SDK raises a failure in (OPIM-28): an HttpResponseException's Response, or the
+       ResponseStatusCode of the Kiota ApiException inside the AggregateException the SDK's retry
+       handler throws when it gives up.
 
     3. Error conversion: non-claims errors are run through Convert-GraphHttpException to
        produce structured ErrorRecord objects with the Graph error.code as the
@@ -152,6 +157,64 @@ function Invoke-OPIMGraphRequest {
         return $null
     }
 
+    # -- Helper: the HTTP facts of a failed Graph request, in both forms the SDK raises ---
+    # SINGLE OWNER of the status read (OPIM-28, EntraRBAC #75). The Graph SDK raises a failed request
+    # in one of two forms:
+    #   1. An HttpResponseException whose .Response is the HttpResponseMessage -- an ordinary failure,
+    #      a plain 401 among them. Its status is .Response.StatusCode.
+    #   2. The Kiota form: when Kiota's RetryHandler in the SDK's pipeline gives up, the SDK raises an
+    #      AggregateException around a Microsoft.Kiota.Abstractions.ApiException, which has NO
+    #      .Response member. Its HTTP facts are ResponseStatusCode ([int]) and ResponseHeaders.
+    # Reading only .Response.StatusCode left the Kiota form with no status at all ([int]$null is 0),
+    # so a 401 in that form was refreshed only when its message happened to name a rejected token.
+    # The members are read BY NAME through the property bag, never by a cast to a Graph SDK type, so
+    # the module takes no dependency on one, and a missing member reads as $null.
+    #
+    # Breadth-first over InnerException and, for an AggregateException, InnerExceptions. THE elseif
+    # BELOW IS LOAD-BEARING: AggregateException.InnerException IS InnerExceptions[0], so following both
+    # would enqueue every level twice and the queue would grow 2^depth against the visit ceiling, which
+    # is a cycle guard only (a real chain is two or three deep).
+    #
+    # NEVER THROWS: it runs on the failure path, where an escaping exception would REPLACE the Graph
+    # error the caller needs. A status is read with -as [int], never a cast, and 0 means unknown:
+    # Kiota leaves ResponseStatusCode at 0 when it saw no response.
+    function Get-GraphResponseFact ([System.Exception]$Exception) {
+        $Fact = @{ Status = $null }
+        $Pending = [System.Collections.Generic.Queue[System.Exception]]::new()
+        if ($null -ne $Exception) { $Pending.Enqueue($Exception) }
+        [int]$Visited = 0
+        while ($Pending.Count -gt 0 -and $Visited -lt 32) {
+            $Current = $Pending.Dequeue()
+            $Visited++
+            if ($null -eq $Current) { continue }
+            try {
+                if ($null -eq $Fact.Status) {
+                    # The Kiota form: the ApiException's own status.
+                    $StatusMember = $Current.PSObject.Properties['ResponseStatusCode']
+                    $Status = if ($StatusMember) { $StatusMember.Value -as [int] } else { $null }
+                    if ($Status -gt 0) { $Fact.Status = $Status }
+                }
+                $ResponseMember = $Current.PSObject.Properties['Response']
+                if ($ResponseMember -and $null -ne $ResponseMember.Value -and $null -eq $Fact.Status) {
+                    # The .Response form: the status of the response the exception holds.
+                    $Status = $ResponseMember.Value.StatusCode -as [int]
+                    if ($Status -gt 0) { $Fact.Status = $Status }
+                }
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+            }
+            if ($null -ne $Fact.Status) { break }
+            if ($Current -is [System.AggregateException]) {
+                foreach ($Nested in $Current.InnerExceptions) {
+                    if ($null -ne $Nested) { $Pending.Enqueue($Nested) }
+                }
+            } elseif ($null -ne $Current.InnerException) {
+                $Pending.Enqueue($Current.InnerException)
+            }
+        }
+        return $Fact
+    }
+
     # -- One request: its gates, the first attempt and the two retries --------
     # Every send of this function sits in here, so a page of a -All read is one request with the
     # same gates, scrubs and retries as a single call. The retries call Initialize-OPIMAuth from this
@@ -246,9 +309,10 @@ function Invoke-OPIMGraphRequest {
         # -- Token rejected/expired (not a claims challenge) -- re-auth and retry
         # A 401 here means the bearer token is invalid or expired (claims challenges were already
         # handled above). Force a token refresh (MSAL refresh-token path, usually no prompt) and
-        # retry once instead of surfacing the failure.
-        $StatusCode = $null
-        try { $StatusCode = [int]$FirstError.Exception.Response.StatusCode } catch { Remove-OPIMErrorRecord -Record $PSItem }
+        # retry once instead of surfacing the failure. OPIM-28: the status is read from either form
+        # the Graph SDK raises a failure in (Get-GraphResponseFact), so a 401 in the Kiota form is
+        # refreshed as well.
+        $StatusCode = (Get-GraphResponseFact $FirstError.Exception).Status
         [bool]$TokenInvalid = $StatusCode -eq 401 -or
             $FirstError.Exception.Message -match 'InvalidAuthenticationToken|CompactToken|token is expired|Lifetime validation failed'
 
