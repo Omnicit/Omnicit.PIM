@@ -124,7 +124,7 @@ Describe 'Initialize-OPIMAuth' {
                 # won't find MSAL methods); the function falls through to interactive which also
                 # throws. We only verify that the MSAL app entry point was reached.
                 try { Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' } catch {}
-                Should -Invoke Get-OPIMMsalApplication -Times 1 -Scope It
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It
             }
         }
     }
@@ -151,7 +151,7 @@ Describe 'Initialize-OPIMAuth' {
         It 'calls Get-OPIMMsalApplication' {
             InModuleScope Omnicit.PIM {
                 try { Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' } catch {}
-                Should -Invoke Get-OPIMMsalApplication -Times 1 -Scope It
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It
             }
         }
 
@@ -166,7 +166,7 @@ Describe 'Initialize-OPIMAuth' {
         It 'uses organizations as default tenant when no TenantId given' {
             InModuleScope Omnicit.PIM {
                 try { Initialize-OPIMAuth } catch {}
-                Should -Invoke Get-OPIMMsalApplication -Times 1 -Scope It -ParameterFilter {
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It -ParameterFilter {
                     $TenantId -eq 'organizations'
                 }
             }
@@ -201,7 +201,7 @@ Describe 'Initialize-OPIMAuth' {
                 # The cached token is valid, so without -ForceRefresh the call would short-circuit
                 # and never touch the MSAL app. -ForceRefresh must force re-acquisition.
                 try { Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -ForceRefresh } catch {}
-                Should -Invoke Get-OPIMMsalApplication -Times 1 -Scope It
+                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It
             }
         }
     }

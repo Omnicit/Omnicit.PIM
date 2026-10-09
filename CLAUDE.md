@@ -110,6 +110,7 @@ tests/
                               #   Testing Conventions -- and OPIMTestToken.ps1
                               #   (New-OPIMTestAccessToken: token-shaped fixtures built at
                               #   runtime, NOT-A-REAL-TOKEN)
+  Workflow/                   # ReleaseTag.Tests.ps1 -- the tag decision and its YAML wiring
 docs/live-verification/       # README.md: the redaction and credential rules, the placeholder
                               #   register dochygiene reads, and the checklist template
 build.yaml, build.ps1         # Sampler/ModuleBuilder config and bootstrap entry point
@@ -119,6 +120,9 @@ GitVersion.yml                # Version computation -- see CHANGELOG and Version
                               #   publish. The ONLY path that publishes -- see Publishing.
 .github/scripts/PublishArtefact.ps1   # -Record / -Verify: proves the published bytes are the
                               #   tested bytes. Single owner of both halves; do not split it.
+.github/scripts/ReleaseTag.ps1        # The tag step's decision: a tag or release only on the
+                              #   commit whose build THIS job published. Tested, with the
+                              #   workflow wiring, by tests/Workflow/ReleaseTag.Tests.ps1.
 ```
 
 **The load order is Classes -> Private -> Public, and it is intentional.** The dev-mode psm1
@@ -183,8 +187,26 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   `catch` whose `finally` calls `Uninstall-OPIMTransportTripwire` -- it checks that wiring, not the
   exact root form (see **Testing Conventions**); `source/` holds `ForEach-Object -Parallel` only in
   a named list -- empty today, so no `-Parallel` block is allowed anywhere -- each block importing
-  only `Microsoft.Graph.Authentication`; and `Get-OPIMMsalApplication` is invoked only in its own
-  test file and the tripwire suite, where every `Get-MgContext` mock throws.
+  only `Microsoft.Graph.Authentication`; `Get-OPIMMsalApplication` is run only in its own test file
+  and the tripwire suite, where every `Get-MgContext` mock throws -- called directly or through a
+  string that can run it (a name in a variable, `Get-Command`, a script block made from a string,
+  `Invoke-Expression`, Pester `-ForEach` or `-TestCases` data run with `& $name`). Any string that
+  parses as a call of it is refused: the name alone, a sentence that begins with it, or one in
+  which it stands as its own word (a name directly followed by `.` or `:` does not parse as the
+  command, so it is not caught). Read as names, never as runs, are only a direct string argument of
+  `Mock`, `Should`, `Should-Invoke`, `Should-NotInvoke` or `Assert-MockCalled` (the `Mock` or
+  `Should -Invoke` target, a plain `-Because 'text'`), a block's name and its `-Tag`; a `-Because`
+  text built in parentheses (a `-f` format, say), or a sentence held in a variable or passed
+  elsewhere, is parsed like any other string. A runnable string in `Describe` or `Context` data is
+  checked against that block's own `BeforeAll` and `BeforeEach`, not against a mock written inside
+  a nested `It`. A call or a runnable string of `Initialize-OPIMAuth` is refused where a
+  `Get-MgContext` mock that returns is in effect (in the `It`, or in a `BeforeAll` or `BeforeEach`
+  of an enclosing block) and neither `Get-OPIMMsalApplication` nor `Initialize-OPIMAuth` is mocked
+  there; any `Mock` of the first counts, even one whose `-ParameterFilter` never matches or that
+  lacks `-ModuleName` outside `InModuleScope`, and either leaves the real command reachable. The
+  gate reads those two commands' own calls and runnable strings, not their callers
+  (`Connect-OPIM`, the wrapper's retries, the pillar cmdlets), and its own file is exempt from both
+  rules, since it names the commands as data.
 - **`sourcehygiene.tests.ps1`** -- every `.ps1`, `.psd1`, `.psm1` and `.ps1xml` under `source/` and
   `tests/` is ASCII without a BOM; every `Verb-OPIM` name in `source/**/*.ps1` resolves to a
   function file, an exported alias, or a function defined inside another function in a function
@@ -232,7 +254,7 @@ and `testhygiene`, `sourcehygiene`, `dochygiene` and `docsync` read files static
 
 # Full test suite -- the authoritative gate, and the command every CI leg runs.
 # QA tests + unit tests + per-function PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-08: 2,533 passed, 0 failed, 0 skipped; coverage 94.72% over 2,992 analysed
+# (measured 2026-10-09: 2,580 passed, 0 failed, 0 skipped; coverage 94.72% over 2,992 analysed
 #  commands; Pester 6.2.0)
 ./build.ps1 -Tasks test
 
@@ -249,11 +271,12 @@ The Sampler test task measures coverage against the **built** module output, not
 `build.yaml`'s `test` workflow does not include `build` (`build.yaml:63-70`; only the default
 workflow, `./build.ps1` with no `-Tasks`, runs both). Always run `-Tasks build` before `-Tasks test`
 after changing source files -- and never build while the tests are running. The coverage threshold
-is 80 % (`build.yaml:152`): measured on 2026-10-08, 2,834 of 2,992 commands are covered, 440 more
-than 80 % requires. The margin has been thin before. The MSAL reflection lines in
-`Get-OPIMMsalApplication` are no longer run by any unit test, since reaching them builds a real
-MSAL client (see **Testing Conventions**), and that took coverage from 83.7 % to 80.28 % -- four
-commands above the line -- so a change that adds untested commands can still bring it close.
+is 80 % (`build.yaml:152`): measured on 2026-10-09, 2,834 of 2,992 commands are covered, 440 more
+than the 2,394 that 80 % requires. The margin was once only four commands: the MSAL reflection
+lines in `Get-OPIMMsalApplication` stopped being run by any unit test, since reaching them builds a
+real MSAL client (see **Testing Conventions**), and that took coverage from 83.7 % to 80.28 % --
+four commands above the line. It is 440 today, but a change that adds untested commands can still
+bring it close.
 
 **The build stamps the version GitVersion computes, and a local build needs GitVersion to do it.**
 Sampler (`Get-SamplerBuildVersion`, Sampler 0.120.1) takes `$env:ModuleVersion` when it is set,
@@ -321,12 +344,21 @@ publish it.
   as a prerelease for a preview). `GitVersion.yml` runs `mode: ContinuousDelivery`, where the
   preview counter advances on a TAG and not per commit: measured in Omnicit.EntraRBAC with
   GitVersion 5.12.0, two merges with no tag between them compute the SAME version. If a publish
-  succeeds but the tag step fails, the next merge computes the same version, skips the publish
-  (the idempotence check finds the version on the Gallery) and then creates the tag and release on
-  ITS OWN commit -- not on the commit whose build the Gallery holds. So re-run the failed job
-  before anything else merges: the re-run tags the commit it published. If a merge has already
-  happened, move the tag and its release to the published commit by hand (a preview tag is outside
-  the `Stable Version` ruleset; a stable tag can be moved only by that ruleset's bypass list).
+  succeeds but the tag step fails, the next merge computes the same version and the publish step
+  skips it, as it is on the Gallery. The tag step then tags nothing: it creates a tag or a release
+  only on a commit whose build THIS job published (`.github/scripts/ReleaseTag.ps1`), so with the
+  release missing it goes RED, naming the version and the hand repair, and until the tag exists
+  every merge to `main` publishes nothing. A re-run of the failed job goes red the same way, since
+  it too finds the version on the Gallery. The repair is by hand: tag the commit of the run whose
+  publish job logged `Publishing Omnicit.PIM <version>` and, after the upload,
+  `Publish-PSResource returned without error` (the first line is written BEFORE the upload, so a
+  run whose upload failed logs it too), and create its release --
+  `git tag v<version> <commit>`, `git push origin v<version>`, then
+  `gh release create v<version> --verify-tag --title v<version> --notes-file <notes>` -- add
+  `--prerelease` for a preview only, never for a stable `v<X.Y.Z>`, as `ReleaseTag.ps1` builds the
+  flag -- with that commit's `[Unreleased]` section as the notes (a preview tag is outside the
+  `Stable Version` ruleset; a stable tag can be created or moved only by that ruleset's bypass
+  list).
 - **Never create a version tag by hand outside that repair or a deliberate release.** The rule
   under **CHANGELOG and Version** has teeth here: a stray tag changes what gets PUBLISHED.
 - **No approval stands between a merge or a `v` tag and the Gallery**, by decision, as in
@@ -354,8 +386,11 @@ publish it.
   commit it was meant for.
 - **A failed Gallery confirmation is not proof of a failed publish.** The job asks the Gallery for
   the exact version for up to 10 minutes and goes red if it cannot see it; check the Gallery before
-  re-running, and never assume the version is free. A re-run is safe: the publish step skips a
-  version that is already on the Gallery, and the release step skips a release that already exists.
+  re-running, and never assume the version is free. A re-run is safe -- it publishes nothing twice:
+  the publish step skips a version that is already on the Gallery, and the tag step skips a release
+  that already exists and refuses, red, to tag anything when the release is missing, since that job
+  did not publish. So a re-run cannot finish the tagging of a version this job published: repair it
+  by hand, as the tag bullet above describes.
 
 **To cut a full release:**
 
@@ -462,7 +497,9 @@ preview number each. A bump message does move it: the minor bump token in the bo
 took the base `v0.5.2-preview0002` to `0.6.0-preview0001`. From the stable base `v0.5.1`, measured
 on 2026-10-05, `feat/x` built `0.6.0-x0001`, a `fix/` branch `0.5.2-fix...` and a `chore/` branch
 `0.5.2-chore...`. GitVersion 5.12 also needs a resolvable `main` ref to compute anything on a
-branch that matches no configuration, so a clone without one cannot build such a branch.
+branch that matches no configuration, so a clone without one cannot build such a branch. Create the
+local branch without checking it out, after a `git fetch origin` when `origin/main` is missing too:
+`git branch --track main origin/main`.
 
 **Do not create a version tag, or a `release/x.y.z` branch, outside a deliberate release.** Any
 newer tag becomes the base, and one sitting on HEAD ships verbatim whatever its value. GitVersion's
@@ -1493,9 +1530,19 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   call (`Get-OPIMMsalApplication.ps1:46`) it builds a real MSAL `PublicClientApplication` by
   reflection, which no mock intercepts. Its two build-path tests therefore mock `Get-MgContext` to
   throw a sentinel and assert that the sentinel stopped the call with the cache unchanged, and
-  testhygiene allows a call to `Get-OPIMMsalApplication` only in
+  testhygiene allows a run of `Get-OPIMMsalApplication` -- a call, or a string that can run it (a
+  name in a variable, `Get-Command`, a script block made from a string, `Invoke-Expression`, Pester
+  `-ForEach` or `-TestCases` data run with `& $name`; any string that parses as a call of it counts
+  -- a sentence in which the name stands as its own word, except a name directly followed by `.` or
+  `:`, and a `-Because` text built in parentheses or held in a variable -- while a plain
+  `-Because 'text'` argument of `Should` is read as a name, like a `Mock` target) -- only in
   `tests/Unit/Private/Get-OPIMMsalApplication.Tests.ps1` and the tripwire suite, where every
-  `Get-MgContext` mock must throw. Everywhere else, mock `Get-OPIMMsalApplication` itself.
+  `Get-MgContext` mock must throw. Everywhere else, mock `Get-OPIMMsalApplication` itself. A test
+  that runs `Initialize-OPIMAuth` itself, unmocked, under a `Get-MgContext` mock that returns must
+  mock `Get-OPIMMsalApplication` beside it, in the same `It` or in a `BeforeAll` or `BeforeEach` it
+  inherits (a runnable string in `Describe` or `Context` data sees only that block's own
+  `BeforeAll` and `BeforeEach`, not a mock written inside a nested `It`), or the gate refuses it.
+  The gate reads `Initialize-OPIMAuth`'s own calls and runnable strings, not its callers.
 - **`Invoke-OPIMDeviceCodeAuth` is tested against an `Add-Type` stand-in** with MSAL's device code
   shape, whose `ExecuteAsync` runs on a thread-pool thread as MSAL does; never against a real MSAL
   client.

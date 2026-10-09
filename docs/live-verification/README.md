@@ -376,14 +376,17 @@ $HeadTime = [datetimeoffset]::Parse((git log -1 --format=%cI))
 "Branch head: $(git log -1 --format='%h %s')"
 "Built version folder: $($Built.Directory.Name)"
 "Built after the branch head was committed: $([datetimeoffset]$Built.LastWriteTime -gt $HeadTime)"
-"Tracked changes in the working tree: $(@(git status --porcelain --untracked-files=no).Count)"
+$Tracked = @(git status --porcelain --untracked-files=no)
+if ($LASTEXITCODE -ne 0) { throw "git status exited with $LASTEXITCODE, so the working tree could not be read; repair the clone before any check below." }
+"Tracked changes in the working tree: $($Tracked.Count)"
 ```
 
 **Expect:** the branch head's hash and subject; the version folder the branch's build printed;
 `Built after the branch head was committed: True`; `Tracked changes in the working tree: 0`.
 **Failure looks like:** `False`, or a tracked change -- the build may not be of this head, so build
-again before any check below. The version alone proves nothing: GitVersion can compute the same
-version for two builds of one branch.
+again before any check below -- or an error from `git status`, which means the working tree could
+not be read at all: repair the clone before any check below. The version alone proves nothing:
+GitVersion can compute the same version for two builds of one branch.
 
 Result:
 

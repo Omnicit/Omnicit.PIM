@@ -270,10 +270,10 @@ function Initialize-OPIMAuth {
             'User.Read'
         )
 
-        # Use GetMethods() name-based search to avoid cross-AssemblyLoadContext type-identity
-        # failures. The MSAL assembly lives in the Graph SDK's custom ALC; types loaded from
-        # that ALC are not identical to the same types from the default ALC, so
-        # GetMethod(name, [Type[]]) with default-ALC type arguments returns $null.
+        # MSAL methods that take MSAL types are found by name through GetMethods(), never through
+        # GetMethod(name, [Type[]]): MSAL lives in the Graph SDK's own AssemblyLoadContext, whose
+        # types are not the default context's. A typed GetMethod is used below only for [bool] and
+        # [string] (WithForceRefresh, WithUseEmbeddedWebView, WithLoginHint, WithClaims).
         $AppType = $MsalApp.GetType()
 
         $CachedAccount = if ($script:_OPIMAuthState -and $script:_OPIMAuthState.Account) {
