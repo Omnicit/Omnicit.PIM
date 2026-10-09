@@ -6,7 +6,7 @@ SHORT DESCRIPTION
     Directory Roles, Azure Resources, and Entra ID Groups.
 
 LONG DESCRIPTION
-    Omnicit.PIM is a PowerShell 7.2+ (Core-only) module for self-service
+    Omnicit.PIM is a PowerShell 7.4+ (Core-only) module for self-service
     activation and deactivation of PIM roles and group memberships across three
     surfaces:
 
@@ -23,8 +23,12 @@ LONG DESCRIPTION
 
     The module requires:
       - Microsoft.Graph.Authentication (>= 2.36.0) for all Graph API calls
-      - Az.Resources (>= 9.0.3) for Azure RBAC PIM operations
-      - AzAuth (2.9.0) for the Azure sign-in; it needs PowerShell 7.4 or later
+      - AzAuth (>= 2.9.0) for the Azure sign-in
+      - PowerShell 7.4 or later, which AzAuth requires
+
+    No Az PowerShell module is needed or loaded: the module sends every Azure
+    Resource Manager request itself, and an Az session you started is left
+    alone.
 
     No other Microsoft.Graph.* SDK modules are needed; all Graph calls use
     Invoke-MgGraphRequest directly.
