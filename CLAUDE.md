@@ -757,7 +757,7 @@ their last parameter and hand it down to `Initialize-OPIMAuth`; without it nothi
   and a failed first sign-in -- a declined or expired code, Ctrl+C -- keeps the mode: the next call
   asks for a code again instead of opening the system browser, until `Disconnect-OPIM`. The
   token-rejected retry in `Invoke-OPIMGraphRequest` checks only that a state exists
-  (`Invoke-OPIMGraphRequest.ps1:319`), but a pillar cmdlet never reaches it on such a state: the
+  (`Invoke-OPIMGraphRequest.ps1:530`), but a pillar cmdlet never reaches it on such a state: the
   failed sign-in left the cmdlet latched, so the wrapper refuses its requests with `SignInRefused`
   before sending.
 - **The mode lives in the module instance of the runspace that signed in.** A
@@ -886,34 +886,48 @@ and `Disconnect-OPIM` cannot clear it: the next ARM sign-in rebuilds it (`Get-Az
 otherwise it ends with the process.
 
 **`Invoke-OPIMGraphRequest` owns the Graph transport.** Every request goes through its nested
-`Invoke-OPIMGraphSingle` (`Invoke-OPIMGraphRequest.ps1:223-350`), which calls
-`Invoke-MgGraphRequest` with `-Verbose:$false -ErrorAction Stop` (`:225-230`). Before the first
-attempt and before each retry it runs the session gate and then the latch gate, outside the `try`
-that sends, and throws `GraphSessionChanged` or `SignInRefused` without sending (`:245-259`,
-`:286-297`, `:325-335`); the `return` after each throw keeps a caller under
+`Invoke-OPIMGraphSingle` (`Invoke-OPIMGraphRequest.ps1:371-561`), which calls
+`Invoke-MgGraphRequest` with `-Verbose:$false -ErrorAction Stop` (`:373-378`). Before the first
+attempt, each throttled retry and each other retry it runs the session gate and then the latch gate,
+outside the `try` that sends, and throws `GraphSessionChanged` or `SignInRefused` without sending
+(`:417-432`, `:497-508`, `:536-546`); the `return` after each throw keeps a caller under
 `-ErrorAction SilentlyContinue` from sending anyway. For the same reason each retry's catch sets a
 flag (`$ClaimsRetryFailed`, `$RefreshRetryFailed`) before its throw, read straight after the `try`
-(`:306`, `:345`): under `SilentlyContinue` with no `try` up the call stack a throw inside a catch
+(`:517`, `:556`): under `SilentlyContinue` with no `try` up the call stack a throw inside a catch
 resumes after the whole `try` statement, and a failed claims retry would otherwise fall on into the
 token-rejected retry -- a refresh and a third send. On a failure:
 
-1. **ACRS claims-challenge retry.** It looks for `claims=` in the `WWW-Authenticate` header, the
+1. **Throttling (OPIM-28).** A 429 is always waited out, and a 503 only when it carries
+   `Retry-After` and the request is a `GET`: a write is sent again only after a 429, which Graph
+   returns before it acts. The wait is the `Retry-After` value (delta-seconds or an HTTP-date) or,
+   for a 429 without one, an exponential fallback, each wait held to 1-120 seconds, within a
+   300-second wait budget per request (per page under `-All`), a 900-second deadline per call and at
+   most 10 throttle retries per request, as in the ARM transport. The status and the header are read
+   by one walk, `Get-GraphResponseFact`, from either form the Graph SDK raises a failure in: an
+   `HttpResponseException`'s `Response`, or the Kiota `ApiException` (`ResponseStatusCode`,
+   `ResponseHeaders`) inside the `AggregateException` the SDK's retry handler throws when it gives
+   up. `Retry-After` is the only header ever read. The loop wraps only the first attempt: the claims
+   step-up and the refresh below run on the last attempt's failure, once each, and a bound that is
+   reached ends the request with the converted error of item 4, so a `-All` read fails whole. One
+   verbose line per retry names the status, the wait, its source and the budgets, never a header or
+   the uri.
+2. **ACRS claims-challenge retry.** It looks for `claims=` in the `WWW-Authenticate` header, the
    response body and the exception message, and decodes the value as URL-encoded JSON (the PIM 400
    `RoleAssignmentRequestAcrsValidationFailed` body form), base64url JSON (the 401 step-up header
-   form) or raw JSON (`:121-158`). It then calls `Initialize-OPIMAuth -ClaimsChallenge` for one
+   form) or raw JSON (`:136-173`). It then calls `Initialize-OPIMAuth -ClaimsChallenge` for one
    step-up -- interactive, or with a device code in device code mode, which it does not pass but
    the auth state remembers -- and retries exactly once; a second failure is converted and thrown,
-   and ends the request (`:273-307`).
-2. **Token-rejected retry.** A 401 that is not a claims challenge -- its status read from either
+   and ends the request (`:484-518`).
+3. **Token-rejected retry.** A 401 that is not a claims challenge -- its status read from either
    form the Graph SDK raises a failure in, an `HttpResponseException`'s `Response` or the
    `ResponseStatusCode` of the Kiota `ApiException` inside the `AggregateException` the SDK's retry
    handler throws (OPIM-28) -- or a message matching `InvalidAuthenticationToken`, `CompactToken`,
    `token is expired` or `Lifetime validation failed`, calls `Initialize-OPIMAuth -ForceRefresh` and
-   retries once (`:315-346`).
-3. **Error conversion.** Anything else is thrown as `Convert-GraphHttpException`'s record, whose
+   retries once (`:526-557`).
+4. **Error conversion.** Anything else is thrown as `Convert-GraphHttpException`'s record, whose
    `FullyQualifiedErrorId` is the Graph `error.code` -- or, when the body carries none, the input
    record's own `FullyQualifiedErrorId` string (its exception's type name when that is empty), with
-   the HTTP status in the message, `HTTP 403: ...` (`:349`). No error id is invented. It is always a
+   the HTTP status in the message, `HTTP 403: ...` (`:560`). No error id is invented. It is always a
    NEW record that never chains the raw exception. A caller receives a response or a thrown
    `ErrorRecord` -- there is no side-channel protocol.
 
@@ -994,7 +1008,7 @@ where a next link's skip token would sit.
 
 | File:line (under `source/`) | Call |
 |---|---|
-| `Private/Invoke-OPIMGraphRequest.ps1:261, 299, 337` | `Invoke-MgGraphRequest` -- the Graph wrapper itself |
+| `Private/Invoke-OPIMGraphRequest.ps1:434, 510, 548` | `Invoke-MgGraphRequest` -- the Graph wrapper itself |
 | `Private/Get-OPIMCurrentTenantInfo.ps1:60` | `Invoke-MgGraphRequest` for `v1.0/organization` (tenant display name) |
 | `Private/Initialize-OPIMAuth.ps1:471` | `Connect-MgGraph -AccessToken` |
 | `Private/Initialize-OPIMAuth.ps1:158, 160` | AzAuth's `Get-AzToken` (the ARM sign-in; `:160` in device code mode) |

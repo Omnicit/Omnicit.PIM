@@ -14,7 +14,8 @@ BeforeAll {
     function New-ScrubFixture {
         param(
             [int]$Status = 403,
-            [string]$Content = '{"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges."}}'
+            [string]$Content = '{"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges."}}',
+            [string]$RetryAfter
         )
         $Token = 'Bearer ' + ('x' * 40) + 'NOT-A-REAL-TOKEN'
         $Request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://graph.microsoft.com/v1.0/me')
@@ -22,7 +23,8 @@ BeforeAll {
         $Response = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]$Status)
         $Response.RequestMessage = $Request
         $Response.Content = [System.Net.Http.StringContent]::new($Content)
-        $Exception = [Microsoft.PowerShell.Commands.HttpResponseException]::new('Response status code does not indicate success.', $Response)
+        if ($RetryAfter) { $null = $Response.Headers.TryAddWithoutValidation('Retry-After', $RetryAfter) }
+        $Exception =[Microsoft.PowerShell.Commands.HttpResponseException]::new('Response status code does not indicate success.', $Response)
         [pscustomobject]@{
             Request = $Request
             Record  = [System.Management.Automation.ErrorRecord]::new($Exception, 'HttpFail', 'InvalidOperation', $Request)
@@ -558,6 +560,476 @@ Describe 'Invoke-OPIMGraphRequest' {
                 (Invoke-OPIMGraphRequest -Uri 'v1.0/me').value[0].id | Should -Be 'after-refresh'
                 Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter { $ClaimsChallenge -match 'acrs' }
                 Should -Invoke Initialize-OPIMAuth -Times 0 -Scope It -ParameterFilter { $ForceRefresh }
+            }
+        }
+    }
+
+    Context 'When Microsoft Graph throttles a request (OPIM-28)' {
+        # Each send throws the next queued failure, or -- when $script:_ThrottleForever is set --
+        # that failure on every send; once the queue is spent a send answers. A send past 40 fails the
+        # test instead of looping. Start-Sleep is mocked: the wrapper's waits are real sleeps.
+        BeforeAll {
+            $script:TooManyMessage = 'HTTP request failed with status code: TooManyRequests.{"error":{"code":"TooManyRequests","message":"Too many requests."}}'
+            $script:UnavailableMessage = 'HTTP request failed with status code: ServiceUnavailable.{"error":{"code":"ServiceUnavailable","message":"Service unavailable."}}'
+            InModuleScope Omnicit.PIM {
+                Mock Start-Sleep {}
+                Mock Initialize-OPIMAuth {}
+                Mock Invoke-MgGraphRequest {
+                    $script:_ThrottleCalls++
+                    if ($script:_ThrottleCalls -gt 40) { throw 'hang guard: the throttle loop did not end' }
+                    $Next = $null
+                    if ($null -ne $script:_ThrottleForever) {
+                        $Next = $script:_ThrottleForever
+                    } elseif ($script:_ThrottleCalls -le @($script:_ThrottleQueue).Count) {
+                        $Next = $script:_ThrottleQueue[$script:_ThrottleCalls - 1]
+                    }
+                    if ($null -eq $Next) { return @{ value = @(@{ id = 'after-wait' }) } }
+                    if ($Next -is [System.Management.Automation.ErrorRecord]) { $PSCmdlet.ThrowTerminatingError($Next) }
+                    throw $Next
+                }
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com' }
+                $script:_ThrottleCalls = 0
+                $script:_ThrottleQueue = @()
+                $script:_ThrottleForever = $null
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_ThrottleCalls = $null
+                $script:_ThrottleQueue = $null
+                $script:_ThrottleForever = $null
+            }
+        }
+
+        It 'waits the delta-seconds Retry-After of a 429 in the Kiota form and sends again' {
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '60' } -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                (Invoke-OPIMGraphRequest -Uri 'v1.0/me').value[0].id | Should -Be 'after-wait'
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 60 }
+            }
+        }
+
+        It 'waits the Retry-After of a 429 in the .Response form and scrubs every throttled attempt' {
+            $First = New-ScrubFixture -Status 429 -Content '{"error":{"code":"TooManyRequests","message":"Too many requests."}}' -RetryAfter '7'
+            $Second = New-ScrubFixture -Status 429 -Content '{"error":{"code":"TooManyRequests","message":"Too many requests."}}' -RetryAfter '7'
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($First.Record, $Second.Record) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                (Invoke-OPIMGraphRequest -Uri 'v1.0/me').value[0].id | Should -Be 'after-wait'
+                Should -Invoke Invoke-MgGraphRequest -Times 3 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 2 -Exactly -Scope It -ParameterFilter { $Seconds -eq 7 }
+            }
+            $First.Request.Headers.Contains('Authorization') | Should -BeFalse
+            $Second.Request.Headers.Contains('Authorization') | Should -BeFalse
+        }
+
+        It 'waits until an HTTP-date Retry-After' {
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = [DateTime]::UtcNow.AddSeconds(100).ToString('R') } -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                $null = Invoke-OPIMGraphRequest -Uri 'v1.0/me'
+                # A window: the date has one-second resolution and time passes before it is read.
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -ge 95 -and $Seconds -le 100 }
+            }
+        }
+
+        It 'clamps an HTTP-date Retry-After already past up to one second' {
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = [DateTime]::UtcNow.AddMinutes(-10).ToString('R') } -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                $null = Invoke-OPIMGraphRequest -Uri 'v1.0/me'
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 1 }
+            }
+        }
+
+        It 'reads Retry-After case-insensitively' {
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'retry-after' = '11' } -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                $null = Invoke-OPIMGraphRequest -Uri 'v1.0/me'
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 11 }
+            }
+        }
+
+        It 'reads Retry-After deep in the Kiota exception chain' {
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '45' } -Message $script:TooManyMessage -NestingDepth 10
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                $null = Invoke-OPIMGraphRequest -Uri 'v1.0/me'
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 45 }
+            }
+        }
+
+        It 'reads a Retry-After that sits further in the chain than the status' {
+            # The walk ends early only when it holds BOTH facts: the status on the outer exception must
+            # not hide the header on the inner one.
+            $Inner = [System.Exception]::new($script:TooManyMessage)
+            Add-Member -InputObject $Inner -NotePropertyName ResponseHeaders -NotePropertyValue @{ 'Retry-After' = '17' }
+            $Outer = [System.Exception]::new($script:TooManyMessage, $Inner)
+            Add-Member -InputObject $Outer -NotePropertyName ResponseStatusCode -NotePropertyValue 429
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Outer) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                $null = Invoke-OPIMGraphRequest -Uri 'v1.0/me'
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 17 }
+            }
+        }
+
+        It 'falls back to exponential backoff when a 429 carries no Retry-After' {
+            $First = New-KiotaFailure -StatusCode 429 -Message $script:TooManyMessage
+            $Second = New-KiotaFailure -StatusCode 429 -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($First, $Second) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                $null = Invoke-OPIMGraphRequest -Uri 'v1.0/me'
+                # 2^0 = 1, then 2^1 = 2.
+                Should -Invoke Start-Sleep -Times 2 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 1 }
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 2 }
+            }
+        }
+
+        It 'falls back to exponential backoff when Retry-After cannot be read, never to zero' {
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = 'soon' } -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                $null = Invoke-OPIMGraphRequest -Uri 'v1.0/me'
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 1 }
+            }
+        }
+
+        It 'falls back, and does not throw, when the header collection is of neither shape' {
+            $Odd = [System.Exception]::new($script:TooManyMessage)
+            Add-Member -InputObject $Odd -NotePropertyName ResponseStatusCode -NotePropertyValue 429
+            Add-Member -InputObject $Odd -NotePropertyName ResponseHeaders -NotePropertyValue 'not-a-header-collection'
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Odd) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                (Invoke-OPIMGraphRequest -Uri 'v1.0/me').value[0].id | Should -Be 'after-wait'
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 1 }
+            }
+        }
+
+        It 'clamps a Retry-After of 0 up to one second' {
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '0' } -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                $null = Invoke-OPIMGraphRequest -Uri 'v1.0/me'
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 1 }
+            }
+        }
+
+        It 'clamps a Retry-After above 120 seconds to 120' {
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '100000' } -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                $null = Invoke-OPIMGraphRequest -Uri 'v1.0/me'
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 120 }
+            }
+        }
+
+        It 'gives up when the per-REQUEST budget cannot cover the next wait, with the error of before' {
+            # 120 s per wait (clamped from 300): 300 s buys two waits; the third 120 s does not fit
+            # the 60 s left.
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '300' } -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Throttle = $Throttle } {
+                param($Throttle)
+                $script:_ThrottleForever = $Throttle
+                $Records = [System.Collections.Generic.List[object]]::new()
+                $Caught = $null
+                try { Invoke-OPIMGraphRequest -Uri 'v1.0/me' -Verbose 4>&1 | ForEach-Object { $Records.Add($PSItem) } } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'TooManyRequests'
+                $Caught.Exception.Message | Should -BeLike 'TooManyRequests: *'
+                Should -Invoke Start-Sleep -Times 2 -Exactly -Scope It
+                Should -Invoke Invoke-MgGraphRequest -Times 3 -Exactly -Scope It
+                $Text = (@($Records | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] }).Message) -join "`n"
+                $Text | Should -Match 'Throttled'
+                $Text | Should -Match 'per-REQUEST budget remain\. Giving up\.'
+            }
+        }
+
+        It 'gives up with the HTTP status in the message when the body names no Graph code' {
+            $Throttle = New-ScrubFixture -Status 429 -Content '{}' -RetryAfter '300'
+            InModuleScope Omnicit.PIM -Parameters @{ Throttle = $Throttle.Record } {
+                param($Throttle)
+                $script:_ThrottleForever = $Throttle
+                $Caught = $null
+                try { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'HttpFail*'
+                $Caught.Exception.Message | Should -BeLike 'HTTP 429: *'
+                Should -Invoke Start-Sleep -Times 2 -Exactly -Scope It
+            }
+        }
+
+        It 'spends the per-REQUEST budget to its last second' {
+            # Three waits of 100 s spend exactly 300 s; the fourth answer asks for 1 s, which no
+            # longer fits.
+            $Hundred = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '100' } -Message $script:TooManyMessage
+            $One = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '1' } -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Hundred, $Hundred, $Hundred, $One) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } | Should -Throw -ErrorId 'TooManyRequests'
+                Should -Invoke Start-Sleep -Times 3 -Exactly -Scope It
+                Should -Invoke Invoke-MgGraphRequest -Times 4 -Exactly -Scope It
+            }
+        }
+
+        It 'stops at the hard cap of 10 retries when Retry-After stays small' {
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '1' } -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Throttle = $Throttle } {
+                param($Throttle)
+                $script:_ThrottleForever = $Throttle
+                $Records = [System.Collections.Generic.List[object]]::new()
+                $Caught = $null
+                try { Invoke-OPIMGraphRequest -Uri 'v1.0/me' -Verbose 4>&1 | ForEach-Object { $Records.Add($PSItem) } } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'TooManyRequests'
+                Should -Invoke Start-Sleep -Times 10 -Exactly -Scope It
+                Should -Invoke Invoke-MgGraphRequest -Times 11 -Exactly -Scope It
+                $Text = (@($Records | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] }).Message) -join "`n"
+                $Text | Should -Match 'Reached the hard cap of 10 throttle retries'
+            }
+        }
+
+        It 'waits out a 503 that carries Retry-After on a read' {
+            $Unavailable = New-KiotaFailure -StatusCode 503 -Header @{ 'Retry-After' = '5' } -Message $script:UnavailableMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Unavailable) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                (Invoke-OPIMGraphRequest -Uri 'v1.0/me').value[0].id | Should -Be 'after-wait'
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 5 }
+            }
+        }
+
+        It 'does not wait out a 503 without Retry-After' {
+            $Unavailable = New-KiotaFailure -StatusCode 503 -Message $script:UnavailableMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Unavailable) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } | Should -Throw -ErrorId 'ServiceUnavailable'
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 0 -Scope It
+            }
+        }
+
+        It 'does not send a <Method> again after a 503, even with Retry-After' -ForEach @(
+            @{ Method = 'POST' }
+            @{ Method = 'PATCH' }
+            @{ Method = 'DELETE' }
+        ) {
+            # A 503 can come after Graph carried a write out; sending an activation again could make a
+            # second one. Only a 429, which Graph returns before it acts, is sent again.
+            $Unavailable = New-KiotaFailure -StatusCode 503 -Header @{ 'Retry-After' = '5' } -Message $script:UnavailableMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Unavailable); Method = $Method } {
+                param($Queue, $Method)
+                $script:_ThrottleQueue = $Queue
+                { Invoke-OPIMGraphRequest -Method $Method -Uri 'v1.0/some/requests' -Body @{ action = 'selfActivate' } } | Should -Throw -ErrorId 'ServiceUnavailable'
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 0 -Scope It
+            }
+        }
+
+        It 'sends a POST again after a 429' {
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '3' } -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                (Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{ action = 'selfActivate' }).value[0].id | Should -Be 'after-wait'
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 3 }
+            }
+        }
+
+        It 'does not wait out an ordinary failure such as 403, even with Retry-After' {
+            $Forbidden = New-KiotaFailure -StatusCode 403 -Header @{ 'Retry-After' = '30' } -Message 'HTTP request failed with status code: Forbidden.{"error":{"code":"Forbidden","message":"Access denied."}}'
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Forbidden) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } | Should -Throw -ErrorId 'Forbidden'
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 0 -Scope It
+            }
+        }
+
+        It 'waits out a throttle, then refreshes a rejected token once and sends again' {
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '3' } -Message $script:TooManyMessage
+            $Rejected = New-KiotaFailure -StatusCode 401 -Message 'HTTP request failed with status code: Unauthorized.{"error":{"code":"InvalidToken","message":"The token was rejected."}}'
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle, $Rejected) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                (Invoke-OPIMGraphRequest -Uri 'v1.0/me').value[0].id | Should -Be 'after-wait'
+                Should -Invoke Invoke-MgGraphRequest -Times 3 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter { $ForceRefresh }
+            }
+        }
+
+        It 'ends the request without waiting when the retry after a refresh is throttled' {
+            # Review Focus 3: the retries after a refresh and a step-up are single sends, as before.
+            $Rejected = New-KiotaFailure -StatusCode 401 -Message 'HTTP request failed with status code: Unauthorized.{"error":{"code":"InvalidToken","message":"The token was rejected."}}'
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '3' } -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Rejected, $Throttle) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } | Should -Throw -ErrorId 'TooManyRequests'
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 0 -Scope It
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter { $ForceRefresh }
+            }
+        }
+
+        It 'runs the session and latch gates before every throttled retry' {
+            $First = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '2' } -Message $script:TooManyMessage
+            $Second = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '2' } -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($First, $Second) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                Mock Get-OPIMGraphSessionState { 'Own' }
+                Mock Get-OPIMSignInRefusal { $null }
+                $null = Invoke-OPIMGraphRequest -Uri 'v1.0/me'
+                Should -Invoke Invoke-MgGraphRequest -Times 3 -Exactly -Scope It
+                Should -Invoke Get-OPIMGraphSessionState -Times 3 -Exactly -Scope It
+                Should -Invoke Get-OPIMSignInRefusal -Times 3 -Exactly -Scope It
+            }
+        }
+
+        It 'refuses the throttled retry when the session changed during the wait' {
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '2' } -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                $script:_GateReads = 0
+                Mock Get-OPIMGraphSessionState { $script:_GateReads++; if ($script:_GateReads -eq 1) { 'Own' } else { 'Changed' } }
+                { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } | Should -Throw -ErrorId 'GraphSessionChanged*'
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It
+                $script:_GateReads = $null
+            }
+        }
+
+        It 'refuses the throttled retry when the command was latched during the wait' {
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '2' } -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                $script:_GateReads = 0
+                Mock Get-OPIMSignInRefusal { $script:_GateReads++; if ($script:_GateReads -eq 1) { $null } else { 'Get-OPIMDirectoryRole' } }
+                { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } | Should -Throw -ErrorId 'SignInRefused*'
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                $script:_GateReads = $null
+            }
+        }
+
+        It 'writes one verbose line per retry with the status, the wait, its source and the budgets, and never a header' {
+            $First = New-KiotaFailure -StatusCode 429 -Message $script:TooManyMessage -Header @{
+                'Retry-After'       = '30'
+                'Authorization'     = ('Bearer ' + ('x' * 20) + 'NOT-A-REAL-TOKEN-MUST-NOT-BE-LOGGED')
+                'client-request-id' = 'correlation-MUST-NOT-BE-LOGGED'
+            }
+            $Second = New-KiotaFailure -StatusCode 429 -Message $script:TooManyMessage
+            $Verbose = InModuleScope Omnicit.PIM -Parameters @{ Queue = @($First, $Second) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                (Invoke-OPIMGraphRequest -Uri 'v1.0/me' -Verbose 4>&1) | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] }
+            }
+            $Lines = @($Verbose.Message | Where-Object { $_ -match 'Throttled' })
+            $Lines.Count | Should -Be 2
+            $Lines[0] | Should -BeExactly '[Invoke-OPIMGraphRequest] Throttled (status=429). Waiting 30 s (server-directed) before retry 1; 270 s of per-REQUEST and 870 s of per-CALL budget remain.'
+            $Lines[1] | Should -Match 'Waiting 2 s \(exponential fallback\) before retry 2; 268 s of per-REQUEST and 868 s of per-CALL budget remain\.'
+            $Text = $Verbose.Message -join "`n"
+            $Text | Should -Not -Match 'MUST-NOT-BE-LOGGED'
+            $Text | Should -Not -Match '(?i)bearer|authorization'
+            $Text | Should -Not -Match 'v1\.0/me'
+        }
+    }
+
+    Context 'When Microsoft Graph throttles the pages of -All (OPIM-28)' {
+        BeforeAll {
+            $script:PagedTooManyMessage = 'HTTP request failed with status code: TooManyRequests.{"error":{"code":"TooManyRequests","message":"Too many requests."}}'
+            InModuleScope Omnicit.PIM {
+                Mock Start-Sleep {}
+                Mock Initialize-OPIMAuth {}
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com' }
+                $script:_PagedCalls = 0
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_PagedCalls = $null
+                $script:_PagedThrottle = $null
+            }
+        }
+
+        It 'gives each page its own per-REQUEST budget' {
+            # Two pages, each throttled twice for 120 s (240 s each). One budget shared by both pages
+            # would refuse page 2's first wait; a budget per page allows all four.
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '120' } -Message $script:PagedTooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Throttle = $Throttle } {
+                param($Throttle)
+                $script:_PagedThrottle = $Throttle
+                Mock Invoke-MgGraphRequest {
+                    $script:_PagedCalls++
+                    if ($script:_PagedCalls -gt 40) { throw 'hang guard: the throttle loop did not end' }
+                    if ($script:_PagedCalls -in 1, 2, 4, 5) { throw $script:_PagedThrottle }
+                    if ($script:_PagedCalls -eq 3) { return @{ value = @(@{ id = 'a' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' } }
+                    @{ value = @(@{ id = 'b' }) }
+                }
+                $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All
+                @($Result.value | ForEach-Object { $_.id }) | Should -Be @('a', 'b')
+                Should -Invoke Start-Sleep -Times 4 -Exactly -Scope It -ParameterFilter { $Seconds -eq 120 }
+                Should -Invoke Invoke-MgGraphRequest -Times 6 -Exactly -Scope It
+            }
+        }
+
+        It 'ends a throttled -All read at the per-CALL deadline and returns no shorter list' {
+            # Each page is throttled once for 120 s and then answers with a link of its own. The
+            # 900 s deadline fits 7 waits (840 s); the 8th does not, so the whole call fails, with the
+            # 7 pages read before it as PartialValue.
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '120' } -Message $script:PagedTooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Throttle = $Throttle } {
+                param($Throttle)
+                $script:_PagedThrottle = $Throttle
+                Mock Invoke-MgGraphRequest {
+                    $script:_PagedCalls++
+                    if ($script:_PagedCalls -gt 40) { throw 'hang guard: the per-CALL deadline did not end the walk' }
+                    if ($script:_PagedCalls % 2 -eq 1) { throw $script:_PagedThrottle }
+                    @{ value = @(@{ id = "p$($script:_PagedCalls)" }); '@odata.nextLink' = "https://graph.microsoft.com/v1.0/x?`$skiptoken=$($script:_PagedCalls)" }
+                }
+                $Result = $null
+                $Caught = $null
+                $Records = [System.Collections.Generic.List[object]]::new()
+                try { $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All -Verbose 4>&1 | ForEach-Object { $Records.Add($PSItem) } } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'TooManyRequests*'
+                @($Records | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] }).Count | Should -Be 0
+                Should -Invoke Start-Sleep -Times 7 -Exactly -Scope It
+                Should -Invoke Invoke-MgGraphRequest -Times 15 -Exactly -Scope It
+                @($Caught.Exception.PartialValue).Count | Should -Be 7
+                $Caught.Exception.PageNumber | Should -Be 8
+                $Text = (@($Records | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] }).Message) -join "`n"
+                $Text | Should -Match 'per-CALL budget remain\. Giving up\.'
+                $Text | Should -Not -Match 'skiptoken'
             }
         }
     }
