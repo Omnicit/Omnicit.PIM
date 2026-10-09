@@ -1,18 +1,23 @@
 function Disconnect-OPIM {
     <#
     .SYNOPSIS
-    Clear all Omnicit.PIM session tokens and disconnect from Microsoft Graph.
+    Clear the module's tokens and disconnect the Microsoft Graph session.
 
     .DESCRIPTION
-    Clears the module-scoped authentication state ($script:_OPIMAuthState) and the cached MSAL
-    PublicClientApplication with its tenant, whose in-memory cache holds the Microsoft Graph tokens.
-    The Azure Resource Manager token lives only in that state, so it is cleared with it: there is no
-    Azure session to disconnect. Then calls Disconnect-MgGraph to end the Microsoft Graph SDK
-    session of this PowerShell process. Clearing the auth state also forgets a device code sign-in
-    mode (-DeviceCode), so the next sign-in uses the system browser unless -DeviceCode is given again.
+    Clears the module's tokens, the Azure Resource Manager token included, and disconnects the
+    Microsoft Graph session; AzAuth keeps its own sign-in in the PowerShell process until the
+    module's next Azure sign-in rebuilds it or the process ends.
 
-    AzAuth, which signs in to Azure, keeps a credential of its own in the process. The first Azure
-    sign-in after Disconnect-OPIM rebuilds it (Get-AzToken -Force) instead of reusing it.
+    It clears the module-scoped authentication state ($script:_OPIMAuthState) and the cached MSAL
+    PublicClientApplication with its tenant, whose in-memory cache holds the Microsoft Graph tokens.
+    The module's Azure Resource Manager token lives only in that state, so it is cleared with it.
+    Then it calls Disconnect-MgGraph to end the Microsoft Graph SDK session of this PowerShell
+    process. Clearing the auth state also forgets a device code sign-in mode (-DeviceCode), so the
+    next sign-in uses the system browser unless -DeviceCode is given again.
+
+    AzAuth, which signs in to Azure, keeps a credential of its own in the process, which
+    Disconnect-OPIM cannot clear. The module's first Azure sign-in after Disconnect-OPIM rebuilds it
+    (Get-AzToken -Force) instead of reusing it; otherwise it ends with the PowerShell process.
 
     After calling Disconnect-OPIM, the next PIM cmdlet (or an explicit Connect-OPIM) will
     trigger a fresh authentication prompt: in the system browser, or with a device code when
@@ -20,8 +25,9 @@ function Disconnect-OPIM {
 
     .EXAMPLE
     Disconnect-OPIM
-    Clear all cached tokens, the Azure Resource Manager token included, and disconnect the Microsoft
-    Graph session.
+    Clears the module's tokens, the Azure Resource Manager token included, and disconnects the
+    Microsoft Graph session; AzAuth keeps its own sign-in in the PowerShell process until the
+    module's next Azure sign-in rebuilds it or the process ends.
     #>
     [Alias('Disconnect-PIM')]
     [CmdletBinding()]

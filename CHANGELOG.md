@@ -11,16 +11,16 @@ which commit that is, it stops and says how to set the tag by hand, instead of t
 commit.
 
 Azure roles (`Get-`, `Enable-` and `Disable-OPIMAzureRole`, and the Azure part of `pim` and `unpim`)
-now sign in with AzAuth and use the module's own Azure Resource Manager transport instead of the Az
-modules' commands. Install AzAuth 2.9.0 for them: the module does not declare it yet, and the Az
-modules stay listed as dependencies for now. The Azure sign-in is separate from the Graph one, in the
-system browser or with a device code shown like Graph's, and its token must be for the Graph
-session's tenant and account, else `TenantMismatch` or the new `AccountMismatch`, and nothing is
-sent. Throttled requests (429, or 503 with `Retry-After`) wait and retry within bounds, and a list is
-read to its last page. Output keeps its property names and the module's type names, but Az's .NET
-type names are gone: a script that tested `-is` against an Az type must test the `Omnicit.PIM.Azure*`
-type name instead. `Disconnect-OPIM` no longer calls `Disconnect-AzAccount`; it clears the module's
-Azure token.
+now sign in with AzAuth and send their requests themselves instead of through the Az modules'
+commands. They need AzAuth 2.9.0 installed and PowerShell 7.4 or later; the module does not declare
+AzAuth yet, and the Az modules stay listed as dependencies. The Azure sign-in, in the system browser
+or with a device code, no longer reuses or ends an Az context of yours: a `Connect-AzAccount`
+session is left alone. Its token must be for the Graph session's tenant and account, else
+`TenantMismatch` or the new `AccountMismatch`, and nothing is sent. Output keeps its property names,
+but Az's .NET type names are gone: a script that tested `-is` against an Az type checks
+`$Obj.PSObject.TypeNames -contains 'Omnicit.PIM.AzureEligibilitySchedule'` (or another
+`Omnicit.PIM.Azure*` name) instead. `Disconnect-OPIM` clears the module's Azure token, but not
+AzAuth's own sign-in in the PowerShell process.
 
 ## [0.6.0] - 2026-10-09
 

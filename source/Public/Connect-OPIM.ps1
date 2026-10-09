@@ -20,7 +20,9 @@ function Connect-OPIM {
     The session state is cached in memory. Subsequent calls are idempotent -- if a valid token
     already exists for the same tenant no sign-in prompt is shown.
 
-    To disconnect and clear all cached tokens, call Disconnect-OPIM.
+    Disconnect-OPIM clears the module's tokens, the Azure Resource Manager token included, and
+    disconnects the Microsoft Graph session; AzAuth keeps its own sign-in in the PowerShell process
+    until the module's next Azure sign-in rebuilds it or the process ends.
 
     .EXAMPLE
     Connect-OPIM -TenantId 'contoso.onmicrosoft.com'

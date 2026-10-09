@@ -24,6 +24,7 @@ LONG DESCRIPTION
     The module requires:
       - Microsoft.Graph.Authentication (>= 2.36.0) for all Graph API calls
       - Az.Resources (>= 9.0.3) for Azure RBAC PIM operations
+      - AzAuth (2.9.0) for the Azure sign-in; it needs PowerShell 7.4 or later
 
     No other Microsoft.Graph.* SDK modules are needed; all Graph calls use
     Invoke-MgGraphRequest directly.
@@ -34,12 +35,15 @@ LONG DESCRIPTION
     MSAL-based browser prompt (system browser, no WAM); the Azure role cmdlets also sign in to
     Azure Resource Manager through AzAuth. Call Connect-OPIM to pre-authenticate or to target a
     specific tenant before running other cmdlets. The tokens are cached for the session --
-    subsequent calls are idempotent. Call Disconnect-OPIM to clear all cached tokens.
+    subsequent calls are idempotent. Disconnect-OPIM clears the module's tokens, the Azure
+    Resource Manager token included, and disconnects the Microsoft Graph session; AzAuth keeps
+    its own sign-in in the PowerShell process until the module's next Azure sign-in rebuilds it
+    or the process ends.
 
       Connect-OPIM                                           # home tenant at the first sign-in
       Connect-OPIM -TenantId 'contoso.onmicrosoft.com'      # specific tenant
       Connect-OPIM -IncludeARM                               # also sign in to Azure
-      Disconnect-OPIM                                        # clear all cached tokens
+      Disconnect-OPIM                                        # clear the module's tokens
 
     A session stays on the tenant it signed in to: a command that names no tenant keeps
     it, and a token issued for another tenant is refused with TenantMismatch. To work in

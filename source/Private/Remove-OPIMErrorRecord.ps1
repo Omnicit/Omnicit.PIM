@@ -7,9 +7,10 @@ function Remove-OPIMErrorRecord {
     .DESCRIPTION
     Does two things, in this order, and BOTH are load-bearing.
 
-    1. SCRUB. The raw Graph SDK error record points, through .TargetObject and through the
-    exception chain, at the very System.Net.Http.HttpRequestMessage the failing call built -- and
-    that message carries "Authorization: Bearer <token>" in plain text. This helper clears the
+    1. SCRUB. A raw error record of the Graph SDK, or of Invoke-WebRequest (the ARM transport's
+    send), can point, through .TargetObject and through the exception chain, at the very
+    System.Net.Http.HttpRequestMessage the failing call built -- and that message carries
+    "Authorization: Bearer <token>" in plain text. This helper clears the
     Authorization header ON that object. Because the request message is a single instance shared by
     every reference to it, clearing the header there removes the token RETROACTIVELY from every
     copy of the record that already escaped: the caller's -ErrorVariable collection, $global:Error,

@@ -110,7 +110,9 @@ For Azure RBAC cmdlets (`Get-/Enable-/Disable-OPIMAzureRole`) an Azure Resource 
 is also needed. Pass `-IncludeARM` to `Connect-OPIM`, or the cmdlets will acquire it
 automatically on first use.
 
-To clear all cached tokens and disconnect:
+`Disconnect-OPIM` clears the module's tokens, the Azure Resource Manager token included, and
+disconnects the Microsoft Graph session; AzAuth keeps its own sign-in in the PowerShell process until
+the module's next Azure sign-in rebuilds it or the process ends.
 
 ```powershell
 Disconnect-OPIM
@@ -652,7 +654,7 @@ are under [Short Aliases](#short-aliases).
 ### Sign-in and configuration (8)
 
 - `Connect-OPIM` (alias `Connect-PIM`) -- signs in to Microsoft Graph, and to Azure with `-IncludeARM`, in the system browser or with `-DeviceCode`; optional, since every cmdlet signs in on first use.
-- `Disconnect-OPIM` (alias `Disconnect-PIM`) -- clears the cached tokens and disconnects from Microsoft Graph and Azure.
+- `Disconnect-OPIM` (alias `Disconnect-PIM`) -- clears the module's tokens, the Azure Resource Manager token included, and disconnects the Microsoft Graph session; AzAuth keeps its own sign-in in the PowerShell process until the module's next Azure sign-in rebuilds it or the process ends.
 - `Install-OPIMConfiguration` -- creates a tenant alias in `TenantMap.psd1`.
 - `Get-OPIMConfiguration` -- reads the tenant aliases in `TenantMap.psd1`.
 - `Set-OPIMConfiguration` -- updates an existing tenant alias.
@@ -781,14 +783,14 @@ With `-Wait`, the `Enable-OPIM*` role and group cmdlets wait for at most `-Timeo
 300) and then report the request by its last status. For a directory role or a group that status is
 written back onto the request (a directory role returns its role assignment once that appears); an
 Azure role returns the request as Azure last gave it, which already carries that status. Groups and
-Azure roles read the status
-again, with a pause between reads, only while the request is still being worked on, counting from
-the start of the wait. Directory roles hand every request that has not failed to
-`Wait-OPIMDirectoryRole`, which reads each one at least once, waits for the role assignment to
-appear once a request is provisioned, and counts from the time Graph created the request. A
-request that waits for approval ends the wait at once, with a warning. One still in progress at the
-limit is an `ActivationWaitTimedOut` error and returns nothing; the request stays submitted. Each
-role or group is reported on its own, so one that fails or times out never stops the next.
+Azure roles read the status again, with a pause between reads, only while the request is still being
+worked on, counting from the start of the wait. Directory roles hand every request that has not
+failed to `Wait-OPIMDirectoryRole`, which reads each one at least once, waits for the role
+assignment to appear once a request is provisioned, and counts from the time Graph created the
+request. A request that waits for approval ends the wait at once, with a warning. One still in
+progress at the limit is an `ActivationWaitTimedOut` error and returns nothing; the request stays
+submitted. Each role or group is reported on its own, so one that fails or times out never stops the
+next.
 
 ---
 
@@ -897,6 +899,7 @@ time-bound assignments. An always-on assignment is not listed.
 |---|---|
 | `Microsoft.Graph.Authentication` 2.36+ | Directory roles and Entra ID group PIM (raw `Invoke-MgGraphRequest`) |
 | `Az.Resources` 9.0.3+ | Azure resource (RBAC) roles |
+| `AzAuth` 2.9.0 | The Azure sign-in; it needs PowerShell 7.4 or later |
 
 ---
 
