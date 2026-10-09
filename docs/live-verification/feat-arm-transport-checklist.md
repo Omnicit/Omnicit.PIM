@@ -224,7 +224,7 @@ the profile -- record it; it was not put there by this run.
 Result: 2026-10-09 18:27 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
-18:23 UTC, window C: first run stopped at Save-PSResource (it refuses a -Path that does not exist; the block now creates the folder first, commit 5d8cf6f). 18:24 UTC: The raw folder is git-ignored: True; contoso-test.PIM in this window: 0.6.0, loaded from the raw folder: True; contoso-test.PIM 0.6.0 under the profile's module folders: False; Az.Resources 9.0.3; Az.Accounts 5.5.3; Microsoft.Graph.Authentication 2.40.0.
+18:23 UTC, window C: first run stopped at Save-PSResource (it refuses a -Path that does not exist; the block now creates the folder first, commit 5d8cf6f). 18:24 UTC: The raw folder is git-ignored: True; Omnicit.PIM in this window: 0.6.0, loaded from the raw folder: True; Omnicit.PIM 0.6.0 under the profile's module folders: False; Az.Resources 9.0.3; Az.Accounts 5.5.3; Microsoft.Graph.Authentication 2.40.0.
 ```
 
 ### S.5. The recorder of ARM's answers
@@ -366,7 +366,7 @@ $Rows | Export-Clixml -Path (Join-Path $Raw "cmp-eligible-$Window.clixml") -Dept
 Result: 2026-10-09 19:05 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
-18:28 UTC: Window B: 2 rows; type names: contoso-test.PIM.AzureEligibilitySchedule. Window C: 2 rows; type names: contoso-test.PIM.AzureEligibilitySchedule.
+18:28 UTC: Window B: 2 rows; type names: Omnicit.PIM.AzureEligibilitySchedule. Window C: 2 rows; type names: Omnicit.PIM.AzureEligibilitySchedule.
 ```
 
 ### 1.2. One role by name at one scope
@@ -505,7 +505,7 @@ multi-factor authentication -- STOP (as 2.1).
 Result: 2026-10-09 19:05 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
-18:30 UTC, window B (15 s): Results 1; errors 0. Type: contoso-test.PIM.AzureAssignmentScheduleRequest; Status: Provisioned; RequestType: SelfActivate; ExpirationType: AfterDuration; ExpirationDuration: PT1H. Linked to the eligibility: True; scope is the resource group: True; principal is the eligibility's: True. ARM answered Provisioned at once, so -Wait had nothing to poll. Azure's mandatory MFA did not refuse the activation.
+18:30 UTC, window B (15 s): Results 1; errors 0. Type: Omnicit.PIM.AzureAssignmentScheduleRequest; Status: Provisioned; RequestType: SelfActivate; ExpirationType: AfterDuration; ExpirationDuration: PT1H. Linked to the eligibility: True; scope is the resource group: True; principal is the eligibility's: True. ARM answered Provisioned at once, so -Wait had nothing to poll. Azure's mandatory MFA did not refuse the activation.
 ```
 
 ### 3.2. `-Activated` and `-All`, compared with 0.6.0 while Reader is active
@@ -726,7 +726,7 @@ deactivation in 3.7 (OPIM-53); record it and run the block again. A second reque
 Result: 2026-10-09 19:05 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
-Run 1, 18:41-18:44 UTC: First pim: RoleAssignmentExists,Enable-OPIMAzureRole -- the active listing showed only 'Assigned' rows (see T.1) and ARM still held the assignment 2 minutes after 3.7's deactivation (OPIM-53). The block's second pim at 18:44:18 activated (recorded 201 Provisioned) but the block counted 0 results: its filter looked for contoso-test.PIM.AzureAssignmentScheduleRequest while pim returns contoso-test.PIM.MyRoleResult (block fixed). A diagnosis beyond the block, 18:44 UTC: a further pim wrote 'Reader -> opim-s2-rg is already active, so no new request was sent ...' and sent nothing. Run 2 (fixed block, 4 minutes after the unpim of 3.10), 18:54-18:55 UTC: First pim: results 1; statuses Provisioned. Second pim, 60 s later: results 0; already active warnings 0; errors 1 -- ARM's active listing at '/' was still empty 62 s after the activation, so the module requested again and ARM refused it, RoleAssignmentExists ('The Role assignment already exists.'); nothing was activated twice. Marked [~]: the G8 second call gave a clear refusal, not 'already active', because of ARM's listing lag, which 0.6.0 reads through the same API (OPIM-39's documented limit; step 5's scope).
+Run 1, 18:41-18:44 UTC: First pim: RoleAssignmentExists,Enable-OPIMAzureRole -- the active listing showed only 'Assigned' rows (see T.1) and ARM still held the assignment 2 minutes after 3.7's deactivation (OPIM-53). The block's second pim at 18:44:18 activated (recorded 201 Provisioned) but the block counted 0 results: its filter looked for Omnicit.PIM.AzureAssignmentScheduleRequest while pim returns Omnicit.PIM.MyRoleResult (block fixed). A diagnosis beyond the block, 18:44 UTC: a further pim wrote 'Reader -> opim-s2-rg is already active, so no new request was sent ...' and sent nothing. Run 2 (fixed block, 4 minutes after the unpim of 3.10), 18:54-18:55 UTC: First pim: results 1; statuses Provisioned. Second pim, 60 s later: results 0; already active warnings 0; errors 1 -- ARM's active listing at '/' was still empty 62 s after the activation, so the module requested again and ARM refused it, RoleAssignmentExists ('The Role assignment already exists.'); nothing was activated twice. Marked [~]: the G8 second call gave a clear refusal, not 'already active', because of ARM's listing lag, which 0.6.0 reads through the same API (OPIM-39's documented limit; step 5's scope).
 ```
 
 ### 3.10. `unpim` with the Azure entry, twice (G8)
