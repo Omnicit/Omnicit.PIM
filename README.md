@@ -17,8 +17,9 @@ A PowerShell module for self-service activation and deactivation of PIM roles an
 
 ## Installation
 
-Omnicit.PIM needs PowerShell 7.4 or later (Core only). `Install-Module Omnicit.PIM` also installs
-its two dependencies, Microsoft.Graph.Authentication and AzAuth; no Az PowerShell module is needed.
+Omnicit.PIM needs PowerShell 7.4 or later (Core only). It declares two dependencies,
+Microsoft.Graph.Authentication and AzAuth, which `Install-Module` installs with it; no Az PowerShell
+module is needed.
 
 ```powershell
 Install-Module Omnicit.PIM
@@ -129,7 +130,7 @@ sign-in of a session -- also after `Disconnect-OPIM`, and after a token the modu
 dropped -- so a credential left in the process by another sign-in is not reused for the first
 token, and again on every forced refresh after Azure Resource Manager rejects a token.
 Omnicit.PIM reuses its own Azure token, without asking AzAuth, only while it is for the session's
-tenant and account and has more than five minutes left. Whatever AzAuth answers, every token is
+tenant and account and has more than 5 minutes left. Whatever AzAuth answers, every token is
 checked against the tenant (`tid`) and the account (`oid`) of the Microsoft Graph session before
 anything is sent with it.
 

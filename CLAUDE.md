@@ -684,9 +684,11 @@ which the catch around the request scrubs and writes as itself. In the `Enable-O
 poll that catch ends the wait for that role only: nothing is returned for it -- the activation
 request was already sent and stays submitted -- and the next role still runs.
 
-**Graph tokens come from MSAL.NET, reached by reflection.** `Get-OPIMMsalApplication` finds the
-`Microsoft.Identity.Client` assembly (4.x or 5.x) that `Microsoft.Graph.Authentication` loads into
-its own `AssemblyLoadContext`, falling back to loading the DLL from that module's folder
+**Graph tokens come from MSAL.NET, reached by reflection.** `Get-OPIMMsalApplication` takes the
+first `Microsoft.Identity.Client` assembly (4.x or 5.x) in any registered `AssemblyLoadContext` --
+normally the copy `Microsoft.Graph.Authentication` loads into its own; AzAuth ships its own (4.83.1
+in AzAuth 2.9.0, beside 4.82.1 in Microsoft.Graph.Authentication 2.36.0), which can be found first
+once it is loaded -- falling back to loading the DLL from Microsoft.Graph.Authentication's folder
 (`Get-OPIMMsalApplication.ps1:57-76`). It builds a public client application for the Microsoft
 Graph Command Line Tools public client id -- no app registration -- with the authority
 `https://login.microsoftonline.com/<tenant>` and the redirect URI `http://localhost` (`:93-140`).
@@ -1000,8 +1002,9 @@ session. `Wait-OPIMDirectoryRole` is not in the table: it polls in sequence thro
 `Invoke-OPIMDeviceCodeAuth` is not in it either: it reaches MSAL through the application object it
 is handed, not through the Graph SDK or AzAuth. No Az command is called anywhere under `source/`,
 no Az module is required by a `#requires` line or declared in the manifest, and the Az boundary in
-`tests/QA/sourcehygiene.tests.ps1` refuses any Az call, any string that runs one and any Az module
-named under `source/` (see the QA gate list under **Module Layout**).
+`tests/QA/sourcehygiene.tests.ps1` refuses every Az call, string that runs one and Az module name it
+can see in the source text under `source/` (see its known limits in the QA gate list under
+**Module Layout**).
 
 Beside these, the module reads `Get-MgContext` (`Get-OPIMMsalApplication.ps1:46`,
 `Get-OPIMGraphSessionFingerprint.ps1:47`), and it reads no Az context.
@@ -1617,10 +1620,11 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   when a command no longer has it. AzAuth is a `RequiredModule`, so it is loaded whenever
   Omnicit.PIM was imported first; the helper still imports it inside Pester when it is not loaded,
   which is load-bearing only when module autoloading is off. No Az module command is on the list:
-  module code calls none, and the Az boundary in `tests/QA/sourcehygiene.tests.ps1` refuses any
-  call of one under `source/` (see the QA gate list under **Module Layout**). A reintroduced Az call
-  is therefore not refused at run time -- where the Az modules are installed, as in a local
-  profile, a unit test would reach the real command -- and the Az boundary fails the same run. A
+  module code calls none, and the Az boundary in `tests/QA/sourcehygiene.tests.ps1` refuses every
+  call of one it can see in the source text under `source/` (see its known limits in the QA gate
+  list under **Module Layout**). A reintroduced Az call is therefore not refused at run time --
+  where the Az modules are installed, as in a local profile, a unit test would reach the real
+  command -- and the Az boundary fails the same run when it can see the call. A
   `Mock -ModuleName Omnicit.PIM` outranks every replacement, so the mocks below work unchanged, and
   the replacements refuse whether or not the process holds a Graph or Az context -- run the suite in
   a fresh `pwsh` process all the same.
@@ -1690,9 +1694,9 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `Convert-GraphHttpException` run underneath the cmdlet. `Get-AzToken` is mocked only in
   `Initialize-OPIMAuth.Tests.ps1` and the tripwire suite. No test mocks an Az command: module code
   calls none, so there is nothing to answer, and the Az boundary in
-  `tests/QA/sourcehygiene.tests.ps1` holds that absence from the source text. The `-Times 0` mocks
-  that once proved it ran only while the Az modules were installed, since Pester's `Mock` throws
-  for a command it cannot resolve.
+  `tests/QA/sourcehygiene.tests.ps1` holds that absence from the source text, within its known
+  limits. The `-Times 0` mocks that once proved it ran only while the Az modules were installed,
+  since Pester's `Mock` throws for a command it cannot resolve.
 - **Mock `Invoke-OPIMArmRequest`, not `Invoke-WebRequest`**, scoped to the module and to the call
   with a `-ParameterFilter` on `$Method` and `$Path`. The three `*-OPIMAzureRole` cmdlets send every
   ARM request through it, so their tests answer it with what the transport returns -- the parsed
@@ -1909,8 +1913,8 @@ with the team may be in Swedish.
 
 | Module | Version | Used for |
 |---|---|---|
-| `Microsoft.Graph.Authentication` | 2.36.0 | `Connect-MgGraph -AccessToken`, `Invoke-MgGraphRequest` (inside the wrapper), and the MSAL assembly `Get-OPIMMsalApplication` reflects into |
-| `AzAuth` | 2.9.0 | `Get-AzToken`, the Azure Resource Manager sign-in in `Initialize-OPIMAuth` (`-Interactive`, or `-DeviceCode` in device code mode) |
+| `Microsoft.Graph.Authentication` | 2.36.0 | `Connect-MgGraph -AccessToken`, `Invoke-MgGraphRequest` (inside the wrapper), and the MSAL assembly `Get-OPIMMsalApplication` normally reflects into |
+| `AzAuth` | 2.9.0 | `Get-AzToken`, the Azure Resource Manager sign-in in `Initialize-OPIMAuth` (`-Interactive`, or `-DeviceCode` in device code mode); it ships an MSAL of its own, which `Get-OPIMMsalApplication` can find first (see **Authentication Architecture**) |
 
 The manifest declares both as `RequiredModules` (`source/Omnicit.PIM.psd1:54-57`), where a
 `ModuleVersion` is a FLOOR, never an exact pin. `RequiredModules.psd1` (`:35-36`) pins the same two
@@ -1920,18 +1924,19 @@ read them from that file and refuse a missing or `latest` value. Keep the two fi
 declared set; every other entry in `RequiredModules.psd1` is build tooling and stays `latest`.
 
 AzAuth 2.9.0 requires PowerShell 7.4 (its own manifest's `PowerShellVersion`), and so does this
-module (`PowerShellVersion = '7.4'`, `source/Omnicit.PIM.psd1:36`): on PowerShell 7.2 or 7.3 the
-module refuses to import, instead of importing and failing at its first Azure sign-in.
-`tests/QA/module.tests.ps1` holds the built manifest's `PowerShellVersion` at 7.4 or more and at
-least at every declared dependency's own.
+module (`PowerShellVersion = '7.4'`, `source/Omnicit.PIM.psd1:36`), so that on PowerShell 7.2 or
+7.3 the import is refused with Omnicit.PIM's own requirement named. AzAuth's floor alone would also
+stop the import there, through `RequiredModules`. `tests/QA/module.tests.ps1` holds the built
+manifest's `PowerShellVersion` at 7.4 or more and at least at every declared dependency's own.
 
 No Az module is declared, resolved or installed: not in the manifest, not in `RequiredModules.psd1`
 and not in the workflow's install loops. None is needed for a test either. The module calls,
 declares and loads no Az module (A7), and two tests hold that: the Az boundary in
-`tests/QA/sourcehygiene.tests.ps1` refuses every Az call, Az module name and `#requires` of one in
-the source text, and the clean-process import in `tests/QA/module.tests.ps1` proves that importing
-the built module loads none. So no test mocks an Az command with `-Times 0`, which would need the Az
-modules installed for Pester to resolve it.
+`tests/QA/sourcehygiene.tests.ps1` refuses every Az call, Az module name and `#requires` of one it
+can see in the source text (see its known limits under **Module Layout**), and the clean-process
+import in `tests/QA/module.tests.ps1` proves that importing the built module loads none. So no
+test mocks an Az command with `-Times 0`, which would need the Az modules installed for Pester to
+resolve it.
 
 Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses raw
 `Invoke-MgGraphRequest` (through `Invoke-OPIMGraphRequest`) to avoid typed SDK coupling and SDK
@@ -2008,9 +2013,10 @@ version drift.
 - **Call no Az command.** Azure Resource Manager is reached only through `Invoke-OPIMArmRequest`,
   whose `Invoke-WebRequest` carries the ARM token as a SecureString with `-SkipHttpErrorCheck`, and
   signed in to only through AzAuth's `Get-AzToken` in `Initialize-OPIMAuth`. The Az boundary in
-  `tests/QA/sourcehygiene.tests.ps1` refuses any Az call under `source/` -- also one run from a
-  string -- and any Az module named there, in a `#requires` line or the manifest; do not answer it
-  with an entry in its allow list, since a new Az dependency is a design decision.
+  `tests/QA/sourcehygiene.tests.ps1` refuses every Az call it can see under `source/` -- also one
+  run from a string -- and every Az module named there, in a `#requires` line or the manifest; its
+  known limits are listed under **Module Layout**, and review has to catch those shapes. Do not
+  answer it with an entry in its allow list, since a new Az dependency is a design decision.
 - **`ErrorRecord.ErrorDetails` requires `[ErrorDetails]::new()`** -- see **Error Handling**.
 - **Never use bare `throw` in public functions** -- see **Error Handling**.
 - **A local `$Filter` shadows the `-Filter` parameter** -- name it `$OdataFilter`.

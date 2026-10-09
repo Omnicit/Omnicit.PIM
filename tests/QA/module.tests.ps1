@@ -521,7 +521,7 @@ Import-Module -Name $Manifest -Force
 
     It 'Should require at least PowerShell 7.4, and at least what every declared dependency requires' {
         $Own = [version]$script:BuiltManifest.PowerShellVersion
-        $Own | Should -BeGreaterOrEqual ([version]'7.4') -Because 'AzAuth 2.9.0 requires PowerShell 7.4; a lower floor lets the module import where its Azure sign-in cannot load'
+        $Own | Should -BeGreaterOrEqual ([version]'7.4') -Because 'AzAuth 2.9.0 requires PowerShell 7.4, and the floor of the module must name that requirement itself, so that an older PowerShell refuses the import with the requirement of Omnicit.PIM named'
         foreach ($Entry in $script:BuiltManifest.RequiredModules) {
             # -ListAvailable reads the manifest from disk and imports nothing.
             $Dependency = @(Get-Module -Name $Entry.ModuleName -ListAvailable | Where-Object { $_.Version -eq [version]$Entry.ModuleVersion })[0]
