@@ -10,6 +10,18 @@ commit whose build was published to the PowerShell Gallery. When the publish wor
 which commit that is, it stops and says how to set the tag by hand, instead of tagging another
 commit.
 
+Azure roles (`Get-`, `Enable-` and `Disable-OPIMAzureRole`, and the Azure part of `pim` and `unpim`)
+now sign in with AzAuth and use the module's own Azure Resource Manager transport instead of the Az
+modules' commands. Install AzAuth 2.9.0 for them: the module does not declare it yet, and the Az
+modules stay listed as dependencies for now. The Azure sign-in is separate from the Graph one, in the
+system browser or with a device code shown like Graph's, and its token must be for the Graph
+session's tenant and account, else `TenantMismatch` or the new `AccountMismatch`, and nothing is
+sent. Throttled requests (429, or 503 with `Retry-After`) wait and retry within bounds, and a list is
+read to its last page. Output keeps its property names and the module's type names, but Az's .NET
+type names are gone: a script that tested `-is` against an Az type must test the `Omnicit.PIM.Azure*`
+type name instead. `Disconnect-OPIM` no longer calls `Disconnect-AzAccount`; it clears the module's
+Azure token.
+
 ## [0.6.0] - 2026-10-09
 
 Roles and groups can be named by display name, as `Enable-OPIMEntraIDGroup 'Finance Team' -AccessType Owner` (a group name alone means membership), and completion offers the bare name when unique. A name or `-Identity` matching several is refused with the candidates (`AmbiguousName`) and nothing changes; `-Scope` (a role, where the command has it), `-AccessType` (a group) or the tab-completed form picks one. A name matching nothing is `EligibleRoleNotFound` (`ActiveRoleNotFound` when deactivating, saying if the role is only eligible or active under another name); neither stops the command or the next name. `Get-OPIMAzureRole -RoleName` and `-Identity` work below the root scope without extra rights, `-All -Scope` returns only that scope's roles, and a `-Scope` ending in a slash is refused.
