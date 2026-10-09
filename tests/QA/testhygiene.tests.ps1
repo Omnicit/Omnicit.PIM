@@ -17,8 +17,11 @@ BeforeAll {
     # R15: source/ may hold ForEach-Object -Parallel blocks only in the named files, and each may
     #      import only Microsoft.Graph.Authentication and call no tripwire name but its four, since
     #      the -Parallel runspace form (a stand-in Microsoft.Graph.Authentication) covers exactly that.
-    # R3:  Get-OPIMMsalApplication may be invoked only in the two named test files, and there every
-    #      Get-MgContext mock throws, so no unit test reaches the MSAL build behind Get-MgContext.
+    # R3:  No unit test may reach the MSAL build behind Get-MgContext. (a) Get-OPIMMsalApplication
+    #      is run only in the two named test files, called or named in a string that can run it
+    #      (a name in a variable, Get-Command, a script block made from a string, Invoke-Expression),
+    #      and there every Get-MgContext mock throws. (b) Initialize-OPIMAuth, which calls it, runs
+    #      unmocked only where no Get-MgContext mock returns, or Get-OPIMMsalApplication is mocked too.
     #
     # The gate reads files statically: it imports nothing and runs no module code. The QA gate
     # files are outside the tripwire on purpose: they call help, the analyzer and pure maps only.
@@ -38,6 +41,19 @@ BeforeAll {
         'tests/Unit/Private/Get-OPIMMsalApplication.Tests.ps1'
         'tests/Unit/TestHelpers/OPIMTransportTripwire.Tests.ps1'
     )
+
+    # The two commands whose run reaches a real MSAL client (R3): Get-OPIMMsalApplication builds one
+    # past its Get-MgContext call, and Initialize-OPIMAuth calls Get-OPIMMsalApplication.
+    $script:MsalName = 'Get-OPIMMsalApplication'
+    $script:InitializeName = 'Initialize-OPIMAuth'
+
+    # Pester commands whose string arguments name a command without running it: the target of a
+    # Mock or of Should -Invoke, a block name, a -Because text (R3).
+    $script:ReferenceOnlyCommands = @('Mock', 'Should', 'Assert-MockCalled', 'Describe', 'Context', 'It')
+
+    # This gate names the commands it looks for, as data and in known-answer texts that it parses
+    # and never runs, so the R3 reference scan skips this one file.
+    $script:ReferenceScanExempt = @('tests/QA/testhygiene.tests.ps1')
 
     function Get-TestHygieneRootBlockBody {
         <#
@@ -326,15 +342,181 @@ BeforeAll {
         }
     }
 
+    function Test-TestHygieneTextRunsCommand {
+        <#
+        .SYNOPSIS
+        Returns $true when a string, parsed as PowerShell, runs the named command.
+        .DESCRIPTION
+        True when the parsed text holds a command of that name, or a string that does, to a depth
+        of three: the text of a script block made from a string, of Invoke-Expression, or a name
+        kept in a variable and then called with & (R3). A text that does not contain the name is
+        never parsed. A path such as tests/Unit/Private/<name>.Tests.ps1 names a script, not the
+        command, and does not run it.
+        #>
+        [OutputType([bool])]
+        param(
+            [AllowNull()]
+            [AllowEmptyString()]
+            [string]$Text,
+
+            [Parameter(Mandatory)]
+            [string]$Name,
+
+            [int]$Depth = 0
+        )
+        if ($Depth -gt 3 -or [string]::IsNullOrEmpty($Text)) { return $false }
+        if ($Text.IndexOf($Name, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { return $false }
+        $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$null)
+        $Call = $Ast.Find({
+                param($Node)
+                $Node -is [System.Management.Automation.Language.CommandAst] -and $Node.GetCommandName() -eq $Name
+            }, $true)
+        if ($Call) { return $true }
+        $Strings = $Ast.FindAll({
+                param($Node)
+                $Node -is [System.Management.Automation.Language.StringConstantExpressionAst] -or $Node -is [System.Management.Automation.Language.ExpandableStringExpressionAst]
+            }, $true)
+        foreach ($String in $Strings) {
+            if ($String.Value -ne $Text -and (Test-TestHygieneTextRunsCommand -Text $String.Value -Name $Name -Depth ($Depth + 1))) { return $true }
+        }
+        $false
+    }
+
+    function Get-TestHygieneCommandReference {
+        <#
+        .SYNOPSIS
+        Returns each place in a parsed file that can run the named command, by line.
+        .DESCRIPTION
+        'Call' is a command of that name -- bare, quoted after &, or dot-sourced. 'String' is a
+        string literal that can run it (Test-TestHygieneTextRunsCommand): a name kept in a
+        variable, a Get-Command argument, a script block made from a string, Invoke-Expression.
+        The name element of a command is the 'Call' half, and a string argument of a command in
+        $script:ReferenceOnlyCommands names the command without running it; neither is a 'String'.
+        #>
+        [OutputType([pscustomobject])]
+        param(
+            [Parameter(Mandatory)]
+            [System.Management.Automation.Language.Ast]$Ast,
+
+            [Parameter(Mandatory)]
+            [string]$Name
+        )
+        $Found = [System.Collections.Generic.List[object]]::new()
+        $Calls = $Ast.FindAll({
+                param($Node)
+                $Node -is [System.Management.Automation.Language.CommandAst] -and $Node.GetCommandName() -eq $Name
+            }, $true)
+        foreach ($Call in $Calls) { $Found.Add([pscustomobject]@{ Kind = 'Call'; Node = $Call; Line = $Call.Extent.StartLineNumber }) }
+
+        $Strings = $Ast.FindAll({
+                param($Node)
+                $Node -is [System.Management.Automation.Language.StringConstantExpressionAst] -or $Node -is [System.Management.Automation.Language.ExpandableStringExpressionAst]
+            }, $true)
+        foreach ($String in $Strings) {
+            $Owner = $String.Parent
+            if ($Owner -is [System.Management.Automation.Language.CommandParameterAst]) { $Owner = $Owner.Parent }
+            if ($Owner -is [System.Management.Automation.Language.CommandAst]) {
+                if ([object]::ReferenceEquals($Owner.CommandElements[0], $String)) { continue }
+                if ($script:ReferenceOnlyCommands -contains $Owner.GetCommandName()) { continue }
+            }
+            if (Test-TestHygieneTextRunsCommand -Text $String.Value -Name $Name) {
+                $Found.Add([pscustomobject]@{ Kind = 'String'; Node = $String; Line = $String.Extent.StartLineNumber })
+            }
+        }
+        $Found | Sort-Object -Property Line -Stable
+    }
+
+    function Get-TestHygieneScopeRoot {
+        <#
+        .SYNOPSIS
+        Returns the parts of a parsed file whose Mock commands Pester has in effect where a node runs.
+        .DESCRIPTION
+        Follows Pester 5's mock scope outwards from the node: the body of the innermost It that
+        holds it, and the BeforeAll and BeforeEach blocks that are direct statements of each
+        enclosing Describe or Context and of the file itself. A sibling block's mocks are not in
+        effect. Order inside an It is not read: a Mock written after the call still counts.
+        #>
+        [OutputType([System.Management.Automation.Language.Ast])]
+        param(
+            [Parameter(Mandatory)]
+            [System.Management.Automation.Language.Ast]$Node
+        )
+        $SeenIt = $false
+        for ($Current = $Node; $null -ne $Current; $Current = $Current.Parent) {
+            if ($Current -isnot [System.Management.Automation.Language.ScriptBlockAst]) { continue }
+            $Owner = if ($Current.Parent -is [System.Management.Automation.Language.ScriptBlockExpressionAst]) { $Current.Parent.Parent } else { $null }
+            $OwnerName = if ($Owner -is [System.Management.Automation.Language.CommandAst]) { $Owner.GetCommandName() } else { $null }
+            if ($null -eq $Current.Parent -or $OwnerName -in 'Describe', 'Context') {
+                if ($null -eq $Current.EndBlock) { continue }
+                foreach ($Statement in $Current.EndBlock.Statements) {
+                    if ($Statement -isnot [System.Management.Automation.Language.PipelineAst]) { continue }
+                    $Command = $Statement.PipelineElements[0]
+                    if ($Command -is [System.Management.Automation.Language.CommandAst] -and $Command.GetCommandName() -in 'BeforeAll', 'BeforeEach') { $Statement }
+                }
+            } elseif ($OwnerName -eq 'It' -and -not $SeenIt) {
+                $SeenIt = $true
+                $Current
+            }
+        }
+    }
+
+    function Test-TestHygieneMockThrows {
+        <#
+        .SYNOPSIS
+        Returns $true when a mock body holds a throw statement directly in its end block.
+        #>
+        [OutputType([bool])]
+        param(
+            [AllowNull()]
+            [object]$Body
+        )
+        if ($Body -isnot [System.Management.Automation.Language.ScriptBlockExpressionAst] -or $null -eq $Body.ScriptBlock.EndBlock) { return $false }
+        @($Body.ScriptBlock.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.ThrowStatementAst] }).Count -gt 0
+    }
+
+    function Get-TestHygieneInitializeFinding {
+        <#
+        .SYNOPSIS
+        Returns 'line N: reason' for each place in a parsed test file that can run Initialize-OPIMAuth
+        unmocked where Get-MgContext is mocked to return and Get-OPIMMsalApplication is not mocked.
+        .DESCRIPTION
+        Unmocked, Initialize-OPIMAuth calls Get-OPIMMsalApplication, which builds a real MSAL client
+        once Get-MgContext returns; the tripwire stands in for Get-MgContext only while no Mock
+        replaces it. So at each Call or String of Initialize-OPIMAuth (Get-TestHygieneCommandReference),
+        a Get-MgContext mock in effect whose body does not throw directly needs a Mock of
+        Get-OPIMMsalApplication or of Initialize-OPIMAuth in effect beside it (R3b).
+        #>
+        [OutputType([string])]
+        param(
+            [Parameter(Mandatory)]
+            [System.Management.Automation.Language.Ast]$Ast
+        )
+        foreach ($Reference in @(Get-TestHygieneCommandReference -Ast $Ast -Name $script:InitializeName)) {
+            $Returning = 0
+            $Guarded = 0
+            foreach ($Root in @(Get-TestHygieneScopeRoot -Node $Reference.Node)) {
+                foreach ($Entry in @(Get-TestHygieneMockOf -Ast $Root -Name 'Get-MgContext')) {
+                    if (-not (Test-TestHygieneMockThrows -Body $Entry.Body)) { $Returning++ }
+                }
+                $Guarded += @(Get-TestHygieneMockOf -Ast $Root -Name $script:MsalName).Count
+                $Guarded += @(Get-TestHygieneMockOf -Ast $Root -Name $script:InitializeName).Count
+            }
+            if ($Returning -gt 0 -and $Guarded -eq 0) {
+                'line {0}: can run Initialize-OPIMAuth unmocked where Get-MgContext is mocked to return and Get-OPIMMsalApplication is not mocked' -f $Reference.Line
+            }
+        }
+    }
+
     function Get-TestHygieneMsalFinding {
         <#
         .SYNOPSIS
         Returns 'line N: reason' for each way a parsed test file breaks R3.
         .DESCRIPTION
-        Outside the named files, any invocation of Get-OPIMMsalApplication is refused. Inside them,
-        every Mock of Get-MgContext must have a mock body whose end block holds a throw statement
-        directly -- a throw in a nested block, in the -ParameterFilter or nowhere does not count.
-        Returns nothing for a file that keeps the rule.
+        Outside the named files, any Call or String of Get-OPIMMsalApplication is refused
+        (Get-TestHygieneCommandReference): a command of that name, or a string that can run it. Inside
+        the named files, every Mock of Get-MgContext must have a mock body whose end block holds a
+        throw statement directly -- a throw in a nested block, in the -ParameterFilter or nowhere does
+        not count. Returns nothing for a file that keeps the rule.
         #>
         [OutputType([string])]
         param(
@@ -345,21 +527,17 @@ BeforeAll {
             [bool]$Allowed
         )
         if (-not $Allowed) {
-            $Invocations = $Ast.FindAll({
-                    param($Node)
-                    $Node -is [System.Management.Automation.Language.CommandAst] -and $Node.GetCommandName() -eq 'Get-OPIMMsalApplication'
-                }, $true)
-            foreach ($Invocation in $Invocations) {
-                'line {0}: invokes Get-OPIMMsalApplication outside the named files' -f $Invocation.Extent.StartLineNumber
+            foreach ($Reference in @(Get-TestHygieneCommandReference -Ast $Ast -Name $script:MsalName)) {
+                if ($Reference.Kind -eq 'Call') {
+                    'line {0}: invokes Get-OPIMMsalApplication outside the named files' -f $Reference.Line
+                } else {
+                    'line {0}: names Get-OPIMMsalApplication in a string that can run it, outside the named files' -f $Reference.Line
+                }
             }
             return
         }
         foreach ($Entry in @(Get-TestHygieneMockOf -Ast $Ast -Name 'Get-MgContext')) {
-            $Throws = $false
-            if ($Entry.Body -is [System.Management.Automation.Language.ScriptBlockExpressionAst] -and $null -ne $Entry.Body.ScriptBlock.EndBlock) {
-                $Throws = @($Entry.Body.ScriptBlock.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.ThrowStatementAst] }).Count -gt 0
-            }
-            if (-not $Throws) {
+            if (-not (Test-TestHygieneMockThrows -Body $Entry.Body)) {
                 'line {0}: a Mock of Get-MgContext does not throw directly in its body' -f $Entry.Mock.Extent.StartLineNumber
             }
         }
@@ -559,6 +737,9 @@ $Items | ForEach-Object -Parallel $Block
         foreach ($Relative in $script:MsalAllowed) {
             Test-Path -LiteralPath (Join-Path -Path $script:ProjectPath -ChildPath $Relative) | Should -BeTrue -Because ('a named file must exist, or it silently allows nothing: {0}' -f $Relative)
         }
+        foreach ($Relative in $script:ReferenceScanExempt) {
+            Test-Path -LiteralPath (Join-Path -Path $script:ProjectPath -ChildPath $Relative) | Should -BeTrue -Because ('an exempt file must exist, or the entry is stale: {0}' -f $Relative)
+        }
 
         $TestsRoot = Join-Path -Path $script:ProjectPath -ChildPath 'tests'
         $Files = @(Get-ChildItem -Path $TestsRoot -Recurse -File | Where-Object Extension -eq '.ps1')
@@ -567,6 +748,7 @@ $Items | ForEach-Object -Parallel $Block
         $MocksChecked = 0
         foreach ($File in $Files) {
             $Relative = ConvertTo-TestHygieneRelativePath -Path $File.FullName
+            if ($script:ReferenceScanExempt -contains $Relative) { continue }
             $Ast = [System.Management.Automation.Language.Parser]::ParseFile($File.FullName, [ref]$null, [ref]$null)
             $Allowed = $script:MsalAllowed -contains $Relative
             if ($Allowed) { $MocksChecked += @(Get-TestHygieneMockOf -Ast $Ast -Name 'Get-MgContext').Count }
@@ -575,7 +757,26 @@ $Items | ForEach-Object -Parallel $Block
             }
         }
         $MocksChecked | Should -BeGreaterThan 0 -Because 'Get-OPIMMsalApplication.Tests.ps1 mocks Get-MgContext; zero checked mocks means the check below read nothing'
-        @($Hits).Count | Should -Be 0 -Because ('Get-OPIMMsalApplication builds a real MSAL application once Get-MgContext returns, so only the named files may invoke it and every Get-MgContext mock there must throw; zero means the rule holds. Breaches: {0}' -f ($Hits -join '; '))
+        @($Hits).Count | Should -Be 0 -Because ('Get-OPIMMsalApplication builds a real MSAL application once Get-MgContext returns, so only the named files may run it, called or named in a string that can run it, and every Get-MgContext mock there must throw; zero means the rule holds. Breaches: {0}' -f ($Hits -join '; '))
+    }
+
+    It 'Should run Initialize-OPIMAuth unmocked only where the MSAL build stays out of reach' {
+        foreach ($Relative in $script:ReferenceScanExempt) {
+            Test-Path -LiteralPath (Join-Path -Path $script:ProjectPath -ChildPath $Relative) | Should -BeTrue -Because ('an exempt file must exist, or the entry is stale: {0}' -f $Relative)
+        }
+        $TestsRoot = Join-Path -Path $script:ProjectPath -ChildPath 'tests'
+        $Files = @(Get-ChildItem -Path $TestsRoot -Recurse -File | Where-Object Extension -eq '.ps1')
+        $Hits = [System.Collections.Generic.List[string]]::new()
+        $References = 0
+        foreach ($File in $Files) {
+            $Relative = ConvertTo-TestHygieneRelativePath -Path $File.FullName
+            if ($script:ReferenceScanExempt -contains $Relative) { continue }
+            $Ast = [System.Management.Automation.Language.Parser]::ParseFile($File.FullName, [ref]$null, [ref]$null)
+            $References += @(Get-TestHygieneCommandReference -Ast $Ast -Name $script:InitializeName).Count
+            foreach ($Finding in @(Get-TestHygieneInitializeFinding -Ast $Ast)) { $Hits.Add(('{0}: {1}' -f $Relative, $Finding)) }
+        }
+        $References | Should -BeGreaterThan 0 -Because 'Initialize-OPIMAuth.Tests.ps1 calls Initialize-OPIMAuth; zero references means the scan read nothing'
+        @($Hits).Count | Should -Be 0 -Because ('Initialize-OPIMAuth calls Get-OPIMMsalApplication, which builds a real MSAL client once Get-MgContext returns, so where a Get-MgContext mock returns, Get-OPIMMsalApplication or Initialize-OPIMAuth must be mocked too; zero means every place is. Places that are not: {0}' -f ($Hits -join '; '))
     }
 
     It 'Should tell a throwing Get-MgContext mock from one that returns (known answer)' {
@@ -603,5 +804,127 @@ Mock -CommandName Get-MgContext -MockWith { if ($true) { throw 'stop' } }
             'line 4: a Mock of Get-MgContext does not throw directly in its body'
         )
         @(Get-TestHygieneMsalFinding -Ast (& $Parse $Throwing) -Allowed $false) | Should -Be @('line 5: invokes Get-OPIMMsalApplication outside the named files')
+    }
+
+    It 'Should find each indirect way to run Get-OPIMMsalApplication (known answer)' {
+        $Indirect = @'
+$Command = 'Get-OPIMMsalApplication'
+& $Command -TenantId 'contoso.onmicrosoft.com'
+& (Get-Command -Name Get-OPIMMsalApplication) -TenantId 'contoso.onmicrosoft.com'
+$Found = Get-Command Get-OPIMMsalApplication; $Found.ScriptBlock.Invoke()
+& ([scriptblock]::Create('Get-OPIMMsalApplication -TenantId contoso.onmicrosoft.com'))
+Invoke-Expression "Get-OPIMMsalApplication -TenantId 'contoso.onmicrosoft.com'"
+& ([scriptblock]::Create("`$Name = 'Get-OPIMMsalApplication'; & `$Name"))
+'@
+        $ReferenceOnly = @'
+Describe 'Get-OPIMMsalApplication' {
+    It 'calls Get-OPIMMsalApplication once' {
+        Mock -ModuleName Omnicit.PIM Get-OPIMMsalApplication { }
+        Mock -CommandName Get-OPIMMsalApplication -MockWith { }
+        Should -Invoke -ModuleName Omnicit.PIM Get-OPIMMsalApplication -Times 0 -Because 'Get-OPIMMsalApplication must not run'
+        $Path = 'tests/Unit/Private/Get-OPIMMsalApplication.Tests.ps1'
+    }
+}
+'@
+        $Parse = { param($Text) [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$null) }
+        $Reason = 'names Get-OPIMMsalApplication in a string that can run it, outside the named files'
+
+        @(Get-TestHygieneMsalFinding -Ast (& $Parse $Indirect) -Allowed $false) | Should -Be @(
+            "line 1: $Reason"
+            "line 3: $Reason"
+            "line 4: $Reason"
+            "line 5: $Reason"
+            "line 6: $Reason"
+            "line 7: $Reason"
+        )
+        @(Get-TestHygieneMsalFinding -Ast (& $Parse $ReferenceOnly) -Allowed $false).Count | Should -Be 0 -Because 'a Mock or Should -Invoke target, a block name, a -Because text and a file path name the command without running it'
+        @(Get-TestHygieneMsalFinding -Ast (& $Parse $Indirect) -Allowed $true).Count | Should -Be 0 -Because 'in a named file only the Get-MgContext rule applies'
+    }
+
+    It 'Should find Initialize-OPIMAuth run unmocked where Get-MgContext returns and the MSAL build is not mocked (known answer)' {
+        $Unguarded = @'
+Describe 'x' {
+    BeforeAll {
+        Mock -ModuleName Omnicit.PIM Get-MgContext { $null }
+    }
+    It 'a' {
+        InModuleScope Omnicit.PIM { Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' }
+    }
+    It 'b' {
+        InModuleScope Omnicit.PIM {
+            $Name = 'Initialize-OPIMAuth'
+            & $Name
+        }
+    }
+    It 'c' {
+        InModuleScope Omnicit.PIM { & (Get-Command Initialize-OPIMAuth) }
+    }
+    It 'd' {
+        InModuleScope Omnicit.PIM { & ([scriptblock]::Create('Initialize-OPIMAuth')) }
+    }
+}
+'@
+        $Guarded = @'
+Describe 'x' {
+    BeforeAll {
+        Mock -ModuleName Omnicit.PIM Get-MgContext { $null }
+        Mock -ModuleName Omnicit.PIM Get-OPIMMsalApplication { }
+    }
+    It 'a' { InModuleScope Omnicit.PIM { Initialize-OPIMAuth } }
+}
+Describe 'y' {
+    BeforeAll {
+        Mock -ModuleName Omnicit.PIM Get-MgContext { throw 'stop' }
+    }
+    It 'b' { InModuleScope Omnicit.PIM { Initialize-OPIMAuth } }
+}
+Describe 'w' {
+    It 'e' {
+        Mock -ModuleName Omnicit.PIM Get-MgContext { $null }
+        Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth { }
+        Initialize-OPIMAuth
+    }
+}
+'@
+        # Kept apart from $Guarded: a mock anywhere else in the same text would be in effect for the
+        # whole file, and hide that this one is not in effect in a sibling block.
+        $Sibling = @'
+Describe 'z' {
+    Context 'mocked here' {
+        BeforeAll { Mock -ModuleName Omnicit.PIM Get-MgContext { $null } }
+        It 'c' { $true | Should -BeTrue }
+    }
+    Context 'not here' {
+        It 'd' { InModuleScope Omnicit.PIM { Initialize-OPIMAuth } }
+    }
+}
+'@
+        $FileRoot = @'
+BeforeAll {
+    Mock -ModuleName Omnicit.PIM Get-MgContext { $null }
+}
+Describe 'x' {
+    It 'a' { InModuleScope Omnicit.PIM { Initialize-OPIMAuth } }
+}
+'@
+        $Parse = { param($Text) [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$null) }
+        $Reason = 'can run Initialize-OPIMAuth unmocked where Get-MgContext is mocked to return and Get-OPIMMsalApplication is not mocked'
+
+        @(Get-TestHygieneInitializeFinding -Ast (& $Parse $Unguarded)) | Should -Be @(
+            "line 6: $Reason"
+            "line 10: $Reason"
+            "line 15: $Reason"
+            "line 18: $Reason"
+        )
+        @(Get-TestHygieneInitializeFinding -Ast (& $Parse $Guarded)).Count | Should -Be 0 -Because 'a mocked MSAL build, a throwing Get-MgContext and a mocked Initialize-OPIMAuth each keep the real client out of reach'
+        @(Get-TestHygieneInitializeFinding -Ast (& $Parse $Sibling)).Count | Should -Be 0 -Because 'a Get-MgContext mock in a sibling Context is not in effect where Initialize-OPIMAuth runs'
+        @(Get-TestHygieneInitializeFinding -Ast (& $Parse $FileRoot)) | Should -Be @("line 5: $Reason")
+    }
+
+    It 'Should read only the strings that can run the command (known answer)' {
+        Test-TestHygieneTextRunsCommand -Text 'Get-OPIMMsalApplication' -Name 'Get-OPIMMsalApplication' | Should -BeTrue
+        Test-TestHygieneTextRunsCommand -Text 'tests/Unit/Private/Get-OPIMMsalApplication.Tests.ps1' -Name 'Get-OPIMMsalApplication' | Should -BeFalse
+        Test-TestHygieneTextRunsCommand -Text 'Invoke-OPIMGraphRequest -Uri x' -Name 'Get-OPIMMsalApplication' | Should -BeFalse
+        Test-TestHygieneTextRunsCommand -Text "`$N = 'Get-OPIMMsalApplication'; & `$N" -Name 'Get-OPIMMsalApplication' | Should -BeTrue
     }
 }
