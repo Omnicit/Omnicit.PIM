@@ -247,7 +247,7 @@ and `testhygiene`, `sourcehygiene`, `dochygiene` and `docsync` read files static
 
 # Full test suite -- the authoritative gate, and the command every CI leg runs.
 # QA tests + unit tests + per-function PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-08: 2,533 passed, 0 failed, 0 skipped; coverage 94.72% over 2,992 analysed
+# (measured 2026-10-09: 2,580 passed, 0 failed, 0 skipped; coverage 94.72% over 2,992 analysed
 #  commands; Pester 6.2.0)
 ./build.ps1 -Tasks test
 
@@ -264,11 +264,12 @@ The Sampler test task measures coverage against the **built** module output, not
 `build.yaml`'s `test` workflow does not include `build` (`build.yaml:63-70`; only the default
 workflow, `./build.ps1` with no `-Tasks`, runs both). Always run `-Tasks build` before `-Tasks test`
 after changing source files -- and never build while the tests are running. The coverage threshold
-is 80 % (`build.yaml:152`): measured on 2026-10-08, 2,834 of 2,992 commands are covered, 440 more
-than 80 % requires. The margin has been thin before. The MSAL reflection lines in
-`Get-OPIMMsalApplication` are no longer run by any unit test, since reaching them builds a real
-MSAL client (see **Testing Conventions**), and that took coverage from 83.7 % to 80.28 % -- four
-commands above the line -- so a change that adds untested commands can still bring it close.
+is 80 % (`build.yaml:152`): measured on 2026-10-09, 2,834 of 2,992 commands are covered, 440 more
+than the 2,394 that 80 % requires. The margin was once only four commands: the MSAL reflection
+lines in `Get-OPIMMsalApplication` stopped being run by any unit test, since reaching them builds a
+real MSAL client (see **Testing Conventions**), and that took coverage from 83.7 % to 80.28 % --
+four commands above the line. It is 440 today, but a change that adds untested commands can still
+bring it close.
 
 **The build stamps the version GitVersion computes, and a local build needs GitVersion to do it.**
 Sampler (`Get-SamplerBuildVersion`, Sampler 0.120.1) takes `$env:ModuleVersion` when it is set,
