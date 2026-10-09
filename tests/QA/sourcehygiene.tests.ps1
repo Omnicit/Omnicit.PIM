@@ -202,8 +202,11 @@ BeforeAll {
         Az command named by a bareword argument rather than called, as in
         & (Get-Command Connect-AzAccount) or $C = Get-Command -Name Get-AzContext; & $C, since a
         bareword argument is neither a call nor a quoted string. And so is an alias the Az modules
-        export without -Az in its name (Resolve-Error, say), called bare. Review must catch these
-        shapes; this pass cannot.
+        export without -Az in its name (Resolve-Error, say), called bare. And so is the XML under
+        source/: this pass reads .ps1, .psm1 and .psd1 only, while the Types and Format files hold
+        script blocks (GetScriptBlock, ScriptBlock, ...) that run at property access and at
+        formatting, where an Az command could sit unseen. Review must catch these shapes; this pass
+        cannot.
 
         The positive controls are the known-answer It, which runs the detector over a text holding
         every refused shape, and the named control: the two Get-AzToken calls of

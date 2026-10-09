@@ -191,9 +191,9 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   its `PowerShellVersion` is at least 7.4, and at least what each declared dependency's own manifest
   requires at its pinned version (read with `Get-Module -ListAvailable`, which imports nothing); and
   the built module, imported by path in a clean `pwsh -NoProfile` process, loads both dependencies
-  and no `Az` or `Az.*` module. A dependency on an Az module turns that test red either way: the
-  import loads the Az module where the profile holds one, as locally, and fails where none is
-  installed, as in CI.
+  and no `Az` or `Az.*` module. A dependency on an Az module turns that test red either way: where
+  an Az module can be found, the import loads it and the Az list is not empty; where none can be
+  found, the import fails.
 - **`testhygiene.tests.ps1`** -- the transport tripwire, held by presence: in every
   `tests/Unit/**/*.Tests.ps1` the root `BeforeAll` calls `Install-OPIMTransportTripwire` after
   `Import-Module`, and the root `AfterAll` calls `Assert-OPIMTransportTripwire` in a `try` with no
@@ -242,8 +242,10 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   refused shape and both allowed calls, and the named control: the two `Get-AzToken` calls of
   `Initialize-OPIMAuth.ps1`; floors on the files parsed and the command nodes walked guard the walk
   itself. Its comment states its KNOWN LIMITS, which review has to catch: a command name assembled
-  at run time, an Az command named by a bareword argument (`Get-Command Connect-AzAccount`), and an
-  Az alias without `-Az` in its name, called bare.
+  at run time, an Az command named by a bareword argument (`Get-Command Connect-AzAccount`), an
+  Az alias without `-Az` in its name, called bare, and the `.ps1xml` files under `source/`, which
+  the scan does not read although the Types and Format files hold script blocks that run at
+  property access and at formatting.
 - **`dochygiene.tests.ps1`** -- over every tracked file under `docs/`, `specs/`, `source/` and
   `tests/`, plus `README.md` and `CHANGELOG.md`: object ids (only placeholders under `docs/` and
   `specs/`; elsewhere no version-4 id outside a pinned register of four public constants), email
@@ -283,7 +285,7 @@ loaded modules; it calls no command of the module.
 
 # Full test suite -- the authoritative gate, and the command every CI leg runs.
 # QA tests + unit tests + per-function PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-09: 3,036 passed, 0 failed, 0 skipped; coverage 95.76% over 3,468 analysed
+# (measured 2026-10-10: 3,003 passed, 0 failed, 0 skipped; coverage 95.79% over 3,468 analysed
 #  commands; Pester 6.2.0)
 ./build.ps1 -Tasks test
 
@@ -300,11 +302,11 @@ The Sampler test task measures coverage against the **built** module output, not
 `build.yaml`'s `test` workflow does not include `build` (`build.yaml:63-70`; only the default
 workflow, `./build.ps1` with no `-Tasks`, runs both). Always run `-Tasks build` before `-Tasks test`
 after changing source files -- and never build while the tests are running. The coverage threshold
-is 80 % (`build.yaml:152`): measured on 2026-10-09, 3,321 of 3,468 commands are covered, 546 more
+is 80 % (`build.yaml:152`): measured on 2026-10-10, 3,322 of 3,468 commands are covered, 547 more
 than the 2,775 that 80 % requires. The margin was once only four commands: the MSAL reflection
 lines in `Get-OPIMMsalApplication` stopped being run by any unit test, since reaching them builds a
 real MSAL client (see **Testing Conventions**), and that took coverage from 83.7 % to 80.28 % --
-four commands above the line. It is 546 today, but a change that adds untested commands can still
+four commands above the line. It is 547 today, but a change that adds untested commands can still
 bring it close.
 
 **The build stamps the version GitVersion computes, and a local build needs GitVersion to do it.**
@@ -1917,7 +1919,7 @@ with the team may be in Swedish.
 | `AzAuth` | 2.9.0 | `Get-AzToken`, the Azure Resource Manager sign-in in `Initialize-OPIMAuth` (`-Interactive`, or `-DeviceCode` in device code mode); it ships an MSAL of its own, which `Get-OPIMMsalApplication` can find first (see **Authentication Architecture**) |
 
 The manifest declares both as `RequiredModules` (`source/Omnicit.PIM.psd1:54-57`), where a
-`ModuleVersion` is a FLOOR, never an exact pin. `RequiredModules.psd1` (`:35-36`) pins the same two
+`ModuleVersion` is a FLOOR, never an exact pin. `RequiredModules.psd1` (`:38-39`) pins the same two
 versions EXACTLY for the build, the tests and the workflow's package and publish installs, which
 read them from that file and refuse a missing or `latest` value. Keep the two files equal --
 `tests/QA/module.tests.ps1` holds each floor equal to its pin and both install loops equal to the

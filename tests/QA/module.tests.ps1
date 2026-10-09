@@ -496,9 +496,9 @@ Describe 'Runtime dependencies' -Tags 'FunctionalQuality' {
 
     It 'Should load no Az module when the build is imported in a clean process' {
         # A clean pwsh with no profile imports the BUILT manifest by path, which loads its declared
-        # dependencies from PSModulePath. Locally the profile holds the Az modules, so a dependency on
-        # one loads it here; in CI none is installed, so a dependency on one fails the import. Either
-        # way the test goes red.
+        # dependencies from PSModulePath. A dependency on an Az module turns this red either way:
+        # where an Az module can be found, the import loads it and the Az list is not empty; where
+        # none can be found, the import fails.
         $Probe = Join-Path -Path $TestDrive -ChildPath 'Import-OPIMInCleanProcess.ps1'
         Set-Content -LiteralPath $Probe -Encoding utf8NoBOM -Value @'
 param([Parameter(Mandatory)][string]$Manifest)

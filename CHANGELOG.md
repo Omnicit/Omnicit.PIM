@@ -20,11 +20,11 @@ against an Az type checks `$Obj.PSObject.TypeNames -contains 'Omnicit.PIM.AzureE
 (or another `Omnicit.PIM.Azure*` name) instead. `Disconnect-OPIM` clears the module's Azure token,
 but not AzAuth's own sign-in in the PowerShell process.
 
-Omnicit.PIM no longer depends on the Az modules. Installing it brings AzAuth 2.9.0 and
-Microsoft.Graph.Authentication, and no longer Az.Resources or Az.Accounts, and importing it loads
-no Az module. A script that used an Az.Resources or Az.Accounts command only because this module
-brought it along must now install and import that module itself. The module now requires
-PowerShell 7.4 or later, which AzAuth needs: on PowerShell 7.2 or 7.3 it no longer imports.
+Omnicit.PIM no longer depends on the Az modules. Installing it brings AzAuth (2.9.0 or later) and
+Microsoft.Graph.Authentication instead of Az.Resources and Az.Accounts, and importing it loads no Az
+module. A script that used an Az.Resources or Az.Accounts command only because this module brought
+it along must now install and import that module itself. The module now requires PowerShell 7.4 or
+later, which AzAuth needs: on PowerShell 7.2 or 7.3 it no longer imports.
 
 ## [0.6.0] - 2026-10-09
 
