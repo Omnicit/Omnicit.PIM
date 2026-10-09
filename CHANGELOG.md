@@ -5,6 +5,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes to the module since 0.6.0. A preview published from this point differs from 0.6.0 only in documentation, tests or the build.
+
+## [0.6.0] - 2026-10-09
+
 Roles and groups can be named by display name, as `Enable-OPIMEntraIDGroup 'Finance Team' -AccessType Owner` (a group name alone means membership), and completion offers the bare name when unique. A name or `-Identity` matching several is refused with the candidates (`AmbiguousName`) and nothing changes; `-Scope` (a role, where the command has it), `-AccessType` (a group) or the tab-completed form picks one. A name matching nothing is `EligibleRoleNotFound` (`ActiveRoleNotFound` when deactivating, saying if the role is only eligible or active under another name); neither stops the command or the next name. `Get-OPIMAzureRole -RoleName` and `-Identity` work below the root scope without extra rights, `-All -Scope` returns only that scope's roles, and a `-Scope` ending in a slash is refused.
 
 A failed or denied request is an error (`ActivationRequestFailed`), and one awaiting approval or provisioning returns with a warning. `-Wait` stops after `-TimeoutSeconds` (default 300, `ActivationWaitTimedOut`); `Wait-OPIMDirectoryRole` checks requests in turn (`-ThrottleLimit` is ignored) and writes an expired one as `ActivationAlreadyExpired`. An active role or group is not requested again, `-Activated` lists activations only, `-Hours` is 1-24, `-NotBefore` works for Azure, and a time without an offset is local. Lists read every page; an unreadable list is its own error, not "not found", and a directory role whose administrative unit is unreadable is listed, with a warning, instead of ending the list. An ownership held as a group's only owner cannot be deactivated and does not end: activate ownership only of a group with another owner.
