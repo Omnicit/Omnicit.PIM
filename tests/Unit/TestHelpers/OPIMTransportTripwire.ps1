@@ -17,8 +17,10 @@
 # for AzAuth's Get-AzToken, 2026-10-09 (AzAuth 2.9.0, a compiled cmdlet without IDynamicParameters):
 #   Cmdlet         A global function built from the cmdlet's metadata. A function outranks a cmdlet,
 #                  and a Pester Mock -ModuleName (an alias in the module scope) outranks both.
-#                  AzAuth is not a dependency of Omnicit.PIM yet, so the definition builder imports
-#                  it first (it runs inside the root BeforeAll, where an import is allowed).
+#                  AzAuth is a RequiredModule of Omnicit.PIM, so it is loaded whenever the module
+#                  was imported first; the definition builder still imports it when it is not
+#                  loaded, so the helper stands on its own (it runs inside the root BeforeAll,
+#                  where an import is allowed).
 # And for ForEach-Object -Parallel runspaces, where no global function or mock reaches: a generated
 # stand-in Microsoft.Graph.Authentication module at the front of PSModulePath, recording into
 # AppDomain data that every runspace in the process shares.
@@ -75,8 +77,10 @@ function New-OPIMTransportTripwireDefinition {
     $Names = Get-OPIMTransportTripwireName
     foreach ($Name in @($Names.Keys)) {
         $Spec = $Names[$Name]
-        # Load-bearing only when module autoloading is off: with it on, the Get-Command below loads
-        # AzAuth from PSModulePath by itself.
+        # AzAuth is a RequiredModule of Omnicit.PIM, so it is already loaded whenever the module was
+        # imported first. The import stays for a run of this helper without it, and is load-bearing
+        # only when module autoloading is off: with it on, the Get-Command below loads AzAuth from
+        # PSModulePath by itself.
         if ($Spec.Module -eq 'AzAuth' -and -not (Get-Module -Name AzAuth)) {
             Import-Module -Name AzAuth -ErrorAction Stop
         }

@@ -240,7 +240,7 @@ jobs:
         # Test-ModuleManifest, which RESOLVES every RequiredModules entry on PSModulePath, and
         # -SkipDependenciesCheck does not cover that -- it only waives the check that the
         # dependencies exist in the destination repository. Nothing else in this job puts
-        # Az.Resources or Microsoft.Graph.Authentication on PSModulePath, and without them the
+        # Microsoft.Graph.Authentication or AzAuth on PSModulePath, and without them the
         # publish fails on the manifest (measured in Omnicit.EntraRBAC on 2026-09-22, where the
         # missing module was AzAuth: "The specified RequiredModules entry 'AzAuth' ... is invalid").
         # They are wanted a second time anyway: Import-Module cannot load the module without them,
@@ -255,7 +255,7 @@ jobs:
           # installing whatever is newest would validate the manifest against something no test
           # run saw.
           $Required = Import-PowerShellDataFile -LiteralPath 'RequiredModules.psd1'
-          foreach ($Name in 'Az.Resources', 'Microsoft.Graph.Authentication') {
+          foreach ($Name in 'Microsoft.Graph.Authentication', 'AzAuth') {
               $Version = [string]$Required[$Name]
               if ([string]::IsNullOrWhiteSpace($Version) -or $Version -eq 'latest') {
                   throw "RequiredModules.psd1 names no fixed version for $Name ('$Version'). The publish path installs exactly the version the tests ran against, so it stops here."
@@ -450,8 +450,8 @@ jobs:
         shell: pwsh
         # Required before Publish-PSResource, for the reason spelled out on the same step in the
         # package job: the publish validates the manifest with Test-ModuleManifest, which resolves
-        # every RequiredModules entry on PSModulePath. Nothing else in this job puts Az.Resources
-        # or Microsoft.Graph.Authentication there, and without them the publish fails on the
+        # every RequiredModules entry on PSModulePath. Nothing else in this job puts
+        # Microsoft.Graph.Authentication or AzAuth there, and without them the publish fails on the
         # manifest rather than on anything about the Gallery.
         # -SkipModuleManifestValidate is not the answer: it switches off the last check that what
         # is about to be published is a loadable module.
@@ -464,7 +464,7 @@ jobs:
           # installing whatever is newest would validate the manifest against something no test
           # run saw.
           $Required = Import-PowerShellDataFile -LiteralPath 'RequiredModules.psd1'
-          foreach ($Name in 'Az.Resources', 'Microsoft.Graph.Authentication') {
+          foreach ($Name in 'Microsoft.Graph.Authentication', 'AzAuth') {
               $Version = [string]$Required[$Name]
               if ([string]::IsNullOrWhiteSpace($Version) -or $Version -eq 'latest') {
                   throw "RequiredModules.psd1 names no fixed version for $Name ('$Version'). The publish path installs exactly the version the tests ran against, so it stops here."

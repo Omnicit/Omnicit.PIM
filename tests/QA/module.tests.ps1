@@ -456,6 +456,70 @@ Describe 'General module control' -Tags 'FunctionalQuality' {
     }
 }
 
+Describe 'Runtime dependencies' -Tags 'FunctionalQuality' {
+    BeforeAll {
+        # The BUILT manifest -- what the package and publish jobs validate and publish.
+        $script:BuiltManifestPath = Join-Path -Path $script:moduleUnderTest.ModuleBase -ChildPath ('{0}.psd1' -f $script:moduleName)
+        $script:BuiltManifest = Import-PowerShellDataFile -LiteralPath $script:BuiltManifestPath
+        $script:RequiredModulesData = Import-PowerShellDataFile -LiteralPath (Join-Path -Path $projectPath -ChildPath 'RequiredModules.psd1')
+        $script:DeclaredNames = @($script:BuiltManifest.RequiredModules | ForEach-Object {
+                if ($_ -is [System.Collections.IDictionary]) { $_.ModuleName } else { [string]$_ }
+            } | Sort-Object)
+    }
+
+    It 'Should declare AzAuth and Microsoft.Graph.Authentication, and no Az module' {
+        $script:DeclaredNames | Should -Be @('AzAuth', 'Microsoft.Graph.Authentication')
+    }
+
+    It 'Should hold every declared floor equal to the exact pin the tests ran against' {
+        foreach ($Entry in $script:BuiltManifest.RequiredModules) {
+            $Pin = [string]$script:RequiredModulesData[$Entry.ModuleName]
+            $Pin | Should -Not -BeNullOrEmpty -Because ('RequiredModules.psd1 must pin {0}' -f $Entry.ModuleName)
+            $Pin | Should -Not -Be 'latest' -Because ('a runtime dependency is pinned exactly, never latest: {0}' -f $Entry.ModuleName)
+            [string]$Entry.ModuleVersion | Should -Be $Pin -Because ('the manifest floor of {0} must be the version the tests ran against' -f $Entry.ModuleName)
+        }
+    }
+
+    It 'Should resolve no Az module for the build or the tests' {
+        @($script:RequiredModulesData.Keys | Where-Object { $_ -match '^Az(\.|$)' }) | Should -BeNullOrEmpty
+    }
+
+    It 'Should install exactly the declared dependencies in the package and the publish job' {
+        $Yaml = Get-Content -LiteralPath (Join-Path -Path $projectPath -ChildPath '.github/workflows/build-and-test.yml') -Raw
+        $Loops = @([regex]::Matches($Yaml, 'foreach \(\$Name in ([^)]+)\)'))
+        $Loops.Count | Should -Be 2 -Because 'the package and the publish job each install the runtime dependencies in one loop'
+        foreach ($Loop in $Loops) {
+            $Names = @([regex]::Matches($Loop.Groups[1].Value, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value } | Sort-Object)
+            $Names | Should -Be $script:DeclaredNames
+        }
+    }
+
+    It 'Should load no Az module when the build is imported in a clean process' {
+        # A clean pwsh with no profile imports the BUILT manifest by path, which loads its declared
+        # dependencies from PSModulePath. Locally the profile holds the Az modules, so a dependency on
+        # one loads it here; in CI none is installed, so a dependency on one fails the import. Either
+        # way the test goes red.
+        $Probe = Join-Path -Path $TestDrive -ChildPath 'Import-OPIMInCleanProcess.ps1'
+        Set-Content -LiteralPath $Probe -Encoding utf8NoBOM -Value @'
+param([Parameter(Mandatory)][string]$Manifest)
+$ErrorActionPreference = 'Stop'
+Import-Module -Name $Manifest -Force
+[pscustomobject]@{
+    Imported     = @(Get-Module -Name 'Omnicit.PIM').Count
+    Dependencies = @(Get-Module -Name 'AzAuth', 'Microsoft.Graph.Authentication' | ForEach-Object { $_.Name } | Sort-Object -Unique)
+    Az           = @(Get-Module -Name 'Az', 'Az.*' | ForEach-Object { $_.Name } | Sort-Object -Unique)
+} | ConvertTo-Json -Compress
+'@
+        $Pwsh = (Get-Process -Id $PID).Path
+        $Output = @(& $Pwsh -NoProfile -NonInteractive -File $Probe -Manifest $script:BuiltManifestPath 2>&1)
+        $LASTEXITCODE | Should -Be 0 -Because ('the built module must import in a clean process: {0}' -f ($Output -join ' '))
+        $Result = $Output[-1] | ConvertFrom-Json
+        $Result.Imported | Should -Be 1
+        @($Result.Dependencies) | Should -Be @('AzAuth', 'Microsoft.Graph.Authentication') -Because 'the import must load the declared dependencies, or an empty Az list proves nothing'
+        @($Result.Az) | Should -BeNullOrEmpty -Because 'importing Omnicit.PIM must load no Az module'
+    }
+}
+
 BeforeDiscovery {
     # Must use the imported module to build test cases.
     $allModuleFunctions = & $mut { Get-Command -Module $args[0] -CommandType Function } $script:moduleName
