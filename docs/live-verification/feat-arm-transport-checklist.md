@@ -164,6 +164,7 @@ $Lines = @(pwsh -NoProfile -NonInteractive -File $Prereq -WhatIf 2>&1 | ForEach-
 "Lines 'exists; kept': $(@($Lines | Where-Object { $_ -match 'exists; kept' }).Count)"
 "What if lines other than the transcript: $(@($Lines | Where-Object { $_ -match '^What if:' -and $_ -notmatch 'transcript' }).Count)"
 $Lines | Where-Object { $_ -match "Sweep 'opim-s|Residue:|Group 'Exclude from CA'|PIM policy of|exists; kept" }
+Import-Module (Join-Path $env:OPIMLIVE_HOME '../../Omnicit Entra RBAC/Live-verifiering/OerLive/OerLive.psm1') -Force
 $null = Import-OerLiveConfig -Prefix 'opim-s21a-'
 Connect-OerLive -Graph
 "Objects with the prefix opim-s21a-: $(@(Find-OerLivePrefixed -Prefix 'opim-s21a-' -ThrowOnUnread -Quiet).Count)"
@@ -254,13 +255,14 @@ $State = & (Get-Module Omnicit.PIM) { $script:_OPIMAuthState }
 "Session tenant is the test tenant: $([string]::Equals([string]$State.TokenTenantId, $Target.TenantId, [System.StringComparison]::OrdinalIgnoreCase))"
 "ARM token held as a SecureString: $($State.ArmToken -is [securestring])"
 "ARM token minutes left: $([int]($State.ArmTokenExpiry - [datetime]::UtcNow).TotalMinutes)"
-"Az context in this window: $([bool](Get-Command Get-AzContext -ErrorAction SilentlyContinue | ForEach-Object { Get-AzContext -ErrorAction SilentlyContinue }))"
+"An Az context for the test user in this window: $([string]::Equals([string](Get-AzContext -ErrorAction SilentlyContinue).Account.Id, $Target.UserPrincipalName, [System.StringComparison]::OrdinalIgnoreCase))"
 ```
 
 **Expect:** the rows `Graph Information True ok` and `AzureCli Information True ok`; every True/False
 line of the harness `True` (Graph account, tenant, device code mode, Azure token user and tenant);
 `Session tenant is the test tenant: True`; `ARM token held as a SecureString: True`; minutes left
-above 5; `Az context in this window: False`. No line prints the account or the tenant id.
+above 5; `An Az context for the test user in this window: False` (the module signed nothing in with
+Az). No line prints the account or the tenant id.
 **Failure looks like:** `False` on any line, a `STOP`, or an Azure row that is not `AzureCli
 Information True ok` -- STOP: run `Disconnect-OPIM`, end window B and run no other check. An ARM token
 whose tenant or user is not the test user's is a STOP even though the module refused it (the
@@ -693,7 +695,7 @@ foreach ($Read in 'eligible', 'byname', 'scope', 'activated', 'all') {
             if ($VB -is [datetime] -and $VC -is [datetime]) { if ($VB.ToUniversalTime() -ne $VC.ToUniversalTime()) { $SameValue = $false } }
             elseif ([string]$VB -cne [string]$VC) { $SameValue = $false }
         }
-        "  $P: in B $InB; in C $InC; same type $SameType; same value $SameValue"
+        "  $($P): in B $InB; in C $InC; same type $SameType; same value $SameValue"
     }
 }
 ```
@@ -820,6 +822,7 @@ Result:
 - [ ] **T.4** Window A, then the operator. No object carries `opim-s21a-`; the raw folder, with the comparison files, the recorder's file, the tenant map and the 0.6.0 module, is deleted once the results are written up.
 
 ```powershell
+Import-Module (Join-Path $env:OPIMLIVE_HOME '../../Omnicit Entra RBAC/Live-verifiering/OerLive/OerLive.psm1') -Force
 $null = Import-OerLiveConfig -Prefix 'opim-s21a-'
 Connect-OerLive -Graph
 "Objects with the prefix opim-s21a-: $(@(Find-OerLivePrefixed -Prefix 'opim-s21a-' -ThrowOnUnread -Quiet).Count)"
