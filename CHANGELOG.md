@@ -5,7 +5,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes to the module since 0.6.0. A preview published from this point differs from 0.6.0 only in documentation, tests or the build.
+Each GitHub release of the module, and the version tag that marks it, now always points at the
+commit whose build was published to the PowerShell Gallery. When the publish workflow cannot prove
+which commit that is, it stops and says how to set the tag by hand, instead of tagging another
+commit.
 
 ## [0.6.0] - 2026-10-09
 
