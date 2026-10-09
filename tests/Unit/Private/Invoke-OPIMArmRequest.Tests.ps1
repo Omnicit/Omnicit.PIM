@@ -290,7 +290,7 @@ Describe 'Invoke-OPIMArmRequest' {
 
                 $Caught.FullyQualifiedErrorId | Should -BeExactly 'ArmTransportError'
                 $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ConnectionError)
-                $Caught.TargetObject | Should -BeExactly '/subscriptions?api-version=2022-12-01'
+                $Caught.TargetObject | Should -BeExactly '/subscriptions'
                 $Caught.Exception.Message | Should -BeExactly 'Azure Resource Manager request failed before a response was received: No such host is known.'
                 $Caught.Exception.InnerException | Should -BeNullOrEmpty
                 @($global:Error | Where-Object { [object]::ReferenceEquals($PSItem.Exception, $script:_OPIMTestTransportException) }) |
@@ -1214,6 +1214,7 @@ Describe 'Invoke-OPIMArmRequest' {
             @{ Name = 'a null ArmToken'; Shape = 'Null' }
             @{ Name = 'an empty SecureString'; Shape = 'Empty' }
             @{ Name = 'an ArmToken that is not a SecureString'; Shape = 'String' }
+            @{ Name = 'an ArmToken but no token tenant'; Shape = 'NoTokenTenant' }
         ) {
             $State = switch ($Shape) {
                 'NoState' { $null }
@@ -1222,6 +1223,7 @@ Describe 'Invoke-OPIMArmRequest' {
                 'Null' { New-ArmTestState -ArmToken $null }
                 'Empty' { New-ArmTestState -ArmToken ([securestring]::new()) }
                 'String' { New-ArmTestState -ArmToken (New-OPIMTestAccessToken -TenantId $SessionTenant -ObjectId $SessionAccount) }
+                'NoTokenTenant' { $S = New-ArmTestState; $S.Remove('TokenTenantId'); $S }
             }
             Set-ArmTestState -State $State
             $Caught = InModuleScope Omnicit.PIM {
@@ -1232,7 +1234,7 @@ Describe 'Invoke-OPIMArmRequest' {
             $Caught | Should -Not -BeNullOrEmpty
             $Caught.FullyQualifiedErrorId | Should -BeExactly 'ArmTokenAcquisitionFailed'
             $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
-            $Caught.TargetObject | Should -BeExactly '/subscriptions?api-version=2022-12-01'
+            $Caught.TargetObject | Should -BeExactly '/subscriptions'
             $Caught.Exception.Message | Should -BeExactly $NoTokenMessage
         }
 
@@ -1602,6 +1604,198 @@ $R
             $Run.Output.Count | Should -Be 0
             $Run.ErrorIds | Should -Be @('ArmTokenAcquisitionFailed')
             Should -Invoke -ModuleName Omnicit.PIM Invoke-WebRequest -Times 0 -Scope It
+        }
+    }
+
+    Context 'When a request path would leave the session''s ARM host' {
+        # The caller's path is appended to the session's ARM host, so a path that starts with '@', '.'
+        # or ':' would move the uri -- and the token -- to another host. Every request's uri is checked
+        # before it is sent: absolute, https, and the session's ARM host. A refusal is a terminating
+        # error with no error id (category SecurityError) that names neither the path nor any host.
+        BeforeAll {
+            $HostRefusal = 'No Azure Resource Manager request was sent: the request path does not stay on the session''s Azure Resource Manager host.'
+        }
+
+        It 'refuses <Name> and sends nothing' -ForEach @(
+            @{ Name = 'a path that starts with user info'; Path = '@evil.example.com/providers/x?api-version=2020-10-01' }
+            @{ Name = 'a path that extends the host name'; Path = '.evil.example.com/providers/x?api-version=2020-10-01' }
+            @{ Name = 'a path with a port and user info'; Path = ':8443@evil.example.com/providers/x?api-version=2020-10-01' }
+            @{ Name = 'a path without a leading slash'; Path = 'providers/x?api-version=2020-10-01' }
+            @{ Name = 'a path that makes the uri unparsable'; Path = ':notaport/providers/x?api-version=2020-10-01' }
+        ) {
+            Mock -ModuleName Omnicit.PIM Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":["sent"]}' } }
+            $R = InModuleScope Omnicit.PIM -Parameters @{ Path = $Path } {
+                param($Path)
+                $Result = $null
+                $Caught = $null
+                try { $Result = Invoke-OPIMArmRequest -Path $Path } catch { $Caught = $PSItem }
+                @{ Result = $Result; Caught = $Caught }
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-WebRequest -Times 0 -Scope It
+            $R.Result | Should -BeNullOrEmpty
+            $R.Caught | Should -Not -BeNullOrEmpty
+            $R.Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::SecurityError)
+            # No error id: the record's id is only the name of the command that raised it.
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'Invoke-OPIMArmRequest'
+            $R.Caught.Exception.Message | Should -BeExactly $HostRefusal
+            $R.Caught.Exception.Message | Should -Not -Match 'evil'
+            $R.Caught.Exception.Message.Contains($Path) | Should -BeFalse
+            $R.Caught.TargetObject | Should -BeNullOrEmpty
+        }
+
+        It 'refuses a session whose ARM resource url is not https, and sends nothing' {
+            $State = New-ArmTestState
+            $State.ArmResourceUrl = 'http://management.azure.com'
+            Set-ArmTestState -State $State
+            Mock -ModuleName Omnicit.PIM Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":["sent"]}' } }
+            $Caught = InModuleScope Omnicit.PIM {
+                try { $null = Invoke-OPIMArmRequest -Path '/providers/x?api-version=2020-10-01' } catch { $PSItem }
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-WebRequest -Times 0 -Scope It
+            $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::SecurityError)
+            $Caught.Exception.Message | Should -BeExactly $HostRefusal
+        }
+
+        It 'sends a path on the session''s ARM host' {
+            Mock -ModuleName Omnicit.PIM Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":["sent"]}' } }
+            $Result = InModuleScope Omnicit.PIM { Invoke-OPIMArmRequest -Path '/providers/x?api-version=2020-10-01' }
+            @($Result.value) | Should -Be @('sent')
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-WebRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Uri.Host -eq 'management.azure.com' -and
+                $Uri.OriginalString -ceq 'https://management.azure.com/providers/x?api-version=2020-10-01'
+            }
+        }
+
+        It 'sends nothing and returns nothing outside any try under -ErrorAction SilentlyContinue' {
+            Mock -ModuleName Omnicit.PIM Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":["sent"]}' } }
+            $Run = Invoke-OutsideAnyTry -Script '$R = Invoke-OPIMArmRequest -Path ''@evil.example.com/providers/x?api-version=2020-10-01'' -ErrorAction SilentlyContinue; $R'
+            $Run.Output.Count | Should -Be 0
+            $Run.ErrorIds | Should -Be @('Invoke-OPIMArmRequest')
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-WebRequest -Times 0 -Scope It
+        }
+    }
+
+    Context 'When a 2xx body cannot be read' {
+        # A 2xx body that does not parse, and with -All a page with no body at all, is a failed read:
+        # ArmTransportError, category InvalidResult, the caller's path as its target -- never a partial
+        # or a duplicated list, and never a second request for the same link. Without -All an empty body
+        # is still no content ($null). The mock answers request n with the n-th body of
+        # $script:_OPIMTestBodies, records every uri, and past the list answers a last page with no next
+        # link, so a walk that goes wrong ends instead of hanging.
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Invoke-WebRequest {
+                    $script:_OPIMTestSent.Add($Uri.OriginalString)
+                    $Index = $script:_OPIMTestSent.Count
+                    $Content = if ($Index -le @($script:_OPIMTestBodies).Count) { $script:_OPIMTestBodies[$Index - 1] } else { '{"value":[{"id":"late"}]}' }
+                    [PSCustomObject]@{ StatusCode = 200; Content = $Content }
+                }
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMTestSent = [System.Collections.Generic.List[string]]::new()
+                $script:_OPIMTestBodies = @()
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMTestSent = $null
+                $script:_OPIMTestBodies = $null
+            }
+        }
+
+        It 'fails <Name> with one ArmTransportError inside a try, and returns nothing' -ForEach @(
+            @{ Name = 'an empty later page'; All = $true; Sends = 3; Message = 'Page 3: Azure Resource Manager returned a body that could not be read, so the list is incomplete.'
+                Bodies = @('{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=2"}', '{"value":[{"id":"b"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=3"}', '') }
+            @{ Name = 'an unparsable later page'; All = $true; Sends = 3; Message = 'Page 3: Azure Resource Manager returned a body that could not be read, so the list is incomplete.'
+                Bodies = @('{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=2"}', '{"value":[{"id":"b"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=3"}', '<html>not json</html>') }
+            @{ Name = 'an empty first page under -All'; All = $true; Sends = 1; Message = 'Page 1: Azure Resource Manager returned a body that could not be read, so the list is incomplete.'
+                Bodies = @('') }
+            @{ Name = 'an unparsable single response'; All = $false; Sends = 1; Message = 'Azure Resource Manager returned a body that could not be read.'
+                Bodies = @('<html>not json</html>') }
+        ) {
+            InModuleScope Omnicit.PIM -Parameters @{ Bodies = $Bodies } { param($Bodies) $script:_OPIMTestBodies = @($Bodies) }
+            $R = InModuleScope Omnicit.PIM -Parameters @{ All = $All } {
+                param($All)
+                $Result = $null
+                $Caught = $null
+                try { $Result = Invoke-OPIMArmRequest -Path '/subscriptions?api-version=2022-12-01' -All:$All } catch { $Caught = $PSItem }
+                @{ Result = $Result; Caught = $Caught; Sent = @($script:_OPIMTestSent) }
+            }
+            $R.Result | Should -BeNullOrEmpty
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'ArmTransportError'
+            $R.Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+            $R.Caught.Exception.Message | Should -BeExactly $Message
+            # The caller's path, never a next link.
+            $R.Caught.TargetObject | Should -BeExactly '/subscriptions?api-version=2022-12-01'
+            @($R.Sent).Count | Should -Be $Sends
+            @($R.Sent | Select-Object -Unique).Count | Should -Be $Sends -Because 'no link is requested twice'
+        }
+
+        It 'fails <Name> outside any try under -ErrorAction SilentlyContinue: no link twice, nothing returned' -ForEach @(
+            @{ Name = 'an empty later page'; All = $true; Sends = 3
+                Bodies = @('{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=2"}', '{"value":[{"id":"b"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=3"}', '') }
+            @{ Name = 'an unparsable later page'; All = $true; Sends = 3
+                Bodies = @('{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=2"}', '{"value":[{"id":"b"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=3"}', '<html>not json</html>') }
+            @{ Name = 'an empty first page under -All'; All = $true; Sends = 1; Bodies = @('') }
+            @{ Name = 'an unparsable single response'; All = $false; Sends = 1; Bodies = @('<html>not json</html>') }
+        ) {
+            InModuleScope Omnicit.PIM -Parameters @{ Bodies = $Bodies } { param($Bodies) $script:_OPIMTestBodies = @($Bodies) }
+            $Switch = if ($All) { ' -All' } else { '' }
+            $Run = Invoke-OutsideAnyTry -Script ('$R = Invoke-OPIMArmRequest -Path ''/subscriptions?api-version=2022-12-01''' + $Switch + ' -ErrorAction SilentlyContinue; $R')
+            $Run.Output.Count | Should -Be 0
+            $Run.ErrorIds | Should -Be @('ArmTransportError')
+            $Sent = InModuleScope Omnicit.PIM { @($script:_OPIMTestSent) }
+            @($Sent).Count | Should -Be $Sends
+            @($Sent | Select-Object -Unique).Count | Should -Be $Sends -Because 'no link is requested twice'
+        }
+
+        It 'still returns $null for an empty 200 body without -All' {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMTestBodies = @('')
+                Invoke-OPIMArmRequest -Path '/x?api-version=2020-10-01' | Should -BeNullOrEmpty
+                @($script:_OPIMTestSent).Count | Should -Be 1
+            }
+        }
+    }
+
+    Context 'When a record of a page request names its request' {
+        # ArmTransportError and ArmTokenAcquisitionFailed name the path without its query string: a
+        # page is requested by its next link's path and query, and that query can carry a skip token.
+        It 'names a page that gets no response by its path without the query' {
+            InModuleScope Omnicit.PIM {
+                $script:ArmCallCount = 0
+                Mock Invoke-WebRequest {
+                    $script:ArmCallCount++
+                    if ($script:ArmCallCount -gt 1) { throw [System.Exception]::new('The response ended prematurely.') }
+                    [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/next?api-version=2022-12-01&$skiptoken=secret-skip"}' }
+                }
+                $Caught = $null
+                try { $null = Invoke-OPIMArmRequest -Path '/subscriptions?api-version=2022-12-01' -All } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'ArmTransportError'
+                $Caught.TargetObject | Should -BeExactly '/next'
+                Should -Invoke Invoke-WebRequest -Times 2 -Exactly -Scope It
+            }
+        }
+
+        It 'names a page refused for a missing token by its path without the query' {
+            InModuleScope Omnicit.PIM {
+                $script:ArmCallCount = 0
+                Mock Invoke-WebRequest {
+                    $script:ArmCallCount++
+                    # A page 2 that got through ends the list, so a missing check fails instead of looping.
+                    if ($script:ArmCallCount -gt 1) { return [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"b"}]}' } }
+                    # The session loses its ARM token while page 1 is answered.
+                    $script:_OPIMAuthState.Remove('ArmToken')
+                    [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/next?api-version=2022-12-01&$skiptoken=secret-skip"}' }
+                }
+                $Caught = $null
+                try { $null = Invoke-OPIMArmRequest -Path '/subscriptions?api-version=2022-12-01' -All } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'ArmTokenAcquisitionFailed'
+                $Caught.TargetObject | Should -BeExactly '/next'
+                Should -Invoke Invoke-WebRequest -Times 1 -Exactly -Scope It
+            }
         }
     }
 }

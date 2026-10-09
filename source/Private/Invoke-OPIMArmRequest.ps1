@@ -18,15 +18,22 @@ function Invoke-OPIMArmRequest {
     and every page of a -All read -- the ARM gate, Get-OPIMArmRefusal, refuses a request made for a
     command whose sign-in was refused (SignInRefused), and a request whose ARM token was issued for
     another tenant (TenantMismatch) or another account (AccountMismatch) than the module's Graph
-    session. A refused request is never sent. A request is never sent without an ARM token either:
-    when the session holds none -- no state, no ArmToken, or an empty SecureString -- it is refused
-    after the gate and before anything is sent, with ArmTokenAcquisitionFailed. Run
-    Connect-OPIM -IncludeARM to sign in to Azure.
+    session. A refused request is never sent. A request is never sent without a usable ARM token
+    either: when the session holds none -- no state, a state without the Graph session's tenant
+    (TokenTenantId), no ArmToken, or an empty SecureString -- it is refused after the gate and before
+    anything is sent, with ArmTokenAcquisitionFailed. Run Connect-OPIM -IncludeARM to sign in to Azure.
+    Nor does a request ever leave the session's ARM host: the uri of every request -- the host and the
+    caller's path, or a page's path -- must parse as an absolute https uri on that host, or it is
+    refused before anything is sent, with a terminating error with no error id (category
+    SecurityError) whose message names neither the path nor any host. The records this function raises
+    for a single request name the path without its query string as their target.
 
     Invoke-WebRequest is called with -SkipHttpErrorCheck so HTTP errors do not throw. Each response is
     normalized to a { StatusCode; Content; Headers } object before the status logic runs; the header
     collection stays inside this wrapper and only its Retry-After entry is ever read. The wrapper
-    returns the parsed JSON content for a 2xx response ($null when the body is empty, as for a 204).
+    returns the parsed JSON content for a 2xx response ($null when the body is empty, as for a 204). A
+    2xx body that does not parse is a failed read: ArmTransportError, category InvalidResult, with the
+    caller's path as its target.
     On a 401 it calls Initialize-OPIMAuth -IncludeARM -ForceRefresh and retries exactly once; the
     refresh budget is shared across the whole call, so a token that expires part-way through a -All
     read gets exactly one forced refresh for the entire walk, not one per page. Any other non-2xx
@@ -39,7 +46,11 @@ function Invoke-OPIMArmRequest {
     session's ARM host, and is then requested by its path and query on that host. Any other link
     would carry the session's ARM token elsewhere: it is never sent, and the call ends with a
     terminating error with no error id (category SecurityError) whose message names neither the link
-    nor its host. Nothing is ever returned for a list that was not read to its end.
+    nor its host. Every page, the first included, must carry a body that parses: an ARM list always
+    answers with a value array, so a page with no body or a body that does not parse is a failed read
+    (ArmTransportError, category InvalidResult, the caller's path as its target, a message naming the
+    page by its number), never an empty or a shorter list. Nothing is ever returned for a list that
+    was not read to its end, and no next link is requested twice.
 
     A 429, and a 503 that carries a Retry-After header, are retried with a bounded backoff: the
     Retry-After value is honoured in either RFC 9110 form (delta-seconds or an HTTP-date), with an
@@ -109,9 +120,11 @@ function Invoke-OPIMArmRequest {
     $ArmBaseHost = ([uri]$ArmBaseUrl).Host
 
     function Invoke-OPIMArmSingle ([string]$CallPath, [string]$CallMethod, [hashtable]$CallBody, [string]$BaseUrl) {
-        # SECURITY: the method and the path without its query (a next link's query can carry a skip
-        # token). Never the token, never the body.
-        Write-Verbose "[Invoke-OPIMArmRequest] $CallMethod $(($CallPath -split '\?', 2)[0])"
+        # The path without its query: what the verbose line and the target of this function's records
+        # name. A page's path is its next link's path and query, and that query can carry a skip token.
+        $CallTarget = ($CallPath -split '\?', 2)[0]
+        # SECURITY: the method and the path without its query. Never the token, never the body.
+        Write-Verbose "[Invoke-OPIMArmRequest] $CallMethod $CallTarget"
 
         # SEC (EntraRBAC A19, OPIM-08, A3): the ARM gate before every request -- the first attempt, each
         # throttled retry, the 401 retry (a refused refresh latches Invoke-OPIMArmWithRefresh) and every
@@ -123,22 +136,46 @@ function Invoke-OPIMArmRequest {
             return
         }
 
-        # SEC: never a request without an ARM token (no state, no ArmToken, an empty SecureString).
-        $ArmToken = if ($script:_OPIMAuthState -is [System.Collections.IDictionary]) { $script:_OPIMAuthState['ArmToken'] }
+        # SEC: never a request without a usable ARM token. A token is usable only in a state that is a
+        # dictionary holding both the Graph session's tenant (TokenTenantId) and a non-empty SecureString
+        # ArmToken: Initialize-OPIMAuth never stores an ARM token without that tenant, and the gate above
+        # compares the token with it, so a token with no tenant to compare against is no usable token.
+        $ArmToken = $null
+        if ($script:_OPIMAuthState -is [System.Collections.IDictionary] -and $script:_OPIMAuthState['TokenTenantId']) {
+            $ArmToken = $script:_OPIMAuthState['ArmToken']
+        }
         if (-not ($ArmToken -is [System.Security.SecureString]) -or $ArmToken.Length -eq 0) {
             throw [System.Management.Automation.ErrorRecord]::new(
                 [System.Exception]::new(('No Azure Resource Manager request was sent: the module''s session holds no ' +
                     'Azure Resource Manager token. Run Connect-OPIM -IncludeARM to sign in to Azure, and run the command again.')),
                 'ArmTokenAcquisitionFailed',
                 [System.Management.Automation.ErrorCategory]::AuthenticationError,
-                $CallPath)
+                $CallTarget)
+            return
+        }
+
+        # SEC: the request stays on the session's ARM host. The caller's path is appended to the host, so
+        # a path such as '@other.host/...' or '.other.host/...' would move the uri, and the token, to
+        # another host. The uri is built and checked here, before every send -- the first attempt, each
+        # retry and every page -- with the same three terms as a next link: absolute, https, and the
+        # session's ARM host ($ArmBaseHost, of the wrapper this function is nested in). The checked uri
+        # is the one sent. No error id, as the next-link refusal; the message names neither the path nor
+        # any host. ThrowTerminatingError ends the call even under SilentlyContinue; the return stays.
+        $CallUri = $null
+        $OnArmHost = [uri]::TryCreate("$BaseUrl$CallPath", [UriKind]::Absolute, [ref]$CallUri) -and
+            $CallUri.Scheme -eq 'https' -and
+            [string]::Equals($CallUri.Host, $ArmBaseHost, [System.StringComparison]::OrdinalIgnoreCase)
+        if (-not $OnArmHost) {
+            Write-CmdletError -Message ([System.Exception]::new(
+                    'No Azure Resource Manager request was sent: the request path does not stay on the session''s Azure Resource Manager host.')) `
+                -Category SecurityError -TargetObject $null -Cmdlet $PSCmdlet -Terminating
             return
         }
         # A6: the SecureString goes to Invoke-WebRequest as it is; the module never makes it plaintext.
         # -Authentication Bearer refuses a non-https uri, and the header is not replayed on a redirect.
         $InvokeParams = @{
             Method             = $CallMethod
-            Uri                = "$BaseUrl$CallPath"
+            Uri                = $CallUri
             Authentication     = 'Bearer'
             Token              = $ArmToken
             SkipHttpErrorCheck = $true
@@ -162,7 +199,7 @@ function Invoke-OPIMArmRequest {
                 [System.Exception]::new("Azure Resource Manager request failed before a response was received: $($PSItem.Exception.Message)"),
                 'ArmTransportError',
                 [System.Management.Automation.ErrorCategory]::ConnectionError,
-                $CallPath)
+                $CallTarget)
         }
         # The throw above does not always end this function: under -ErrorAction SilentlyContinue or
         # Ignore, with no try up the call stack, a throw inside a CATCH block resumes AFTER the whole try
@@ -417,9 +454,9 @@ function Invoke-OPIMArmRequest {
     # function.
     #
     # No response object at all means a nested function already raised and returned: the ARM gate,
-    # the missing-token refusal or the transport failure in Invoke-OPIMArmSingle. Its record is the
-    # call's answer. Converting the missing response would add a parameter-binding record of its own,
-    # since Convert-OPIMArmHttpException requires one.
+    # the missing-token refusal, the host refusal or the transport failure in Invoke-OPIMArmSingle.
+    # Its record is the call's answer. Converting the missing response would add a parameter-binding
+    # record of its own, since Convert-OPIMArmHttpException requires one.
     if ($null -eq $Response) { return }
     if ([int]$Response.StatusCode -lt 200 -or [int]$Response.StatusCode -gt 299) {
         throw (Convert-OPIMArmHttpException -Response $Response -Path $Path)
@@ -427,8 +464,38 @@ function Invoke-OPIMArmRequest {
         return
     }
 
-    if (-not $Response.Content) { return $null }
-    $Parsed = $Response.Content | ConvertFrom-Json -ErrorAction Stop
+    # Every 2xx body is parsed into a FRESH variable inside a try whose catch only scrubs and sets a
+    # flag, read straight after the try: a throw inside the catch would resume after the try under
+    # -ErrorAction SilentlyContinue with no try up the call stack, and a failed assignment would leave a
+    # reused variable holding the previous page. Without -All an empty body is no content ($null, as
+    # for a 204), but a body that does not parse is a failed read. With -All the first page must carry
+    # a body that parses as well: an ARM list always answers with a value array, so an empty answer is
+    # a failed read, never an empty list.
+    $Parsed = $null
+    $ReadFailed = $false
+    if ($Response.Content) {
+        try {
+            $Parsed = $Response.Content | ConvertFrom-Json -ErrorAction Stop
+        } catch {
+            Remove-OPIMErrorRecord -Record $PSItem
+            $ReadFailed = $true
+        }
+    }
+    if ($ReadFailed -or ($All -and $null -eq $Parsed)) {
+        $ReadMessage = if ($All) {
+            'Page 1: Azure Resource Manager returned a body that could not be read, so the list is incomplete.'
+        } else {
+            'Azure Resource Manager returned a body that could not be read.'
+        }
+        # The caller's path as the target, never a next link.
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new($ReadMessage),
+            'ArmTransportError',
+            [System.Management.Automation.ErrorCategory]::InvalidResult,
+            $Path)
+        # Carrying on would hand back nothing as an answer, or read a missing page as an empty list.
+        return
+    }
 
     if (-not $All) { return $Parsed }
 
@@ -475,7 +542,29 @@ function Invoke-OPIMArmRequest {
             return
         }
         $PageNumber++
-        $Page = $PageResponse.Content | ConvertFrom-Json -ErrorAction Stop
+        # A FRESH variable for every page, parsed as the first page is: a page that does not parse, or
+        # carries no body at all, is a failed read. Reusing the previous page's variable added that
+        # page's items again and requested its next link again -- a duplicated list, or an endless walk.
+        $Page = $null
+        $PageReadFailed = $false
+        if ($PageResponse.Content) {
+            try {
+                $Page = $PageResponse.Content | ConvertFrom-Json -ErrorAction Stop
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PageReadFailed = $true
+            }
+        }
+        if ($PageReadFailed -or $null -eq $Page) {
+            # The caller's path as the target, never the next link, whose query can carry a skip token.
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("Page $PageNumber`: Azure Resource Manager returned a body that could not be read, so the list is incomplete."),
+                'ArmTransportError',
+                [System.Management.Automation.ErrorCategory]::InvalidResult,
+                $Path)
+            # return, never break: break would hand back the pages so far as the whole collection.
+            return
+        }
         if ($null -ne $Page.value) { foreach ($Item in $Page.value) { $AllValues.Add($Item) } }
         $NextLink = if ($Page.PSObject.Properties['nextLink']) { $Page.nextLink }
         elseif ($Page.PSObject.Properties['@nextLink']) { $Page.'@nextLink' }
