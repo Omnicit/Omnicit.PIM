@@ -3,6 +3,7 @@ BeforeAll {
     Import-Module Omnicit.PIM -Force
     . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
     Install-OPIMTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OPIMTestToken.ps1"
 }
 
 AfterAll {
@@ -10,20 +11,26 @@ AfterAll {
 }
 
 Describe 'Disconnect-OPIM' {
+    # The module calls no Az command: the Azure Resource Manager token lives only in the auth state,
+    # so clearing the state is the whole Azure disconnect. Disconnect-AzAccount is mocked only so that
+    # a call to it is counted here instead of failing the file on the tripwire.
+    BeforeAll {
+        Mock -ModuleName Omnicit.PIM Disconnect-AzAccount {}
+    }
+
     Context 'When called successfully' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Disconnect-MgGraph {}
-            Mock -ModuleName Omnicit.PIM Disconnect-AzAccount {}
         }
 
-        It 'calls Disconnect-MgGraph' {
+        It 'calls Disconnect-MgGraph once' {
             Disconnect-OPIM
-            Should -Invoke -ModuleName Omnicit.PIM Disconnect-MgGraph -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disconnect-MgGraph -Times 1 -Exactly -Scope It
         }
 
-        It 'calls Disconnect-AzAccount' {
+        It 'calls no Az command' {
             Disconnect-OPIM
-            Should -Invoke -ModuleName Omnicit.PIM Disconnect-AzAccount -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disconnect-AzAccount -Times 0 -Scope It
         }
 
         It 'produces no output' {
@@ -35,23 +42,62 @@ Describe 'Disconnect-OPIM' {
     Context 'When Disconnect-MgGraph throws (not connected)' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Disconnect-MgGraph { throw 'Not connected' }
-            Mock -ModuleName Omnicit.PIM Disconnect-AzAccount {}
         }
 
         It 'does not produce a terminating error' {
             { Disconnect-OPIM } | Should -Not -Throw
         }
 
-        It 'calls Disconnect-AzAccount as well, despite the Disconnect-MgGraph error' {
+        It 'clears the auth state despite the Disconnect-MgGraph error' {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com' }
+            }
             Disconnect-OPIM
-            Should -Invoke -ModuleName Omnicit.PIM Disconnect-AzAccount -Times 1 -Scope It
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState | Should -BeNullOrEmpty
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Disconnect-AzAccount -Times 0 -Scope It
+        }
+    }
+
+    Context 'When the session holds an Azure Resource Manager token' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Disconnect-MgGraph {}
+        }
+
+        It 'clears the ARM token with the auth state, and the MSAL application with its tenant' {
+            $Token = New-OPIMTestAccessToken -TenantId '22222222-2222-2222-2222-222222222222' -ObjectId '33333333-3333-3333-3333-333333333333'
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token } {
+                param($Token)
+                $script:_OPIMAuthState = @{
+                    TenantId         = 'contoso.onmicrosoft.com'
+                    TokenTenantId    = '22222222-2222-2222-2222-222222222222'
+                    ObjectId         = '33333333-3333-3333-3333-333333333333'
+                    ArmToken         = [System.Net.NetworkCredential]::new('', $Token).SecurePassword
+                    ArmTokenExpiry   = [DateTime]::UtcNow.AddHours(1)
+                    ArmTokenTenantId = '22222222-2222-2222-2222-222222222222'
+                    ArmTokenObjectId = '33333333-3333-3333-3333-333333333333'
+                    ArmResourceUrl   = 'https://management.azure.com'
+                }
+                $script:_OPIMMsalApp = [pscustomobject]@{ Name = 'msal-application-stand-in' }
+                $script:_OPIMMsalAppTenantId = 'contoso.onmicrosoft.com'
+            }
+
+            Disconnect-OPIM
+
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState | Should -BeNullOrEmpty
+                $script:_OPIMMsalApp | Should -BeNullOrEmpty
+                $script:_OPIMMsalAppTenantId | Should -BeNullOrEmpty
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Disconnect-MgGraph -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disconnect-AzAccount -Times 0 -Scope It
         }
     }
 
     Context 'When the session signed in with a device code' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Disconnect-MgGraph {}
-            Mock -ModuleName Omnicit.PIM Disconnect-AzAccount {}
         }
 
         It 'clears the remembered device code mode with the auth state' {
@@ -63,6 +109,20 @@ Describe 'Disconnect-OPIM' {
             InModuleScope Omnicit.PIM {
                 $script:_OPIMAuthState | Should -BeNullOrEmpty
             }
+        }
+    }
+
+    Context 'Its definition' {
+        It 'names and calls no Az command, in its help or its code' {
+            # AzAuth's Get-AzToken is no Az command: AzAuth is not one of the Az modules.
+            $Definition = (Get-Command -Name Disconnect-OPIM -Module Omnicit.PIM).Definition
+            $Definition | Should -Not -Match '\b[A-Z][a-z]+-Az(?!ure|Token\b)[A-Za-z]+'
+            $Definition | Should -Not -Match 'Az\.Accounts|Az context|Az module'
+        }
+
+        It 'says in its help that the Azure Resource Manager token is cleared with the auth state' {
+            $Help = (Get-Command -Name Disconnect-OPIM -Module Omnicit.PIM).ScriptBlock.Ast.GetHelpContent()
+            $Help.Description | Should -Match 'Azure Resource Manager token'
         }
     }
 }
