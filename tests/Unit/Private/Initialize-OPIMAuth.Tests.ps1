@@ -561,7 +561,7 @@ Describe 'Initialize-OPIMAuth' {
             # calling command latched. The command is a module-scope test function with a try of its
             # own, so it carries on and reads the latch after the refusal.
             It 'refuses a token for <Name> with <ErrorId>, stores nothing and keeps the caller latched' -ForEach @(
-                @{ Name = 'another tenant'; Fixture = @{ ArmTid = 'bbbbbbbb-0000-0000-0000-00000000000b' }; NoSessionOid = $false; ErrorId = 'TenantMismatch'; Message = 'Azure is signed in to another tenant than *' }
+                @{ Name = 'another tenant'; Fixture = @{ ArmTid = 'bbbbbbbb-0000-0000-0000-00000000000b' }; NoSessionOid = $false; ErrorId = 'TenantMismatch'; Message = 'The Azure Resource Manager token was issued for another tenant than *' }
                 @{ Name = 'no readable tenant'; Fixture = @{ ArmNoTid = $true }; NoSessionOid = $false; ErrorId = 'TenantMismatch'; Message = 'The tenant of the Azure Resource Manager token could not be read*' }
                 @{ Name = 'another account'; Fixture = @{ ArmOid = '33333333-3333-3333-3333-333333333333' }; NoSessionOid = $false; ErrorId = 'AccountMismatch'; Message = 'The Azure Resource Manager token was issued to another account*' }
                 @{ Name = 'no readable account'; Fixture = @{ ArmNoOid = $true }; NoSessionOid = $false; ErrorId = 'AccountMismatch'; Message = 'The account of the Azure Resource Manager token could not be read*' }

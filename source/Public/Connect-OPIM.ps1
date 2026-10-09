@@ -11,10 +11,11 @@ function Connect-OPIM {
     One Microsoft Graph sign-in covers directory roles and Entra ID groups. WAM is never used: the
     Graph sign-in goes through the system browser, which works identically on Windows, macOS, and
     Linux, or, with -DeviceCode, through a device code for a machine without a browser. Azure RBAC
-    signs in separately, through the Az module's own sign-in (Connect-AzAccount) for the tenant of
-    the Graph session: with -IncludeARM here, or when an Azure role cmdlet first needs it. It may
-    open its own browser window, with WAM turned off for this PowerShell process, or, in device
-    code mode, show its own code.
+    signs in separately, through AzAuth's Get-AzToken, for the tenant of the Graph session: with
+    -IncludeARM here, or when an Azure role cmdlet first needs it. It opens its own browser window
+    or, in device code mode, shows its own code. Its token must be issued for the tenant and the
+    account of the Graph sign-in (TenantMismatch, AccountMismatch otherwise), and Omnicit.PIM sends
+    every Azure request itself with it: no Az context and no subscription choice are involved.
 
     The session state is cached in memory. Subsequent calls are idempotent -- if a valid token
     already exists for the same tenant no sign-in prompt is shown.
@@ -32,7 +33,7 @@ function Connect-OPIM {
 
     .EXAMPLE
     Connect-OPIM -TenantAlias corp -IncludeARM
-    Authenticate and also sign in to Azure through the Az module, for the Azure role cmdlets.
+    Authenticate and also sign in to Azure Resource Manager, for the Azure role cmdlets.
 
     .EXAMPLE
     Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -DeviceCode -IncludeARM
@@ -49,9 +50,9 @@ function Connect-OPIM {
     Mutually exclusive with -TenantAlias.
 
     .PARAMETER IncludeARM
-    Also sign in to Azure, through the Az module's own sign-in (Connect-AzAccount), for the tenant
-    of the Microsoft Graph session. An earlier Azure sign-in is reused when it is for that tenant and
-    the same account and can still get a token silently. Optional: without it,
+    Also sign in to Azure Resource Manager, through AzAuth's Get-AzToken, for the tenant and the
+    account of the Microsoft Graph session. The session's Azure token is reused when it was issued
+    for that tenant and the same account and has more than 5 minutes left. Optional: without it,
     Get-/Enable-/Disable-OPIMAzureRole sign in to Azure on first use; use it to have the Azure
     prompt appear now.
 
@@ -63,13 +64,13 @@ function Connect-OPIM {
     Sign in with a device code instead of the system browser, for a machine without one, such as a
     remote session or a cloud PC. The sign-in message with the code and the address is written to
     the Information stream with the tag OPIMDeviceCode and shown whatever the information preference
-    is. With -IncludeARM, Connect-AzAccount shows its own code for Azure (Az.Accounts 5.5.3 writes
-    it as an information record, an older Az.Accounts as a warning). A script reads both as they
-    arrive by merging the streams into a pipeline, for example
-    6>&1 3>&1 | ForEach-Object { $PSItem.ToString() }; capturing the output in a variable shows
-    nothing until the flow ends, which can take 15 minutes. The mode is remembered for this
-    PowerShell session: the refresh stays silent while it can, and any later sign-in that needs a
-    prompt, a step-up included, uses a device code until Disconnect-OPIM.
+    is. With -IncludeARM, Azure shows a second code: AzAuth hands it over as a warning, which
+    Omnicit.PIM writes on the Information stream instead, with the same tag, so it is shown even
+    where warnings are silenced. A script reads both as they arrive by merging the Information
+    stream into a pipeline, for example 6>&1 | ForEach-Object { $PSItem.ToString() }; capturing
+    the output in a variable shows nothing until the flow ends, which can take 15 minutes. The mode
+    is remembered for this PowerShell session: the refresh stays silent while it can, and any later
+    sign-in that needs a prompt, a step-up included, uses a device code until Disconnect-OPIM.
     #>
     [Alias('Connect-PIM')]
     [CmdletBinding(DefaultParameterSetName = 'ByTenantId')]

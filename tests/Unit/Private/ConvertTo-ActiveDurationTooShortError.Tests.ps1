@@ -23,14 +23,6 @@ Describe 'ConvertTo-ActiveDurationTooShortError' {
 
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Write-CmdletError {}
-
-            $FakeException = [System.Exception]::new('Activation still pending')
-            $FakeRecord = [System.Management.Automation.ErrorRecord]::new(
-                $FakeException,
-                'ActiveDurationTooShortForRole,Microsoft.Azure.Commands.Resources.Cmdlets',
-                [System.Management.Automation.ErrorCategory]::InvalidOperation,
-                $null
-            )
         }
 
         It 'returns $true' {

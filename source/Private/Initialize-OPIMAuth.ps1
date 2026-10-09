@@ -179,9 +179,10 @@ function Initialize-OPIMAuth {
     # outside any try a command carries on past a terminating error raised here, and would otherwise
     # send under the session or the ARM token an earlier sign-in left. Keyed on the calling
     # command's invocation, so a nested command's or a pipeline neighbour's success releases only its
-    # own entry. The caller is the command that called this function directly: the cmdlet, or
+    # own entry. The caller is the command that called this function directly: the cmdlet,
     # Invoke-OPIMGraphRequest's nested Invoke-OPIMGraphSingle for its claims step-up and
-    # token-rejected retry.
+    # token-rejected retry, or Invoke-OPIMArmRequest's nested Invoke-OPIMArmWithRefresh for its one
+    # refresh after a 401.
     $SignInCaller = Lock-OPIMSignIn
 
     # OPIM-07: a call that names no tenant keeps the session's tenant -- never 'organizations' once the

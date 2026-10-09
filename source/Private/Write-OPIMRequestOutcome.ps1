@@ -6,8 +6,8 @@ function Write-OPIMRequestOutcome {
     .DESCRIPTION
     The one place that turns a request status into what the user sees, for the Enable- and Disable-
     cmdlets and Wait-OPIMDirectoryRole. It first writes the status back onto the request object --
-    a note property is added when the object has none, and a read-only status (an Az.Resources
-    object) is left as it is -- and then, by Get-OPIMRequestOutcome:
+    a note property is added when the object has none, and a status property that cannot be set is
+    left as it is -- and then, by Get-OPIMRequestOutcome:
 
     Succeeded: returns the request.
     InProgress or AwaitingDecision: writes a warning through -Cmdlet and returns the request, which

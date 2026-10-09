@@ -186,7 +186,7 @@ Describe 'Get-OPIMArmRefusal' {
                 $Record.FullyQualifiedErrorId | Should -BeExactly 'TenantMismatch'
                 $Record.TargetObject | Should -BeExactly $TenantA
                 $Record.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
-                $Record.Exception.Message | Should -BeLike "Azure is signed in to another tenant than '$TenantA'*"
+                $Record.Exception.Message | Should -BeLike "The Azure Resource Manager token was issued for another tenant than '$TenantA'*"
                 $Record.Exception.Message | Should -Not -BeLike "*$TenantB*"
             }
         }

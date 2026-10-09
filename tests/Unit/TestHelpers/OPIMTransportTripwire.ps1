@@ -6,9 +6,13 @@
 # tests/QA/testhygiene.tests.ps1 proves every file does. Ported from Omnicit.EntraRBAC.
 #
 # Record AND throw: a throw alone is not enough, since the module's own catch blocks turn it into a
-# WriteError, a verbose line or nothing at all (Initialize-OPIMAuth discards an Update-AzConfig
-# failure). The record is what the AfterAll check reads. It holds parameter NAMES only -- never a
-# value, which may be a secret or a token.
+# WriteError, a verbose line or nothing at all (Invoke-OPIMArmRequest turns an Invoke-WebRequest
+# failure into a record of its own, ArmTransportError). The record is what the AfterAll check reads.
+# It holds parameter NAMES only -- never a value, which may be a secret or a token.
+#
+# The five Az.Accounts and the four Az.Resources commands stay on the list although module code no
+# longer calls them: Az.Resources is still a declared dependency, and a call that came back would be
+# refused here, until the Az modules leave the dependencies (Sprint 2 step 1b).
 #
 # Three forms, measured 2026-10-06 (Microsoft.Graph.Authentication 2.36.0, Az.Accounts 5.5.3,
 # Az.Resources 9.0.3) and, for AzAuth's Get-AzToken, 2026-10-09 (AzAuth 2.9.0, a compiled cmdlet
@@ -92,6 +96,8 @@ function New-OPIMTransportTripwireDefinition {
     $Names = Get-OPIMTransportTripwireName
     foreach ($Name in @($Names.Keys)) {
         $Spec = $Names[$Name]
+        # Load-bearing only when module autoloading is off: with it on, the Get-Command below loads
+        # AzAuth from PSModulePath by itself.
         if ($Spec.Module -eq 'AzAuth' -and -not (Get-Module -Name AzAuth)) {
             Import-Module -Name AzAuth -ErrorAction Stop
         }

@@ -74,8 +74,8 @@ function Enable-OPIMMyRole {
     Activate all eligible Entra ID PIM group assignments. Requires confirmation. May be combined
     with other -AllEligible* switches.
     .PARAMETER AllEligibleAzureRoles
-    Activate all eligible Azure RBAC roles. Triggers Connect-AzAccount. Requires confirmation.
-    May be combined with other -AllEligible* switches.
+    Activate all eligible Azure RBAC roles. Signs in to Azure Resource Manager as well (AzAuth's
+    Get-AzToken). Requires confirmation. May be combined with other -AllEligible* switches.
     .PARAMETER Hours
     Activation duration in hours applied to all role and group activations. Defaults to 1.
     Make it persistent with: $PSDefaultParameterValues['Enable-OPIM*:Hours'] = 4

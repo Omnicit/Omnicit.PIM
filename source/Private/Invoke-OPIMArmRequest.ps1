@@ -11,8 +11,8 @@ function Invoke-OPIMArmRequest {
     Initialize-OPIMAuth -IncludeARM holds in $script:_OPIMAuthState.ArmToken: a SecureString that is
     handed to Invoke-WebRequest -Authentication Bearer -Token as it is, so the module never makes it
     plaintext; -Authentication Bearer refuses a uri that is not https, and the header is not replayed
-    on a redirect. The host is the state's ArmResourceUrl, else https://management.azure.com. The
-    module uses neither Az.Accounts nor Invoke-AzRestMethod.
+    on a redirect. The host is the state's ArmResourceUrl, else https://management.azure.com. No Az
+    module takes part: neither Az.Accounts nor its REST cmdlet.
 
     Before every request -- the first attempt, each throttled retry, the retry after a 401 refresh
     and every page of a -All read -- the ARM gate, Get-OPIMArmRefusal, refuses a request made for a

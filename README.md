@@ -29,9 +29,9 @@ Import-Module Omnicit.PIM
 All `Get-/Enable-/Disable-OPIM*` cmdlets authenticate automatically on first use. The first
 Microsoft Graph sign-in opens the system browser, or shows a device code with `-DeviceCode` (see
 below); the token is cached via MSAL for the session, and later calls reuse it without a new prompt
-while it can be refreshed silently. The Azure role cmdlets also need Azure's own sign-in, through
-the Az module, which prompts separately the first time (see below). You never need to call
-`Connect-MgGraph` or `Connect-AzAccount` manually.
+while it can be refreshed silently. The Azure role cmdlets also need an Azure Resource Manager
+sign-in of their own, through AzAuth, which prompts separately the first time (see below). You
+never need to call `Connect-MgGraph` or any Az sign-in command manually.
 
 `Connect-OPIM` is the module's optional pre-authentication command. Use it when you want the
 sign-in prompt at a predictable time or need to target a specific tenant:
@@ -65,12 +65,15 @@ the error: every request it would still make is refused with `SignInRefused`. A 
 while a failed request is retried -- an ACRS step-up or a token refresh -- fails only that request.
 Run `Connect-OPIM`, or the command again, once the sign-in can succeed.
 
-Azure signs in separately, through the Az module, for the same tenant as the Microsoft Graph
-sign-in. An earlier Azure sign-in is reused only when it is for that tenant and the same account as
-the Graph sign-in; otherwise Azure signs in again for that tenant. It never asks you to pick a
-subscription: every Azure role command names its own scope. A failed Azure sign-in ends with
-`AzureConnectFailed`, and the command then sends nothing to Azure under an earlier sign-in
-(`SignInRefused`).
+Azure signs in separately, through AzAuth's `Get-AzToken`, for the same tenant as the Microsoft
+Graph sign-in. Its token must be issued for that tenant and for the account the Graph sign-in used:
+a token for another tenant is refused with `TenantMismatch`, and one for another account with
+`AccountMismatch`, before anything is sent. The token is reused only while it is for that tenant
+and account and has more than 5 minutes left; otherwise Azure signs in again. Omnicit.PIM sends
+every Azure request itself, with that token, so no Az context and no Az session are involved, and
+it never asks you to pick a subscription: every Azure role command names its own scope. A failed
+Azure sign-in ends with `AzureConnectFailed`, and the command then sends nothing to Azure under an
+earlier sign-in (`SignInRefused`).
 
 `pim` and `unpim` sign in to Microsoft Graph first; when that fails, the command stops before
 anything is listed or changed. They then sign in to Azure, only when Azure roles are part of the
@@ -92,14 +95,15 @@ Connect-OPIM -TenantAlias corp -DeviceCode -IncludeARM
 pim -TenantAlias corp -DeviceCode                     # Enable-OPIMMyRole and Disable-OPIMMyRole take it too
 ```
 
-The message with the code goes to the Information stream with the tag `OPIMDeviceCode`. The code
-Azure shows comes from `Connect-AzAccount` itself: Az.Accounts 5.5.3 writes it as an information
-record, an older Az.Accounts as a warning. A script reads both as they arrive by merging the two
-streams into a pipeline. Capturing the output in a variable instead (`$x = Connect-OPIM -DeviceCode 6>&1`)
-shows nothing until the flow ends, which can take 15 minutes.
+The message with the code goes to the Information stream with the tag `OPIMDeviceCode`. AzAuth
+hands over the code Azure shows as a warning; Omnicit.PIM writes it on the Information stream
+instead, with the same tag, so it shows even where warnings are silenced. A script reads both as
+they arrive by merging the Information stream into a pipeline. Capturing the output in a variable
+instead (`$x = Connect-OPIM -DeviceCode 6>&1`) shows nothing until the flow ends, which can take 15
+minutes.
 
 ```powershell
-Connect-OPIM -TenantAlias corp -DeviceCode -IncludeARM 6>&1 3>&1 | ForEach-Object { $PSItem.ToString() }
+Connect-OPIM -TenantAlias corp -DeviceCode -IncludeARM 6>&1 | ForEach-Object { $PSItem.ToString() }
 ```
 
 For Azure RBAC cmdlets (`Get-/Enable-/Disable-OPIMAzureRole`) an Azure Resource Manager token
@@ -776,8 +780,8 @@ twice in one command is requested once, with a warning for the second.
 With `-Wait`, the `Enable-OPIM*` role and group cmdlets wait for at most `-TimeoutSeconds` (default
 300) and then report the request by its last status. For a directory role or a group that status is
 written back onto the request (a directory role returns its role assignment once that appears); an
-Azure role returns the request as Azure last gave it, since the `Status` of an Az request object is
-read-only. Groups and Azure roles read the status
+Azure role returns the request as Azure last gave it, which already carries that status. Groups and
+Azure roles read the status
 again, with a pause between reads, only while the request is still being worked on, counting from
 the start of the wait. Directory roles hand every request that has not failed to
 `Wait-OPIMDirectoryRole`, which reads each one at least once, waits for the role assignment to

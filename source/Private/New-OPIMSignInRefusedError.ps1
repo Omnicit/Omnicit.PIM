@@ -8,15 +8,16 @@ function New-OPIMSignInRefusedError {
     request made on behalf of a command whose sign-in was refused -- a command Get-OPIMSignInRefusal
     finds latched on the call stack -- so nothing is sent for that command under the session or the
     token an earlier sign-in left: Invoke-OPIMGraphRequest before every Graph call, and the ARM gate
-    Get-OPIMArmRefusal before every Az.Resources call. Invoke-OPIMGraphRequest checks its session
-    gate first, so a Graph request made while the Graph SDK session is changed is refused as
-    GraphSessionChanged instead. The target is the latched command's name, which is the immediate
-    caller of Initialize-OPIMAuth: the cmdlet (a pillar cmdlet, Wait-OPIMDirectoryRole or
-    Connect-OPIM), for a sign-in refused at its entry, or Invoke-OPIMGraphSingle, the function nested
-    in Invoke-OPIMGraphRequest that makes every Graph request, for one refused during that wrapper's
-    own claims step-up or token-rejected retry. The message names no tenant, no
-    account and no token: it is fixed text, and the command's name is the only value the record
-    carries.
+    Get-OPIMArmRefusal, which Invoke-OPIMArmRequest calls before every Azure Resource Manager request.
+    Invoke-OPIMGraphRequest checks its session gate first, so a Graph request made while the Graph
+    SDK session is changed is refused as GraphSessionChanged instead. The target is the latched
+    command's name, which is the immediate caller of Initialize-OPIMAuth: the cmdlet (a pillar
+    cmdlet, Wait-OPIMDirectoryRole or Connect-OPIM), for a sign-in refused at its entry;
+    Invoke-OPIMGraphSingle, the function nested in Invoke-OPIMGraphRequest that makes every Graph
+    request, for one refused during that wrapper's own claims step-up or token-rejected retry; or
+    Invoke-OPIMArmWithRefresh, the function nested in Invoke-OPIMArmRequest, for one refused during
+    the ARM transport's refresh after a 401. The message names no tenant, no account and no token:
+    it is fixed text, and the command's name is the only value the record carries.
 
     Initialize-OPIMAuth raises it too, as a terminating error before any token call or Connect-MgGraph
     and before it latches its own caller, when a command OUTSIDE the one that called it is latched

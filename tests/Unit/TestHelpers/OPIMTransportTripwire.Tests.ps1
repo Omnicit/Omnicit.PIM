@@ -27,7 +27,8 @@ BeforeDiscovery {
         @{ Name = 'Get-AzRoleEligibilitySchedule'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{ Scope = '/' } }
         @{ Name = 'Get-AzRoleAssignmentScheduleInstance'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{ Scope = '/' } }
         @{ Name = 'Get-AzRoleAssignmentScheduleRequest'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{ Scope = '/' } }
-        # The parameter shape source/Public/Enable-OPIMAzureRole.ps1:208-224 sends.
+        # The parameter shape Enable-OPIMAzureRole sent before it moved to the module's own ARM
+        # transport; module code calls the command no more, and the tripwire still refuses it.
         @{ Name = 'New-AzRoleAssignmentScheduleRequest'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{
                 Name                            = 'opim-tripwire-request'
                 Scope                           = '/'
@@ -331,9 +332,11 @@ Describe 'OPIMTransportTripwire' {
     }
 
     It 'carries EnableLoginByWam on the Update-AzConfig replacement, a parameter the real cmdlet offers only dynamically' {
-        # Initialize-OPIMAuth.ps1:522 passes -EnableLoginByWam. It is one of the configuration keys
-        # Update-AzConfig returns from GetDynamicParameters on Az.Accounts 5.3.x and 5.5.x alike, so
-        # this holds on every version, unlike the extra dynamic parameters of the other four cmdlets.
+        # Initialize-OPIMAuth passed -EnableLoginByWam before it signed in to Azure with AzAuth, and
+        # the replacement still carries it while Update-AzConfig stays on the tripwire. It is one of
+        # the configuration keys Update-AzConfig returns from GetDynamicParameters on Az.Accounts 5.3.x
+        # and 5.5.x alike, so this holds on every version, unlike the extra dynamic parameters of the
+        # other four cmdlets.
         $Real = @(Get-TripwireKnownAnswerRealCommand -Name 'Update-AzConfig' -Module 'Az.Accounts')
         $Real.Count | Should -Be 1 -Because 'exactly one real Update-AzConfig must exist in Az.Accounts'
         $Real[0] | Should -BeOfType ([System.Management.Automation.CmdletInfo])
@@ -412,9 +415,9 @@ Describe 'OPIMTransportTripwire' {
     }
 
     It 'binds a Mock -ModuleName on Update-AzConfig with a -ParameterFilter on EnableLoginByWam to the call shape module code uses' {
-        # Initialize-OPIMAuth.ps1:522 calls Update-AzConfig -EnableLoginByWam $false -Scope Process
-        # -WhatIf:$false -Confirm:$false -ErrorAction SilentlyContinue (and :533 makes the
-        # -LoginExperienceV2 call of its own). EnableLoginByWam is a DYNAMIC parameter of the real cmdlet,
+        # The call shape Initialize-OPIMAuth used before it signed in to Azure with AzAuth:
+        # Update-AzConfig -EnableLoginByWam $false -Scope Process -WhatIf:$false -Confirm:$false
+        # -ErrorAction SilentlyContinue. EnableLoginByWam is a DYNAMIC parameter of the real cmdlet,
         # so this proves the materialized static parameter binds under a mock and the filter sees it.
         Mock -ModuleName Omnicit.PIM Update-AzConfig { 'mocked' } -ParameterFilter { $EnableLoginByWam -eq $false }
         $Before = $global:OPIMTransportTripwireHits.Count
