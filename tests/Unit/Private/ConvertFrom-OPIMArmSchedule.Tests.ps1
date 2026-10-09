@@ -415,4 +415,171 @@ Describe 'ConvertFrom-OPIMArmSchedule' {
             }
         }
     }
+
+    # The answers ARM gave in the live run of docs/live-verification/feat-arm-transport-checklist.md
+    # (tests/Unit/TestHelpers/ArmResponse/recorded-*.json), redacted to non-v4 placeholder ids and
+    # to the example.com / contoso.com domains. Where the Microsoft Learn fixtures above show the
+    # documented shape, these show what the service really returned: dates with none to seven
+    # fractional digits and with a Z or a +00:00 suffix, an Assigned row that carries no end date
+    # and no link to its eligibility, a request answer with an empty ticketInfo and no scheduleInfo,
+    # and a principal that carries userPrincipalName where the schema has email.
+    # The expected values are read from the recorded text itself, with the same JsonDocument oracle
+    # as above, never typed twice.
+    # -ForEach data is built when the file is discovered, so it stands outside BeforeAll.
+    Context 'recorded ARM answers' {
+        $RecordedAnswers = @(
+            @{ Name = 'eligibility schedule at the first resource group'; File = 'recorded-roleEligibilitySchedules.json'; Index = 0; Kind = 'EligibilitySchedule' }
+            @{ Name = 'eligibility schedule at the second resource group'; File = 'recorded-roleEligibilitySchedules.json'; Index = 1; Kind = 'EligibilitySchedule' }
+            @{ Name = 'Activated instance'; File = 'recorded-roleAssignmentScheduleInstances.json'; Index = 0; Kind = 'AssignmentScheduleInstance' }
+            @{ Name = 'Assigned instance'; File = 'recorded-roleAssignmentScheduleInstances.json'; Index = 1; Kind = 'AssignmentScheduleInstance' }
+            @{ Name = 'SelfActivate request'; File = 'recorded-roleAssignmentScheduleRequest-SelfActivate.json'; Index = -1; Kind = 'AssignmentScheduleRequest' }
+            @{ Name = 'SelfDeactivate request'; File = 'recorded-roleAssignmentScheduleRequest-SelfDeactivate.json'; Index = -1; Kind = 'AssignmentScheduleRequest' }
+        )
+
+        # What each recorded answer does not carry: the properties that must come out $null, since
+        # neither the field nor a value is in the text.
+        $RecordedNulls = @(
+            @{
+                Name = 'eligibility schedule'; File = 'recorded-roleEligibilitySchedules.json'; Index = 0; Kind = 'EligibilitySchedule'
+                Missing = @('Condition', 'ConditionVersion', 'PrincipalEmail')
+            }
+            @{
+                Name = 'Activated instance'; File = 'recorded-roleAssignmentScheduleInstances.json'; Index = 0; Kind = 'AssignmentScheduleInstance'
+                Missing = @('Condition', 'ConditionVersion', 'PrincipalEmail')
+            }
+            @{
+                Name = 'Assigned instance'; File = 'recorded-roleAssignmentScheduleInstances.json'; Index = 1; Kind = 'AssignmentScheduleInstance'
+                Missing = @('Condition', 'ConditionVersion', 'EndDateTime', 'LinkedRoleEligibilityScheduleId', 'LinkedRoleEligibilityScheduleInstanceId', 'PrincipalEmail')
+            }
+            @{
+                Name = 'SelfActivate request'; File = 'recorded-roleAssignmentScheduleRequest-SelfActivate.json'; Index = -1; Kind = 'AssignmentScheduleRequest'
+                Missing = @('ApprovalId', 'Condition', 'ConditionVersion', 'ExpirationEndDateTime', 'PrincipalEmail',
+                    'TargetRoleAssignmentScheduleInstanceId', 'TicketInfoTicketNumber', 'TicketInfoTicketSystem')
+            }
+            @{
+                Name = 'SelfDeactivate request'; File = 'recorded-roleAssignmentScheduleRequest-SelfDeactivate.json'; Index = -1; Kind = 'AssignmentScheduleRequest'
+                Missing = @('ApprovalId', 'Condition', 'ConditionVersion', 'ExpirationDuration', 'ExpirationEndDateTime', 'ExpirationType',
+                    'Justification', 'LinkedRoleEligibilityScheduleId', 'PrincipalEmail', 'ScheduleInfoStartDateTime',
+                    'TargetRoleAssignmentScheduleId', 'TargetRoleAssignmentScheduleInstanceId', 'TicketInfoTicketNumber', 'TicketInfoTicketSystem')
+            }
+        )
+
+        BeforeAll {
+            $RecordedDirectory = "$PSScriptRoot/../TestHelpers/ArmResponse"
+            $script:Recorded = @{}
+            foreach ($File in 'recorded-roleEligibilitySchedules.json', 'recorded-roleAssignmentScheduleInstances.json',
+                'recorded-roleAssignmentScheduleRequest-SelfActivate.json', 'recorded-roleAssignmentScheduleRequest-SelfDeactivate.json') {
+                $script:Recorded[$File] = Get-Content -Raw -LiteralPath "$RecordedDirectory/$File"
+            }
+
+            # The JSON text of one value of a recorded answer, as the file spells it. Index is the
+            # item of a list answer ('value[Index]') and -1 for an answer that is one object. A JSON
+            # null, and a value that is not in the file, are $null.
+            function Get-RecordedText {
+                param([string]$File, [int]$Index, [string]$Path)
+                $Document = [System.Text.Json.JsonDocument]::Parse($script:Recorded[$File])
+                try {
+                    $Element = $Document.RootElement
+                    if ($Index -ge 0) { $Element = $Element.GetProperty('value')[$Index] }
+                    foreach ($Segment in $Path.Split('.')) {
+                        $Found = $false
+                        foreach ($Property in $Element.EnumerateObject()) {
+                            if ($Property.Name -ceq $Segment) {
+                                $Element = $Property.Value
+                                $Found = $true
+                                break
+                            }
+                        }
+                        if (-not $Found) { return $null }
+                    }
+                    if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Null) { return $null }
+                    $Element.GetString()
+                } finally {
+                    $Document.Dispose()
+                }
+            }
+
+            # A fresh object for one item of a recorded answer, read by ConvertFrom-Json, as the transport reads a response.
+            function Get-RecordedItem {
+                param([string]$File, [int]$Index)
+                $Parsed = $script:Recorded[$File] | ConvertFrom-Json
+                if ($Index -ge 0) { $Parsed.value[$Index] } else { $Parsed }
+            }
+        }
+
+        It 'records the states the cases are named after' {
+            Get-RecordedText -File 'recorded-roleAssignmentScheduleInstances.json' -Index 0 -Path 'properties.assignmentType' | Should -BeExactly 'Activated'
+            Get-RecordedText -File 'recorded-roleAssignmentScheduleInstances.json' -Index 1 -Path 'properties.assignmentType' | Should -BeExactly 'Assigned'
+            Get-RecordedText -File 'recorded-roleAssignmentScheduleRequest-SelfActivate.json' -Index -1 -Path 'properties.requestType' | Should -BeExactly 'SelfActivate'
+            Get-RecordedText -File 'recorded-roleAssignmentScheduleRequest-SelfDeactivate.json' -Index -1 -Path 'properties.requestType' | Should -BeExactly 'SelfDeactivate'
+        }
+
+        It 'returns exactly the A4 properties of <Kind> for the recorded <Name>' -ForEach $RecordedAnswers {
+            $Result = Invoke-Converter -InputObject (Get-RecordedItem -File $File -Index $Index) -Kind $Kind
+            @($Result) | Should -HaveCount 1
+            $Result.PSObject.Properties.Name -join ',' | Should -BeExactly ($script:A4Names[$Kind] -join ',')
+        }
+
+        It 'returns every string property of the recorded <Name> as its JSON source, and $null for what the text lacks' -ForEach $RecordedAnswers {
+            $Result = Invoke-Converter -InputObject (Get-RecordedItem -File $File -Index $Index) -Kind $Kind
+            foreach ($Entry in $script:StringPath[$Kind].GetEnumerator()) {
+                $Expected = Get-RecordedText -File $File -Index $Index -Path $Entry.Value
+                if ($null -eq $Expected) {
+                    $null -eq $Result.($Entry.Key) | Should -BeTrue -Because "$($Entry.Key) is not in the recorded text and must stay null"
+                } else {
+                    $Result.($Entry.Key) | Should -BeOfType ([string]) -Because "$($Entry.Key) is a string"
+                    $Result.($Entry.Key) | Should -BeExactly $Expected -Because "$($Entry.Key) is read from $($Entry.Value)"
+                }
+            }
+        }
+
+        It 'returns every date property of the recorded <Name> as a UTC DateTime of the JSON instant, and $null for what the text lacks' -ForEach $RecordedAnswers {
+            $Result = Invoke-Converter -InputObject (Get-RecordedItem -File $File -Index $Index) -Kind $Kind
+            foreach ($Entry in $script:DatePath[$Kind].GetEnumerator()) {
+                $Text = Get-RecordedText -File $File -Index $Index -Path $Entry.Value
+                if ($null -eq $Text) {
+                    $null -eq $Result.($Entry.Key) | Should -BeTrue -Because "$($Entry.Key) is not in the recorded text and must stay null"
+                } else {
+                    $Expected = [DateTimeOffset]::Parse($Text, [System.Globalization.CultureInfo]::InvariantCulture,
+                        [System.Globalization.DateTimeStyles]::AssumeUniversal).UtcDateTime
+                    $Result.($Entry.Key) | Should -BeOfType ([datetime]) -Because "$($Entry.Key) is a date"
+                    $Result.($Entry.Key).Kind | Should -Be ([System.DateTimeKind]::Utc) -Because "$($Entry.Key) is in UTC"
+                    $Result.($Entry.Key).ToString('o') | Should -BeExactly $Expected.ToString('o') -Because "$($Entry.Key) is read from $($Entry.Value)"
+                }
+            }
+        }
+
+        It 'returns $null for the properties the recorded <Name> does not carry' -ForEach $RecordedNulls {
+            $Result = Invoke-Converter -InputObject (Get-RecordedItem -File $File -Index $Index) -Kind $Kind
+            foreach ($Property in $Missing) {
+                $Path = if ($script:StringPath[$Kind].ContainsKey($Property)) { $script:StringPath[$Kind][$Property] } else { $script:DatePath[$Kind][$Property] }
+                $Path | Should -Not -BeNullOrEmpty -Because "$Property must be a property the A4 maps cover for $Kind"
+                $null -eq (Get-RecordedText -File $File -Index $Index -Path $Path) | Should -BeTrue -Because "$Path is not in the recorded text"
+                $null -eq $Result.$Property | Should -BeTrue -Because "$Property has no source in the recorded text"
+            }
+        }
+
+        It 'returns the resource group of the id of the recorded <Name>' -ForEach $RecordedAnswers {
+            $Result = Invoke-Converter -InputObject (Get-RecordedItem -File $File -Index $Index) -Kind $Kind
+            # The id is /subscriptions/<id>/resourceGroups/<name>/providers/...: the name is its fifth segment.
+            $Segments = (Get-RecordedText -File $File -Index $Index -Path 'id').Split('/')
+            $Segments[3] | Should -BeExactly 'resourceGroups' -Because 'the recorded id is in a resource group'
+            $Expected = $Segments[4]
+            $Expected | Should -Not -BeNullOrEmpty
+            $Result.ResourceGroupName | Should -BeExactly $Expected
+            $Result.ResourceGroupName | Should -BeExactly (Get-RecordedText -File $File -Index $Index -Path 'properties.expandedProperties.scope.displayName') -Because 'the recorded scope is the resource group itself'
+        }
+
+        It 'reads the end of the recorded Activated instance, a Z-suffixed date with no fraction, as that second in UTC' {
+            $Result = Invoke-Converter -InputObject (Get-RecordedItem -File 'recorded-roleAssignmentScheduleInstances.json' -Index 0) -Kind AssignmentScheduleInstance
+            $Result.EndDateTime.ToString('o') | Should -BeExactly ((Get-RecordedText -File 'recorded-roleAssignmentScheduleInstances.json' -Index 0 -Path 'properties.endDateTime') -replace 'Z$', '.0000000Z')
+        }
+
+        It 'reads the start of the recorded SelfActivate request, a +00:00 date with seven digits, as that instant in UTC' {
+            $Result = Invoke-Converter -InputObject (Get-RecordedItem -File 'recorded-roleAssignmentScheduleRequest-SelfActivate.json' -Index -1) -Kind AssignmentScheduleRequest
+            $Text = Get-RecordedText -File 'recorded-roleAssignmentScheduleRequest-SelfActivate.json' -Index -1 -Path 'properties.scheduleInfo.startDateTime'
+            $Text | Should -Match '\.\d{7}\+00:00$' -Because 'the recorded start carries seven fractional digits and an offset'
+            $Result.ScheduleInfoStartDateTime.ToString('o') | Should -BeExactly ($Text -replace '\+00:00$', 'Z')
+        }
+    }
 }

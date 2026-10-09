@@ -150,6 +150,39 @@ Describe 'Get-OPIMAzureRole' {
         }
     }
 
+    Context 'When -Activated reads the listing recorded live' {
+        # The answer ARM gave to the roleAssignmentScheduleInstances listing in the live run of
+        # docs/live-verification/feat-arm-transport-checklist.md, redacted: an Activated row, and the
+        # Assigned row ARM lists for a few minutes after an activation is revoked.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $RecordedDirectory = "$PSScriptRoot/../TestHelpers/ArmResponse"
+            $RecordedListing = Get-Content -Raw -LiteralPath "$RecordedDirectory/recorded-roleAssignmentScheduleInstances.json" | ConvertFrom-Json
+            $RecordedResponse = [pscustomobject]@{ value = $RecordedListing.value }
+            $RecordedActivated = @($RecordedListing.value | Where-Object { $_.properties.assignmentType -ceq 'Activated' })
+            $RecordedAssigned = @($RecordedListing.value | Where-Object { $_.properties.assignmentType -ceq 'Assigned' })
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $RecordedResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
+        }
+
+        It 'keeps only the Activated instance of the recorded listing' {
+            @($RecordedListing.value) | Should -HaveCount 2 -Because 'the recorded listing must carry both rows for the filter to have something to drop'
+            $RecordedActivated | Should -HaveCount 1
+            $RecordedAssigned | Should -HaveCount 1
+
+            $Result = @(Get-OPIMAzureRole -Activated)
+
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Path -ceq '/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?$filter=asTarget()&api-version=2020-10-01'
+            }
+            $Result | Should -HaveCount 1
+            $Result[0].Name | Should -BeExactly $RecordedActivated[0].name
+            $Result[0].Id | Should -BeExactly $RecordedActivated[0].id
+            $Result[0].AssignmentType | Should -BeExactly 'Activated'
+            $Result[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.PIM.AzureAssignmentScheduleInstance'
+            @($Result | Where-Object Name -EQ $RecordedAssigned[0].name) | Should -HaveCount 0
+        }
+    }
+
     Context 'When -All is specified' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

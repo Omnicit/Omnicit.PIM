@@ -275,6 +275,61 @@ Describe 'ConvertTo-PolicyValidationError' {
         }
     }
 
+    # The 400 bodies ARM answered in the live run of docs/live-verification/feat-arm-transport-checklist.md
+    # (tests/Unit/TestHelpers/ArmResponse/recorded-error-*.json), redacted. They differ from the Learn
+    # based bodies above: the policy message names the rule as plain text ("JustificationRule -
+    # Justification is required"), not as a quoted list. Each record is built by
+    # Convert-OPIMArmHttpException, as Invoke-OPIMArmRequest throws it, and the real Write-CmdletError
+    # runs against a cmdlet stand-in that keeps what is written.
+    Context 'recorded ARM bodies' {
+
+        BeforeAll {
+            $FixtureDirectory = "$PSScriptRoot/../TestHelpers/ArmResponse"
+        }
+
+        It 'writes the justification error once and returns $true for the recorded policy body' {
+            $Body = Get-Content -Raw -LiteralPath "$FixtureDirectory/recorded-error-PolicyValidationFailed.json"
+            $Recorded = ($Body | ConvertFrom-Json).error
+            InModuleScope Omnicit.PIM -Parameters @{ Body = $Body; Code = $Recorded.code; Message = $Recorded.message } {
+                param($Body, $Code, $Message)
+                $Record = Convert-OPIMArmHttpException -Response ([pscustomobject]@{ StatusCode = 400; Content = $Body }) -Path '/providers/x'
+                $Record.FullyQualifiedErrorId | Should -BeExactly $Code
+                $Record.Exception.Message | Should -BeExactly ('{0}: {1}' -f $Code, $Message)
+                $Cmdlet = [PSCustomObject]@{ Written = [System.Collections.Generic.List[object]]::new() }
+                Add-Member -InputObject $Cmdlet -MemberType ScriptMethod -Name WriteError -Value { param($E) $this.Written.Add($E) }
+
+                $Result = ConvertTo-PolicyValidationError -CaughtError $Record -ResourceType 'role' -Cmdlet $Cmdlet
+
+                $Result | Should -Be $true
+                $Cmdlet.Written.Count | Should -Be 1
+                $Cmdlet.Written[0].FullyQualifiedErrorId | Should -BeExactly 'RoleAssignmentRequestPolicyValidationFailed'
+                $Cmdlet.Written[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::OperationStopped)
+                $Cmdlet.Written[0].Exception.Message | Should -BeExactly 'Your PIM policy requires a justification for this role. Use the -Justification parameter.'
+            }
+        }
+
+        It 'returns $false and writes nothing for the recorded <Name> body' -ForEach @(
+            @{ Name = 'ActiveDurationTooShort'; File = 'recorded-error-ActiveDurationTooShort.json' }
+            @{ Name = 'RoleAssignmentExists'; File = 'recorded-error-RoleAssignmentExists.json' }
+            @{ Name = 'RoleAssignmentDoesNotExist'; File = 'recorded-error-RoleAssignmentDoesNotExist.json' }
+        ) {
+            $Body = Get-Content -Raw -LiteralPath "$FixtureDirectory/$File"
+            $Recorded = ($Body | ConvertFrom-Json).error
+            InModuleScope Omnicit.PIM -Parameters @{ Body = $Body; Code = $Recorded.code } {
+                param($Body, $Code)
+                $Record = Convert-OPIMArmHttpException -Response ([pscustomobject]@{ StatusCode = 400; Content = $Body }) -Path '/providers/x'
+                $Record.FullyQualifiedErrorId | Should -BeExactly $Code
+                $Cmdlet = [PSCustomObject]@{ Written = [System.Collections.Generic.List[object]]::new() }
+                Add-Member -InputObject $Cmdlet -MemberType ScriptMethod -Name WriteError -Value { param($E) $this.Written.Add($E) }
+
+                $Result = ConvertTo-PolicyValidationError -CaughtError $Record -ResourceType 'role' -Cmdlet $Cmdlet
+
+                $Result | Should -BeExactly $false
+                $Cmdlet.Written.Count | Should -Be 0
+            }
+        }
+    }
+
     # The same converter serves the Graph cmdlets, whose record Convert-GraphHttpException builds the
     # same way: the Graph error.code as the id, "<code>: <message>" as the message.
     Context 'Graph error body' {
