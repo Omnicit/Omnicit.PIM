@@ -269,6 +269,17 @@ Describe 'Get-OPIMAzureRole' {
             $Eligible | Should -HaveCount 2
             Assert-SameProperty -Actual ($Eligible | Where-Object Name -EQ $EligExpected.Name) -Expected $EligExpected -Except Status
         }
+
+        It 'drops the Assigned instance with -All' {
+            # The fixture lists two instances: one Activated (...557) and one Assigned (...558), a
+            # permanent assignment the user cannot self-deactivate.
+            @($InstFixture.value | Where-Object { $_.properties.assignmentType -eq 'Assigned' }).name |
+                Should -BeExactly '55555555-5555-5555-5555-555555555558' -Because 'the fixture must carry the Assigned instance the cmdlet drops'
+            $Active = @(Get-OPIMAzureRole -All | Where-Object Status -EQ 'Active')
+            $Active | Should -HaveCount 1
+            $Active[0].Name | Should -BeExactly '55555555-5555-5555-5555-555555555557'
+            $Active[0].AssignmentType | Should -BeExactly 'Activated'
+        }
     }
 
     Context 'When -Identity is specified' {
@@ -510,6 +521,30 @@ Describe 'Get-OPIMAzureRole' {
             { Get-OPIMAzureRole -Scope '/subscriptions/sub-001' -ErrorAction Stop } | Should -Not -Throw
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Path -ceq '/subscriptions/sub-001/providers/Microsoft.Authorization/roleEligibilitySchedules?$filter=asTarget()&api-version=2020-10-01'
+            }
+        }
+    }
+
+    Context 'When -Scope is typed without its leading slash' {
+        # The ARM path prefix of a scope is the scope with exactly one leading slash, so a scope typed
+        # without it is read at that scope, and its path stays on the ARM host instead of extending
+        # the host name. Only the request path changes.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $EmptyResponse = New-ArmResponse @()
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EmptyResponse } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EmptyResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
+        }
+
+        It 'reads the <List> at that scope (<Name>)' -ForEach @(
+            @{ Name = 'eligible'; Parameters = @{}; List = 'roleEligibilitySchedules' }
+            @{ Name = '-Activated'; Parameters = @{ Activated = $true }; List = 'roleAssignmentScheduleInstances' }
+        ) {
+            $null = Get-OPIMAzureRole @Parameters -Scope 'subscriptions/22222222-2222-2222-2222-222222222222' -ErrorAction Stop
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $All.IsPresent -and
+                $Path -ceq ('/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/{0}?$filter=asTarget()&api-version=2020-10-01' -f $List)
             }
         }
     }

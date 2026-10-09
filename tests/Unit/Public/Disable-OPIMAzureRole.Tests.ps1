@@ -497,6 +497,52 @@ Describe 'Disable-OPIMAzureRole' {
         }
     }
 
+    Context 'When a role names no Azure scope' {
+        # SECURITY 4: a deactivation is made at the active assignment's own ARM scope, so a role object
+        # whose ScopeId is empty or lacks its leading slash names none, and nothing is sent for it: one
+        # error with no error id (category InvalidArgument, no target object). The next object still
+        # runs.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $GoodPost = New-AzurePost -Name 'active-003' -DefinitionId 'role-def-contributor' -RoleName 'Contributor' -ScopeId '/subscriptions/sub-001' -ScopeName 'sub-001' -Active
+            function New-ScopelessPost {
+                param($ScopeId)
+                $Post = New-AzurePost -Name 'active-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/placeholder' -ScopeName 'rg-one' -Active
+                $Post.ScopeId = $ScopeId
+                $Post
+            }
+            $NoScopeMessage = 'Reader -> rg-one: the role names no Azure scope, so no request was sent.'
+        }
+
+        It 'sends nothing for a ScopeId that is <Name>, and writes one error' -ForEach @(
+            @{ Name = 'null'; ScopeId = $null }
+            @{ Name = 'empty'; ScopeId = '' }
+            @{ Name = 'without its leading slash'; ScopeId = 'subscriptions/sub-001/resourceGroups/rg-one' }
+        ) {
+            $Bad = New-ScopelessPost -ScopeId $ScopeId
+            $Result = $Bad | Disable-OPIMAzureRole -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 0 -Scope It
+            @($Errs).Count | Should -Be 1
+            $Errs[0].Exception.Message | Should -BeExactly $NoScopeMessage
+            $Errs[0].FullyQualifiedErrorId | Should -BeExactly 'Disable-OPIMAzureRole'
+            $Errs[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidArgument)
+            $Errs[0].TargetObject | Should -BeNullOrEmpty
+            @($Warns).Count | Should -Be 0
+            $Result | Should -BeNullOrEmpty
+        }
+
+        It 'still deactivates the next piped role after one that names no scope' {
+            $Result = @((New-ScopelessPost -ScopeId ''), $GoodPost) | Disable-OPIMAzureRole -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'PUT' -and $Path -ceq ('/subscriptions/sub-001' + $script:RequestSuffix) -and
+                $Body.properties.roleDefinitionId -ceq 'role-def-contributor'
+            }
+            @($Errs | Where-Object { $_.Exception.Message -eq $NoScopeMessage }).Count | Should -Be 1
+            @($Result).Count | Should -Be 1
+        }
+    }
+
     Context 'When the transport refuses the request' {
         # The transport gates every request itself (SignInRefused, TenantMismatch, AccountMismatch),
         # before anything is sent, and throws the refusal. The cmdlet's catch writes it as itself, in

@@ -186,7 +186,12 @@ function Get-OPIMAzureRole {
             return
         }
 
-        $Prefix = if ($Scope -eq '/') { '' } else { $Scope }
+        # The ARM path prefix of the scope: '' for the root scope '/', so a root path starts with
+        # '/providers'; any other scope with exactly one leading slash, so a scope typed without it
+        # ('subscriptions/...') is read at that scope and the path stays on the ARM host. Only the
+        # request path: the scope filters above keep -Scope as it was given.
+        $ScopePath = ([string]$Scope).TrimStart('/')
+        $Prefix = if ($ScopePath) { '/' + $ScopePath } else { '' }
         try {
             if ($Activated) {
                 (Invoke-OPIMArmRequest -Path ($InstPath -f $Prefix, $OdataFilter) -All).value |

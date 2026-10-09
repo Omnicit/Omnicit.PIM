@@ -18,7 +18,9 @@ function Enable-OPIMAzureRole {
     A role that is already active at that scope (listed by Get-OPIMAzureRole -Activated) is not
     requested again: a warning is written and nothing is sent for it, and when that list cannot be
     read, its error is written and nothing more is sent. The list is read once per command, and a
-    role named or piped twice is requested once, with a warning for the second.
+    role named or piped twice is requested once, with a warning for the second. A role object that
+    names no Azure scope (no ScopeId starting with '/') is written as an error and nothing is sent
+    for it; the next role still runs.
     .NOTES
     The default activation period is 1 hour. Override with -Hours. Make it persistent in your profile:
 
@@ -176,6 +178,17 @@ function Enable-OPIMAzureRole {
                 Write-Verbose "Skipping already-active Azure role: $($Role.RoleDefinitionDisplayName) on $($Role.ScopeDisplayName)"
                 continue
             }
+            $Label = (Get-OPIMScheduleName -Pillar Azure -InputObject $Role).Label
+            # SECURITY 4: the request is made at the role's own ARM scope. A role whose ScopeId is no ARM
+            # scope -- empty, or without its leading slash -- names none, and its path would land at the
+            # root scope or off the ARM host, so nothing is sent for it. Before the OPIM-39 bookkeeping:
+            # a refused role reads no active list and is never counted as requested. No error id, as the
+            # transport's refusal of a next link.
+            if (-not ([string]$Role.ScopeId).StartsWith('/', [System.StringComparison]::Ordinal)) {
+                Write-CmdletError -Message ([System.Exception]::new("$Label`: the role names no Azure scope, so no request was sent.")) `
+                    -Category InvalidArgument -TargetObject $null -Cmdlet $PSCmdlet
+                continue
+            }
             # OPIM-39: never send a second request for a post that is already active -- a repeated
             # request can end the active one. A list that cannot be read is no proof that nothing is
             # active, so nothing more is sent by this command (G3).
@@ -190,7 +203,6 @@ function Enable-OPIMAzureRole {
                     continue
                 }
             }
-            $Label = (Get-OPIMScheduleName -Pillar Azure -InputObject $Role).Label
             if (@($ActivePosts | Where-Object {
                         [string]::Equals($_.RoleDefinitionId, $Role.RoleDefinitionId, [System.StringComparison]::OrdinalIgnoreCase) -and
                         [string]::Equals($_.ScopeId, $Role.ScopeId, [System.StringComparison]::OrdinalIgnoreCase)

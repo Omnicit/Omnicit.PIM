@@ -628,36 +628,111 @@ Describe 'Enable-OPIMAzureRole' {
     }
 
     Context 'When the transport cannot read the answer to an accepted request' {
-        # A 2xx PUT whose body cannot be read is ArmTransportError although ARM accepted the request,
-        # so the cmdlet writes the transport's record as itself and adds no wording of its own.
+        # A 2xx PUT answered with no body, or with a body that cannot be read, is ArmTransportError
+        # although ARM may have accepted the request, so the cmdlet writes the transport's record as
+        # itself, adds no wording of its own, and still requests the next role. The mock throws the
+        # record the transport throws for a write answered with no body, for the Reader eligibility
+        # only, and answers the Contributor one as ARM does.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            $fakeRole = [PSCustomObject]@{
-                Name                      = 'elig-001'
-                ScopeId                   = '/subscriptions/sub-001'
-                ScopeDisplayName          = 'My Subscription'
-                PrincipalId               = 'principal-001'
-                RoleDefinitionId          = '/providers/Microsoft.Authorization/roleDefinitions/role-def-001'
-                RoleDefinitionDisplayName = 'Contributor'
+            $PostA = New-AzurePost -Name 'azure-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one'
+            $PostB = New-AzurePost -Name 'azure-003' -DefinitionId 'role-def-contributor' -RoleName 'Contributor' -ScopeId '/subscriptions/sub-001' -ScopeName 'sub-001'
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule {
+                if ($Name -eq 'Reader') { $PostA } else { $PostB }
             }
-            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { return $fakeRole }
+            $NoBodyMessage = 'Azure Resource Manager returned no body for the request, so its answer could not be read; the request may have been accepted.'
             Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest {
-                $PSCmdlet.ThrowTerminatingError(
-                    [System.Management.Automation.ErrorRecord]::new(
-                        [System.Exception]::new('The response of the Azure Resource Manager request could not be read.'),
-                        'ArmTransportError',
-                        [System.Management.Automation.ErrorCategory]::InvalidResult,
-                        $null
+                if ($Body.properties.linkedRoleEligibilityScheduleId -eq 'azure-001') {
+                    $PSCmdlet.ThrowTerminatingError(
+                        [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new($NoBodyMessage),
+                            'ArmTransportError',
+                            [System.Management.Automation.ErrorCategory]::InvalidResult,
+                            $Path
+                        )
                     )
-                )
+                }
+                $Where = & $script:ParseRequestPath $Path
+                & $script:NewArmRequest $Where.Name $Where.Scope 'Provisioned' $Body.properties.linkedRoleEligibilityScheduleId $null
             } -ParameterFilter { $Method -eq 'PUT' }
         }
 
         It 'writes ArmTransportError as itself, with the transport message unchanged' {
-            $Result = Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Result = Enable-OPIMAzureRole -RoleName 'Reader' -ErrorVariable Errs -ErrorAction SilentlyContinue
             @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'ArmTransportError,Enable-OPIMAzureRole' }).Count | Should -Be 1
-            $Errs[-1].Exception.Message | Should -BeExactly 'The response of the Azure Resource Manager request could not be read.'
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ArmTransportError,Enable-OPIMAzureRole'
+            $Errs[-1].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+            $Errs[-1].Exception.Message | Should -BeExactly $NoBodyMessage
             $Result | Should -BeNullOrEmpty
+        }
+
+        It 'writes it for the role it belongs to and still requests and returns the next role' {
+            $Result = Enable-OPIMAzureRole -RoleName 'Reader', 'Contributor' `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 2 -Exactly -Scope It -ParameterFilter { $Method -eq 'PUT' }
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'ArmTransportError,Enable-OPIMAzureRole' }).Count | Should -Be 1
+            @($Result).Count | Should -Be 1
+            $Result.LinkedRoleEligibilityScheduleId | Should -BeExactly 'azure-003'
+            $Result.Status | Should -BeExactly 'Provisioned'
+            @($Warns).Count | Should -Be 0
+        }
+    }
+
+    Context 'When a role names no Azure scope' {
+        # SECURITY 4: a request is made at the role's own ARM scope, so a role object whose ScopeId is
+        # empty or lacks its leading slash names none, and nothing is sent for it: one error with no
+        # error id (category InvalidArgument, no target object), no active list read for it, and no
+        # entry among the posts the command has requested. The next role still runs.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $GoodPost = New-AzurePost -Name 'azure-003' -DefinitionId 'role-def-contributor' -RoleName 'Contributor' -ScopeId '/subscriptions/sub-001' -ScopeName 'sub-001'
+            function New-ScopelessPost {
+                param($ScopeId)
+                $Post = New-AzurePost -Name 'azure-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/placeholder' -ScopeName 'rg-one'
+                $Post.ScopeId = $ScopeId
+                $Post
+            }
+            $NoScopeMessage = 'Reader -> rg-one: the role names no Azure scope, so no request was sent.'
+        }
+
+        It 'sends nothing for a ScopeId that is <Name>, and writes one error' -ForEach @(
+            @{ Name = 'null'; ScopeId = $null }
+            @{ Name = 'empty'; ScopeId = '' }
+            @{ Name = 'without its leading slash'; ScopeId = 'subscriptions/sub-001/resourceGroups/rg-one' }
+        ) {
+            $Bad = New-ScopelessPost -ScopeId $ScopeId
+            $Result = $Bad | Enable-OPIMAzureRole -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 0 -Scope It -ParameterFilter { $Activated }
+            @($Errs).Count | Should -Be 1
+            $Errs[0].Exception.Message | Should -BeExactly $NoScopeMessage
+            $Errs[0].FullyQualifiedErrorId | Should -BeExactly 'Enable-OPIMAzureRole'
+            $Errs[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidArgument)
+            $Errs[0].TargetObject | Should -BeNullOrEmpty
+            @($Warns).Count | Should -Be 0
+            $Result | Should -BeNullOrEmpty
+        }
+
+        It 'still requests the next role after one that names no scope' {
+            $Result = Enable-OPIMAzureRole -Role @((New-ScopelessPost -ScopeId ''), $GoodPost) -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'PUT' -and $Path -ceq ('/subscriptions/sub-001' + $script:RequestSuffix) -and
+                $Body.properties.linkedRoleEligibilityScheduleId -ceq 'azure-003'
+            }
+            @($Errs | Where-Object { $_.Exception.Message -eq $NoScopeMessage }).Count | Should -Be 1
+            @($Result).Count | Should -Be 1
+            $Result.LinkedRoleEligibilityScheduleId | Should -BeExactly 'azure-003'
+        }
+
+        It 'never counts a role that names no scope as requested' {
+            # Two such objects with the same role definition: each is refused for its scope, and the
+            # second never reads as already requested by this command.
+            $null = Enable-OPIMAzureRole -Role @((New-ScopelessPost -ScopeId ''), (New-ScopelessPost -ScopeId '')) `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 0 -Scope It
+            @($Errs | Where-Object { $_.Exception.Message -eq $NoScopeMessage }).Count | Should -Be 2
+            @($Warns).Count | Should -Be 0
         }
     }
 
@@ -772,7 +847,8 @@ Describe 'Enable-OPIMAzureRole' {
                 & $script:NewArmRequest $Where.Name $Where.Scope $Plan.Post[$Eligibility] $Eligibility $null
             } -ParameterFilter { $Method -eq 'PUT' }
             Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest {
-                $Sent.Polls.Add([pscustomobject]@{ Path = $Path; All = $All.IsPresent })
+                # MethodBound: a poll is a GET by the transport's default, so it binds no -Method.
+                $Sent.Polls.Add([pscustomobject]@{ Path = $Path; All = $All.IsPresent; MethodBound = $PesterBoundParameters.ContainsKey('Method') })
                 $PollScope = ($Path -split '/providers/', 2)[0]
                 if (-not $PollScope) { $PollScope = '/' }
                 $Eligibility = if ($PollScope -eq '/subscriptions/sub-001') { 'azure-003' } elseif ($PollScope -eq '/') { 'azure-004' } else { 'azure-001' }
@@ -872,6 +948,8 @@ Describe 'Enable-OPIMAzureRole' {
             }
             $Sent.Polls.Count | Should -Be 1
             $Sent.Polls[0].All | Should -BeTrue
+            # A GET by the transport's default: a poll sent with any -Method would be a write.
+            $Sent.Polls[0].MethodBound | Should -BeFalse
             Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Get-OPIMArmRefusal -Times 0 -Scope It
         }

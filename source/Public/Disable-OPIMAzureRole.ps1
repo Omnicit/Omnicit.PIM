@@ -12,7 +12,8 @@ function Disable-OPIMAzureRole {
     is eligible but not active, the message says it is already deactivated.
     The request is reported by the status Azure gives it: a deactivation that does not end Revoked
     is written as an ActivationRequestFailed error, and one that waits for approval or is still
-    being processed is returned with a warning.
+    being processed is returned with a warning. A role object that names no Azure scope (no ScopeId
+    starting with '/') is written as an error and nothing is sent for it.
     .EXAMPLE
     Get-OPIMAzureRole -Activated | Disable-OPIMAzureRole
     Deactivate all currently active Azure roles.
@@ -105,6 +106,16 @@ function Disable-OPIMAzureRole {
             Write-Verbose "Skipping eligible-only Azure role: $($Role.RoleDefinitionDisplayName)"
             return
         }
+        $Label = (Get-OPIMScheduleName -Pillar Azure -InputObject $Role).Label
+        # SECURITY 4: the request is made at the active assignment's own ARM scope. A role whose ScopeId
+        # is no ARM scope -- empty, or without its leading slash -- names none, and its path would land
+        # at the root scope or off the ARM host, so nothing is sent for it. No error id, as the
+        # transport's refusal of a next link.
+        if (-not ([string]$Role.ScopeId).StartsWith('/', [System.StringComparison]::Ordinal)) {
+            Write-CmdletError -Message ([System.Exception]::new("$Label`: the role names no Azure scope, so no request was sent.")) `
+                -Category InvalidArgument -TargetObject $null -Cmdlet $PSCmdlet
+            return
+        }
 
         # The request is built for the module's own ARM transport: the name of the request is a new id,
         # and the body names the active assignment by its principal and role definition, at the scope
@@ -141,7 +152,6 @@ function Disable-OPIMAzureRole {
             # Outside the try: a failed status written under -ErrorAction Stop must not reach the
             # catch above and be written a second time.
             $Response.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleRequest')
-            $Label = (Get-OPIMScheduleName -Pillar Azure -InputObject $Role).Label
             Write-OPIMRequestOutcome -Request $Response -Status $Response.Status -Name $Label -Deactivate -Cmdlet $PSCmdlet
         }
     }
