@@ -21,9 +21,12 @@ proof of 0.1 holds only for the sign-in it checked.
 
 **Two windows, never one process** (decision A10 of Sprint 1, kept in Sprint 2). Window A runs as
 `oer-live-cc`, and reads files without the module. Window B runs the branch's build as the test
-user, in a `pwsh -NoProfile` whose module path holds only a folder of the step's own -- AzAuth,
+user, in a `pwsh -NoProfile` whose module path is set to a folder of the step's own -- AzAuth,
 Microsoft.Graph.Authentication and the two SecretStore modules the harness needs -- and PowerShell's
-own modules: no Az module can be found or loaded there. Every block below names its window.
+own modules. Importing Microsoft.Graph.Authentication puts the profile's and the shared module
+folders back on that path (measured on 2026-10-10, see "Setup, once"), so check 0.1 sets it again
+after the import and before the sign-in; no Az module may be loaded in window B at any point. Every
+block below names its window.
 
 **No block prints a scope id, an object id, a tenant id or a message that holds one.** The blocks
 print counts, statuses, error ids, display names of the fixture's roles, group and resource groups,
@@ -93,6 +96,17 @@ go to `docs/live-verification/raw/opim-s21b` (git-ignored), which is deleted onc
 written up.
 
 A block that runs the module in window B starts with the three-line prologue of the template.
+
+**The module path does not stay as set.** Measured on 2026-10-10 in scratch `pwsh -NoProfile`
+processes, with no sign-in: importing Microsoft.Graph.Authentication 2.36.0 -- by name or by path,
+and so also as a required module of Omnicit.PIM -- puts the profile's module folder and the shared
+one back in front of the process's module path; importing AzAuth 2.9.0, the SecretManagement module
+or the Graph dll alone does not. On this machine the profile's folder holds Az modules and a newer
+AzAuth. So S.3 loads AzAuth 2.9.0, the version the tests pin, by path before the module is
+imported (as step 1a's S.1 did), and 0.1 sets the module path back to the step's folder after the
+import and before the sign-in. The first run of 0.1, before this was known, loaded AzAuth 2.10.0
+from the profile, and the harness's own `Disconnect-AzAccount` then loaded Az.Accounts from it; its
+result is kept under 0.1.
 
 The PIM policies of the fixture's roles and group require a justification on activation (measured
 in the fixture session), so every activation below passes one.
@@ -164,19 +178,22 @@ Result:
 
 ### S.3. Window B finds no Az module
 
-- [ ] **S.3** Window B, a fresh `pwsh -NoProfile`, before anything else runs in it. Its module path is the step's module folder and PowerShell's own modules only; no Az module can be found or is loaded; PowerShell is 7.4 or later.
+- [ ] **S.3** Window B, a fresh `pwsh -NoProfile`, before anything else runs in it. Its module path is the step's module folder and PowerShell's own modules only; no Az module can be found or is loaded; PowerShell is 7.4 or later; and AzAuth 2.9.0 is loaded from the step's folder.
 
 ```powershell
 $env:PSModulePath = (Resolve-Path 'docs/live-verification/raw/opim-s21b/modules').Path + [System.IO.Path]::PathSeparator + (Join-Path $PSHOME 'Modules')
+$global:OpimS21bModulePath = $env:PSModulePath
 "Module path entries: $(@($env:PSModulePath -split [System.IO.Path]::PathSeparator | Where-Object { $_ }).Count)"
 "Az modules this window can find: $(@(Get-Module -ListAvailable -Name 'Az', 'Az.*').Count)"
 "Az modules loaded: $(@(Get-Module -Name 'Az', 'Az.*').Count)"
 "Modules loaded: $(@(Get-Module | ForEach-Object Name | Sort-Object) -join ', ')"
 "PowerShell: $($PSVersionTable.PSVersion)"
+Import-Module (Join-Path (Resolve-Path 'docs/live-verification/raw/opim-s21b/modules').Path 'AzAuth/2.9.0/AzAuth.psd1')
+"AzAuth loaded: $((Get-Module AzAuth).Version)"
 ```
 
 **Expect:** `Module path entries: 2`; `Az modules this window can find: 0`; `Az modules loaded: 0`;
-only `Microsoft.PowerShell.*` modules loaded; `PowerShell:` 7.4 or later.
+only `Microsoft.PowerShell.*` modules loaded; `PowerShell:` 7.4 or later; `AzAuth loaded: 2.9.0`.
 **Failure looks like:** an Az module found or loaded -- the window is not clean: end it and start a
 fresh one; never continue in it.
 
@@ -236,18 +253,21 @@ Result:
 
 ### 0.1. Identity check, Graph and Azure, in a window without Az
 
-- [ ] **0.1** Window B. The build loads AzAuth 2.9.0 and Microsoft.Graph.Authentication 2.36.0 from the step's folder and no Az module; `Connect-OpimLiveUser -IncludeARM` signs it in to Graph and Azure with one device code each, both on the Information stream; the Graph account is the test user, the tenant is the test tenant, the module's ARM token is the test user's in the test tenant; and afterwards no Az module is loaded.
+- [ ] **0.1** Window B. The build loads AzAuth 2.9.0 and Microsoft.Graph.Authentication 2.36.0 from the step's folder and no Az module; with the module path set back to the step's folder, `Connect-OpimLiveUser -IncludeARM` signs it in to Graph and Azure with one device code each, both on the Information stream; the Graph account is the test user, the tenant is the test tenant, the module's ARM token is the test user's in the test tenant; and afterwards no Az module is loaded.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built.DirectoryName) { throw 'A different build of Omnicit.PIM is loaded; use a fresh window.' }
 if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
 $Modules = (Resolve-Path 'docs/live-verification/raw/opim-s21b/modules').Path
+if (-not $global:OpimS21bModulePath) { throw 'S.3 has not run in this window.' }
+"The import put other module folders back on the module path: $($env:PSModulePath -ne $global:OpimS21bModulePath)"
+$env:PSModulePath = $global:OpimS21bModulePath
 foreach ($Name in 'AzAuth', 'Microsoft.Graph.Authentication') {
     $M = Get-Module -Name $Name
     "$Name $($M.Version), from the step's folder: $($M.ModuleBase.StartsWith($Modules, [System.StringComparison]::OrdinalIgnoreCase))"
 }
-"Az modules loaded before the sign-in: $(@(Get-Module -Name 'Az', 'Az.*').Count)"
+"Az modules loaded before the sign-in: $(@(Get-Module -Name 'Az', 'Az.*').Count); this window can find: $(@(Get-Module -ListAvailable -Name 'Az', 'Az.*').Count)"
 $Target = Get-OpimLiveTarget
 $Sign = Connect-OpimLiveUser -IncludeARM -RawFolder 'docs/live-verification/raw/opim-s21b'
 $Sign.Codes | Format-Table App, Stream, Tagged, Status -AutoSize
@@ -258,12 +278,15 @@ $State = & (Get-Module Omnicit.PIM) { $script:_OPIMAuthState }
 "Az modules loaded after the sign-in: $(@(Get-Module -Name 'Az', 'Az.*').Count); this window can find: $(@(Get-Module -ListAvailable -Name 'Az', 'Az.*').Count)"
 ```
 
-**Expect:** `AzAuth 2.9.0, from the step's folder: True`; `Microsoft.Graph.Authentication 2.36.0,
-from the step's folder: True`; `Az modules loaded before the sign-in: 0`; the rows `Graph Information
-True ok` and `AzureCli Information True ok`; every True/False line of the harness `True` (Graph
-account, tenant, device code mode, Azure token user and tenant); `Session tenant is the test tenant:
-True`; `ARM token held as a SecureString: True`; minutes left above 5; `Az modules loaded after the
-sign-in: 0; this window can find: 0`. No line prints the account or the tenant id.
+**Expect:** `The import put other module folders back on the module path: True` (see "Setup, once");
+`AzAuth 2.9.0, from the step's folder: True`; `Microsoft.Graph.Authentication 2.36.0, from the step's
+folder: True`; `Az modules loaded before the sign-in: 0; this window can find: 0`; the rows `Graph
+Information True ok` and `AzureCli Information True ok`; every True/False line of the harness `True`
+(Graph account, tenant, device code mode, Azure token user and tenant); `Session tenant is the test
+tenant: True`; `ARM token held as a SecureString: True`; minutes left above 5; `Az modules loaded
+after the sign-in: 0`. No line prints the account or the tenant id.
+**Record:** `this window can find:` after the sign-in -- whether the sign-in put the profile's
+folders back on the module path again.
 **Failure looks like:** `False` on any line, a `STOP`, or an Azure row that is not `AzureCli
 Information True ok` -- STOP: run `Disconnect-OPIM`, end window B and run no other check. An ARM token
 whose tenant or user is not the test user's is a STOP even though the module refused it (the
@@ -421,8 +444,9 @@ $Second = @(Disable-OPIMMyRole -TenantAlias 's21b-all' -TenantMapPath $Map 2>&1 
 ```
 
 **Expect:** `Listings settled after ... s: True`; `Second unpim: results 0; errors 0`; `Active:
-directory 0, group 0, Azure 0`; `Az modules loaded: 0; this window can find: 0`.
-**Record:** the seconds the listings took to settle, and the second call's other lines.
+directory 0, group 0, Azure 0`; `Az modules loaded: 0`.
+**Record:** the seconds the listings took to settle, the second call's other lines, and `this window
+can find:` (the profile's folders may be back on the module path; see "Setup, once").
 **Failure looks like:** a crash, or a second request -- record it (G8). An Az module loaded -- a
 defect within this step's scope (G11).
 
