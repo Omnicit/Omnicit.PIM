@@ -49,6 +49,19 @@ BeforeAll {
     # is NOT exported gets noticed rather than silently skipped.
     $script:CmdletNamePattern = [regex]'\b[A-Z][A-Za-z]+-OPIM[A-Za-z]*\b(?!\*)'
 
+    function Get-DocSyncRosterName {
+        <#
+        .SYNOPSIS
+        Returns each distinct Verb-OPIM name in a text, compared ordinally.
+        .DESCRIPTION
+        Distinct by ordinal comparison, as this gate's header says: a name spelled in another case
+        is a separate token, kept so the checks below can report it as unknown rather than fold it
+        into the correctly spelled one.
+        #>
+        param([string]$Text)
+        @($script:CmdletNamePattern.Matches($Text) | ForEach-Object { $_.Value } | Sort-Object -Unique -CaseSensitive)
+    }
+
     function Get-DocSyncMarkdownSection {
         <#
             .SYNOPSIS
@@ -157,6 +170,13 @@ Describe 'README and about topic stay in step' -Tags 'helpQuality' {
         $script:AboutRoster = Get-DocSyncAboutSection -Line $script:AboutLines -Heading 'COMMAND COHORTS'
     }
 
+    It 'Should keep two names that differ only in case apart (known answer)' {
+        $Names = @(Get-DocSyncRosterName -Text 'Get-OPIMDirectoryRole, Get-OPIMdirectoryRole and Get-OPIMDirectoryRole')
+        $Names.Count | Should -Be 2 -Because 'a name spelled in another case is a separate token; folding it into the right spelling hides it from the unknown-name check'
+        ($Names -ccontains 'Get-OPIMdirectoryRole') | Should -BeTrue
+        ($Names -ccontains 'Get-OPIMDirectoryRole') | Should -BeTrue
+    }
+
     It 'Should find the roster section in both documents' {
         # Every assertion below reads one of these two sections. A renamed heading would otherwise
         # hand them an empty collection, and a set comparison between two empty sets passes.
@@ -172,11 +192,7 @@ Describe 'README and about topic stay in step' -Tags 'helpQuality' {
         # A check that matches the whole file passes for a cmdlet mentioned only in a Quick Start
         # snippet, which is missing from the list a reader scrolls to. This check is scoped to the
         # section.
-        $Rostered = @(
-            $script:CmdletNamePattern.Matches(($script:ReadmeRoster -join "`n")) |
-                ForEach-Object { $_.Value } |
-                Sort-Object -Unique
-        )
+        $Rostered = @(Get-DocSyncRosterName -Text ($script:ReadmeRoster -join "`n"))
 
         $Rostered.Count | Should -BeGreaterThan 0 -Because 'the section must name cmdlets; zero means the section was found but parsed as empty'
 
@@ -192,11 +208,7 @@ Describe 'README and about topic stay in step' -Tags 'helpQuality' {
     }
 
     It 'Should roster every exported cmdlet in the about topic''s COMMAND COHORTS section' {
-        $Rostered = @(
-            $script:CmdletNamePattern.Matches(($script:AboutRoster -join "`n")) |
-                ForEach-Object { $_.Value } |
-                Sort-Object -Unique
-        )
+        $Rostered = @(Get-DocSyncRosterName -Text ($script:AboutRoster -join "`n"))
 
         $Rostered.Count | Should -BeGreaterThan 0 -Because 'the section must name cmdlets; zero means the section was found but parsed as empty'
 
@@ -216,19 +228,9 @@ Describe 'README and about topic stay in step' -Tags 'helpQuality' {
         # FunctionsToExport, so this one can only fail if a roster drifted in a way that also broke
         # one of them -- which is the point: it names the disagreement directly, so a reader sees
         # "these two documents differ" rather than two separate "missing from X" failures.
-        $ReadmeSet = @(
-            $script:CmdletNamePattern.Matches(($script:ReadmeRoster -join "`n")) |
-                ForEach-Object { $_.Value } |
-                Where-Object { $_ -cin $script:ExportedNames } |
-                Sort-Object -Unique
-        )
+        $ReadmeSet = @(Get-DocSyncRosterName -Text ($script:ReadmeRoster -join "`n") | Where-Object { $_ -cin $script:ExportedNames })
 
-        $AboutSet = @(
-            $script:CmdletNamePattern.Matches(($script:AboutRoster -join "`n")) |
-                ForEach-Object { $_.Value } |
-                Where-Object { $_ -cin $script:ExportedNames } |
-                Sort-Object -Unique
-        )
+        $AboutSet = @(Get-DocSyncRosterName -Text ($script:AboutRoster -join "`n") | Where-Object { $_ -cin $script:ExportedNames })
 
         $ReadmeSet.Count | Should -BeGreaterThan 0 -Because 'a comparison between two empty sets passes; the README roster must be non-empty for this check to mean anything'
         $AboutSet.Count | Should -BeGreaterThan 0 -Because 'a comparison between two empty sets passes; the about roster must be non-empty for this check to mean anything'
