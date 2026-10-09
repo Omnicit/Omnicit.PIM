@@ -86,6 +86,64 @@ BeforeAll {
         }
         ($Body -join "`n").TrimEnd()
     }
+
+    function Invoke-TagStep {
+        <#
+        .SYNOPSIS
+        Runs the tag step's run: text against a fake gh and a fake git, and reports what happened.
+        .DESCRIPTION
+        The fakes are functions, which PowerShell resolves before an executable of the same name; they
+        record each call as one line and set $LASTEXITCODE the way the real tools would. Nothing leaves
+        the process: no gh, no git, no network. The step runs from the project root, as a workflow
+        step runs from the checkout, and the environment variables it reads are set for the call and
+        put back afterwards. Returns Thrown (the message of the terminating error, or $null) and Calls.
+        #>
+        param(
+            [hashtable]$Environment = @{},
+            [int]$GhViewExit = 1,
+            [int]$GitExit = 0,
+            [string[]]$GitOutput = @()
+        )
+        $Variables = @{
+            PublishVersion     = '0.6.1-preview0002'
+            GITHUB_SHA         = $script:Sha
+            GITHUB_REF         = 'refs/heads/main'
+            PublishedByThisJob = 'true'
+            PublishPrerelease  = 'preview0002'
+            ModulePath         = $script:StepModulePath
+            RUNNER_TEMP        = $script:StepModulePath
+        }
+        foreach ($Key in $Environment.Keys) { $Variables[$Key] = $Environment[$Key] }
+        $Saved = @{}
+        foreach ($Key in $Variables.Keys) { $Saved[$Key] = [System.Environment]::GetEnvironmentVariable($Key) }
+        $SavedExitCode = $global:LASTEXITCODE
+        $Calls = [System.Collections.Generic.List[string]]::new()
+
+        function gh {
+            $Calls.Add('gh ' + ($args -join ' '))
+            $global:LASTEXITCODE = if ($args[0] -ceq 'release' -and $args[1] -ceq 'view') { $GhViewExit } else { 0 }
+        }
+
+        function git {
+            $Calls.Add('git ' + ($args -join ' '))
+            $global:LASTEXITCODE = $GitExit
+            $GitOutput
+        }
+
+        $Thrown = $null
+        Push-Location -Path $script:ProjectPath
+        try {
+            foreach ($Key in $Variables.Keys) { [System.Environment]::SetEnvironmentVariable($Key, $Variables[$Key]) }
+            & ([scriptblock]::Create($script:TagRun)) 6>$null
+        }
+        catch { $Thrown = $_.Exception.Message }
+        finally {
+            Pop-Location
+            foreach ($Key in $Saved.Keys) { [System.Environment]::SetEnvironmentVariable($Key, $Saved[$Key]) }
+            $global:LASTEXITCODE = $SavedExitCode
+        }
+        [PSCustomObject]@{ Thrown = $Thrown; Calls = $Calls }
+    }
 }
 
 Describe 'ReleaseTag.ps1' {
@@ -156,6 +214,11 @@ Describe 'ReleaseTag.ps1' {
             $Message | Should -BeLike "*$($script:Sha)*"
         }
 
+        It 'points the hand repair at the log line written only after a successful upload' {
+            $Message = Get-ReleaseTagRefusal -Change @{ PublishedByThisJob = '' }
+            $Message | Should -BeLike '*logged ''Publishing Omnicit.PIM 0.6.1-preview0002'' and, after the upload, ''Publish-PSResource returned without error''*'
+        }
+
         It 'refuses on a tag run whose release is missing, naming the tag''s commit and the release command' {
             $Message = Get-ReleaseTagRefusal -Change @{
                 PublishedByThisJob = ''
@@ -194,6 +257,8 @@ Describe 'ReleaseTag.ps1' {
         It 'refuses a line for another ref' {
             $Message = Get-ReleaseTagRefusal -Change @{ RemoteTag = @("$($script:Sha)`trefs/tags/v0.6.1-preview00021") }
             $Message | Should -BeLike '*cannot be read*'
+            $Message | Should -BeLike '*a re-run cannot tag it: tag by hand*'
+            $Message | Should -Not -BeLike '*before re-running*'
         }
 
         It 'refuses a line that is not a commit id and a ref' {
@@ -241,9 +306,23 @@ Describe 'ReleaseTag.ps1' {
 
         It 'writes PublishedByThisJob only after Publish-PSResource returns, and nowhere else' {
             [regex]::Matches($script:WorkflowText, 'PublishedByThisJob=').Count | Should -Be 1 -Because 'only the publish step may set the flag, once'
+            # IndexOf answers -1 for text that is gone, which is "less than" everything: find each
+            # anchor first, so that a renamed anchor fails here instead of passing the order checks.
             $Write = $script:PublishRun.IndexOf("'PublishedByThisJob=true'")
-            $Write | Should -BeGreaterThan $script:PublishRun.IndexOf('Publish-PSResource -Path')
-            $script:PublishRun.IndexOf('Publish-PSResource -Path') | Should -BeGreaterThan $script:PublishRun.IndexOf('SKIPPING THE PUBLISH')
+            $Upload = $script:PublishRun.IndexOf('Publish-PSResource -Path')
+            $Skipped = $script:PublishRun.IndexOf('SKIPPING THE PUBLISH')
+            $Write | Should -BeGreaterOrEqual 0
+            $Upload | Should -BeGreaterOrEqual 0
+            $Skipped | Should -BeGreaterOrEqual 0
+            $Write | Should -BeGreaterThan $Upload
+            $Upload | Should -BeGreaterThan $Skipped
+        }
+
+        It 'logs the line the hand repair names only after the upload' {
+            $Upload = $script:PublishRun.IndexOf('Publish-PSResource -Path')
+            $Logged = $script:PublishRun.IndexOf('Publish-PSResource returned without error')
+            $Upload | Should -BeGreaterOrEqual 0
+            $Logged | Should -BeGreaterThan $Upload
         }
 
         It 'hands the decision to ReleaseTag.ps1 with the job''s facts' {
@@ -262,9 +341,74 @@ Describe 'ReleaseTag.ps1' {
             $Skip.Index | Should -BeLessThan $script:TagRun.IndexOf('gh @Arguments')
         }
 
+        It 'asks ReleaseTag.ps1 for the decision before it creates the release, outside any try' {
+            $Asked = $script:TagRun.IndexOf('./.github/scripts/ReleaseTag.ps1 ')
+            $Created = $script:TagRun.IndexOf('gh @Arguments')
+            $Asked | Should -BeGreaterOrEqual 0
+            $Created | Should -BeGreaterThan $Asked
+
+            $Errors = $null
+            $Ast = [System.Management.Automation.Language.Parser]::ParseInput($script:TagRun, [ref]$null, [ref]$Errors)
+            $Calls = @($Ast.FindAll({
+                        param($Node)
+                        $Node -is [System.Management.Automation.Language.CommandAst] -and $Node.GetCommandName() -ceq './.github/scripts/ReleaseTag.ps1'
+                    }, $true))
+            $Calls.Count | Should -Be 1
+            $Wrapping = [System.Collections.Generic.List[string]]::new()
+            $Parent = $Calls[0].Parent
+            while ($null -ne $Parent) {
+                if ($Parent -is [System.Management.Automation.Language.TryStatementAst]) { $Wrapping.Add($Parent.Extent.Text) }
+                $Parent = $Parent.Parent
+            }
+            $Wrapping.Count | Should -Be 0 -Because 'a try around the call could swallow a refusal and let the step go on to create the release'
+        }
+
+        It 'tells a failed release creation to be repaired by hand, never to be re-run' {
+            $script:TagRun | Should -Not -Match 're-running'
+            $script:TagRun | Should -Match 'a re-run of this job cannot create the release: tag and release by hand'
+        }
+
         It 'creates the release on the decision''s target, never on GITHUB_SHA directly' {
             $script:TagRun | Should -Match '''--target'', \$Decision\.Target'
             $script:TagRun | Should -Not -Match '''--target'', \$env:GITHUB_SHA'
+        }
+    }
+
+    Context 'When the tag step runs against a fake gh and git' {
+        BeforeAll {
+            $script:TagRun = Get-WorkflowStepRun -Text ([System.IO.File]::ReadAllText($script:WorkflowPath)) -StepName 'Tag the published commit and create the release'
+            # The step reads the built manifest's ReleaseNotes before it creates the release.
+            $script:StepModulePath = Join-Path -Path $TestDrive -ChildPath 'ModulePath'
+            $null = New-Item -Path $script:StepModulePath -ItemType Directory -Force
+            Set-Content -LiteralPath (Join-Path -Path $script:StepModulePath -ChildPath 'Omnicit.PIM.psd1') -Value "@{ PrivateData = @{ PSData = @{ ReleaseNotes = 'Notes of a fixture manifest, long enough to read.' } } }"
+        }
+
+        It 'creates the release on GITHUB_SHA, marked as a prerelease, when this job published' {
+            $Run = Invoke-TagStep
+            $Run.Thrown | Should -BeNullOrEmpty
+            $Created = @($Run.Calls | Where-Object { $_ -like 'gh release create*' })
+            $Created.Count | Should -Be 1
+            $Created[0] | Should -BeLike "gh release create v0.6.1-preview0002 --target $($script:Sha) --title v0.6.1-preview0002 --notes-file *--prerelease"
+            @($Run.Calls | Where-Object { $_ -eq 'git ls-remote origin refs/tags/v0.6.1-preview0002 refs/tags/v0.6.1-preview0002^{}' }).Count | Should -Be 1
+        }
+
+        It 'stops before it asks for a decision when git ls-remote fails' {
+            $Run = Invoke-TagStep -GitExit 128
+            $Run.Thrown | Should -BeLike 'git ls-remote exited with 128*'
+            $Run.Thrown | Should -BeLike '*a re-run cannot tag it: tag by hand*'
+            @($Run.Calls | Where-Object { $_ -like 'gh release create*' }).Count | Should -Be 0
+        }
+
+        It 'creates nothing when the publish step skipped and the release is missing' {
+            $Run = Invoke-TagStep -Environment @{ PublishedByThisJob = '' }
+            $Run.Thrown | Should -BeLike 'REFUSING TO TAG.*'
+            @($Run.Calls | Where-Object { $_ -like 'gh release create*' }).Count | Should -Be 0
+        }
+
+        It 'creates nothing when the release already exists' {
+            $Run = Invoke-TagStep -Environment @{ PublishedByThisJob = '' } -GhViewExit 0
+            $Run.Thrown | Should -BeNullOrEmpty
+            @($Run.Calls | Where-Object { $_ -like 'gh release create*' }).Count | Should -Be 0
         }
     }
 

@@ -331,7 +331,9 @@ publish it.
   release missing it goes RED, naming the version and the hand repair, and until the tag exists
   every merge to `main` publishes nothing. A re-run of the failed job goes red the same way, since
   it too finds the version on the Gallery. The repair is by hand: tag the commit of the run whose
-  publish job logged `Publishing Omnicit.PIM <version>` and create its release --
+  publish job logged `Publishing Omnicit.PIM <version>` and, after the upload,
+  `Publish-PSResource returned without error` (the first line is written BEFORE the upload, so a
+  run whose upload failed logs it too), and create its release --
   `git tag v<version> <commit>`, `git push origin v<version>`, then
   `gh release create v<version> --verify-tag --title v<version> --prerelease --notes-file <notes>`
   with that commit's `[Unreleased]` section as the notes (a preview tag is outside the
@@ -364,9 +366,11 @@ publish it.
   commit it was meant for.
 - **A failed Gallery confirmation is not proof of a failed publish.** The job asks the Gallery for
   the exact version for up to 10 minutes and goes red if it cannot see it; check the Gallery before
-  re-running, and never assume the version is free. A re-run is safe: the publish step skips a
-  version that is already on the Gallery, and the tag step skips a release that already exists --
-  and refuses, red, to tag anything when the release is missing, since that job did not publish.
+  re-running, and never assume the version is free. A re-run is safe -- it publishes nothing twice:
+  the publish step skips a version that is already on the Gallery, and the tag step skips a release
+  that already exists and refuses, red, to tag anything when the release is missing, since that job
+  did not publish. So a re-run cannot finish the tagging of a version this job published: repair it
+  by hand, as the tag bullet above describes.
 
 **To cut a full release:**
 

@@ -121,7 +121,7 @@ foreach ($Line in @($RemoteTag)) {
     if ([string]::IsNullOrWhiteSpace($Line)) { continue }
     $Answer = [regex]::Match($Line, $LinePattern)
     if (-not $Answer.Success) {
-        throw "REFUSING TO TAG. git ls-remote answered '$Line' for $Tag, which is neither refs/tags/$Tag nor its peeled line, so where $Tag points cannot be read. Nothing was tagged. $ModuleName $Version may already be published -- read the comment on the tag step before re-running."
+        throw "REFUSING TO TAG. git ls-remote answered '$Line' for $Tag, which is neither refs/tags/$Tag nor its peeled line, so where $Tag points cannot be read. Nothing was tagged. $ModuleName $Version may already be published, and if this job published it, a re-run cannot tag it: tag by hand -- see the comment on the tag step."
     }
     if ($Answer.Groups[2].Success) { $PeeledCommit = $Answer.Groups[1].Value } else { $PlainCommit = $Answer.Groups[1].Value }
 }
@@ -129,7 +129,7 @@ $TagCommit = if ($PeeledCommit) { $PeeledCommit } else { $PlainCommit }
 
 $Flag = if ([string]::IsNullOrEmpty($Prerelease)) { '' } else { ' --prerelease' }
 $ReleaseCommand = "gh release create $Tag --verify-tag --title $Tag$Flag --notes-file <a file holding the Unreleased section of CHANGELOG.md at that commit>"
-$PublishedCommit = "the commit of the workflow run whose publish job logged 'Publishing $ModuleName $Version'"
+$PublishedCommit = "the commit of the workflow run whose publish job logged 'Publishing $ModuleName $Version' and, after the upload, 'Publish-PSResource returned without error'"
 $Ruleset = "a v<X.Y.Z> tag only by the 'Stable Version' ruleset's bypass list"
 
 if ($ReleaseExists) {

@@ -587,7 +587,7 @@ jobs:
           $ExitCode = $LASTEXITCODE
           if ($ExitCode -ne 0) {
               $Detail = (@($Answer | ForEach-Object { "$_".Trim() }) -join ' ').Trim()
-              throw "git ls-remote exited with $ExitCode ($Detail), so this job cannot tell where $Tag points, and it tags nothing. $ModuleName $Version may already be published -- read the comment on this step before re-running."
+              throw "git ls-remote exited with $ExitCode ($Detail), so this job cannot tell where $Tag points, and it tags nothing. $ModuleName $Version is already on the PowerShell Gallery. If this job published it, a re-run cannot tag it: tag by hand -- see the comment on this step."
           }
           $RemoteTag = @($Answer | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$_" })
 
@@ -616,6 +616,6 @@ jobs:
           }
 
           gh @Arguments
-          if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE. $ModuleName $Version IS ALREADY PUBLISHED -- read the comment on this step before re-running." }
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE. $ModuleName $Version IS ALREADY PUBLISHED, and a re-run of this job cannot create the release: tag and release by hand -- see the comment on this step." }
 
           Write-Host "Created the release $($Decision.Tag) on $($Decision.Target). The next build on main counts up from it."
