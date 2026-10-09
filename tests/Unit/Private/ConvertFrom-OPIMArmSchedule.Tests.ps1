@@ -418,11 +418,12 @@ Describe 'ConvertFrom-OPIMArmSchedule' {
 
     # The answers ARM gave in the live run of docs/live-verification/feat-arm-transport-checklist.md
     # (tests/Unit/TestHelpers/ArmResponse/recorded-*.json), redacted to non-v4 placeholder ids and
-    # to the example.com / contoso.com domains. Where the Microsoft Learn fixtures above show the
-    # documented shape, these show what the service really returned: dates with none to seven
-    # fractional digits and with a Z or a +00:00 suffix, an Assigned row that carries no end date
-    # and no link to its eligibility, a request answer with an empty ticketInfo and no scheduleInfo,
-    # and a principal that carries userPrincipalName where the schema has email.
+    # to the contoso.com domain. Where the Microsoft Learn fixtures above show the documented
+    # shape, these show what the service really returned: dates with none to seven fractional
+    # digits and with a Z or a +00:00 suffix, an Assigned row that carries no end date and no link
+    # to its eligibility, request answers with an empty ticketInfo (and, for the SelfDeactivate
+    # answer, no scheduleInfo), and a principal that carries userPrincipalName where the schema
+    # has email.
     # The expected values are read from the recorded text itself, with the same JsonDocument oracle
     # as above, never typed twice.
     # -ForEach data is built when the file is discovered, so it stands outside BeforeAll.
