@@ -282,49 +282,30 @@ Describe 'Get-OPIMArmRefusal' {
     }
 
     Context 'When the module is read as it loaded' {
-        It 'stands before every Az.Resources call in the module' {
-            # Static check on every function as the module loaded it: each call to an Az.Resources
-            # schedule command has the gate -- $ArmRefusal = Get-OPIMArmRefusal, then an if on it --
-            # among the statements before it in a block that encloses it, within the same function.
+        It 'leaves no Az.Resources call in the module' {
+            # Static check on every function as the module loaded it: no command of the Az.Resources
+            # schedule family is called any more. Every Azure request goes through the module's own ARM
+            # transport, which gates each request itself, so no call site is left to stand behind a gate.
             $Az = @('Get-AzRoleEligibilitySchedule', 'Get-AzRoleAssignmentScheduleInstance',
                 'New-AzRoleAssignmentScheduleRequest', 'Get-AzRoleAssignmentScheduleRequest')
             $Functions = @(InModuleScope Omnicit.PIM { Get-Command -Module Omnicit.PIM -CommandType Function })
-            $IsGate = {
-                param($Statement)
-                $Statement -is [System.Management.Automation.Language.IfStatementAst] -and
-                $Statement.Clauses[0].Item1.Extent.Text -match '\$null\s+-ne\s+\$ArmRefusal'
-            }
-            $IsGateRead = {
-                param($Statement)
-                $Statement -is [System.Management.Automation.Language.AssignmentStatementAst] -and
-                $Statement.Left.Extent.Text -eq '$ArmRefusal' -and
-                $Statement.Right.Extent.Text -match '^Get-OPIMArmRefusal$'
-            }
-            $Calls = foreach ($Function in $Functions) {
-                $Ast = $Function.ScriptBlock.Ast
-                foreach ($Command in @($Ast.FindAll({
-                                param($Node)
-                                $Node -is [System.Management.Automation.Language.CommandAst] -and $Az -contains $Node.GetCommandName()
-                            }, $true))) {
-                    $Gated = $false
-                    $Child = $Command
-                    $Node = $Command.Parent
-                    while ($Node -and -not $Gated -and -not [object]::ReferenceEquals($Node, $Ast)) {
-                        if ($Node -is [System.Management.Automation.Language.StatementBlockAst] -or
-                            $Node -is [System.Management.Automation.Language.NamedBlockAst]) {
-                            $Index = $Node.Statements.IndexOf($Child)
-                            for ($I = $Index - 1; $I -ge 1; $I--) {
-                                if ((& $IsGate $Node.Statements[$I]) -and (& $IsGateRead $Node.Statements[$I - 1])) { $Gated = $true; break }
-                            }
-                        }
-                        $Child = $Node
-                        $Node = $Node.Parent
+            # The walk reaches the three cmdlets that held the Az.Resources calls, so a pass is no
+            # empty walk.
+            $Functions.Name | Should -Contain 'Get-OPIMAzureRole'
+            $Functions.Name | Should -Contain 'Enable-OPIMAzureRole'
+            $Functions.Name | Should -Contain 'Disable-OPIMAzureRole'
+            $Calls = @(foreach ($Function in $Functions) {
+                    $Ast = $Function.ScriptBlock.Ast
+                    foreach ($Command in @($Ast.FindAll({
+                                    param($Node)
+                                    $Node -is [System.Management.Automation.Language.CommandAst] -and $Az -contains $Node.GetCommandName()
+                                }, $true))) {
+                        '{0}:{1} {2}' -f $Function.Name, $Command.Extent.StartLineNumber, $Command.GetCommandName()
                     }
-                    [pscustomobject]@{ Site = '{0}:{1} {2}' -f $Function.Name, $Command.Extent.StartLineNumber, $Command.GetCommandName(); Gated = $Gated }
-                }
-            }
-            @($Calls).Count | Should -Be 3 -Because 'the walk must reach the activation and deactivation requests and the -Wait poll, the Az.Resources calls left now that Get-OPIMAzureRole reads through the transport'
-            @($Calls | Where-Object { -not $_.Gated } | ForEach-Object Site) | Should -BeNullOrEmpty
+                })
+            # The sites are the failure text, so a call that comes back is found by its place.
+            ($Calls -join '; ') | Should -BeNullOrEmpty -Because 'every Az.Resources schedule call was replaced by a request through the module''s own ARM transport'
+            $Calls.Count | Should -Be 0
         }
     }
 }

@@ -205,34 +205,40 @@ function Enable-OPIMAzureRole {
                 $PSCmdlet.WriteWarning("$Label was already requested by this command, so no second request was sent.")
                 continue
             }
-            $RoleActivateParams = @{
-                Name                            = New-Guid
-                Scope                           = $Role.ScopeId
-                PrincipalId                     = $Role.PrincipalId
-                RoleDefinitionId                = $Role.RoleDefinitionId
-                RequestType                     = 'SelfActivate'
-                LinkedRoleEligibilityScheduleId = $Role.Name
-                Justification                   = $Justification
-            }
-
-            if ($Until) {
-                $RoleActivateParams.ExpirationType         = 'AfterDateTime'
-                $RoleActivateParams.ExpirationEndDateTime  = $Until.ToUniversalTime()
+            # The request is built for the module's own ARM transport: the name of the request is a new
+            # id, and the body carries one eligibility, one role definition at one scope, for the
+            # requested duration, and nothing else (SECURITY 4).
+            $RequestName = [string](New-Guid)
+            $Expiration = if ($Until) {
                 [string]$RoleExpireTime = $Until
+                [ordered]@{ type = 'AfterDateTime'; endDateTime = $Until.ToUniversalTime().ToString('o') }
             } else {
-                $RoleActivateParams.ExpirationType        = 'AfterDuration'
-                $RoleActivateParams.ExpirationDuration    = [XmlConvert]::ToString([TimeSpan]::FromHours($Hours))
                 [string]$RoleExpireTime = $NotBefore.AddHours($Hours)
+                [ordered]@{ type = 'AfterDuration'; duration = [XmlConvert]::ToString([TimeSpan]::FromHours($Hours)) }
             }
-
+            $ScheduleInfo = [ordered]@{ expiration = $Expiration }
             # OPIM-15: the start is sent only when -NotBefore was given; without it ARM starts the
-            # activation now, as before. Times go to ARM in UTC (a time without an offset is local).
+            # activation now. Times go to ARM in UTC (a time without an offset is local, OPIM-18).
             if ($PSBoundParameters.ContainsKey('NotBefore')) {
-                $RoleActivateParams.ScheduleInfoStartDateTime = $NotBefore.ToUniversalTime()
+                $ScheduleInfo.startDateTime = $NotBefore.ToUniversalTime().ToString('o')
             }
-
-            if ($TicketNumber) { $RoleActivateParams.TicketNumber = $TicketNumber }
-            if ($TicketSystem)  { $RoleActivateParams.TicketSystem  = $TicketSystem }
+            $RequestProperties = [ordered]@{
+                principalId                     = $Role.PrincipalId
+                roleDefinitionId                = $Role.RoleDefinitionId
+                requestType                     = 'SelfActivate'
+                linkedRoleEligibilityScheduleId = $Role.Name
+                scheduleInfo                    = $ScheduleInfo
+            }
+            if ($Justification) { $RequestProperties.justification = $Justification }
+            if ($TicketNumber -or $TicketSystem) {
+                $TicketInfo = [ordered]@{}
+                if ($TicketNumber) { $TicketInfo.ticketNumber = $TicketNumber }
+                if ($TicketSystem) { $TicketInfo.ticketSystem = $TicketSystem }
+                $RequestProperties.ticketInfo = $TicketInfo
+            }
+            # The root scope has no prefix: its path starts with /providers, never with //providers.
+            $RequestScope = if ($Role.ScopeId -eq '/') { '' } else { $Role.ScopeId }
+            $RequestPath = '{0}/providers/Microsoft.Authorization/roleAssignmentScheduleRequests/{1}?api-version=2020-10-01' -f $RequestScope, $RequestName
 
             if ($PSCmdlet.ShouldProcess(
                     "$($Role.RoleDefinitionDisplayName) on $($Role.ScopeDisplayName) ($($Role.ScopeId))",
@@ -241,11 +247,11 @@ function Enable-OPIMAzureRole {
                 # Counted before it is sent, so a request that fails still is not sent again.
                 $null = $RequestedPosts.Add($PostKey)
                 try {
-                    # SEC (EntraRBAC A19): the ARM gate, inside the try so the catch reports a refusal
-                    # as itself.
-                    $ArmRefusal = Get-OPIMArmRefusal
-                    if ($null -ne $ArmRefusal) { throw $ArmRefusal }
-                    $Response = New-AzRoleAssignmentScheduleRequest @RoleActivateParams -ErrorAction Stop
+                    # The transport gates the request itself (SignInRefused, TenantMismatch,
+                    # AccountMismatch) and throws a refusal or an ARM error as a record, which this
+                    # catch writes as itself.
+                    $Response = ConvertFrom-OPIMArmSchedule -Kind AssignmentScheduleRequest -InputObject (
+                        Invoke-OPIMArmRequest -Method PUT -Path $RequestPath -Body @{ properties = $RequestProperties })
                 } catch {
                     Remove-OPIMErrorRecord -Record $PSItem
                     if (-not (ConvertTo-PolicyValidationError -CaughtError $PSItem -ResourceType 'role' -Cmdlet $PSCmdlet)) {
@@ -254,8 +260,8 @@ function Enable-OPIMAzureRole {
                     continue
                 }
 
-                # An Az request's Status is read-only, so the request reported is the last one read:
-                # the response, or the polled request that carries the final status.
+                # The request reported is the last one read: the response, or the polled request that
+                # carries the final status.
                 $Current = $Response
                 $Status = [string]$Response.Status
                 $TimedOut = $false
@@ -267,17 +273,19 @@ function Enable-OPIMAzureRole {
                         if ((Get-Date -AsUTC) -ge $Deadline) { $TimedOut = $true; break }
                         Start-Sleep -Seconds 5
                         try {
-                            # SEC (EntraRBAC A19): the ARM gate before every round of the poll, inside
-                            # the try, so the catch reports a refusal as itself and ends the wait for
-                            # this role only; the request above was already sent.
-                            $ArmRefusal = Get-OPIMArmRefusal
-                            if ($null -ne $ArmRefusal) { throw $ArmRefusal }
+                            # The transport gates every round of the poll itself, so a refusal is thrown
+                            # here, written as itself by the catch, and ends the wait for this role
+                            # only; the request above was already sent and stays submitted.
                             # asTarget() lists the requests made for the signed-in user and needs no role
                             # at the scope. asRequestor() would fail exactly while the poll is needed:
                             # ARM refuses it to a user who holds no active role there yet
-                            # (InsufficientPermissions, measured live 2026-10-08).
-                            $Polled = @(Get-AzRoleAssignmentScheduleRequest -Scope $Response.Scope -Filter 'asTarget()' -ErrorAction Stop |
-                                    Where-Object Name -EQ $Response.Name)
+                            # (InsufficientPermissions, measured live 2026-10-08). The list is read
+                            # across every page (-All), and the root scope has no prefix.
+                            $PollScope = if ($Response.Scope -eq '/') { '' } else { $Response.Scope }
+                            $PollPath = '{0}/providers/Microsoft.Authorization/roleAssignmentScheduleRequests?$filter=asTarget()&api-version=2020-10-01' -f $PollScope
+                            $Polled = @((Invoke-OPIMArmRequest -Path $PollPath -All).value |
+                                    Where-Object { $_.name -eq $Response.Name } |
+                                    ConvertFrom-OPIMArmSchedule -Kind AssignmentScheduleRequest)
                         } catch {
                             # An ARM failure record can point at the request and its bearer token:
                             # scrub it, then report it as itself for this role only.
