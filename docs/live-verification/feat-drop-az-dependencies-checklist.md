@@ -113,7 +113,7 @@ in the fixture session), so every activation below passes one.
 
 ### S.1. Find the build under test and tie it to the branch head
 
-- [ ] **S.1** Window A (no module). The newest build in `output/module/Omnicit.PIM/` was made after the branch head was committed, and its manifest declares AzAuth and Microsoft.Graph.Authentication, no Az module, and PowerShell 7.4.
+- [x] **S.1** Window A (no module). The newest build in `output/module/Omnicit.PIM/` was made after the branch head was committed, and its manifest declares AzAuth and Microsoft.Graph.Authentication, no Az module, and PowerShell 7.4.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -136,11 +136,15 @@ Microsoft.Graph.Authentication 2.36.0`; `PowerShellVersion: 7.4`; the last line 
 **Failure looks like:** `False` on the second line or a tracked change -- build again before any
 check below. Another dependency list -- the build is not this branch's: STOP.
 
-Result:
+Result: 2026-10-09 22:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+22:39 UTC, window A (no module), after the checklist fix and a new build: Branch head: 510d3c7 (the checklist fix); Built version folder: 0.7.0; Built after the branch head was committed: True; Tracked changes in the working tree: 0; Declared dependencies: AzAuth 2.9.0, Microsoft.Graph.Authentication 2.36.0; PowerShellVersion: 7.4; A #requires line of the built module names an Az module: False. First run, 22:32 UTC, on 083975b after the first new build: the same lines, branch head 083975b.
+```
 
 ### S.2. The step's module folder
 
-- [ ] **S.2** Window A (no module). The raw folder is git-ignored, and the step's module folder holds AzAuth 2.9.0 and Microsoft.Graph.Authentication 2.36.0 from the build's own dependencies and the two SecretStore modules the harness needs, and no Az module.
+- [x] **S.2** Window A (no module). The raw folder is git-ignored, and the step's module folder holds AzAuth 2.9.0 and Microsoft.Graph.Authentication 2.36.0 from the build's own dependencies and the two SecretStore modules the harness needs, and no Az module.
 
 ```powershell
 $Raw = Join-Path (Get-Location).Path 'docs/live-verification/raw/opim-s21b'
@@ -174,11 +178,15 @@ module in the folder: False`.
 dependency -- resolve the build's dependencies again (`./build.ps1 -ResolveDependency -Tasks noop
 -UseModuleFast`) and run the block again.
 
-Result:
+Result: 2026-10-09 22:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+22:32 UTC, window A (no module): The raw folder is git-ignored: True; AzAuth 2.9.0; Microsoft.Graph.Authentication 2.36.0; Microsoft.PowerShell.SecretManagement 1.1.1; Microsoft.PowerShell.SecretStore 1.0.5; An Az module in the folder: False.
+```
 
 ### S.3. Window B finds no Az module
 
-- [ ] **S.3** Window B, a fresh `pwsh -NoProfile`, before anything else runs in it. Its module path is the step's module folder and PowerShell's own modules only; no Az module can be found or is loaded; PowerShell is 7.4 or later; and AzAuth 2.9.0 is loaded from the step's folder.
+- [x] **S.3** Window B, a fresh `pwsh -NoProfile`, before anything else runs in it. Its module path is the step's module folder and PowerShell's own modules only; no Az module can be found or is loaded; PowerShell is 7.4 or later; and AzAuth 2.9.0 is loaded from the step's folder.
 
 ```powershell
 $env:PSModulePath = (Resolve-Path 'docs/live-verification/raw/opim-s21b/modules').Path + [System.IO.Path]::PathSeparator + (Join-Path $PSHOME 'Modules')
@@ -197,11 +205,15 @@ only `Microsoft.PowerShell.*` modules loaded; `PowerShell:` 7.4 or later; `AzAut
 **Failure looks like:** an Az module found or loaded -- the window is not clean: end it and start a
 fresh one; never continue in it.
 
-Result:
+Result: 2026-10-09 22:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+22:39 UTC, window B, a fresh pwsh -NoProfile (the second window B; the first ended after 0.1's first run): Module path entries: 2; Az modules this window can find: 0; Az modules loaded: 0; Modules loaded: Microsoft.PowerShell.Management, Microsoft.PowerShell.Utility; PowerShell: 7.6.6; AzAuth loaded: 2.9.0. (First window B, 22:32 UTC, with the first form of the block: the same first five lines.)
+```
 
 ### S.4. The fixture is in place, and nothing carries the step's prefix
 
-- [ ] **S.4** Window A, as `oer-live-cc`. The prerequisite script with `-WhatIf` finds every object of the fixture and would write nothing, and no object carries the prefix `opim-s21b-`.
+- [x] **S.4** Window A, as `oer-live-cc`. The prerequisite script with `-WhatIf` finds every object of the fixture and would write nothing, and no object carries the prefix `opim-s21b-`.
 
 ```powershell
 $Prereq = Join-Path $env:OPIMLIVE_HOME 'Initialize-OpimS2Prereq.ps1'
@@ -226,11 +238,15 @@ context; `Objects with the prefix opim-s21b-: 0`.
 prefixed object that is not the fixture's -- STOP (the fixture is missing something, or something
 without the prefix exists): create nothing and ask for nothing. A 401 or 403 -- STOP (G6).
 
-Result:
+Result: 2026-10-09 22:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+22:32-22:33 UTC, window A as oer-live-cc: Lines 'exists; kept': 10; What if lines other than the transcript: 0. Sweep 'opim-s1-': 0; sweep 'opim-s2-': test user 1, test group 1, other prefixed objects 0. Group 'Exclude from CA': found 1, not role-assignable, not dynamic. Every PIM policy (both directory roles, the group member, Reader on opim-s2-rg and opim-s2-rg2): approval required False, authentication context False, on activation Justification. Residue: 2 rows, both from opim-s1 (R-L10 of Sprint 1), not touched. Every oer-live-cc identity line True. Objects with the prefix opim-s21b-: 0.
+```
 
 ### S.5. The harness loads in window B, and still no Az module
 
-- [ ] **S.5** Window B. OerLive is 1.0.3, OpimLive is 1.0.4, the harness reads the test values through it, the TOTP implementation reproduces RFC 6238, and loading the harness loaded no Az module.
+- [x] **S.5** Window B. OerLive is 1.0.3, OpimLive is 1.0.4, the harness reads the test values through it, the TOTP implementation reproduces RFC 6238, and loading the harness loaded no Az module.
 
 ```powershell
 Import-Module (Join-Path $env:OPIMLIVE_HOME 'OpimLive/OpimLive.psm1') -Force
@@ -247,13 +263,17 @@ modules this window can find: 0; loaded: 0`.
 **Failure looks like:** `False` on the self-test -- STOP: the harness would enter wrong codes. An Az
 module -- end the window (S.3).
 
-Result:
+Result: 2026-10-09 22:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+22:40 UTC, window B (the second): OerLive version: 1.0.3; OpimLive version: 1.0.4; Test user and tenant read (values hidden): True; TOTP self-test: True; Az modules this window can find: 0; loaded: 0. (The first window B, 22:33 UTC: the same lines.)
+```
 
 ### 0. Preparation
 
 ### 0.1. Identity check, Graph and Azure, in a window without Az
 
-- [ ] **0.1** Window B. The build loads AzAuth 2.9.0 and Microsoft.Graph.Authentication 2.36.0 from the step's folder and no Az module; with the module path set back to the step's folder, `Connect-OpimLiveUser -IncludeARM` signs it in to Graph and Azure with one device code each, both on the Information stream; the Graph account is the test user, the tenant is the test tenant, the module's ARM token is the test user's in the test tenant; and afterwards no Az module is loaded.
+- [x] **0.1** Window B. The build loads AzAuth 2.9.0 and Microsoft.Graph.Authentication 2.36.0 from the step's folder and no Az module; with the module path set back to the step's folder, `Connect-OpimLiveUser -IncludeARM` signs it in to Graph and Azure with one device code each, both on the Information stream; the Graph account is the test user, the tenant is the test tenant, the module's ARM token is the test user's in the test tenant; and afterwards no Az module is loaded.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -293,11 +313,15 @@ whose tenant or user is not the test user's is a STOP even though the module ref
 harness signed in wrong). An import error naming a missing module -- the build still depends on
 something the step's folder does not hold: a defect within this step's scope (G11).
 
-Result:
+Result: 2026-10-09 22:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+22:40 UTC, window B (the second; 26 s): The import put other module folders back on the module path: True (set back before the sign-in); AzAuth 2.9.0, from the step's folder: True; Microsoft.Graph.Authentication 2.36.0, from the step's folder: True; Az modules loaded before the sign-in: 0; this window can find: 0. Disconnect-OPIM, Disconnect-MgGraph and Disconnect-AzAccount ran first (the last found no command). The Graph code and then the AzAuth code were completed in Edge, the Azure page naming Microsoft Azure CLI: rows Graph Information True ok and AzureCli Information True ok; Signed in to Graph as the test user: True; to the test tenant: True; the module remembers the device code mode: True; Azure token is the test user (the Graph sign-in's object id): True; Azure token is the test tenant: True. Session tenant is the test tenant: True; ARM token held as a SecureString: True; ARM token minutes left: 81; Az modules loaded after the sign-in: 0; this window can find: 9 (recorded: the sign-in put the profile's folders back on the module path; no Az module was loaded). No line printed the account or the tenant id. Run 1, before the block fix (commit 510d3c7): 22:33-22:34 UTC, the first window B: AzAuth 2.10.0, from the step's folder: False; Microsoft.Graph.Authentication 2.36.0, from the step's folder: True; Az modules loaded before the sign-in: 0; both device codes on the Information stream and completed (Graph Information True ok, AzureCli Information True ok); every harness identity line True; session tenant True; ARM token SecureString True; 79 minutes; Az modules loaded after the sign-in: 1; this window can find: 9. Diagnosis (22:34-22:37 UTC, scratch pwsh processes, no sign-in): importing Microsoft.Graph.Authentication 2.36.0, by name or by path, puts the profile's and the shared module folders back in front of the process's module path (importing AzAuth, SecretManagement or the Graph dll alone does not), so AzAuth resolved to 2.10.0 from the profile, and the harness's own Disconnect-AzAccount then loaded Az.Accounts 5.5.3 from it. Omnicit.PIM loaded no Az module and called none. Window B signed out (state cleared True, no Graph context) and ended; the profile's Az context file was not written (last written 2026-10-08).
+```
 
 ### 0.2. What is eligible and what is active
 
-- [ ] **0.2** Window B. The fixture's eligibilities are listed, and nothing is active.
+- [x] **0.2** Window B. The fixture's eligibilities are listed, and nothing is active.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -311,13 +335,17 @@ if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
 **Failure looks like:** another eligible count -- STOP. Something already active -- record it; the
 checks below count before and after. A terminating error from a read is a failed read, never a `0`.
 
-Result:
+Result: 2026-10-09 22:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+22:40 UTC, window B: Eligible: directory 2, group 1, Azure 2; Active: directory 0, group 0, Azure 0.
+```
 
 ### 1. `pim` and `unpim` for all three kinds, from a tenant map (the specification's 1.x)
 
 ### 1.1. The tenant map
 
-- [ ] **1.1** Window B. A tenant map in the raw folder holds one alias with Usage Summary Reports Reader, the membership of `opim-s2-grp` and Reader on `opim-s2-rg`, one entry each, stored from the listed eligibilities.
+- [x] **1.1** Window B. A tenant map in the raw folder holds one alias with Usage Summary Reports Reader, the membership of `opim-s2-grp` and Reader on `opim-s2-rg`, one entry each, stored from the listed eligibilities.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -342,11 +370,15 @@ $Config = Get-OPIMConfiguration -TenantAlias 's21b-all' -TenantMapPath $Map -Err
 **Failure looks like:** another count -- record it, and do not run section 1 until the map holds the
 three entries.
 
-Result:
+Result: 2026-10-09 22:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+22:40-22:41 UTC, window B: Rows to store: 3; Entries: directory 1, group 1, Azure 1. Install-OPIMConfiguration's own host lines name the stored keys, which hold ids; they are not copied here, and the block now sends them to 6>$null (a block fix; the cmdlet tells the user what it stores by design).
+```
 
 ### 1.2. `pim` activates all three
 
-- [ ] **1.2** Window B. `pim -TenantAlias s21b-all` activates the directory role, the group membership and Reader on `opim-s2-rg`, with no error, and all three are then listed as active.
+- [x] **1.2** Window B. `pim -TenantAlias s21b-all` activates the directory role, the group membership and Reader on `opim-s2-rg`, with no error, and all three are then listed as active.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -377,11 +409,15 @@ all three listed as active within 300 seconds.
 seconds -- record it. An Azure error naming AzAuth or `Get-AzToken`, or `AzureConnectFailed` -- a
 defect within this step's scope (G11).
 
-Result:
+Result: 2026-10-09 22:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+22:41-22:42 UTC, window B: First pim: results 3; DirectoryRole Usage Summary Reports Reader Provisioned; EntraIDGroup opim-s2-grp Provisioned; AzureRole Reader Provisioned. Errors: (none); warnings: 0. Listed as active after (seconds, the first check after the call): directory 46, group 46, Azure 46.
+```
 
 ### 1.3. A second `pim` sends nothing (G8)
 
-- [ ] **1.3** Window B. Once all three are listed as active, the same `pim` again writes "already active" for each and sends no request.
+- [x] **1.3** Window B. Once all three are listed as active, the same `pim` again writes "already active" for each and sends no request.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -397,11 +433,15 @@ $Second = @(Enable-OPIMMyRole -TenantAlias 's21b-all' -TenantMapPath $Map -Justi
 (G8). ARM's and Graph's listing lag is known (OPIM-50, OPIM-53); 1.2 waits until each kind is
 listed, so a second request here is a finding.
 
-Result:
+Result: 2026-10-09 22:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+22:42 UTC, window B: Second pim, 64 s after the first: results 0; already active warnings 3; errors (none).
+```
 
 ### 1.4. `unpim` deactivates all three after five minutes
 
-- [ ] **1.4** Window B. Five minutes after 1.2, `unpim -TenantAlias s21b-all` deactivates all three, with no error.
+- [x] **1.4** Window B. Five minutes after 1.2, `unpim -TenantAlias s21b-all` deactivates all three, with no error.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -421,11 +461,15 @@ $Results = @($First | Where-Object { $_.PSObject.TypeNames -contains 'Omnicit.PI
 **Failure looks like:** `ActiveDurationTooShort` -- the five minutes were not waited out: run the block
 again after a minute. Another error, or fewer results -- record it.
 
-Result:
+Result: 2026-10-09 22:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+22:42-22:47 UTC, window B (the block waited until 320 s after 1.2's pim): First unpim: results 3; DirectoryRole Usage Summary Reports Reader Revoked; EntraIDGroup opim-s2-grp Revoked; AzureRole Reader Revoked. Errors: (none).
+```
 
 ### 1.5. A second `unpim` sends nothing (G8), and nothing is left active
 
-- [ ] **1.5** Window B. The same `unpim` again sends nothing and writes no error, and the listings show nothing active.
+- [x] **1.5** Window B. The same `unpim` again sends nothing and writes no error, and the listings show nothing active.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -451,7 +495,11 @@ can find:` (the profile's folders may be back on the module path; see "Setup, on
 **Failure looks like:** a crash, or a second request -- record it (G8). An Az module loaded -- a
 defect within this step's scope (G11).
 
-Result:
+Result: 2026-10-09 22:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+22:47 UTC, window B: Listings settled after 54 s: True; Second unpim: results 0; errors 0; other lines 0; Active: directory 0, group 0, Azure 0; Az modules loaded: 0; this window can find: 9 (recorded: the profile's folders are back on the module path since the sign-in; no Az module was loaded).
+```
 
 ## Teardown
 
@@ -460,7 +508,7 @@ is left active, that no object carries the step's prefix, and that no window kee
 
 ### T.1. Nothing is left active
 
-- [ ] **T.1** Window B. The test user has no active directory role, group assignment or Azure role.
+- [x] **T.1** Window B. The test user has no active directory role, group assignment or Azure role.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -473,11 +521,15 @@ if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
 **Failure looks like:** an active role -- deactivate it (after five minutes) and record it. A
 terminating error is a failed read, never a `0`.
 
-Result:
+Result: 2026-10-09 22:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+22:47 UTC, window B: Active: directory 0, group 0, Azure 0.
+```
 
 ### T.2. Window B signs out
 
-- [ ] **T.2** Window B. The window's session is cleared and the window ended.
+- [x] **T.2** Window B. The window's session is cleared and the window ended.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -491,11 +543,15 @@ try { Disconnect-MgGraph -ErrorAction Stop | Out-Null } catch { $null = $PSItem 
 **Expect:** `Module state cleared: True; Graph context left: False`.
 **Failure looks like:** `False` / `True` -- record it, and end the window.
 
-Result:
+Result: 2026-10-09 22:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+22:47 UTC, window B: Module state cleared: True; Graph context left: False. Window B ended. (The first window B was signed out the same way at 22:37 UTC, state cleared True, no Graph context, and ended.)
+```
 
 ### T.3. No object of the step, and the raw folder
 
-- [ ] **T.3** Window A, then the operator. No object carries `opim-s21b-`; the raw folder, with the step's module folder and the tenant map, is deleted once the results are written up.
+- [x] **T.3** Window A, then the operator. No object carries `opim-s21b-`; the raw folder, with the step's module folder and the tenant map, is deleted once the results are written up.
 
 ```powershell
 Import-Module (Join-Path $env:OPIMLIVE_HOME '../../Omnicit Entra RBAC/Live-verifiering/OerLive/OerLive.psm1') -Force
@@ -513,4 +569,8 @@ docs/live-verification: 0`.
 **Failure looks like:** a prefixed object -- STOP (it was not made by this file). The fixture
 `opim-s2-` stays on purpose until step 5.
 
-Result:
+Result: 2026-10-09 22:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+22:47-22:48 UTC, window A as oer-live-cc, after window B had ended: every oer-live-cc identity line True; Objects with the prefix opim-s21b-: 0; Raw folder gone: True; Untracked files under docs/live-verification: 0. The fixture opim-s2- stays until step 5.
+```
