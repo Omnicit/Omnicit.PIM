@@ -22,6 +22,13 @@ BeforeAll {
     #      (a name in a variable, Get-Command, a script block made from a string, Invoke-Expression),
     #      and there every Get-MgContext mock throws. (b) Initialize-OPIMAuth, which calls it, runs
     #      unmocked only where no Get-MgContext mock returns, or Get-OPIMMsalApplication is mocked too.
+    #      Any string that parses as a call counts, a sentence or a -Because text that begins with the
+    #      name too; only a Mock or Should target, a block name and a -Tag are read as names.
+    #      What it does not follow: a Mock or a call in AfterAll, AfterEach or a helper function;
+    #      & ${function:name} and the function: drive; a name set in one block and run in another;
+    #      the callers of Initialize-OPIMAuth (Connect-OPIM, the wrapper's retries, the pillar
+    #      cmdlets); names built at run time. A name given as Describe or Context data is read
+    #      against that block's own BeforeAll and BeforeEach only, not the Its inside it.
     #
     # The gate reads files statically: it imports nothing and runs no module code. The QA gate
     # files are outside the tripwire on purpose: they call help, the analyzer and pure maps only.
@@ -48,8 +55,14 @@ BeforeAll {
     $script:InitializeName = 'Initialize-OPIMAuth'
 
     # Pester commands whose string arguments name a command without running it: the target of a
-    # Mock or of Should -Invoke, a block name, a -Because text (R3).
-    $script:ReferenceOnlyCommands = @('Mock', 'Should', 'Assert-MockCalled', 'Describe', 'Context', 'It')
+    # Mock or of Should -Invoke (also Pester 6's Should-Invoke and Should-NotInvoke), a -Because
+    # text (R3).
+    $script:ReferenceOnlyCommands = @('Mock', 'Should', 'Assert-MockCalled', 'Should-Invoke', 'Should-NotInvoke')
+
+    # Pester blocks. Only the block's name and its -Tag are read as names; every other string argument
+    # is data Pester hands to the block (-ForEach, -TestCases) and can be run with & $name (R3).
+    $script:BlockCommands = @('Describe', 'Context', 'It')
+    $script:BlockSwitchParameters = @('Skip', 'Focus', 'Pending', 'Inconclusive')
 
     # This gate names the commands it looks for, as data and in known-answer texts that it parses
     # and never runs, so the R3 reference scan skips this one file.
@@ -382,6 +395,53 @@ BeforeAll {
         $false
     }
 
+    function Test-TestHygieneBlockLabel {
+        <#
+        .SYNOPSIS
+        Returns $true when an element of a Describe, Context or It command is the block's name or
+        its -Tag argument.
+        .DESCRIPTION
+        Walks the command's own element list the way the binder does: the first positional element
+        is the name, a parameter takes the element after it (a switch in
+        $script:BlockSwitchParameters takes none), and a colon-form parameter holds its own
+        argument. The element is the name when positional first or given to -Name, and a tag when
+        given to -Tag; the data parameters (-ForEach, -TestCases) are neither.
+        #>
+        [OutputType([bool])]
+        param(
+            [Parameter(Mandatory)]
+            [System.Management.Automation.Language.CommandAst]$Command,
+
+            [Parameter(Mandatory)]
+            [System.Management.Automation.Language.Ast]$Element
+        )
+        $Elements = $Command.CommandElements
+        $Pending = $null
+        $Positional = 0
+        for ($Index = 1; $Index -lt $Elements.Count; $Index++) {
+            $Current = $Elements[$Index]
+            if ($Current -is [System.Management.Automation.Language.CommandParameterAst]) {
+                if ($null -ne $Current.Argument) {
+                    if ([object]::ReferenceEquals($Current.Argument, $Element)) { return $Current.ParameterName -in 'Name', 'Tag' }
+                    $Pending = $null
+                } elseif ($Current.ParameterName -in $script:BlockSwitchParameters) {
+                    $Pending = $null
+                } else {
+                    $Pending = $Current.ParameterName
+                }
+                continue
+            }
+            if ($null -ne $Pending) {
+                if ([object]::ReferenceEquals($Current, $Element)) { return $Pending -in 'Name', 'Tag' }
+                $Pending = $null
+                continue
+            }
+            if ([object]::ReferenceEquals($Current, $Element)) { return $Positional -eq 0 }
+            $Positional++
+        }
+        $false
+    }
+
     function Get-TestHygieneCommandReference {
         <#
         .SYNOPSIS
@@ -389,9 +449,12 @@ BeforeAll {
         .DESCRIPTION
         'Call' is a command of that name -- bare, quoted after &, or dot-sourced. 'String' is a
         string literal that can run it (Test-TestHygieneTextRunsCommand): a name kept in a
-        variable, a Get-Command argument, a script block made from a string, Invoke-Expression.
-        The name element of a command is the 'Call' half, and a string argument of a command in
-        $script:ReferenceOnlyCommands names the command without running it; neither is a 'String'.
+        variable, a Get-Command argument, a script block made from a string, Invoke-Expression, or
+        Pester data (-ForEach, -TestCases) that a block runs with & $name. The name element of a
+        command is the 'Call' half. A string argument of a command in
+        $script:ReferenceOnlyCommands names the command without running it, and so does the name
+        and the -Tag of a Describe, Context or It (Test-TestHygieneBlockLabel); none of these is a
+        'String'.
         #>
         [OutputType([pscustomobject])]
         param(
@@ -419,6 +482,12 @@ BeforeAll {
                 if ([object]::ReferenceEquals($Owner.CommandElements[0], $String)) { continue }
                 if ($script:ReferenceOnlyCommands -contains $Owner.GetCommandName()) { continue }
             }
+            $Element = if ($String.Parent -is [System.Management.Automation.Language.ArrayLiteralAst]) { $String.Parent } else { $String }
+            $Block = $Element.Parent
+            if ($Block -is [System.Management.Automation.Language.CommandParameterAst]) { $Block = $Block.Parent }
+            if ($Block -is [System.Management.Automation.Language.CommandAst] -and $script:BlockCommands -contains $Block.GetCommandName()) {
+                if (Test-TestHygieneBlockLabel -Command $Block -Element $Element) { continue }
+            }
             if (Test-TestHygieneTextRunsCommand -Text $String.Value -Name $Name) {
                 $Found.Add([pscustomobject]@{ Kind = 'String'; Node = $String; Line = $String.Extent.StartLineNumber })
             }
@@ -434,15 +503,26 @@ BeforeAll {
         Follows Pester 5's mock scope outwards from the node: the body of the innermost It that
         holds it, and the BeforeAll and BeforeEach blocks that are direct statements of each
         enclosing Describe or Context and of the file itself. A sibling block's mocks are not in
-        effect. Order inside an It is not read: a Mock written after the call still counts.
+        effect. Order inside an It is not read: a Mock written after the call still counts. A node
+        written in a block's own argument list (its -ForEach data, say) lies outside the block's
+        body, but Pester runs the body with that data, so the walk then starts at the body.
         #>
         [OutputType([System.Management.Automation.Language.Ast])]
         param(
             [Parameter(Mandatory)]
             [System.Management.Automation.Language.Ast]$Node
         )
+        $Start = $Node
+        for ($Walk = $Node; $null -ne $Walk; $Walk = $Walk.Parent) {
+            if ($Walk -is [System.Management.Automation.Language.ScriptBlockAst]) { break }
+            if ($Walk -is [System.Management.Automation.Language.CommandAst] -and $script:BlockCommands -contains $Walk.GetCommandName()) {
+                $Body = @($Walk.CommandElements | Where-Object { $_ -is [System.Management.Automation.Language.ScriptBlockExpressionAst] }) | Select-Object -Last 1
+                if ($Body) { $Start = $Body.ScriptBlock }
+                break
+            }
+        }
         $SeenIt = $false
-        for ($Current = $Node; $null -ne $Current; $Current = $Current.Parent) {
+        for ($Current = $Start; $null -ne $Current; $Current = $Current.Parent) {
             if ($Current -isnot [System.Management.Automation.Language.ScriptBlockAst]) { continue }
             $Owner = if ($Current.Parent -is [System.Management.Automation.Language.ScriptBlockExpressionAst]) { $Current.Parent.Parent } else { $null }
             $OwnerName = if ($Owner -is [System.Management.Automation.Language.CommandAst]) { $Owner.GetCommandName() } else { $null }
@@ -823,6 +903,8 @@ Describe 'Get-OPIMMsalApplication' {
         Mock -CommandName Get-OPIMMsalApplication -MockWith { }
         Should -Invoke -ModuleName Omnicit.PIM Get-OPIMMsalApplication -Times 0 -Because 'Get-OPIMMsalApplication must not run'
         $Path = 'tests/Unit/Private/Get-OPIMMsalApplication.Tests.ps1'
+        Should-Invoke -CommandName Get-OPIMMsalApplication -ModuleName Omnicit.PIM -Times 0
+        Should-NotInvoke -CommandName Get-OPIMMsalApplication -ModuleName Omnicit.PIM
     }
 }
 '@
@@ -837,7 +919,7 @@ Describe 'Get-OPIMMsalApplication' {
             "line 6: $Reason"
             "line 7: $Reason"
         )
-        @(Get-TestHygieneMsalFinding -Ast (& $Parse $ReferenceOnly) -Allowed $false).Count | Should -Be 0 -Because 'a Mock or Should -Invoke target, a block name, a -Because text and a file path name the command without running it'
+        @(Get-TestHygieneMsalFinding -Ast (& $Parse $ReferenceOnly) -Allowed $false).Count | Should -Be 0 -Because 'a Mock, Should -Invoke or Should-Invoke target, a block name, a -Because text and a file path name the command without running it'
         @(Get-TestHygieneMsalFinding -Ast (& $Parse $Indirect) -Allowed $true).Count | Should -Be 0 -Because 'in a named file only the Get-MgContext rule applies'
     }
 
@@ -926,5 +1008,108 @@ Describe 'x' {
         Test-TestHygieneTextRunsCommand -Text 'tests/Unit/Private/Get-OPIMMsalApplication.Tests.ps1' -Name 'Get-OPIMMsalApplication' | Should -BeFalse
         Test-TestHygieneTextRunsCommand -Text 'Invoke-OPIMGraphRequest -Uri x' -Name 'Get-OPIMMsalApplication' | Should -BeFalse
         Test-TestHygieneTextRunsCommand -Text "`$N = 'Get-OPIMMsalApplication'; & `$N" -Name 'Get-OPIMMsalApplication' | Should -BeTrue
+    }
+
+    It 'Should find the Pester data a block runs as a string that can run Get-OPIMMsalApplication, and a block name or tag as none (known answer)' {
+        $ItData = @'
+It 'runs' -ForEach 'Get-OPIMMsalApplication' { InModuleScope Omnicit.PIM -Parameters @{ C = $_ } { param($C) & $C } }
+'@
+        $DescribeData = @'
+Describe 'd' -ForEach 'Get-OPIMMsalApplication' { It 'a' { & $_ } }
+'@
+        $TestCasesData = @'
+It 'runs' -TestCases @(@{ C = 'Get-OPIMMsalApplication' }) { & $C }
+'@
+        $Labels = @'
+It 'calls Get-OPIMMsalApplication once' { }
+It 'tagged' -Tag 'Get-OPIMMsalApplication' { }
+Describe 'Get-OPIMMsalApplication' -Tag 'x', 'Get-OPIMMsalApplication' { }
+Context -Name 'Get-OPIMMsalApplication' -Tag:'Get-OPIMMsalApplication' { }
+It -Tag 'Get-OPIMMsalApplication' 'Get-OPIMMsalApplication' { }
+It -Skip 'Get-OPIMMsalApplication' { }
+It 'runs' -ForEach @(@{ Name = 'Get-OtherCommand' }) { }
+'@
+        $Parse = { param($Text) [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$null) }
+        $Reason = 'names Get-OPIMMsalApplication in a string that can run it, outside the named files'
+
+        @(Get-TestHygieneMsalFinding -Ast (& $Parse $ItData) -Allowed $false) | Should -Be @("line 1: $Reason")
+        @(Get-TestHygieneMsalFinding -Ast (& $Parse $DescribeData) -Allowed $false) | Should -Be @("line 1: $Reason")
+        @(Get-TestHygieneMsalFinding -Ast (& $Parse $TestCasesData) -Allowed $false) | Should -Be @("line 1: $Reason")
+        @(Get-TestHygieneMsalFinding -Ast (& $Parse $Labels) -Allowed $false).Count | Should -Be 0 -Because 'a block name (also after a -Skip switch), a -Tag (one, several or in colon form) and data that names another command do not run Get-OPIMMsalApplication'
+        @(Get-TestHygieneMsalFinding -Ast (& $Parse $ItData) -Allowed $true).Count | Should -Be 0 -Because 'in a named file only the Get-MgContext rule applies'
+    }
+
+    It 'Should find Initialize-OPIMAuth run under a Get-MgContext mock set in the It or in a BeforeEach (known answer)' {
+        $ItMock = @'
+Describe 'x' {
+    It 'a' {
+        Mock -ModuleName Omnicit.PIM Get-MgContext { $null }
+        InModuleScope Omnicit.PIM { Initialize-OPIMAuth }
+    }
+}
+'@
+        $BeforeEachMock = @'
+Describe 'x' {
+    BeforeEach { Mock -ModuleName Omnicit.PIM Get-MgContext { $null } }
+    It 'a' { InModuleScope Omnicit.PIM { Initialize-OPIMAuth } }
+}
+'@
+        $Parse = { param($Text) [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$null) }
+        $Reason = 'can run Initialize-OPIMAuth unmocked where Get-MgContext is mocked to return and Get-OPIMMsalApplication is not mocked'
+
+        @(Get-TestHygieneInitializeFinding -Ast (& $Parse $ItMock)) | Should -Be @("line 4: $Reason")
+        @(Get-TestHygieneInitializeFinding -Ast (& $Parse $BeforeEachMock)) | Should -Be @("line 3: $Reason")
+    }
+
+    It 'Should read the data of an It as a reference to Initialize-OPIMAuth in the scope of the It (known answer)' {
+        $ItData = @'
+Describe 'x' {
+    It 'runs <Name>' -ForEach @(@{ Name = 'Initialize-OPIMAuth' }) {
+        Mock -ModuleName Omnicit.PIM Get-MgContext { $null }
+        InModuleScope Omnicit.PIM { & $Name }
+    }
+}
+'@
+        $ItDirect = @'
+Describe 'x' {
+    BeforeAll { Mock -ModuleName Omnicit.PIM Get-MgContext { $null } }
+    It 'runs' -ForEach 'Initialize-OPIMAuth' { InModuleScope Omnicit.PIM -Parameters @{ C = $_ } { param($C) & $C } }
+}
+'@
+        $Parse = { param($Text) [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$null) }
+        $Reason = 'can run Initialize-OPIMAuth unmocked where Get-MgContext is mocked to return and Get-OPIMMsalApplication is not mocked'
+
+        @(Get-TestHygieneInitializeFinding -Ast (& $Parse $ItData)) | Should -Be @("line 2: $Reason")
+        @(Get-TestHygieneInitializeFinding -Ast (& $Parse $ItDirect)) | Should -Be @("line 3: $Reason")
+    }
+
+    It 'Should read the data of a Describe as a reference to Initialize-OPIMAuth in the scope of the Describe, and a block name or tag as none (known answer)' {
+        $DescribeData = @'
+Describe 'x' -ForEach @(@{ Name = 'Initialize-OPIMAuth' }) {
+    BeforeAll { Mock -ModuleName Omnicit.PIM Get-MgContext { $null } }
+    It 'a' { InModuleScope Omnicit.PIM { & $Name } }
+}
+'@
+        $DescribeGuarded = @'
+Describe 'x' -ForEach @(@{ Name = 'Initialize-OPIMAuth' }) {
+    BeforeAll {
+        Mock -ModuleName Omnicit.PIM Get-MgContext { $null }
+        Mock -ModuleName Omnicit.PIM Get-OPIMMsalApplication { }
+    }
+    It 'a' { InModuleScope Omnicit.PIM { & $Name } }
+}
+'@
+        $Labels = @'
+Describe 'Initialize-OPIMAuth' -Tag 'Initialize-OPIMAuth' {
+    BeforeAll { Mock -ModuleName Omnicit.PIM Get-MgContext { $null } }
+    It 'calls Initialize-OPIMAuth once' -Tag 'Initialize-OPIMAuth' { $true | Should -BeTrue }
+}
+'@
+        $Parse = { param($Text) [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$null) }
+        $Reason = 'can run Initialize-OPIMAuth unmocked where Get-MgContext is mocked to return and Get-OPIMMsalApplication is not mocked'
+
+        @(Get-TestHygieneInitializeFinding -Ast (& $Parse $DescribeData)) | Should -Be @("line 1: $Reason")
+        @(Get-TestHygieneInitializeFinding -Ast (& $Parse $DescribeGuarded)).Count | Should -Be 0 -Because 'a mocked MSAL build beside the Get-MgContext mock keeps the real client out of reach'
+        @(Get-TestHygieneInitializeFinding -Ast (& $Parse $Labels)).Count | Should -Be 0 -Because 'a block name and a -Tag that name Initialize-OPIMAuth do not run it'
     }
 }

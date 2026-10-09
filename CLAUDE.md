@@ -190,9 +190,16 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   only `Microsoft.Graph.Authentication`; `Get-OPIMMsalApplication` is run only in its own test file
   and the tripwire suite, where every `Get-MgContext` mock throws -- called directly or through a
   string that can run it (a name in a variable, `Get-Command`, a script block made from a string,
-  `Invoke-Expression`); and `Initialize-OPIMAuth` runs unmocked only where no `Get-MgContext` mock
-  returns, or `Get-OPIMMsalApplication` is mocked beside it. The gate's own file is exempt from
-  both, since it names the commands as data.
+  `Invoke-Expression`, Pester `-ForEach` or `-TestCases` data run with `& $name`). Any string that
+  parses as a call of it, or holds its name as a separate word, is refused, a sentence or a
+  `-Because` text included, so write the name only where it is read as a name: the target of a
+  `Mock`, `Should -Invoke` or `Should-Invoke`, a block's name and its `-Tag`. A call or a runnable
+  string of `Initialize-OPIMAuth` is refused where a `Get-MgContext` mock that returns is in effect
+  (in the `It`, or in a `BeforeAll` or `BeforeEach` of an enclosing block) and neither
+  `Get-OPIMMsalApplication` nor `Initialize-OPIMAuth` is mocked there. The gate reads those two
+  commands' own calls and runnable strings, not their callers (`Connect-OPIM`, the wrapper's
+  retries, the pillar cmdlets), and its own file is exempt from both rules, since it names the
+  commands as data.
 - **`sourcehygiene.tests.ps1`** -- every `.ps1`, `.psd1`, `.psm1` and `.ps1xml` under `source/` and
   `tests/` is ASCII without a BOM; every `Verb-OPIM` name in `source/**/*.ps1` resolves to a
   function file, an exported alias, or a function defined inside another function in a function
@@ -1513,12 +1520,15 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   reflection, which no mock intercepts. Its two build-path tests therefore mock `Get-MgContext` to
   throw a sentinel and assert that the sentinel stopped the call with the cache unchanged, and
   testhygiene allows a run of `Get-OPIMMsalApplication` -- a call, or a string that can run it (a
-  name in a variable, `Get-Command`, a script block made from a string, `Invoke-Expression`) -- only
-  in `tests/Unit/Private/Get-OPIMMsalApplication.Tests.ps1` and the tripwire suite, where every
-  `Get-MgContext` mock must throw. Everywhere else, mock `Get-OPIMMsalApplication` itself; a test
-  that runs `Initialize-OPIMAuth` unmocked under a `Get-MgContext` mock that returns needs a mock of
-  `Get-OPIMMsalApplication` (or of `Initialize-OPIMAuth`) in scope too, and the gate refuses it
-  otherwise.
+  name in a variable, `Get-Command`, a script block made from a string, `Invoke-Expression`, Pester
+  `-ForEach` or `-TestCases` data run with `& $name`; any string that parses as a call of it counts,
+  a sentence or a `-Because` text included) -- only in
+  `tests/Unit/Private/Get-OPIMMsalApplication.Tests.ps1` and the tripwire suite, where every
+  `Get-MgContext` mock must throw. Everywhere else, mock `Get-OPIMMsalApplication` itself. A test
+  that runs `Initialize-OPIMAuth` itself, unmocked, under a `Get-MgContext` mock that returns must
+  mock `Get-OPIMMsalApplication` beside it, in the same `It` or in a `BeforeAll` or `BeforeEach` it
+  inherits, or the gate refuses it. The gate reads `Initialize-OPIMAuth`'s own calls and runnable
+  strings, not its callers.
 - **`Invoke-OPIMDeviceCodeAuth` is tested against an `Add-Type` stand-in** with MSAL's device code
   shape, whose `ExecuteAsync` runs on a thread-pool thread as MSAL does; never against a real MSAL
   client.
