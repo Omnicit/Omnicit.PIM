@@ -2,13 +2,13 @@ function Initialize-OPIMAuth {
     <#
     .SYNOPSIS
     The single authentication entry point for Omnicit.PIM. Acquires a Graph token via MSAL.NET,
-    wires it into Connect-MgGraph, and optionally connects to Azure via Connect-AzAccount.
+    wires it into Connect-MgGraph, and optionally acquires an Azure Resource Manager token via AzAuth.
 
     .DESCRIPTION
     All Get-/Enable-/Disable-OPIM* cmdlets call this function at their entry point.
     It is idempotent: when a valid Graph token is already cached for the requested tenant and
-    (when -IncludeARM is given) the cached Azure context is validated by silently minting an ARM
-    access token via Get-AzAccessToken, it returns immediately without making any network calls
+    (when -IncludeARM is given) the cached Azure Resource Manager token is for the same tenant and
+    account with more than 5 minutes left, it returns immediately without making any network calls
     or showing any sign-in prompt.
 
     Graph token acquisition order:
@@ -42,48 +42,47 @@ function Initialize-OPIMAuth {
     entry first refuses a sign-in under a command whose own sign-in was refused: when a latched
     command stands on the call stack outside the command that called this function
     (Get-OPIMSignInRefusal -OutsideCaller), the function ends with SignInRefused before any token
-    call, Connect-MgGraph or Connect-AzAccount, and latches nothing (BL-74). Every other entry latches
+    call, Connect-MgGraph or Get-AzToken, and latches nothing (BL-74). Every other entry latches
     the command that called it (Lock-OPIMSignIn) and releases it only on a success
     (Unlock-OPIMSignIn): the cached return, or a sign-in that went the whole way. A refusal or a
-    terminating error -- TenantMismatch, GraphSessionChanged, a failed device code sign-in -- and a
-    failed Azure connection leave it latched, and Invoke-OPIMGraphRequest and the ARM gate
-    Get-OPIMArmRefusal then refuse every request that command makes with SignInRefused, since outside
-    any try a command carries on past a terminating error raised here.
+    terminating error -- TenantMismatch, AccountMismatch, GraphSessionChanged, a failed device code
+    sign-in -- and a failed Azure sign-in leave it latched, and Invoke-OPIMGraphRequest and the ARM
+    gate Get-OPIMArmRefusal then refuse every request that command makes with SignInRefused, since
+    outside any try a command carries on past a terminating error raised here.
 
-    For Azure RBAC commands, pass -IncludeARM. Azure is checked after Graph, since it needs the
-    session's tenant: the tenant the Graph token was issued for (TokenTenantId), always a GUID, also
-    for a session pinned by domain or first signed in under 'organizations'. The Az module's cached
-    context is reused, without a sign-in prompt, only when it is for that tenant and for the account
-    the Graph session signed in with, and can mint an ARM token silently. Otherwise
-    Connect-AzAccount -Tenant <that tenant> establishes a new context with the Az module's own
-    authentication, which is separate from Graph auth and may open its own browser window, or in
-    device code mode show its own code. A failed Connect-AzAccount ends this function with the
-    terminating AzureConnectFailed, which keeps the Az message but neither the Az exception nor its
-    record; an Az context for another tenant after the sign-in, or none, ends it with TenantMismatch.
-    Before Connect-AzAccount the function sets the Az configuration for this process only
-    (Update-AzConfig -Scope Process), each key in a call of its own: WAM off, and LoginExperienceV2
-    off. LoginExperienceV2 off is what keeps the Azure sign-in from asking for a subscription, and it
-    is safe because the module names the scope of every ARM call and never uses the default
-    subscription. Connect-AzAccount also gets -SkipContextPopulation, which only skips filling the Az
-    context list with a context for each of the first 25 subscriptions when the user has no context
-    yet; it has no part in the subscription prompt. The two Update-AzConfig calls and
-    Connect-AzAccount run with -WhatIf:$false and -Confirm:$false: a sign-in is not the change that
-    -WhatIf previews (the Graph sign-in runs under -WhatIf too), and a -WhatIf handed down from
-    Enable-OPIMMyRole or Disable-OPIMMyRole would otherwise connect nothing and end in a misleading
-    TenantMismatch. The user's own Az configuration is never touched.
+    For Azure RBAC commands, pass -IncludeARM. The Azure Resource Manager token is acquired after
+    Graph, since it needs the session's tenant: the tenant the Graph token was issued for
+    (TokenTenantId), always a GUID, also for a session pinned by domain or first signed in under
+    'organizations'. It comes from AzAuth's Get-AzToken for the resource https://management.azure.com
+    and that tenant -- interactively in the system browser, or with a device code in device code
+    mode -- with AzAuth's own authentication, separate from the Graph sign-in. Every new ARM token is
+    checked before it is kept (A3): its tid must be the session's tenant (TenantMismatch otherwise,
+    also when it cannot be read) and its oid the account of the session's Graph token
+    (AccountMismatch otherwise, also when either cannot be read). Only then is it kept, as a
+    SecureString in the auth state and in memory only, never on disk, with its expiry, tenant and
+    account, for the ARM transport to send. A cached ARM token is reused silently only when it was
+    issued for the same tenant and the same account and has more than 5 minutes left. A new Graph
+    token for another tenant or another account drops the cached ARM token, so the next -IncludeARM
+    acquires a new one. A failed Get-AzToken ends this function with the terminating
+    AzureConnectFailed, which keeps the AzAuth message but neither its exception nor its record.
+    AzAuth keeps one credential per process, so the first ARM sign-in of a session and every
+    -ForceRefresh pass -Force to rebuild it.
 
     Graph auth and Azure auth are intentionally independent -- the Microsoft Graph Command Line
     Tools app registration (used by MSAL here) is not authorised for Azure Resource Manager.
 
     With -DeviceCode, or once a session has used it, the Graph token comes from the device code flow
-    (Invoke-OPIMDeviceCodeAuth) instead of the system browser, and Azure signs in with
-    Connect-AzAccount -UseDeviceAuthentication. The mode is stored as DeviceCode in the auth state,
-    so every later sign-in in the session uses it -- the silent refresh, the token-rejected retry and
-    the ACRS step-up in Invoke-OPIMGraphRequest pass no -DeviceCode -- until Disconnect-OPIM clears
-    the state. A device code session never falls back to the system browser. Before the first
-    sign-in the state holds only DeviceCode, which never counts as signed in, so a first sign-in
-    that fails (a declined or expired code, Ctrl+C) keeps the mode too. A failed device code flow
-    ends this function with the helper's DeviceCodeAuthFailed error and no second error after it.
+    (Invoke-OPIMDeviceCodeAuth) instead of the system browser, and the ARM token from
+    Get-AzToken -DeviceCode. AzAuth writes its sign-in instruction as a warning; this function
+    re-emits it on the Information stream with the OPIMDeviceCode tag, as the Graph device code is,
+    so a host that silenced warnings still shows it. The mode is stored as DeviceCode in the auth
+    state, so every later sign-in in the session uses it -- the silent refresh, the token-rejected
+    retry and the ACRS step-up in Invoke-OPIMGraphRequest pass no -DeviceCode -- until
+    Disconnect-OPIM clears the state. A device code session never falls back to the system browser.
+    Before the first sign-in the state holds only DeviceCode, which never counts as signed in, so a
+    first sign-in that fails (a declined or expired code, Ctrl+C) keeps the mode too. A failed device
+    code flow ends this function with the helper's DeviceCodeAuthFailed error and no second error
+    after it.
 
     .PARAMETER TenantId
     The Entra ID tenant GUID or domain. When omitted or empty, the session keeps the tenant it is
@@ -93,12 +92,12 @@ function Initialize-OPIMAuth {
     refused with TenantMismatch.
 
     .PARAMETER IncludeARM
-    When set, ensures an Azure context for the tenant of the Graph session's token and its account.
-    A cached Az context is trusted only when its tenant and account match and it is validated with a
-    silent Get-AzAccessToken (not merely detected via Get-AzContext); the Az module autosaves its
-    context to disk, so a stale context can resurface in a fresh session with an expired token. When
-    no usable context exists, Connect-AzAccount is called with -Tenant set to the session's tenant.
-    The Az module handles its own token caching independently of the MSAL/Graph cache.
+    When set, ensures an Azure Resource Manager token for the tenant of the Graph session's token and
+    its account. A cached ARM token is reused without a call only when its tenant and its account (the
+    tid and oid claims) are the session's and it has more than 5 minutes left. Otherwise AzAuth's
+    Get-AzToken acquires a new one for that tenant, interactively or with a device code by the
+    session's mode, and the token is kept only after its tid and oid matched the Graph session's, as
+    a SecureString in memory. A failed sign-in ends this function with AzureConnectFailed.
 
     .PARAMETER ClaimsChallenge
     The decoded JSON claims challenge string extracted from a 401 WWW-Authenticate header.
@@ -111,7 +110,8 @@ function Initialize-OPIMAuth {
     Bypass the cached-token idempotency check and force MSAL to mint a fresh access token via
     the refresh token (AcquireTokenSilent(...).WithForceRefresh($true)). Used by
     Invoke-OPIMGraphRequest to recover transparently when Graph rejects a bearer token as
-    invalid or expired. Usually completes without a sign-in prompt.
+    invalid or expired. Usually completes without a sign-in prompt. With -IncludeARM it also acquires
+    a new Azure Resource Manager token, passing -Force to Get-AzToken.
 
     .PARAMETER DeviceCode
     Sign in with the device code flow instead of the system browser, and remember the mode in the
@@ -139,6 +139,30 @@ function Initialize-OPIMAuth {
         [switch]$DeviceCode
     )
 
+    # The Azure Resource Manager resource. A constant until the cloud table owns it (OPIM-29).
+    [string]$ArmResource = 'https://management.azure.com'
+
+    # AzAuth (A6), ported from Omnicit.EntraRBAC Invoke-AzTokenCall. In device code mode AzAuth writes its
+    # sign-in instruction on the WARNING stream; it is re-emitted on the Information stream with the
+    # OPIMDeviceCode tag, as the Graph device code is, while Get-AzToken still waits. -WarningAction
+    # Continue is load-bearing: a record dropped at source under a silenced warning preference cannot be
+    # redirected. The pipeline ends in a script block, not ForEach-Object, so the token object AzAuth
+    # returns is bound to no command parameter (module logging records every bound value).
+    function Invoke-OPIMAzTokenCall ([hashtable]$TokenParameter, [switch]$DeviceCodeFlow) {
+        if (-not $DeviceCodeFlow) {
+            return Get-AzToken @TokenParameter
+        }
+        Get-AzToken @TokenParameter -WarningAction Continue 3>&1 | & {
+            process {
+                if ($PSItem -is [System.Management.Automation.WarningRecord]) {
+                    Write-Information -MessageData $PSItem.Message -Tags 'OPIMDeviceCode' -InformationAction Continue
+                } else {
+                    $PSItem
+                }
+            }
+        }
+    }
+
     # SEC (EntraRBAC BL-74): a sign-in under a command whose own sign-in was refused is refused before
     # any prompt. Only a frame OUTSIDE the calling command counts (Get-OPIMSignInRefusal
     # -OutsideCaller): the caller's own latched frame, from an earlier refused sign-in in the same
@@ -153,7 +177,7 @@ function Initialize-OPIMAuth {
     # and the last statement of a new sign-in that went the whole way. Every refusal and terminating
     # error leaves it latched, and both transports refuse every request it makes (SignInRefused):
     # outside any try a command carries on past a terminating error raised here, and would otherwise
-    # send under the session or the Azure context an earlier sign-in left. Keyed on the calling
+    # send under the session or the ARM token an earlier sign-in left. Keyed on the calling
     # command's invocation, so a nested command's or a pipeline neighbour's success releases only its
     # own entry. The caller is the command that called this function directly: the cmdlet, or
     # Invoke-OPIMGraphRequest's nested Invoke-OPIMGraphSingle for its claims step-up and
@@ -452,113 +476,76 @@ function Initialize-OPIMAuth {
         # TenantId is the label the session is pinned to: as requested, or the token's tid after a
         # first sign-in under 'organizations'. TokenTenantId is the tid of the current Graph token;
         # AuthorityTenant is the tenant the MSAL app was built for; GraphSessionFingerprint is the
-        # Graph SDK session the module connected (it holds no token).
+        # Graph SDK session the module connected (it holds no token). ObjectId is the oid of the
+        # Graph token, the account every ARM token must be issued to. The state holds no Graph token,
+        # and the ARM token only as a SecureString (A6), with its expiry, tenant, account and
+        # resource.
+        # A3: the Graph token's own object id, compared with every ARM token's oid.
+        [string]$GraphObjectId = Get-OPIMTokenObjectId -AccessToken $SecureToken
+        # SEC (A3): an ARM token survives a new Graph token only when it was issued for the same tenant
+        # and the same account; otherwise it is dropped, never carried, and -IncludeARM acquires a new
+        # one.
+        $PreviousState = $script:_OPIMAuthState
+        [bool]$KeepArmToken = ($PreviousState -is [System.Collections.IDictionary]) -and
+            ($null -ne $PreviousState['ArmToken']) -and
+            [bool]$GraphObjectId -and
+            [string]$PreviousState['ArmTokenTenantId'] -eq $TokenTenant -and
+            [string]$PreviousState['ArmTokenObjectId'] -eq $GraphObjectId
         $script:_OPIMAuthState = @{
             TenantId                = if ($EffectiveTenant -eq 'organizations') { $TokenTenant } else { $EffectiveTenant }
             TokenTenantId           = $TokenTenant
             AuthorityTenant         = $Authority
             Account                 = $AuthResult.Account
+            ObjectId                = if ($GraphObjectId) { $GraphObjectId } else { $null }
             GraphTokenExpiry        = $GraphTokenExpiry
             ClaimsSatisfied         = [bool]$ClaimsChallenge
             DeviceCode              = $UseDeviceCode
             GraphSessionFingerprint = $GraphSessionFingerprint
+            ArmToken                = if ($KeepArmToken) { $PreviousState['ArmToken'] } else { $null }
+            ArmTokenExpiry          = if ($KeepArmToken) { $PreviousState['ArmTokenExpiry'] } else { $null }
+            ArmTokenTenantId        = if ($KeepArmToken) { $PreviousState['ArmTokenTenantId'] } else { $null }
+            ArmTokenObjectId        = if ($KeepArmToken) { $PreviousState['ArmTokenObjectId'] } else { $null }
+            ArmResourceUrl          = if ($KeepArmToken) { $PreviousState['ArmResourceUrl'] } else { $null }
         }
     }
 
-    # -- Azure connection (when requested) -------------------------------------
-    # The Az module manages its own authentication independently from MSAL/Graph.
-    # The Microsoft Graph Command Line Tools app registration used above is NOT authorised
-    # for Azure Resource Manager -- Connect-AzAccount handles Azure auth with its own sign-in
-    # (a browser prompt, or a device code in device code mode) the first time, then caches the
-    # context in the Az module.
+    # -- Azure Resource Manager token (when requested) ---------------------------
+    # A2/A6: Azure is signed in by AzAuth, separately from Graph (the Microsoft Graph Command Line Tools
+    # app is not authorised for ARM), for the tenant of the session's Graph token, interactively or with a
+    # device code by the session's mode. The token is kept as a SecureString in the auth state and never
+    # written to disk; the ARM transport sends it.
     if ($IncludeARM) {
-        # OPIM-08: Azure must be signed in to the Graph session's tenant -- always the GUID its token
-        # was issued for, also for a session pinned by domain or first signed in under
-        # 'organizations' -- and as the same account; anything else is a new sign-in, never a reuse.
         [string]$ArmTenant = [string]$script:_OPIMAuthState.TokenTenantId
         if (-not $ArmTenant) {
-            # Cannot happen for a state this module built. Refused rather than signed in to Azure
-            # without a tenant.
+            # Cannot happen for a state this module built. Refused rather than signed in without a tenant.
             Write-CmdletError -ErrorRecord (New-OPIMTenantMismatchError -RequestedTenant $EffectiveTenant -Unreadable) -Cmdlet $PSCmdlet -Terminating
             return
         }
+        [string]$SessionObjectId = [string]$script:_OPIMAuthState.ObjectId
 
-        # A cached Az context object alone is NOT proof of a usable connection. The Az module
-        # autosaves its context to disk (Enable-AzContextAutosave, on by default), so a brand-new
-        # PowerShell session resurfaces a context whose underlying token may have expired or now
-        # needs an interactive Conditional Access / MFA step-up. Verify that it can mint an ARM
-        # access token silently (no browser) before reusing it. String -eq is case-insensitive, as
-        # wanted for a GUID and a user principal name.
-        $AzContext = Get-AzContext -ErrorAction SilentlyContinue
-        [bool]$AzReusable = $false
-        if ($AzContext -and [string]$AzContext.Tenant.Id -eq $ArmTenant -and
-            $script:_OPIMAuthState.Account -and
-            [string]$AzContext.Account.Id -eq [string]$script:_OPIMAuthState.Account.Username) {
+        # Silent reuse only for the same tenant and the same account with more than 5 minutes left.
+        [bool]$ArmCached = -not $ForceRefresh -and
+            ($null -ne $script:_OPIMAuthState.ArmToken) -and
+            $script:_OPIMAuthState.ArmTokenExpiry -gt [DateTime]::UtcNow.AddMinutes(5) -and
+            [string]$script:_OPIMAuthState.ArmTokenTenantId -eq $ArmTenant -and
+            [bool]$SessionObjectId -and
+            [string]$script:_OPIMAuthState.ArmTokenObjectId -eq $SessionObjectId
+
+        if (-not $ArmCached) {
+            $ArmTokenParams = @{ Resource = $ArmResource; Tenant = $ArmTenant; ErrorAction = 'Stop' }
+            if ($UseDeviceCode) { $ArmTokenParams.DeviceCode = $true } else { $ArmTokenParams.Interactive = $true }
+            # AzAuth keeps one credential per process (EntraRBAC A6 rule). -Force rebuilds it: on a forced
+            # refresh, and on the first ARM sign-in of a session -- after Disconnect-OPIM, or when the
+            # Graph identity changed -- so a reused credential never answers for an earlier sign-in (a
+            # device-code credential reused for another tenant never returns, measured in EntraRBAC).
+            if ($ForceRefresh -or $null -eq $script:_OPIMAuthState.ArmToken) { $ArmTokenParams.Force = $true }
             try {
-                $null = Get-AzAccessToken -TenantId $ArmTenant -AsSecureString -WarningAction SilentlyContinue -ErrorAction Stop
-                $AzReusable = $true
-                Write-Verbose "[Initialize-OPIMAuth] Reusing the Azure context for tenant '$ArmTenant'."
+                $ArmResult = Invoke-OPIMAzTokenCall -TokenParameter $ArmTokenParams -DeviceCodeFlow:$UseDeviceCode
             } catch {
                 Remove-OPIMErrorRecord -Record $PSItem
-                Write-Verbose "[Initialize-OPIMAuth] Cached Azure context cannot acquire an ARM token silently ($($PSItem.Exception.GetType().Name)); signing in to Azure again."
-            }
-        }
-
-        if (-not $AzReusable) {
-            Write-Verbose "[Initialize-OPIMAuth] Connecting to Azure via Connect-AzAccount for tenant '$ArmTenant'..."
-
-            # -WhatIf:$false -Confirm:$false on both Update-AzConfig calls and on Connect-AzAccount: a
-            # sign-in is not the change -WhatIf previews (the Graph sign-in above runs under it too).
-            # Enable-/Disable-OPIMMyRole -WhatIf or -Confirm hand $WhatIfPreference or
-            # $ConfirmPreference down to here, and the Az cmdlets honour them: under -WhatIf
-            # Connect-AzAccount would connect nothing, so the tenant check after it would report a
-            # misleading TenantMismatch, and under -Confirm the settings would ask to be confirmed.
-
-            # Force browser-based sign-in for parity with the Graph side. Since Az 12.0.0 (Az.Accounts
-            # 3.0.0) WAM is the Windows default (the "Please select the account" picker), which hangs
-            # in some terminals. Disable it at PROCESS scope only -- the user's persisted Az config is
-            # never touched. No-op on Linux/macOS, where browser login is already the default.
-            try {
-                Update-AzConfig -EnableLoginByWam $false -Scope Process -WhatIf:$false -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-            } catch { Remove-OPIMErrorRecord -Record $PSItem }
-
-            # A15 (OPIM-43): Az 12.0.0 (Az.Accounts 3.0.0) and later ask for a subscription at sign-in
-            # when the account reaches more than one. The module never uses the default subscription
-            # -- every ARM call names its scope (asTarget() at '/', or the role's own scope) -- so
-            # LoginExperienceV2 Off turns that prompt off, for this PROCESS only. This setting is what
-            # keeps the prompt away. The user's own Az configuration (CurrentUser) is never touched. A
-            # call of its own, so an Az.Accounts without this key still gets the WAM setting and signs
-            # in.
-            try {
-                Update-AzConfig -LoginExperienceV2 Off -Scope Process -WhatIf:$false -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-            } catch { Remove-OPIMErrorRecord -Record $PSItem }
-
-            # -SkipContextPopulation only skips filling the Az context list with a context for each of
-            # the first 25 subscriptions when the user has no context yet (Microsoft Learn,
-            # Connect-AzAccount); the module reads none of them. It has no part in the subscription
-            # prompt, which LoginExperienceV2 Off above keeps away.
-            $AzParams = @{
-                Tenant                = $ArmTenant
-                SkipContextPopulation = $true
-                WhatIf                = $false
-                Confirm               = $false
-                ErrorAction           = 'Stop'
-            }
-            # Device code mode signs in to Azure with a device code too. Connect-AzAccount writes its
-            # own message with the code (Az.Accounts 5.5.3: an information record; older: a warning).
-            if ($UseDeviceCode) {
-                $AzParams.UseDeviceAuthentication = $true
-            }
-            try {
-                Connect-AzAccount @AzParams | Out-Null
-            } catch {
-                Remove-OPIMErrorRecord -Record $PSItem
-                # Terminating (OPIM-08): a failed Azure sign-in ends this function, not the command.
-                # A caller outside any try carries on past it, still latched (SEC, EntraRBAC A19: no
-                # success, so the latch stays), and the ARM gate then refuses every Az.Resources call
-                # it makes with SignInRefused. The record keeps the Az message only -- no inner
-                # exception and the session tenant as its target object -- since the Az exception and
-                # record can reference the request (OPIM-11).
+                # Terminating, and the calling command stays latched (EntraRBAC A19), so its ARM requests
+                # are refused with SignInRefused. The AzAuth message only: no inner exception, and the
+                # session tenant as the target object.
                 Write-CmdletError `
                     -Message ([System.Exception]::new("Azure connection failed: $($PSItem.Exception.Message)")) `
                     -ErrorId 'AzureConnectFailed' `
@@ -568,19 +555,56 @@ function Initialize-OPIMAuth {
                     -Terminating
                 return
             }
+            if (-not $ArmResult -or -not $ArmResult.Token) {
+                Write-CmdletError `
+                    -Message ([System.Exception]::new('Azure connection failed: the Azure sign-in returned no access token.')) `
+                    -ErrorId 'AzureConnectFailed' `
+                    -Category AuthenticationError `
+                    -TargetObject $ArmTenant `
+                    -Cmdlet $PSCmdlet `
+                    -Terminating
+                return
+            }
+            # The plaintext reaches .NET only, as for the Graph token above.
+            $SecureArmToken = [System.Net.NetworkCredential]::new('', $ArmResult.Token).SecurePassword
+            $ArmTokenExpiry = ConvertTo-OPIMUtcDateTime -Value $ArmResult.ExpiresOn
+            $ArmResult = $null
 
-            # The context the sign-in left is the one every Az.Resources call runs under. One for
-            # another tenant than the Graph session, or none, is refused.
-            $AzContext = Get-AzContext -ErrorAction SilentlyContinue
-            if (-not $AzContext -or [string]$AzContext.Tenant.Id -ne $ArmTenant) {
+            # SEC (A3, OPIM-47): the ARM token must be for the tenant AND the account of the Graph
+            # session. Refused before it reaches the auth state, so no ARM request ever carries it.
+            [string]$ArmTokenTenant = Get-OPIMTokenTenantId -AccessToken $SecureArmToken
+            if (-not $ArmTokenTenant) {
+                Write-CmdletError -ErrorRecord (New-OPIMTenantMismatchError -RequestedTenant $ArmTenant -Source Azure -Unreadable) -Cmdlet $PSCmdlet -Terminating
+                return
+            }
+            if ($ArmTokenTenant -ne $ArmTenant) {
                 Write-CmdletError -ErrorRecord (New-OPIMTenantMismatchError -RequestedTenant $ArmTenant -Source Azure) -Cmdlet $PSCmdlet -Terminating
                 return
             }
+            [string]$ArmTokenObject = Get-OPIMTokenObjectId -AccessToken $SecureArmToken
+            if (-not $ArmTokenObject -or -not $SessionObjectId) {
+                Write-CmdletError -ErrorRecord (New-OPIMAccountMismatchError -RequestedTenant $ArmTenant -Unreadable) -Cmdlet $PSCmdlet -Terminating
+                return
+            }
+            if ($ArmTokenObject -ne $SessionObjectId) {
+                Write-CmdletError -ErrorRecord (New-OPIMAccountMismatchError -RequestedTenant $ArmTenant) -Cmdlet $PSCmdlet -Terminating
+                return
+            }
+
+            $script:_OPIMAuthState.ArmToken         = $SecureArmToken
+            $script:_OPIMAuthState.ArmTokenExpiry   = $ArmTokenExpiry
+            $script:_OPIMAuthState.ArmTokenTenantId = $ArmTokenTenant
+            $script:_OPIMAuthState.ArmTokenObjectId = $ArmTokenObject
+            $script:_OPIMAuthState.ArmResourceUrl   = $ArmResource
+            Write-Verbose "[Initialize-OPIMAuth] Azure Resource Manager token acquired for tenant '$ArmTenant'. Expiry (UTC): $ArmTokenExpiry."
+        } else {
+            Write-Verbose "[Initialize-OPIMAuth] Reusing the Azure Resource Manager token for tenant '$ArmTenant'."
         }
     }
 
-    # SEC (EntraRBAC A19): the new sign-in went the whole way -- Graph connected or cached, and Azure
-    # connected or not asked for -- so release the calling command's latch. The last statement and not
-    # a finally: every refusal and terminating error above must leave the command latched.
+    # SEC (EntraRBAC A19): the new sign-in went the whole way -- Graph connected or cached, and the ARM
+    # token acquired or reused, or not asked for -- so release the calling command's latch. The last
+    # statement and not a finally: every refusal and terminating error above must leave the command
+    # latched.
     Unlock-OPIMSignIn -Invocation $SignInCaller
 }

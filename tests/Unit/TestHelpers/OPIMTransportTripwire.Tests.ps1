@@ -199,28 +199,10 @@ Describe 'OPIMTransportTripwire module code paths' {
         }
     }
 
-    # Runs the real Initialize-OPIMAuth -IncludeARM against a cached Graph state, with nothing but the
-    # tripwire in front of the ARM sign-in. It holds only once module code acquires the ARM token with
-    # Get-AzToken; until then the same run ends in AzureConnectFailed through Connect-AzAccount and
-    # records that command instead, so the case reports itself skipped rather than red. The check
-    # reads every function the module defines, so it follows the call into a helper.
+    # Runs the real Initialize-OPIMAuth -IncludeARM against a cached Graph state that holds no ARM
+    # token, with nothing but the tripwire in front of the AzAuth sign-in: the tripwire records the
+    # Get-AzToken call and refuses it, and the refusal ends the function in AzureConnectFailed.
     It 'records Get-AzToken, parameter names only, when Initialize-OPIMAuth -IncludeARM reaches it unmocked, and ends in AzureConnectFailed' {
-        $ModuleCallsGetAzToken = InModuleScope Omnicit.PIM {
-            $Found = $false
-            foreach ($Function in @(Get-Command -CommandType Function | Where-Object { $_.ModuleName -eq 'Omnicit.PIM' })) {
-                $Calls = @($Function.ScriptBlock.Ast.FindAll({
-                            param($Node)
-                            $Node -is [System.Management.Automation.Language.CommandAst] -and $Node.GetCommandName() -eq 'Get-AzToken'
-                        }, $true))
-                if ($Calls.Count -gt 0) { $Found = $true; break }
-            }
-            $Found
-        }
-        if (-not $ModuleCallsGetAzToken) {
-            Set-ItResult -Skipped -Because 'no function of the module calls Get-AzToken yet; this case runs once the ARM sign-in does'
-            return
-        }
-
         # Asserted before module code runs, so a broken installation fails here and the sign-in
         # below can never reach the real Get-AzToken.
         $Resolved = Resolve-TripwireKnownAnswerCommand -Name 'Get-AzToken'
@@ -232,14 +214,21 @@ Describe 'OPIMTransportTripwire module code paths' {
         $Before = $global:OPIMTransportTripwireHits.Count
 
         $Caught = InModuleScope Omnicit.PIM {
+            # A cached Graph sign-in as Initialize-OPIMAuth writes it, with its account and no ARM token.
             $script:_OPIMAuthState = @{
                 TenantId         = '22222222-2222-2222-2222-222222222222'
                 TokenTenantId    = '22222222-2222-2222-2222-222222222222'
                 AuthorityTenant  = '22222222-2222-2222-2222-222222222222'
                 Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                ObjectId         = '33333333-3333-3333-3333-333333333333'
                 GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
                 ClaimsSatisfied  = $false
                 DeviceCode       = $true
+                ArmToken         = $null
+                ArmTokenExpiry   = $null
+                ArmTokenTenantId = $null
+                ArmTokenObjectId = $null
+                ArmResourceUrl   = $null
             }
             $Outcome = $null
             try {
@@ -257,7 +246,9 @@ Describe 'OPIMTransportTripwire module code paths' {
             $Caught.FullyQualifiedErrorId | Should -BeLike 'AzureConnectFailed*'
             $Hits = @($global:OPIMTransportTripwireHits | Select-Object -Skip $Before)
             $TokenHits = @($Hits | Where-Object { $_.Command -eq 'Get-AzToken' })
-            $TokenHits.Count | Should -BeGreaterThan 0 -Because ('the hit list must hold Get-AzToken; it holds: {0}' -f ((@($Hits | ForEach-Object { $_.Command }) -join ', ')))
+            $TokenHits.Count | Should -Be 1 -Because ('the hit list must hold the one Get-AzToken call; it holds: {0}' -f ((@($Hits | ForEach-Object { $_.Command }) -join ', ')))
+            @($TokenHits[0].Parameters -split ',') | Should -Contain 'Resource'
+            @($TokenHits[0].Parameters -split ',') | Should -Contain 'Tenant'
             foreach ($Hit in $TokenHits) {
                 foreach ($Name in @($Hit.Parameters -split ',')) {
                     @($Real[0].Parameters.Keys) | Should -Contain $Name -Because 'a hit holds parameter names only, each one a parameter of the real Get-AzToken'

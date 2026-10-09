@@ -9,6 +9,11 @@ BeforeAll {
     $TenantA = 'aaaaaaaa-0000-0000-0000-00000000000a'
     $TenantB = 'bbbbbbbb-0000-0000-0000-00000000000b'
 
+    # The account (the oid claim) of the session's Graph token, and another account. Digit-repeat
+    # placeholders: neither is a version-4 id.
+    $SessionOid = '22222222-2222-2222-2222-222222222222'
+    $OtherOid = '33333333-3333-3333-3333-333333333333'
+
     # An auth state as Initialize-OPIMAuth writes it after a Graph sign-in, in device code mode so the
     # tests drive the acquisition through the Invoke-OPIMDeviceCodeAuth mock.
     function New-PinState {
@@ -16,6 +21,7 @@ BeforeAll {
             [string]$TenantId,
             [string]$TokenTenantId,
             [string]$AuthorityTenant,
+            [string]$ObjectId,
             [switch]$Expired
         )
         @{
@@ -23,22 +29,44 @@ BeforeAll {
             TokenTenantId    = $TokenTenantId
             AuthorityTenant  = $AuthorityTenant
             Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
+            ObjectId         = if ($ObjectId) { $ObjectId } else { $null }
             GraphTokenExpiry = if ($Expired) { [DateTime]::UtcNow.AddMinutes(-1) } else { [DateTime]::UtcNow.AddHours(1) }
             ClaimsSatisfied  = $false
             DeviceCode       = $true
         }
     }
 
-    # An Az context as Get-AzContext returns it, with only the members the module reads.
-    function New-AzTestContext {
+    # Adds the five keys Initialize-OPIMAuth writes once an Azure Resource Manager token has passed its
+    # tid and oid checks. The token itself is a SecureString, as the module keeps it (A6).
+    function Add-ArmTestToken {
         param(
+            [Parameter(Mandatory)]
+            [hashtable]$State,
             [string]$TenantId,
-            [string]$AccountId = 'user@contoso.com'
+            [string]$ObjectId,
+            [datetime]$Expiry = [DateTime]::UtcNow.AddHours(1)
         )
-        [PSCustomObject]@{
-            Tenant  = [PSCustomObject]@{ Id = $TenantId }
-            Account = [PSCustomObject]@{ Id = $AccountId }
-        }
+        $State.ArmToken = [System.Net.NetworkCredential]::new('', (New-OPIMTestAccessToken -TenantId $TenantId -ObjectId $ObjectId)).SecurePassword
+        $State.ArmTokenExpiry = $Expiry
+        $State.ArmTokenTenantId = $TenantId
+        $State.ArmTokenObjectId = $ObjectId
+        $State.ArmResourceUrl = 'https://management.azure.com'
+        $State
+    }
+
+    # The values the Get-AzToken and Invoke-OPIMDeviceCodeAuth mocks of the ARM contexts read. They are
+    # $script: variables of this file: a mock body runs in the test scope, where it also finds
+    # New-OPIMTestAccessToken, which the module scope does not see.
+    function Reset-ArmTestFixture {
+        $script:ArmTid = 'aaaaaaaa-0000-0000-0000-00000000000a'
+        $script:ArmOid = '22222222-2222-2222-2222-222222222222'
+        $script:ArmNoTid = $false
+        $script:ArmNoOid = $false
+        $script:ArmWarning = $null
+        $script:ArmExpiresOn = [DateTimeOffset]::new(2030, 1, 1, 12, 0, 0, [TimeSpan]::FromHours(2))
+        $script:GraphTid = 'aaaaaaaa-0000-0000-0000-00000000000a'
+        $script:GraphOid = '22222222-2222-2222-2222-222222222222'
+        $script:GraphNoOid = $false
     }
 }
 
@@ -58,7 +86,6 @@ Describe 'Initialize-OPIMAuth' {
                 }
                 Mock Get-OPIMMsalApplication {}
                 Mock Connect-MgGraph {}
-                Mock Connect-AzAccount {}
             }
         }
         AfterAll {
@@ -110,7 +137,6 @@ Describe 'Initialize-OPIMAuth' {
 
                 Mock Get-OPIMMsalApplication { return $FakeMsalApp }
                 Mock Connect-MgGraph {}
-                Mock Connect-AzAccount {}
                 Mock ConvertTo-SecureString { return [System.Security.SecureString]::new() }
             }
         }
@@ -141,7 +167,6 @@ Describe 'Initialize-OPIMAuth' {
                 Mock Get-OPIMMsalApplication { return $FakeMsalApp }
                 Mock Invoke-OPIMDeviceCodeAuth {}
                 Mock Connect-MgGraph {}
-                Mock Connect-AzAccount {}
             }
         }
         AfterAll {
@@ -189,7 +214,6 @@ Describe 'Initialize-OPIMAuth' {
                 }
                 Mock Get-OPIMMsalApplication { return $FakeMsalApp }
                 Mock Connect-MgGraph {}
-                Mock Connect-AzAccount {}
             }
         }
         AfterAll {
@@ -206,516 +230,751 @@ Describe 'Initialize-OPIMAuth' {
         }
     }
 
-    Context 'When Azure is connected for the Graph session' {
-        # OPIM-08. Azure must be signed in to the tenant of the Graph session's token -- always the GUID
-        # its tid names -- and as the same account; anything else is a new Azure sign-in, never a
-        # reuse. Get-AzContext reads what the Az module holds ($script:_OPIMTestAz); the
-        # Connect-AzAccount mock puts $script:_OPIMTestAzAfter in its place, as a real sign-in does.
-        # The Graph SDK session is the module's own. A Graph sign-in, where an It needs one, runs
-        # through the Invoke-OPIMDeviceCodeAuth mock, as in the pin context.
+    Context 'When -IncludeARM signs in to Azure Resource Manager' {
+        # A2, A3, A6. AzAuth's Get-AzToken acquires the ARM token for the tenant of the session's Graph
+        # token, interactively or with a device code by the session's mode. The token must carry the
+        # tid and the oid of the Graph session, and is kept only as a SecureString. The Graph SDK
+        # session is the module's own. The Get-AzToken mock builds its token from this file's
+        # $script:Arm* values, and the Invoke-OPIMDeviceCodeAuth mock (a Graph sign-in, where an It
+        # needs one) from $script:Graph*; Reset-ArmTestFixture sets both before every It. A bound
+        # -WarningAction sets no preference inside a mock body, which runs in the test scope, so the
+        # Get-AzToken mock takes it from $PesterBoundParameters, as the compiled cmdlet honours it.
         BeforeAll {
-            InModuleScope Omnicit.PIM {
-                Mock Get-OPIMGraphSessionState { 'Own' }
-                Mock Get-OPIMGraphSessionFingerprint { 'fp' }
-                Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
-                Mock Invoke-OPIMDeviceCodeAuth {
-                    [PSCustomObject]@{
-                        AccessToken = $script:_OPIMTestToken
-                        ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
-                        Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
-                    }
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionState { 'Own' }
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionFingerprint { 'fp' }
+            Mock -ModuleName Omnicit.PIM Get-OPIMMsalApplication { [PSCustomObject]@{} }
+            Mock -ModuleName Omnicit.PIM Connect-MgGraph {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMDeviceCodeAuth {
+                $GraphTokenArgs = @{ TenantId = $script:GraphTid; ObjectId = $script:GraphOid }
+                if ($script:GraphNoOid) { $GraphTokenArgs.NoObjectId = $true }
+                [PSCustomObject]@{
+                    AccessToken = New-OPIMTestAccessToken @GraphTokenArgs
+                    ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
+                    Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
                 }
-                Mock Connect-MgGraph {}
-                Mock Get-AzContext { $script:_OPIMTestAz }
-                Mock Get-AzAccessToken { [PSCustomObject]@{ ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1) } }
-                Mock Update-AzConfig {}
-                Mock Connect-AzAccount { $script:_OPIMTestAz = $script:_OPIMTestAzAfter }
+            }
+            Mock -ModuleName Omnicit.PIM Get-AzToken {
+                param($Resource, $Tenant, [switch]$DeviceCode, [switch]$Interactive, [switch]$Force)
+                if ($PesterBoundParameters.ContainsKey('WarningAction')) {
+                    $WarningPreference = $PesterBoundParameters['WarningAction']
+                }
+                if ($script:ArmWarning) { Microsoft.PowerShell.Utility\Write-Warning $script:ArmWarning }
+                $ArmTokenArgs = @{ TenantId = $script:ArmTid; ObjectId = $script:ArmOid }
+                if ($script:ArmNoTid) { $ArmTokenArgs.NoTenant = $true }
+                if ($script:ArmNoOid) { $ArmTokenArgs.NoObjectId = $true }
+                [PSCustomObject]@{
+                    Token     = New-OPIMTestAccessToken @ArmTokenArgs
+                    ExpiresOn = $script:ArmExpiresOn
+                    TenantId  = $script:ArmTid
+                    Identity  = 'user@contoso.com'
+                }
             }
         }
         BeforeEach {
+            Reset-ArmTestFixture
             InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
                 $script:_OPIMSignInLatch = $null
-                $script:_OPIMTestToken = $null
-                $script:_OPIMTestAz = $null
-                $script:_OPIMTestAzAfter = $null
-                $script:_OPIMTestAzRecord = $null
-                $script:_OPIMTestCalls = $null
             }
         }
         AfterAll {
             InModuleScope Omnicit.PIM {
                 $script:_OPIMAuthState = $null
                 $script:_OPIMSignInLatch = $null
-                $script:_OPIMTestToken = $null
-                $script:_OPIMTestAz = $null
-                $script:_OPIMTestAzAfter = $null
-                $script:_OPIMTestAzRecord = $null
-                $script:_OPIMTestCalls = $null
             }
         }
 
-        It 'reuses an Az context for the same tenant and account that mints a token silently' {
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            $Az = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Az = $Az } {
-                param($State, $Az)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAz = $Az
-                Initialize-OPIMAuth -IncludeARM
-                Should -Invoke Connect-AzAccount -Times 0 -Scope It
-                Should -Invoke Get-AzAccessToken -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $TenantId -eq 'aaaaaaaa-0000-0000-0000-00000000000a'
+        Context 'When no ARM token is cached' {
+            It 'calls Get-AzToken once for the ARM resource and the tenant of the Graph token' {
+                # A session pinned by domain: AzAuth gets the GUID its Graph token was issued for.
+                $State = New-PinState -TenantId 'contoso.onmicrosoft.com' -TokenTenantId $TenantA -AuthorityTenant 'contoso.onmicrosoft.com' -ObjectId $SessionOid
+                InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -IncludeARM
                 }
-                Should -Invoke Get-OPIMMsalApplication -Times 0 -Scope It
-                Should -Invoke Connect-MgGraph -Times 0 -Scope It
-            }
-        }
-
-        It 'reuses the Az context of a session pinned by domain for the tenant of its token' {
-            # The session's label is a domain, its token's tid a GUID; Get-AzContext reports the GUID.
-            $State = New-PinState -TenantId 'contoso.onmicrosoft.com' -TokenTenantId $TenantA -AuthorityTenant 'contoso.onmicrosoft.com'
-            $Az = New-AzTestContext -TenantId $TenantA -AccountId $State.Account.Username
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Az = $Az } {
-                param($State, $Az)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAz = $Az
-                Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -IncludeARM
-                Initialize-OPIMAuth -IncludeARM
-                Should -Invoke Connect-AzAccount -Times 0 -Scope It
-                Should -Invoke Get-AzAccessToken -Times 2 -Exactly -Scope It -ParameterFilter {
-                    $TenantId -eq 'aaaaaaaa-0000-0000-0000-00000000000a'
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Resource -eq 'https://management.azure.com' -and $Tenant -eq 'aaaaaaaa-0000-0000-0000-00000000000a'
                 }
+                Should -Invoke -ModuleName Omnicit.PIM Get-OPIMMsalApplication -Times 0 -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
             }
-        }
 
-        It 'signs in to Azure again when the cached context is for another tenant' {
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            $Az = New-AzTestContext -TenantId $TenantB
-            $After = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Az = $Az; After = $After } {
-                param($State, $Az, $After)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAz = $Az
-                $script:_OPIMTestAzAfter = $After
-                Initialize-OPIMAuth -IncludeARM
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $Tenant -eq 'aaaaaaaa-0000-0000-0000-00000000000a'
-                }
-                Should -Invoke Get-AzAccessToken -Times 0 -Scope It
-            }
-        }
-
-        It 'signs in to Azure again when the cached context is for another account' {
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            $Az = New-AzTestContext -TenantId $TenantA -AccountId 'other@contoso.com'
-            $After = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Az = $Az; After = $After } {
-                param($State, $Az, $After)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAz = $Az
-                $script:_OPIMTestAzAfter = $After
-                Initialize-OPIMAuth -IncludeARM
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It
-                Should -Invoke Get-AzAccessToken -Times 0 -Scope It
-            }
-        }
-
-        It 'signs in to Azure again when the cached context cannot mint a token silently' {
-            # A stale autosaved context resurfaces for the right tenant and account, but its token has
-            # expired or needs an interactive step-up.
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            $Az = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Az = $Az } {
-                param($State, $Az)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAz = $Az
-                $script:_OPIMTestAzAfter = $Az
-                Mock Get-AzAccessToken { throw [System.Exception]::new('interaction required') }
-                Initialize-OPIMAuth -IncludeARM
-                Should -Invoke Get-AzAccessToken -Times 1 -Exactly -Scope It
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It
-            }
-        }
-
-        It 'signs in to Azure when the Az module holds no context, without a new Graph sign-in' {
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            $After = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After } {
-                param($State, $After)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAzAfter = $After
-                Initialize-OPIMAuth -IncludeARM
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It
-                Should -Invoke Get-AzAccessToken -Times 0 -Scope It
-                Should -Invoke Get-OPIMMsalApplication -Times 0 -Scope It
-                Should -Invoke Connect-MgGraph -Times 0 -Scope It
-            }
-        }
-
-        It 'always passes the session tenant to Connect-AzAccount' {
-            # A session first signed in under organizations: its label and its token's tid are the
-            # tenant it was pinned to, and its MSAL authority is still organizations.
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant 'organizations'
-            $After = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After } {
-                param($State, $After)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAzAfter = $After
-                Initialize-OPIMAuth -IncludeARM
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $Tenant -eq 'aaaaaaaa-0000-0000-0000-00000000000a'
-                }
-            }
-        }
-
-        It 'passes the tenant of the Graph token, not the domain, for a session pinned by domain' {
-            $State = New-PinState -TenantId 'contoso.onmicrosoft.com' -TokenTenantId $TenantA -AuthorityTenant 'contoso.onmicrosoft.com'
-            $After = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After } {
-                param($State, $After)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAzAfter = $After
-                Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -IncludeARM
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $Tenant -eq 'aaaaaaaa-0000-0000-0000-00000000000a'
-                }
-            }
-        }
-
-        It 'passes the tenant of the new token to Connect-AzAccount in the call that first signs in under organizations' {
-            $Token = New-OPIMTestAccessToken -TenantId $TenantA
-            $After = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; After = $After; TenantA = $TenantA } {
-                param($Token, $After, $TenantA)
-                $script:_OPIMAuthState = @{ DeviceCode = $true }
-                $script:_OPIMTestToken = $Token
-                $script:_OPIMTestAzAfter = $After
-                Initialize-OPIMAuth -IncludeARM
-                Should -Invoke Get-OPIMMsalApplication -Times 1 -Exactly -Scope It -ParameterFilter { $TenantId -eq 'organizations' }
-                Should -Invoke Connect-MgGraph -Times 1 -Exactly -Scope It
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $Tenant -eq 'aaaaaaaa-0000-0000-0000-00000000000a'
-                }
-                $script:_OPIMAuthState.TenantId | Should -Be $TenantA
-            }
-        }
-
-        It 'does not pass -UseDeviceAuthentication without device code mode' {
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            $State.DeviceCode = $false
-            $After = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After } {
-                param($State, $After)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAzAfter = $After
-                Initialize-OPIMAuth -IncludeARM
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It -ParameterFilter {
-                    -not $UseDeviceAuthentication
-                }
-            }
-        }
-
-        # OPIM-43 (A15). Az 12.0.0 (Az.Accounts 3.0.0) and later ask for a subscription at sign-in
-        # when the account reaches more than one. The module never uses the default subscription --
-        # every ARM call names its scope -- so LoginExperienceV2 Off turns the prompt off for this
-        # PROCESS only; that setting is what keeps it away. -SkipContextPopulation only skips filling
-        # the Az context list when the user has no context yet. The user's own Az configuration
-        # (CurrentUser) is never touched.
-        It 'turns the subscription prompt off for this process only before Azure signs in' {
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            $After = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After } {
-                param($State, $After)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAzAfter = $After
-                $script:_OPIMTestCalls = [System.Collections.Generic.List[string]]::new()
-                # A mock body does not see which parameters were bound -- its parameter variables keep
-                # the value of the previous call -- so the call is recognised by a -ParameterFilter.
-                Mock Update-AzConfig {
-                    $script:_OPIMTestCalls.Add('Update-AzConfig LoginExperienceV2 Off Process')
-                } -ParameterFilter { $LoginExperienceV2 -eq 'Off' -and $Scope -eq 'Process' }
-                Mock Connect-AzAccount {
-                    $script:_OPIMTestCalls.Add('Connect-AzAccount')
-                    $script:_OPIMTestAz = $script:_OPIMTestAzAfter
-                }
-                Initialize-OPIMAuth -IncludeARM
-                Should -Invoke Update-AzConfig -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $LoginExperienceV2 -eq 'Off' -and $Scope -eq 'Process'
-                }
-                # In that order: a setting made after the sign-in would not have kept the prompt away.
-                @($script:_OPIMTestCalls) | Should -Be @('Update-AzConfig LoginExperienceV2 Off Process', 'Connect-AzAccount')
-            }
-        }
-
-        It 'leaves the user''s own Az configuration unchanged' {
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            $After = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After } {
-                param($State, $After)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAzAfter = $After
-                Initialize-OPIMAuth -IncludeARM
-                # Both settings are made, each at Process scope; a call without -Scope would default to
-                # CurrentUser, and so would count against the zero below.
-                Should -Invoke Update-AzConfig -Times 2 -Exactly -Scope It -ParameterFilter { $Scope -eq 'Process' }
-                Should -Invoke Update-AzConfig -Times 0 -Scope It -ParameterFilter { $Scope -ne 'Process' }
-            }
-        }
-
-        It 'skips filling the Az context list at the Azure sign-in in <Mode>' -ForEach @(
-            @{ Mode = 'device code mode'; DeviceCode = $true }
-            @{ Mode = 'the system browser'; DeviceCode = $false }
-        ) {
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            $State.DeviceCode = $DeviceCode
-            $After = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After } {
-                param($State, $After)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAzAfter = $After
-                Initialize-OPIMAuth -IncludeARM
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It -ParameterFilter { $SkipContextPopulation }
-            }
-        }
-
-        It 'keeps WAM off for this process' {
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            $After = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After } {
-                param($State, $After)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAzAfter = $After
-                Initialize-OPIMAuth -IncludeARM
-                Should -Invoke Update-AzConfig -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $EnableLoginByWam -eq $false -and $Scope -eq 'Process'
-                }
-            }
-        }
-
-        # A sign-in is not the change -WhatIf previews. Enable-/Disable-OPIMMyRole -WhatIf and -Confirm
-        # set $WhatIfPreference and $ConfirmPreference, which the module's own commands inherit and the
-        # Az cmdlets honour, so the two settings and the Azure sign-in turn both switches off
-        # themselves. The preference is set in a child scope, so the assertions run without it.
-        It 'turns -WhatIf and -Confirm off for both Az settings and the Azure sign-in under <Name>' -ForEach @(
-            @{ Name = 'a -WhatIf preference'; Preference = 'WhatIf' }
-            @{ Name = 'a -Confirm preference'; Preference = 'Confirm' }
-        ) {
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            $After = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After; Preference = $Preference } {
-                param($State, $After, $Preference)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAzAfter = $After
-                & {
-                    if ($Preference -eq 'WhatIf') { $WhatIfPreference = $true } else { $ConfirmPreference = 'Low' }
+            It 'signs in interactively, and never with a device code, outside device code mode' {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $State.DeviceCode = $false
+                InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
                     Initialize-OPIMAuth -IncludeARM
                 }
-                Should -Invoke Update-AzConfig -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $PesterBoundParameters.ContainsKey('EnableLoginByWam') -and
-                    $PesterBoundParameters.ContainsKey('WhatIf') -and -not $WhatIf -and
-                    $PesterBoundParameters.ContainsKey('Confirm') -and -not $Confirm
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter { $Interactive -and -not $DeviceCode }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 0 -Scope It -ParameterFilter { $DeviceCode }
+            }
+
+            It 'signs in with a device code, and never interactively, in device code mode' {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -IncludeARM
                 }
-                Should -Invoke Update-AzConfig -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $PesterBoundParameters.ContainsKey('LoginExperienceV2') -and
-                    $PesterBoundParameters.ContainsKey('WhatIf') -and -not $WhatIf -and
-                    $PesterBoundParameters.ContainsKey('Confirm') -and -not $Confirm
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter { $DeviceCode -and -not $Interactive }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 0 -Scope It -ParameterFilter { $Interactive }
+            }
+
+            It 'passes the tenant of the new Graph token in the call that first signs in under organizations' {
+                InModuleScope Omnicit.PIM {
+                    $script:_OPIMAuthState = @{ DeviceCode = $true }
+                    Initialize-OPIMAuth -IncludeARM
                 }
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $PesterBoundParameters.ContainsKey('WhatIf') -and -not $WhatIf -and
-                    $PesterBoundParameters.ContainsKey('Confirm') -and -not $Confirm
+                Should -Invoke -ModuleName Omnicit.PIM Get-OPIMMsalApplication -Times 1 -Exactly -Scope It -ParameterFilter { $TenantId -eq 'organizations' }
+                Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Tenant -eq 'aaaaaaaa-0000-0000-0000-00000000000a'
                 }
             }
-        }
 
-        It 'signs in to Azure under a -WhatIf preference instead of ending in TenantMismatch' {
-            # The Connect-AzAccount mock honours ShouldProcess as the real cmdlet does: under -WhatIf
-            # it would connect nothing, and the tenant check after the sign-in would then refuse.
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            $After = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After } {
-                param($State, $After)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAzAfter = $After
-                Mock Connect-AzAccount {
-                    if ($PSCmdlet.ShouldProcess('Azure', 'Connect-AzAccount')) {
-                        $script:_OPIMTestAz = $script:_OPIMTestAzAfter
+            It 'stores the token as a SecureString with its UTC expiry, tenant, account and resource' {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -IncludeARM
+                    $script:_OPIMAuthState
+                }
+                $After.ArmToken | Should -BeOfType [securestring]
+                $After.ArmTokenExpiry | Should -BeOfType [datetime]
+                $After.ArmTokenExpiry.Kind | Should -Be ([System.DateTimeKind]::Utc)
+                # AzAuth's ExpiresOn is 12:00 at UTC+2 in the fixture.
+                $After.ArmTokenExpiry | Should -Be ([datetime]::new(2030, 1, 1, 10, 0, 0, [System.DateTimeKind]::Utc))
+                $After.ArmTokenTenantId | Should -BeExactly $TenantA
+                $After.ArmTokenObjectId | Should -BeExactly $SessionOid
+                $After.ArmResourceUrl | Should -BeExactly 'https://management.azure.com'
+            }
+
+            It 'keeps no token in plaintext in the state, and the ARM token only as a SecureString' {
+                # A first sign-in: a new Graph token and a new ARM token in one call (A6).
+                $After = InModuleScope Omnicit.PIM {
+                    $script:_OPIMAuthState = @{ DeviceCode = $true }
+                    Initialize-OPIMAuth -IncludeARM
+                    $script:_OPIMAuthState
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                foreach ($Key in @($After.Keys)) {
+                    if ($After[$Key] -is [string]) {
+                        $After[$Key] | Should -Not -BeLike '*NOT-A-REAL-TOKEN*' -Because "the state key $Key must hold no plaintext token"
                     }
                 }
-                Mock Unlock-OPIMSignIn {}
-                { & { $WhatIfPreference = $true; Initialize-OPIMAuth -IncludeARM } } | Should -Not -Throw
-                $script:_OPIMTestAz | Should -Be $After -Because 'the Azure sign-in must have connected'
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It
-                Should -Invoke Unlock-OPIMSignIn -Times 1 -Exactly -Scope It
+                @($After.Values | Where-Object { $_ -is [securestring] }).Count | Should -Be 1
+                $After.ArmToken | Should -BeOfType [securestring]
             }
-        }
 
-        It 'sets the two configuration keys in separate calls' {
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            $After = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After } {
-                param($State, $After)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAzAfter = $After
-                Initialize-OPIMAuth -IncludeARM
-                Should -Invoke Update-AzConfig -Times 0 -Scope It -ParameterFilter {
-                    $PesterBoundParameters.ContainsKey('EnableLoginByWam') -and $PesterBoundParameters.ContainsKey('LoginExperienceV2')
+            It 'releases the calling command once the token is acquired' {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $Refusal = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    function Invoke-ArmSignInCommand {
+                        Initialize-OPIMAuth -IncludeARM
+                        Get-OPIMSignInRefusal
+                    }
+                    Invoke-ArmSignInCommand
                 }
+                $Refusal | Should -BeNullOrEmpty
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
             }
-        }
 
-        It 'makes the other setting and signs in to Azure all the same when the <Key> setting is refused' -ForEach @(
-            @{ Key = 'EnableLoginByWam' }
-            @{ Key = 'LoginExperienceV2' }
-        ) {
-            # An Az.Accounts that does not offer one of the keys fails that call at binding. The other
-            # key, and the sign-in, must not depend on it.
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            $After = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After; Key = $Key } {
-                param($State, $After, $Key)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAzAfter = $After
-                $script:_OPIMTestCalls = [System.Collections.Generic.List[string]]::new()
-                # The refusal is recognised by a -ParameterFilter: a mock body does not see which
-                # parameters were bound, since its parameter variables keep the previous call's value.
-                $Refusal = {
-                    $script:_OPIMTestCalls.Add('refused')
-                    $PSCmdlet.ThrowTerminatingError(
-                        [System.Management.Automation.ErrorRecord]::new(
-                            [System.Management.Automation.ParameterBindingException]::new('A parameter cannot be found.'),
-                            'NamedParameterNotFound',
-                            [System.Management.Automation.ErrorCategory]::InvalidArgument,
-                            $null))
+            It 'refuses ARM with TenantMismatch, before any Get-AzToken, when the state records no tenant' {
+                # A state the module built always records the token's tenant; one without it is refused
+                # rather than signed in to Azure without a tenant.
+                $Caught = InModuleScope Omnicit.PIM {
+                    $script:_OPIMAuthState = @{
+                        TenantId         = 'contoso.onmicrosoft.com'
+                        Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                        GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                        ClaimsSatisfied  = $false
+                    }
+                    try { Initialize-OPIMAuth -IncludeARM } catch { $PSItem }
                 }
-                if ($Key -eq 'EnableLoginByWam') {
-                    Mock Update-AzConfig $Refusal -ParameterFilter { $PesterBoundParameters.ContainsKey('EnableLoginByWam') }
-                } else {
-                    Mock Update-AzConfig $Refusal -ParameterFilter { $PesterBoundParameters.ContainsKey('LoginExperienceV2') }
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
+                $Caught.Exception.Message | Should -BeLike "*could not be read*'contoso.onmicrosoft.com'*"
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 0 -Scope It
+            }
+
+            It 'returns from the cache without an ARM sign-in when -IncludeARM is not given' {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $Refusal = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    function Invoke-GraphSignInCommand {
+                        Initialize-OPIMAuth
+                        Get-OPIMSignInRefusal
+                    }
+                    Invoke-GraphSignInCommand
                 }
-                { Initialize-OPIMAuth -IncludeARM } | Should -Not -Throw
-                @($script:_OPIMTestCalls).Count | Should -Be 1 -Because 'the call for the refused key must have been refused'
-                Should -Invoke Update-AzConfig -Times 1 -Exactly -Scope It -ParameterFilter { $PesterBoundParameters.ContainsKey('EnableLoginByWam') }
-                Should -Invoke Update-AzConfig -Times 1 -Exactly -Scope It -ParameterFilter { $PesterBoundParameters.ContainsKey('LoginExperienceV2') }
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It
+                $Refusal | Should -BeNullOrEmpty
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 0 -Scope It
             }
         }
 
-        It 'returns from the cache without reading Azure when -IncludeARM is not given' {
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
-                param($State)
-                $script:_OPIMAuthState = $State
-                Mock Unlock-OPIMSignIn {}
-                Initialize-OPIMAuth
-                Should -Invoke Get-AzContext -Times 0 -Scope It
-                Should -Invoke Connect-AzAccount -Times 0 -Scope It
-                Should -Invoke Unlock-OPIMSignIn -Times 1 -Exactly -Scope It
+        Context 'When the ARM sign-in rebuilds the AzAuth credential' {
+            It 'passes -Force on the first ARM sign-in of the session' {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -IncludeARM
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter { $Force }
+            }
+
+            It 'passes -Force under -ForceRefresh, also with a cached ARM token for the same tenant and account' {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
+                InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -ForceRefresh -IncludeARM
+                }
+                # The Graph refresh kept the ARM token (same tenant and account); -ForceRefresh still forces.
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter { $Force }
+            }
+
+            It 'passes no -Force when the state holds an ARM token that is about to expire' {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid -Expiry ([DateTime]::UtcNow.AddMinutes(4))
+                InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -IncludeARM
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter { -not $Force }
             }
         }
 
-        It 'releases the caller once when the Graph token is cached and the Az context is reused' {
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            $Az = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Az = $Az } {
-                param($State, $Az)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAz = $Az
-                Mock Unlock-OPIMSignIn {}
-                Initialize-OPIMAuth -IncludeARM
-                Should -Invoke Unlock-OPIMSignIn -Times 1 -Exactly -Scope It
+        Context 'When an ARM token is cached' {
+            It 'reuses a token with more than 5 minutes left for the same tenant and account, without a call' {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
+                $Kept = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    $Before = $State.ArmToken
+                    Initialize-OPIMAuth -IncludeARM
+                    [object]::ReferenceEquals($Before, $script:_OPIMAuthState.ArmToken)
+                }
+                $Kept | Should -BeTrue
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 0 -Scope It
+            }
+
+            It 'releases the calling command once when the Graph token and the ARM token are cached' {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
+                InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Mock Unlock-OPIMSignIn {}
+                    Initialize-OPIMAuth -IncludeARM
+                    Should -Invoke Unlock-OPIMSignIn -Times 1 -Exactly -Scope It
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 0 -Scope It
+            }
+
+            It 'acquires a new token when the cached one has <Minutes> minutes or less left' -ForEach @(
+                @{ Minutes = 5 }
+                @{ Minutes = 1 }
+            ) {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid -Expiry ([DateTime]::UtcNow.AddMinutes($Minutes))
+                InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -IncludeARM
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+            }
+
+            It 'acquires a new token when the cached one is for another tenant' {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $null = Add-ArmTestToken -State $State -TenantId $TenantB -ObjectId $SessionOid
+                $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -IncludeARM
+                    $script:_OPIMAuthState
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                $After.ArmTokenTenantId | Should -BeExactly $TenantA
+            }
+
+            It 'acquires a new token when the cached one is for another account' {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $OtherOid
+                $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -IncludeARM
+                    $script:_OPIMAuthState
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                $After.ArmTokenObjectId | Should -BeExactly $SessionOid
+            }
+
+            It 'acquires a new token when the state records an expiry but holds no token' {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
+                $State.ArmToken = $null
+                InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -IncludeARM
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+            }
+
+            It 'never reuses a cached token for a session that records no account' {
+                # Two unknown accounts are not the same account: the call is made, and the oid check
+                # after it refuses.
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId ''
+                $State.ArmTokenObjectId = $null
+                $Caught = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    try { Initialize-OPIMAuth -IncludeARM } catch { $PSItem }
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'AccountMismatch*'
             }
         }
 
-        It 'throws AzureConnectFailed when Connect-AzAccount fails' {
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; TenantA = $TenantA } {
-                param($State, $TenantA)
-                $script:_OPIMAuthState = $State
-                Mock Connect-AzAccount { throw [System.Exception]::new('Azure auth failure') }
-                Mock Unlock-OPIMSignIn {}
-                { Initialize-OPIMAuth -IncludeARM } | Should -Throw -ErrorId 'AzureConnectFailed*'
-                $Caught = $null
-                try { Initialize-OPIMAuth -IncludeARM } catch { $Caught = $PSItem }
-                $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
-                $Caught.Exception.Message | Should -BeLike '*Azure auth failure*'
-                # The caller stays latched: a failed Azure sign-in is no success.
-                Should -Invoke Unlock-OPIMSignIn -Times 0 -Scope It
+        Context 'When the ARM token is not for the tenant and the account of the Graph session' {
+            # SEC (A3, OPIM-47). Each refusal is terminating, stores nothing of the token and leaves the
+            # calling command latched. The command is a module-scope test function with a try of its
+            # own, so it carries on and reads the latch after the refusal.
+            It 'refuses a token for <Name> with <ErrorId>, stores nothing and keeps the caller latched' -ForEach @(
+                @{ Name = 'another tenant'; Fixture = @{ ArmTid = 'bbbbbbbb-0000-0000-0000-00000000000b' }; NoSessionOid = $false; ErrorId = 'TenantMismatch'; Message = 'Azure is signed in to another tenant than *' }
+                @{ Name = 'no readable tenant'; Fixture = @{ ArmNoTid = $true }; NoSessionOid = $false; ErrorId = 'TenantMismatch'; Message = 'The tenant of the Azure Resource Manager token could not be read*' }
+                @{ Name = 'another account'; Fixture = @{ ArmOid = '33333333-3333-3333-3333-333333333333' }; NoSessionOid = $false; ErrorId = 'AccountMismatch'; Message = 'The Azure Resource Manager token was issued to another account*' }
+                @{ Name = 'no readable account'; Fixture = @{ ArmNoOid = $true }; NoSessionOid = $false; ErrorId = 'AccountMismatch'; Message = 'The account of the Azure Resource Manager token could not be read*' }
+                @{ Name = 'a session that records no account'; Fixture = @{}; NoSessionOid = $true; ErrorId = 'AccountMismatch'; Message = 'The account of the Azure Resource Manager token could not be read*' }
+            ) {
+                foreach ($Entry in $Fixture.GetEnumerator()) {
+                    Set-Variable -Scope Script -Name $Entry.Key -Value $Entry.Value
+                }
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $(if ($NoSessionOid) { '' } else { $SessionOid })
+                $Result = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    function Invoke-ArmSignInCommand {
+                        $Result = @{}
+                        try { Initialize-OPIMAuth -IncludeARM } catch { $Result.SignIn = $PSItem }
+                        $Result.Refusal = Get-OPIMSignInRefusal
+                        $Result.State = $script:_OPIMAuthState
+                        $Result
+                    }
+                    Invoke-ArmSignInCommand
+                }
+                $Result.SignIn | Should -Not -BeNullOrEmpty -Because 'the refusal must end the function'
+                $Result.SignIn.FullyQualifiedErrorId | Should -BeLike "$ErrorId*"
+                $Result.SignIn.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+                $Result.SignIn.TargetObject | Should -BeExactly $TenantA
+                $Result.SignIn.Exception.Message | Should -BeLike $Message
+                $Result.SignIn.Exception.Message | Should -BeLike "*'$TenantA'*"
+                $Result.SignIn.Exception.Message | Should -Not -BeLike '*bbbbbbbb*'
+                $Result.SignIn.Exception.Message | Should -Not -BeLike '*33333333*'
+                foreach ($Key in 'ArmToken', 'ArmTokenExpiry', 'ArmTokenTenantId', 'ArmTokenObjectId', 'ArmResourceUrl') {
+                    $Result.State[$Key] | Should -BeNullOrEmpty -Because "nothing of a refused token may be stored ($Key)"
+                }
+                $Result.Refusal | Should -BeExactly 'Invoke-ArmSignInCommand'
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
             }
         }
 
-        It 'scrubs the record of the failed Connect-AzAccount and keeps no reference to it' {
-            # The Az error can carry the request it failed on. AzureConnectFailed keeps its message
-            # only: no inner exception, and the session tenant as its target object. The token is
-            # built at runtime and says what it is, so no token-shaped literal sits here.
-            $Request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://management.azure.com/subscriptions')
-            $null = $Request.Headers.TryAddWithoutValidation('Authorization', ('Bearer ' + ('x' * 40) + 'NOT-A-REAL-TOKEN'))
-            $Record = [System.Management.Automation.ErrorRecord]::new(
-                [System.InvalidOperationException]::new('Azure sign-in failed'), 'ConnectAzAccountFailed', 'AuthenticationError', $Request)
-            $Request.Headers.Contains('Authorization') | Should -BeTrue -Because 'the fixture must carry the header the scrub removes'
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Record = $Record; TenantA = $TenantA } {
-                param($State, $Record, $TenantA)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAzRecord = $Record
-                Mock Connect-AzAccount { $PSCmdlet.ThrowTerminatingError($script:_OPIMTestAzRecord) }
-                $Caught = $null
-                try { Initialize-OPIMAuth -IncludeARM } catch { $Caught = $PSItem }
+        Context 'When the ARM sign-in fails' {
+            It 'throws AzureConnectFailed with the AzAuth message only, and keeps the caller latched, in <Mode>' -ForEach @(
+                @{ Mode = 'device code mode'; DeviceCode = $true }
+                @{ Mode = 'the system browser'; DeviceCode = $false }
+            ) {
+                Mock -ModuleName Omnicit.PIM Get-AzToken { throw [System.InvalidOperationException]::new('AzAuth sign-in failure') }
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $State.DeviceCode = $DeviceCode
+                $Result = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    function Invoke-ArmSignInCommand {
+                        $Result = @{}
+                        try { Initialize-OPIMAuth -IncludeARM } catch { $Result.SignIn = $PSItem }
+                        $Result.Refusal = Get-OPIMSignInRefusal
+                        $Result.State = $script:_OPIMAuthState
+                        $Result
+                    }
+                    Invoke-ArmSignInCommand
+                }
+                $Result.SignIn.FullyQualifiedErrorId | Should -BeLike 'AzureConnectFailed*'
+                $Result.SignIn.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+                $Result.SignIn.Exception.Message | Should -BeExactly 'Azure connection failed: AzAuth sign-in failure'
+                $Result.SignIn.Exception.InnerException | Should -BeNullOrEmpty
+                $Result.SignIn.TargetObject | Should -BeExactly $TenantA
+                $Result.State.ArmToken | Should -BeNullOrEmpty
+                $Result.State.ArmTokenTenantId | Should -BeNullOrEmpty
+                $Result.Refusal | Should -BeExactly 'Invoke-ArmSignInCommand'
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+            }
+
+            It 'throws AzureConnectFailed when Get-AzToken returns no token, and keeps the caller latched' {
+                Mock -ModuleName Omnicit.PIM Get-AzToken { [PSCustomObject]@{ ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1) } }
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $Result = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    function Invoke-ArmSignInCommand {
+                        $Result = @{}
+                        try { Initialize-OPIMAuth -IncludeARM } catch { $Result.SignIn = $PSItem }
+                        $Result.Refusal = Get-OPIMSignInRefusal
+                        $Result.State = $script:_OPIMAuthState
+                        $Result
+                    }
+                    Invoke-ArmSignInCommand
+                }
+                $Result.SignIn.FullyQualifiedErrorId | Should -BeLike 'AzureConnectFailed*'
+                $Result.SignIn.Exception.Message | Should -BeExactly 'Azure connection failed: the Azure sign-in returned no access token.'
+                $Result.SignIn.TargetObject | Should -BeExactly $TenantA
+                $Result.State.ArmToken | Should -BeNullOrEmpty
+                $Result.Refusal | Should -BeExactly 'Invoke-ArmSignInCommand'
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+            }
+
+            It 'scrubs the record of the failed Get-AzToken and keeps no reference to it' {
+                # The AzAuth error can carry the request it failed on. AzureConnectFailed keeps its
+                # message only: no inner exception, and the session tenant as its target object. The
+                # token is built at runtime and says what it is, so no token-shaped literal sits here.
+                $Request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://management.azure.com/subscriptions')
+                $null = $Request.Headers.TryAddWithoutValidation('Authorization', ('Bearer ' + ('x' * 40) + 'NOT-A-REAL-TOKEN'))
+                $script:ArmFailureRecord = [System.Management.Automation.ErrorRecord]::new(
+                    [System.InvalidOperationException]::new('Azure sign-in failed'), 'GetAzTokenFailed', 'AuthenticationError', $Request)
+                $Request.Headers.Contains('Authorization') | Should -BeTrue -Because 'the fixture must carry the header the scrub removes'
+                Mock -ModuleName Omnicit.PIM Get-AzToken { $PSCmdlet.ThrowTerminatingError($script:ArmFailureRecord) }
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $Caught = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    try { Initialize-OPIMAuth -IncludeARM } catch { $PSItem }
+                }
                 $Caught.FullyQualifiedErrorId | Should -BeLike 'AzureConnectFailed*'
                 $Caught.Exception.Message | Should -BeLike '*Azure sign-in failed*'
                 $Caught.Exception.InnerException | Should -BeNullOrEmpty
                 $Caught.TargetObject | Should -BeExactly $TenantA
-            }
-            $Request.Headers.Contains('Authorization') | Should -BeFalse
-        }
-
-        It 'throws TenantMismatch when Azure signed in to another tenant' {
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            $After = New-AzTestContext -TenantId $TenantB
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State; After = $After; TenantA = $TenantA; TenantB = $TenantB } {
-                param($State, $After, $TenantA, $TenantB)
-                $script:_OPIMAuthState = $State
-                $script:_OPIMTestAzAfter = $After
-                Mock Unlock-OPIMSignIn {}
-                $Caught = $null
-                try { Initialize-OPIMAuth -IncludeARM } catch { $Caught = $PSItem }
-                $Caught.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
-                $Caught.TargetObject | Should -BeExactly $TenantA
-                $Caught.Exception.Message | Should -BeLike "Azure is signed in to another tenant than '$TenantA'*"
-                $Caught.Exception.Message | Should -Not -BeLike "*$TenantB*"
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It
-                Should -Invoke Unlock-OPIMSignIn -Times 0 -Scope It
+                $Request.Headers.Contains('Authorization') | Should -BeFalse
+                $script:ArmFailureRecord = $null
             }
         }
 
-        It 'throws TenantMismatch when the Az module shows no context after Connect-AzAccount' {
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
-                param($State)
-                $script:_OPIMAuthState = $State
-                { Initialize-OPIMAuth -IncludeARM } | Should -Throw -ErrorId 'TenantMismatch*'
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It
+        Context 'When the ARM sign-in shows a device code' {
+            # AzAuth writes its sign-in instruction on the WARNING stream. In device code mode the module
+            # re-emits it on the Information stream with the OPIMDeviceCode tag, as the Graph device
+            # code is, so a host that silenced warnings still shows it (Review Focus 2).
+            BeforeAll {
+                $DeviceCodeText = 'To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code TESTCODE1 to authenticate.'
             }
-        }
 
-        It 'refuses Azure with TenantMismatch when the state records no tenant' {
-            # A state the module built always records the token's tenant; one without it is refused
-            # rather than signed in to Azure with no -Tenant.
-            InModuleScope Omnicit.PIM {
-                $script:_OPIMAuthState = @{
-                    TenantId         = 'contoso.onmicrosoft.com'
-                    Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
-                    GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
-                    ClaimsSatisfied  = $false
+            It 're-emits the instruction once on the Information stream with the OPIMDeviceCode tag, and no warning' {
+                $script:ArmWarning = $DeviceCodeText
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $Out = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -IncludeARM 6>&1 3>&1
                 }
-                $Caught = $null
-                try { Initialize-OPIMAuth -IncludeARM } catch { $Caught = $PSItem }
-                $Caught.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
-                $Caught.Exception.Message | Should -BeLike "*could not be read*'contoso.onmicrosoft.com'*"
-                Should -Invoke Get-AzContext -Times 0 -Scope It
-                Should -Invoke Connect-AzAccount -Times 0 -Scope It
+                $Information = @($Out | Where-Object { $_ -is [System.Management.Automation.InformationRecord] })
+                $Information.Count | Should -Be 1
+                $Information[0].Tags | Should -Contain 'OPIMDeviceCode'
+                [string]$Information[0].MessageData | Should -BeExactly $DeviceCodeText
+                @($Out | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }).Count | Should -Be 0
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter { $DeviceCode }
+            }
+
+            It 'still shows the instruction when the host silenced warnings and information' {
+                $script:ArmWarning = $DeviceCodeText
+                $WarningPreference = 'SilentlyContinue'
+                $InformationPreference = 'SilentlyContinue'
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $Out = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $WarningPreference = 'SilentlyContinue'
+                    $InformationPreference = 'SilentlyContinue'
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -IncludeARM 6>&1 3>&1
+                }
+                $Information = @($Out | Where-Object { $_ -is [System.Management.Automation.InformationRecord] })
+                $Information.Count | Should -Be 1
+                $Information[0].Tags | Should -Contain 'OPIMDeviceCode'
+                [string]$Information[0].MessageData | Should -BeExactly $DeviceCodeText
+            }
+
+            It 'writes the instruction whatever information preference the caller has' {
+                # -InformationAction Continue on the module's own Write-Information: under a preference of
+                # Ignore the record would otherwise not be written at all.
+                $script:ArmWarning = $DeviceCodeText
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $Out = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $InformationPreference = 'Ignore'
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -IncludeARM 6>&1 3>&1
+                }
+                $Information = @($Out | Where-Object { $_ -is [System.Management.Automation.InformationRecord] })
+                $Information.Count | Should -Be 1
+                [string]$Information[0].MessageData | Should -BeExactly $DeviceCodeText
+            }
+
+            It 'leaves an AzAuth warning on the warning stream outside device code mode' {
+                $script:ArmWarning = 'An unrelated AzAuth warning.'
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $State.DeviceCode = $false
+                $Out = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -IncludeARM 6>&1 3>&1
+                }
+                $Warnings = @($Out | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
+                $Warnings.Count | Should -Be 1
+                $Warnings[0].Message | Should -BeExactly 'An unrelated AzAuth warning.'
+                @($Out | Where-Object { $_ -is [System.Management.Automation.InformationRecord] }).Count | Should -Be 0
+            }
+        }
+
+        Context 'When the Graph sign-in changes while an ARM token is cached' {
+            # SEC (A3, Review Focus 1). An ARM token survives a new Graph token only when it was issued
+            # for the same tenant and the same account; otherwise it is dropped and never sent.
+            It 'keeps the cached ARM token on a forced Graph refresh for the same tenant and account' {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
+                $Expiry = $State.ArmTokenExpiry
+                $Result = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    $Before = $State.ArmToken
+                    Initialize-OPIMAuth -ForceRefresh
+                    @{
+                        Same  = [object]::ReferenceEquals($Before, $script:_OPIMAuthState.ArmToken)
+                        State = $script:_OPIMAuthState
+                    }
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It
+                $Result.Same | Should -BeTrue
+                $Result.State.ArmTokenExpiry | Should -Be $Expiry
+                $Result.State.ArmTokenTenantId | Should -BeExactly $TenantA
+                $Result.State.ArmTokenObjectId | Should -BeExactly $SessionOid
+                $Result.State.ArmResourceUrl | Should -BeExactly 'https://management.azure.com'
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 0 -Scope It
+            }
+
+            It 'drops the cached ARM token when the new Graph token is for another account' {
+                $script:GraphOid = $OtherOid
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
+                $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -ForceRefresh
+                    $script:_OPIMAuthState
+                }
+                $After.ObjectId | Should -BeExactly $OtherOid
+                foreach ($Key in 'ArmToken', 'ArmTokenExpiry', 'ArmTokenTenantId', 'ArmTokenObjectId', 'ArmResourceUrl') {
+                    $After.ContainsKey($Key) | Should -BeTrue
+                    $After[$Key] | Should -BeNullOrEmpty -Because "the ARM token of another account must be dropped ($Key)"
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 0 -Scope It
+            }
+
+            It 'drops the cached ARM token when the session signs in to another tenant' {
+                $script:GraphTid = $TenantB
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
+                $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State; TenantB = $TenantB } {
+                    param($State, $TenantB)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -TenantId $TenantB
+                    $script:_OPIMAuthState
+                }
+                $After.TokenTenantId | Should -BeExactly $TenantB
+                foreach ($Key in 'ArmToken', 'ArmTokenExpiry', 'ArmTokenTenantId', 'ArmTokenObjectId', 'ArmResourceUrl') {
+                    $After[$Key] | Should -BeNullOrEmpty -Because "the ARM token of another tenant must be dropped ($Key)"
+                }
+            }
+
+            It 'acquires a new ARM token with -Force in the same call after <Name>' -ForEach @(
+                @{ Name = 'the Graph account changed'; Account = $true }
+                @{ Name = 'the session moved to another tenant'; Account = $false }
+            ) {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid -Expired:$Account
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
+                if ($Account) {
+                    # An expired Graph token: a new sign-in without -ForceRefresh, answered by another account.
+                    $script:GraphOid = $OtherOid
+                    $script:ArmOid = $OtherOid
+                    $Parameters = @{ IncludeARM = $true }
+                } else {
+                    $script:GraphTid = $TenantB
+                    $script:ArmTid = $TenantB
+                    $Parameters = @{ IncludeARM = $true; TenantId = $TenantB }
+                }
+                $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State; P = $Parameters } {
+                    param($State, $P)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth @P
+                    $script:_OPIMAuthState
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter { $Force }
+                $After.ArmTokenObjectId | Should -BeExactly $script:ArmOid
+                $After.ArmTokenTenantId | Should -BeExactly $script:ArmTid
+            }
+
+            It 'drops a cached ARM token that records no account when the new Graph token carries none either' {
+                # Two unknown accounts are not the same account.
+                $script:GraphNoOid = $true
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId ''
+                $State.ArmTokenObjectId = $null
+                $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -ForceRefresh
+                    $script:_OPIMAuthState
+                }
+                $After.ObjectId | Should -BeNullOrEmpty
+                foreach ($Key in 'ArmToken', 'ArmTokenExpiry', 'ArmTokenTenantId', 'ArmTokenObjectId', 'ArmResourceUrl') {
+                    $After[$Key] | Should -BeNullOrEmpty -Because "an ARM token of an unknown account must be dropped ($Key)"
+                }
+            }
+
+            It 'carries no ARM key over from a state that holds no ARM token' {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
+                $State.ArmToken = $null
+                $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -ForceRefresh
+                    $script:_OPIMAuthState
+                }
+                foreach ($Key in 'ArmToken', 'ArmTokenExpiry', 'ArmTokenTenantId', 'ArmTokenObjectId', 'ArmResourceUrl') {
+                    $After[$Key] | Should -BeNullOrEmpty -Because "no ARM key outlives the token it describes ($Key)"
+                }
+            }
+        }
+
+        Context 'When a Graph sign-in writes the session' {
+            It 'writes the oid of the Graph token as ObjectId, in lower case' {
+                $script:GraphOid = 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'
+                $After = InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA } {
+                    param($TenantA)
+                    $script:_OPIMAuthState = @{ DeviceCode = $true }
+                    Initialize-OPIMAuth -TenantId $TenantA
+                    $script:_OPIMAuthState
+                }
+                $After.ObjectId | Should -BeExactly 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+            }
+
+            It 'writes no ObjectId for a Graph token without an oid, and still signs in' {
+                $script:GraphNoOid = $true
+                $After = InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA } {
+                    param($TenantA)
+                    $script:_OPIMAuthState = @{ DeviceCode = $true }
+                    Initialize-OPIMAuth -TenantId $TenantA
+                    $script:_OPIMAuthState
+                }
+                $After.ContainsKey('ObjectId') | Should -BeTrue
+                $After.ObjectId | Should -BeNullOrEmpty
+                $After.TokenTenantId | Should -BeExactly $TenantA
+                Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Exactly -Scope It
+            }
+
+            It 'writes the session and its ObjectId on a first sign-in in the system browser with no state at all' {
+                # The very first sign-in of a process: no auth state and no device code. A compiled
+                # stand-in with the shape of MSAL's interactive flow (AcquireTokenInteractive,
+                # WithUseEmbeddedWebView, ExecuteAsync) stands in for the MSAL application; nothing
+                # opens a browser.
+                if (-not ('OPIMTest.InteractiveApp' -as [type])) {
+                    Add-Type -TypeDefinition @'
+namespace OPIMTest {
+    public class InteractiveAccount {
+        public string Username { get; set; }
+    }
+    public class InteractiveResult {
+        public string AccessToken { get; set; }
+        public System.DateTimeOffset ExpiresOn { get; set; }
+        public InteractiveAccount Account { get; set; }
+    }
+    public class InteractiveBuilder {
+        private readonly InteractiveResult result;
+        public InteractiveBuilder(InteractiveResult result) { this.result = result; }
+        public InteractiveBuilder WithUseEmbeddedWebView(bool useEmbeddedWebView) { return this; }
+        public System.Threading.Tasks.Task<InteractiveResult> ExecuteAsync() { return System.Threading.Tasks.Task.FromResult(result); }
+    }
+    public class InteractiveApp {
+        public InteractiveResult Result { get; set; }
+        public InteractiveBuilder AcquireTokenInteractive(System.Collections.Generic.IEnumerable<string> scopes) { return new InteractiveBuilder(Result); }
+    }
+}
+'@
+                }
+                $App = [OPIMTest.InteractiveApp]::new()
+                $App.Result = [OPIMTest.InteractiveResult]::new()
+                $App.Result.AccessToken = New-OPIMTestAccessToken -TenantId $TenantA -ObjectId $SessionOid
+                $App.Result.ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                $App.Result.Account = [OPIMTest.InteractiveAccount]::new()
+                $App.Result.Account.Username = 'user@contoso.com'
+                $script:InteractiveApp = $App
+                Mock -ModuleName Omnicit.PIM Get-OPIMMsalApplication { $script:InteractiveApp }
+                $After = InModuleScope Omnicit.PIM {
+                    $script:_OPIMAuthState = $null
+                    Initialize-OPIMAuth -ErrorAction Stop
+                    $script:_OPIMAuthState
+                }
+                $After.TenantId | Should -BeExactly $TenantA
+                $After.TokenTenantId | Should -BeExactly $TenantA
+                $After.ObjectId | Should -BeExactly $SessionOid
+                $After.DeviceCode | Should -BeFalse
+                $After.ArmToken | Should -BeNullOrEmpty
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMDeviceCodeAuth -Times 0 -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Exactly -Scope It
+                $script:InteractiveApp = $null
+            }
+        }
+
+        Context 'When the ARM sign-in runs' {
+            It 'calls no Az.Accounts command in <Mode>' -ForEach @(
+                @{ Mode = 'device code mode'; DeviceCode = $true }
+                @{ Mode = 'the system browser'; DeviceCode = $false }
+            ) {
+                Mock -ModuleName Omnicit.PIM Connect-AzAccount {}
+                Mock -ModuleName Omnicit.PIM Get-AzContext {}
+                Mock -ModuleName Omnicit.PIM Get-AzAccessToken {}
+                Mock -ModuleName Omnicit.PIM Update-AzConfig {}
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $State.DeviceCode = $DeviceCode
+                InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -IncludeARM
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Connect-AzAccount -Times 0 -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzContext -Times 0 -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzAccessToken -Times 0 -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Update-AzConfig -Times 0 -Scope It
             }
         }
     }
@@ -938,46 +1197,6 @@ Describe 'Initialize-OPIMAuth' {
                 try { Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -DeviceCode } catch { $null = $PSItem }
                 $script:_OPIMAuthState.ContainsKey('TenantId') | Should -BeFalse
                 $script:_OPIMAuthState.ContainsKey('GraphTokenExpiry') | Should -BeFalse
-            }
-        }
-    }
-
-    Context 'When -IncludeARM in device code mode and Azure is not connected' {
-        BeforeAll {
-            $After = New-AzTestContext -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA; After = $After } {
-                param($TenantA, $After)
-                $script:_OPIMAuthState = @{
-                    TenantId         = 'contoso.onmicrosoft.com'
-                    TokenTenantId    = $TenantA
-                    Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
-                    GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
-                    ClaimsSatisfied  = $false
-                    DeviceCode       = $true
-                }
-                $script:_OPIMTestAz = $null
-                $script:_OPIMTestAzAfter = $After
-                Mock Get-AzContext { $script:_OPIMTestAz }
-                Mock Update-AzConfig {}
-                Mock Connect-AzAccount { $script:_OPIMTestAz = $script:_OPIMTestAzAfter }
-                Mock Get-OPIMMsalApplication {}
-                Mock Connect-MgGraph {}
-            }
-        }
-        AfterAll {
-            InModuleScope Omnicit.PIM {
-                $script:_OPIMAuthState = $null
-                $script:_OPIMTestAz = $null
-                $script:_OPIMTestAzAfter = $null
-            }
-        }
-
-        It 'signs in to Azure with -UseDeviceAuthentication and the tenant of the Graph token' {
-            InModuleScope Omnicit.PIM {
-                Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com' -IncludeARM
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $UseDeviceAuthentication -and $Tenant -eq 'aaaaaaaa-0000-0000-0000-00000000000a'
-                }
             }
         }
     }
@@ -1241,27 +1460,100 @@ Describe 'Initialize-OPIMAuth' {
         }
     }
 
-    Context 'When the Graph token is handed on' {
+    Context 'When the Graph token and the ARM token are handed on' {
         It 'binds the plaintext token to no command' {
             # SECURITY rule 5: PowerShell module logging (LogPipelineExecutionDetails, event 4103)
             # records every value bound to a command parameter. Static check on the function as the
-            # module loaded it: no argument of any command call reaches an .AccessToken member, so
-            # the plaintext only ever reaches .NET (the SecureString is what commands receive).
+            # module loaded it: no argument of any command call reaches an .AccessToken member of the
+            # Graph result or a .Token member of the ARM result, so the plaintext only ever reaches
+            # .NET (the SecureString is what commands receive). The only reads of .Token are the
+            # NetworkCredential constructor and a truthiness test in an if.
             $Ast = InModuleScope Omnicit.PIM { (Get-Command Initialize-OPIMAuth).ScriptBlock.Ast }
             $Commands = @($Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true))
             @($Commands | Where-Object { $_.GetCommandName() -eq 'Connect-MgGraph' }).Count |
                 Should -Be 1 -Because 'the walk must reach the Connect-MgGraph hand-off; a walk that reads nothing would pass vacuously'
+            @($Commands | Where-Object { $_.GetCommandName() -eq 'Get-AzToken' }).Count |
+                Should -Be 2 -Because 'the walk must reach both AzAuth calls, with and without the device code pipeline'
             $Hits = foreach ($Command in $Commands) {
                 foreach ($Element in @($Command.CommandElements | Select-Object -Skip 1)) {
                     $Member = $Element.Find({
                             param($Node)
                             $Node -is [System.Management.Automation.Language.MemberExpressionAst] -and
-                            $Node.Member.Extent.Text -eq 'AccessToken'
+                            $Node.Member.Extent.Text -in 'AccessToken', 'Token'
                         }, $true)
                     if ($Member) { 'line {0}: {1}' -f $Command.Extent.StartLineNumber, $Command.GetCommandName() }
                 }
             }
             $Hits | Should -BeNullOrEmpty
+
+            $TokenMembers = @($Ast.FindAll({
+                        param($Node)
+                        $Node -is [System.Management.Automation.Language.MemberExpressionAst] -and
+                        $Node -isnot [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                        $Node.Member.Extent.Text -eq 'Token'
+                    }, $true))
+            $Uses = foreach ($Member in $TokenMembers) {
+                $Parent = $Member.Parent
+                if ($Parent -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                    $Parent.Member.Extent.Text -eq 'new' -and
+                    $Parent.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and
+                    $Parent.Expression.TypeName.FullName -eq 'System.Net.NetworkCredential' -and
+                    @($Parent.Arguments | Where-Object { [object]::ReferenceEquals($_, $Member) }).Count -eq 1) {
+                    'NetworkCredential'
+                    continue
+                }
+                # A truthiness test: from the member up to an if condition through -not, -or, -and,
+                # parentheses and the condition's own pipeline only.
+                $Node = $Member
+                $InIfCondition = $false
+                while ($null -ne $Node.Parent) {
+                    $Up = $Node.Parent
+                    if (($Up -is [System.Management.Automation.Language.UnaryExpressionAst] -and $Up.TokenKind -in 'Not', 'Exclaim') -or
+                        ($Up -is [System.Management.Automation.Language.BinaryExpressionAst] -and $Up.Operator -in 'Or', 'And') -or
+                        $Up -is [System.Management.Automation.Language.ParenExpressionAst] -or
+                        $Up -is [System.Management.Automation.Language.CommandExpressionAst] -or
+                        $Up -is [System.Management.Automation.Language.PipelineAst]) {
+                        $Node = $Up
+                        continue
+                    }
+                    if ($Up -is [System.Management.Automation.Language.IfStatementAst] -and
+                        @($Up.Clauses | Where-Object { [object]::ReferenceEquals($_.Item1, $Node) }).Count -eq 1) {
+                        $InIfCondition = $true
+                    }
+                    break
+                }
+                if ($InIfCondition) { 'IfTest' } else { 'line {0}: {1}' -f $Member.Extent.StartLineNumber, $Member.Parent.Extent.Text }
+            }
+            @($Uses | Where-Object { $_ -eq 'NetworkCredential' }).Count | Should -Be 1 -Because 'the ARM token reaches .NET through the NetworkCredential constructor exactly once'
+            @($Uses | Where-Object { $_ -eq 'IfTest' }).Count | Should -BeGreaterOrEqual 1 -Because 'the walk must find the test that the ARM result carries a token'
+            @($Uses | Where-Object { $_ -notin 'NetworkCredential', 'IfTest' }) | Should -BeNullOrEmpty
+        }
+
+        It 'reads AzAuth through no command parameter in device code mode' {
+            # A6: the device code pipeline re-emits AzAuth's warnings, and its last element is a script
+            # block (& { process { ... } }), never ForEach-Object or Where-Object, so the token object
+            # AzAuth returns is bound to no command parameter (module logging records every bound value).
+            $Ast = InModuleScope Omnicit.PIM { (Get-Command Initialize-OPIMAuth).ScriptBlock.Ast }
+            $Pipelines = @($Ast.FindAll({
+                        param($Node)
+                        $Node -is [System.Management.Automation.Language.PipelineAst] -and
+                        @($Node.PipelineElements | Where-Object {
+                                $_ -is [System.Management.Automation.Language.CommandAst] -and $_.GetCommandName() -eq 'Get-AzToken'
+                            }).Count -gt 0
+                    }, $true))
+            $Piped = @($Pipelines | Where-Object { $_.PipelineElements.Count -gt 1 })
+            $Piped.Count | Should -Be 1 -Because 'the device code call is the one Get-AzToken pipeline; a walk that finds none would pass vacuously'
+            $Elements = @($Piped[0].PipelineElements)
+            $Elements[0].GetCommandName() | Should -Be 'Get-AzToken'
+            foreach ($Element in @($Elements | Select-Object -Skip 1)) {
+                $Element | Should -BeOfType [System.Management.Automation.Language.CommandAst]
+                $Element.InvocationOperator | Should -Be ([System.Management.Automation.Language.TokenKind]::Ampersand)
+                $Element.CommandElements[0] | Should -BeOfType [System.Management.Automation.Language.ScriptBlockExpressionAst]
+            }
+            @($Pipelines | ForEach-Object { $_.PipelineElements } | Where-Object {
+                    $_ -is [System.Management.Automation.Language.CommandAst] -and
+                    $_.GetCommandName() -in 'ForEach-Object', 'Where-Object', '%', '?', 'foreach', 'where'
+                }) | Should -BeNullOrEmpty
         }
     }
 
@@ -1342,9 +1634,7 @@ Describe 'Initialize-OPIMAuth' {
                 }
                 Mock Connect-MgGraph { $script:_OPIMTestConnected = $true }
                 Mock Get-OPIMGraphSessionFingerprint { if ($script:_OPIMTestConnected) { 'fp' } else { 'read-before-the-connect' } }
-                Mock Get-AzContext {}
-                Mock Update-AzConfig {}
-                Mock Connect-AzAccount {}
+                Mock Get-AzToken {}
             }
         }
         BeforeEach {
@@ -1402,8 +1692,7 @@ Describe 'Initialize-OPIMAuth' {
                 Should -Invoke Get-OPIMMsalApplication -Times 0 -Scope It
                 Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 0 -Scope It
                 Should -Invoke Connect-MgGraph -Times 0 -Scope It
-                Should -Invoke Get-AzContext -Times 0 -Scope It
-                Should -Invoke Connect-AzAccount -Times 0 -Scope It
+                Should -Invoke Get-AzToken -Times 0 -Scope It
             }
         }
 
@@ -1650,7 +1939,7 @@ Describe 'Initialize-OPIMAuth' {
                 $script:_OPIMTestToken = $null
                 $script:_OPIMTestSentinel = $null
                 $script:_OPIMSignInLatch = $null
-                $script:_OPIMTestAz = $null
+                $script:_OPIMTestArmToken = $null
             }
         }
 
@@ -1711,24 +2000,22 @@ Describe 'Initialize-OPIMAuth' {
             }
         }
 
-        It 'releases the caller after a new sign-in and an Azure connection' {
+        It 'releases the caller after a new sign-in and an ARM token' {
+            # The Graph token and the ARM token carry the same tenant and the same (default) account.
             $Token = New-OPIMTestAccessToken -TenantId $TenantA
-            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; TenantA = $TenantA } {
-                param($Token, $TenantA)
+            $ArmToken = New-OPIMTestAccessToken -TenantId $TenantA
+            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; ArmToken = $ArmToken; TenantA = $TenantA } {
+                param($Token, $ArmToken, $TenantA)
                 $script:_OPIMAuthState = @{ DeviceCode = $true }
                 $script:_OPIMTestToken = $Token
-                $script:_OPIMTestAz = $null
-                Mock Get-AzContext { $script:_OPIMTestAz }
-                Mock Update-AzConfig {}
-                Mock Connect-AzAccount {
-                    $script:_OPIMTestAz = [PSCustomObject]@{
-                        Tenant  = [PSCustomObject]@{ Id = 'aaaaaaaa-0000-0000-0000-00000000000a' }
-                        Account = [PSCustomObject]@{ Id = 'user@contoso.com' }
-                    }
-                }
+                $script:_OPIMTestArmToken = $ArmToken
+                Mock Get-AzToken { [PSCustomObject]@{ Token = $script:_OPIMTestArmToken; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1) } }
                 Initialize-OPIMAuth -TenantId $TenantA -IncludeARM
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It
+                Should -Invoke Get-AzToken -Times 1 -Exactly -Scope It
                 Should -Invoke Unlock-OPIMSignIn -Times 1 -Exactly -Scope It
+                Should -Invoke Unlock-OPIMSignIn -Times 1 -Exactly -Scope It -ParameterFilter {
+                    [object]::ReferenceEquals($Invocation, $script:_OPIMTestSentinel)
+                }
             }
         }
 
@@ -1777,18 +2064,16 @@ Describe 'Initialize-OPIMAuth' {
             }
         }
 
-        It 'keeps the caller latched after a failed Azure connect' {
-            # The Graph token is cached and the Azure connection fails: AzureConnectFailed is
-            # terminating, so the function ends without releasing the caller.
-            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
+        It 'keeps the caller latched after a failed ARM sign-in' {
+            # The Graph token is cached and the ARM sign-in fails: AzureConnectFailed is terminating,
+            # so the function ends without releasing the caller.
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
             InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
                 param($State)
                 $script:_OPIMAuthState = $State
-                Mock Get-AzContext {}
-                Mock Update-AzConfig {}
-                Mock Connect-AzAccount { throw [System.Exception]::new('Azure auth failure') }
+                Mock Get-AzToken { throw [System.Exception]::new('Azure auth failure') }
                 { Initialize-OPIMAuth -IncludeARM } | Should -Throw -ErrorId 'AzureConnectFailed*'
-                Should -Invoke Connect-AzAccount -Times 1 -Exactly -Scope It
+                Should -Invoke Get-AzToken -Times 1 -Exactly -Scope It
                 Should -Invoke Lock-OPIMSignIn -Times 1 -Exactly -Scope It
                 Should -Invoke Unlock-OPIMSignIn -Times 0 -Scope It
             }
