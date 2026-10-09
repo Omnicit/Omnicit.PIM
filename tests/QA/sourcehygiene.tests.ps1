@@ -123,18 +123,14 @@ BeforeAll {
     # 'Transport' is anything that can put a credential on the wire or fail with a record of a
     # request that carried one: the module's Graph wrapper and the raw Graph call, the two web
     # cmdlets, the sign-ins (Connect-MgGraph and AzAuth's Get-AzToken), and the module's own ARM
-    # wrapper (Invoke-OPIMArmRequest). Connect-AzAccount, the silent ARM token check
-    # Get-AzAccessToken and the four Az.Resources schedule cmdlets, ARM requests whose failure
-    # records can carry the request, are no longer called by source/: they stay on the list, so a
-    # call that came back is held to the scrub, until the Az modules leave the dependencies (Sprint 2
-    # step 1b).
+    # wrapper (Invoke-OPIMArmRequest). No Az module command is on the list: the Az boundary pass
+    # (Pass 4, below) refuses any call of one under source/ outright, so there is no Az call left
+    # for this scan to hold to the scrub.
     # =====================================================================================
     $script:TransportCommands = @(
         'Invoke-OPIMGraphRequest', 'Invoke-MgGraphRequest', 'Invoke-WebRequest', 'Invoke-RestMethod',
-        'Connect-MgGraph', 'Connect-AzAccount', 'Get-AzAccessToken', 'Get-AzToken',
-        'Invoke-OPIMArmRequest',
-        'Get-AzRoleEligibilitySchedule', 'Get-AzRoleAssignmentScheduleInstance',
-        'New-AzRoleAssignmentScheduleRequest', 'Get-AzRoleAssignmentScheduleRequest'
+        'Connect-MgGraph', 'Get-AzToken',
+        'Invoke-OPIMArmRequest'
     )
 
     # The one first statement the scan accepts.
@@ -166,6 +162,127 @@ BeforeAll {
     $script:ScrubControlPath = 'source/Private/Invoke-OPIMGraphRequest.ps1'
     $script:ScrubControlCatchCount = 8
 
+    <#
+        =====================================================================================
+        AZ BOUNDARY (Pass 4, decision A7, modelled on Omnicit.EntraRBAC's "Pass 8").
+
+        THE PROPERTY. Omnicit.PIM signs in to Azure Resource Manager with AzAuth's Get-AzToken and
+        sends every ARM request itself, through Invoke-OPIMArmRequest. It calls no Az module
+        command, loads no Az module and declares none, so a user's own Az session and Az
+        configuration are never touched and no Az module needs to be installed.
+
+        The property used to be proven by mocks only: 'Should -Invoke <Az command> -Times 0' in the
+        unit tests. Those assertions only run while the Az modules are installed, since Pester's
+        Mock throws for a command it cannot resolve, and Sprint 2 step 1b takes the Az modules out
+        of the build. This pass proves the property from the source text instead, independently of
+        what is installed:
+        it asks the PowerShell parser what source/ CALLS, so the prose that names an Az command to
+        say the module does not call it (a comment, comment-based help) is never offered to it.
+
+        THREE REFUSED SHAPES, found in every .ps1, .psm1 and .psd1 under source/ on the AST Pass 1
+        already parsed (each file is parsed once):
+          - Call: a command whose static name matches '-Az' (Connect-AzAccount), or that is
+            module-qualified with an Az module (Az.Accounts\Get-AzContext). GetCommandName() also
+            returns a quoted first element, so & 'Disconnect-AzAccount' is a call.
+          - String: a quoted string -- not a command's own name -- whose text parses as such a call,
+            the form a command takes through [scriptblock]::Create('...') or Invoke-Expression.
+          - Module: an Az module (Az, Az.Accounts, Az.Resources, ...) named as a quoted string or a
+            bareword (Import-Module Az.Accounts, a manifest's RequiredModules entry), or required
+            by #requires -Modules.
+
+        THE ALLOW LIST is Get-AzToken alone, bare or qualified with AzAuth: AzAuth is not one of the
+        Az modules, and acquiring a token is the whole design. The module's own nested helper
+        Invoke-OPIMAzTokenCall does not match '-Az' and needs no entry.
+
+        KNOWN LIMIT, stated rather than papered over. A command name assembled at run time (a name
+        held in a variable and run with & $Name, or a string built from parts) is invisible to a
+        parser: GetCommandName() returns $null for it, and no string holds the whole name. Review
+        must catch that shape; this pass cannot.
+
+        The positive controls are the known-answer It, which runs the detector over a text holding
+        every refused shape, and the named control: the two Get-AzToken calls of
+        source/Private/Initialize-OPIMAuth.ps1, which a matcher that stopped seeing the tree would
+        no longer find.
+        =====================================================================================
+    #>
+    $script:AzAllowedCommands = [System.Collections.Generic.HashSet[string]]::new(
+        [string[]]@('Get-AzToken'), [System.StringComparer]::OrdinalIgnoreCase)
+    $script:AzCommandPattern = '-Az'
+    $script:AzModulePattern = '^Az(\.[A-Za-z0-9]+)*$'
+
+    function Get-SourceHygieneAzFinding {
+        <#
+        .SYNOPSIS
+        Returns one record per Az-shaped reference in a parsed file: Kind (Call, String or Module),
+        Line, Name, and Allowed (true only for a call on the allow list).
+        #>
+        [OutputType([pscustomobject])]
+        param(
+            [Parameter(Mandatory)]
+            [System.Management.Automation.Language.Ast]$Ast
+        )
+        $IsAzCall = {
+            param($Name)
+            $Parts = $Name -split '\\'
+            ($Name -match $script:AzCommandPattern) -or ($Parts.Count -gt 1 -and $Parts[0] -match $script:AzModulePattern)
+        }
+        $IsAllowed = {
+            param($Name)
+            $Parts = $Name -split '\\'
+            $script:AzAllowedCommands.Contains($Parts[-1]) -and ($Parts.Count -eq 1 -or $Parts[0] -eq 'AzAuth')
+        }
+        # Call: a command whose static name matches. GetCommandName() also returns the value of a quoted
+        # first element, so & 'Disconnect-AzAccount' is a call.
+        foreach ($Node in $Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+            $Name = $Node.GetCommandName()
+            if ([string]::IsNullOrEmpty($Name) -or -not (& $IsAzCall $Name)) { continue }
+            [pscustomobject]@{ Kind = 'Call'; Line = $Node.Extent.StartLineNumber; Name = $Name; Allowed = [bool](& $IsAllowed $Name) }
+        }
+        # String: a quoted string, not a command's own name, that parses as an Az call.
+        foreach ($Node in $Ast.FindAll({
+                    ($args[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                        $args[0].StringConstantType -ne [System.Management.Automation.Language.StringConstantType]::BareWord) -or
+                    $args[0] -is [System.Management.Automation.Language.ExpandableStringExpressionAst]
+                }, $true)) {
+            if ($Node.Parent -is [System.Management.Automation.Language.CommandAst] -and
+                [object]::ReferenceEquals($Node.Parent.CommandElements[0], $Node)) { continue }
+            $Inner = [System.Management.Automation.Language.Parser]::ParseInput([string]$Node.Value, [ref]$null, [ref]$null)
+            foreach ($Call in $Inner.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+                $Name = $Call.GetCommandName()
+                if ([string]::IsNullOrEmpty($Name) -or -not (& $IsAzCall $Name) -or (& $IsAllowed $Name)) { continue }
+                [pscustomobject]@{ Kind = 'String'; Line = $Node.Extent.StartLineNumber; Name = $Name; Allowed = $false }
+            }
+        }
+        # Module: an Az module named as a string or a bareword, or in #requires -Modules.
+        foreach ($Node in $Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true)) {
+            if ($Node.Value -match $script:AzModulePattern) {
+                [pscustomobject]@{ Kind = 'Module'; Line = $Node.Extent.StartLineNumber; Name = $Node.Value; Allowed = $false }
+            }
+        }
+        if ($Ast -is [System.Management.Automation.Language.ScriptBlockAst] -and $Ast.ScriptRequirements) {
+            $Lines = $Ast.Extent.Text -split "`n"
+            foreach ($Required in @($Ast.ScriptRequirements.RequiredModules)) {
+                if ($Required.Name -notmatch $script:AzModulePattern) { continue }
+                $Line = 0
+                for ($I = 0; $I -lt $Lines.Count; $I++) {
+                    if ($Lines[$I] -match '^\s*#requires\b' -and $Lines[$I] -match [regex]::Escape($Required.Name)) { $Line = $I + 1; break }
+                }
+                [pscustomobject]@{ Kind = 'Module'; Line = $Line; Name = $Required.Name; Allowed = $false }
+            }
+        }
+    }
+
+    <#
+        The floors sit just under the counts Pass 1 measured on 2026-10-09: 65 parsed files under
+        source/ (.ps1, .psm1, .psd1) holding 759 CommandAst nodes. A scan below a floor has lost a
+        directory or broken its walk, not found less code; raise a floor when the tree genuinely grows.
+    #>
+    $script:AzParsedFileFloor = 63
+    $script:AzCommandAstFloor = 740
+    $script:AzFindings = [System.Collections.Generic.List[object]]::new()
+    $script:AzParsedFileCount = 0
+    $script:AzCommandAstCount = 0
+
     # --- Pass 1: parse every PowerShell-syntax source file exactly once. ---
     #
     # .ps1xml is excluded since it is XML, which the PowerShell parser would report as errors.
@@ -191,6 +308,14 @@ BeforeAll {
             $script:ParseFailures.Add(('{0} -- {1} parse error(s), first: {2}' -f
                     $File.RelativePath, $Errors.Count, $Errors[0].Message))
             continue
+        }
+
+        # Pass 4 (the Az boundary) reads the same AST; see its comment above Pass 1.
+        $script:AzParsedFileCount++
+        $script:AzCommandAstCount += @($FileAst.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)).Count
+        foreach ($Finding in @(Get-SourceHygieneAzFinding -Ast $FileAst)) {
+            $Finding | Add-Member -NotePropertyName Path -NotePropertyValue $File.RelativePath
+            $script:AzFindings.Add($Finding)
         }
 
         <#
@@ -557,5 +682,67 @@ Describe 'Format and type data' -Tags 'SourceHygiene' {
             }
         }
         $Failures -join "`n" | Should -BeNullOrEmpty -Because 'every .ps1xml file under source/ must be well-formed XML, or PowerShell cannot load it'
+    }
+}
+
+Describe 'Az boundary' -Tags 'SourceHygiene' {
+
+    It 'recognises every Az shape it refuses, and allows only AzAuth''s Get-AzToken (known answer)' {
+        # The positive control of the gate: if the matcher, the string pass or the module pass stops
+        # matching, this text no longer yields its findings.
+        $Text = @'
+#requires -Modules Az.Resources
+function Test-AzShape {
+    Connect-AzAccount -Identity
+    Az.Accounts\Get-AzContext
+    & 'Disconnect-AzAccount'
+    $null = [scriptblock]::Create('Get-AzAccessToken')
+    Invoke-Expression "Update-AzConfig -Scope Process"
+    Import-Module Az.Accounts
+    $Manifest = @{ RequiredModules = @(@{ ModuleName = 'Az.Resources'; ModuleVersion = '9.0.3' }) }
+    # Connect-AzAccount in a comment is no call
+    Get-AzToken -Resource 'https://management.azure.com'
+    Invoke-OPIMAzTokenCall
+    Write-Verbose 'Run Connect-AzAccount yourself for an Az session of your own.'
+    Get-OPIMAzureRole
+}
+'@
+        $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$null)
+        $All = @(Get-SourceHygieneAzFinding -Ast $Ast)
+        @($All | Where-Object { -not $_.Allowed } | Sort-Object -Property Line, Kind | ForEach-Object { '{0} {1} {2}' -f $_.Line, $_.Kind, $_.Name }) | Should -Be @(
+            '1 Module Az.Resources'
+            '3 Call Connect-AzAccount'
+            '4 Call Az.Accounts\Get-AzContext'
+            '5 Call Disconnect-AzAccount'
+            '6 String Get-AzAccessToken'
+            '7 String Update-AzConfig'
+            '8 Module Az.Accounts'
+            '9 Module Az.Resources'
+        )
+        @($All | Where-Object Allowed | ForEach-Object { '{0} {1}' -f $_.Line, $_.Name }) | Should -Be @('11 Get-AzToken')
+    }
+
+    It 'parses every source file and walks a meaningful number of command nodes' {
+        $script:ParseFailures | Should -BeNullOrEmpty
+        $script:AzParsedFileCount | Should -BeGreaterOrEqual $script:AzParsedFileFloor
+        $script:AzCommandAstCount | Should -BeGreaterOrEqual $script:AzCommandAstFloor
+    }
+
+    It 'sees the two Get-AzToken calls of Initialize-OPIMAuth, the named control' {
+        # The real-tree half of the positive control: a matcher that stopped seeing the tree would
+        # find no Az-shaped call at all, which is indistinguishable from a clean tree without this.
+        @($script:AzFindings | Where-Object {
+                $_.Allowed -and $_.Path -eq 'source/Private/Initialize-OPIMAuth.ps1'
+            }).Count | Should -Be 2
+    }
+
+    It 'calls, runs, requires and declares no Az module command anywhere under source/' {
+        $Violations = @($script:AzFindings | Where-Object { -not $_.Allowed } | ForEach-Object {
+                '{0}:{1} -- {2} {3}' -f $_.Path, $_.Line, $_.Kind, $_.Name
+            })
+        ($Violations -join '; ') | Should -BeNullOrEmpty -Because (
+            'Omnicit.PIM signs in to Azure with AzAuth''s Get-AzToken and sends every request itself ' +
+            '(Invoke-OPIMArmRequest); it calls, loads and declares no Az module (A7). Do not add the ' +
+            'offending name to the allow list: a new Az dependency is a design decision, not an entry here')
     }
 }

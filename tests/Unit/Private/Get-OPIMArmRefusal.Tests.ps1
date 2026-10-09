@@ -69,12 +69,10 @@ Describe 'Get-OPIMArmRefusal' {
                 Mock Get-OPIMSignInRefusal { 'Get-OPIMAzureRole' }
                 Mock New-OPIMSignInRefusedError {}
                 Mock Get-OPIMTokenTenantId {}
-                Mock Get-AzContext {}
                 @(Get-OPIMArmRefusal).Count | Should -Be 0
                 Should -Invoke Get-OPIMSignInRefusal -Times 0 -Scope It
                 Should -Invoke New-OPIMSignInRefusedError -Times 0 -Scope It
                 Should -Invoke Get-OPIMTokenTenantId -Times 0 -Scope It
-                Should -Invoke Get-AzContext -Times 0 -Scope It
             }
         }
     }
@@ -146,7 +144,8 @@ Describe 'Get-OPIMArmRefusal' {
     Context 'When the module holds a sign-in and an ARM token (OPIM-08, A3)' {
         # The ARM token's own tid and oid are read before every ARM request and compared with the
         # module's Graph session: the tenant of its token (TokenTenantId) and the account it signed in
-        # with (ObjectId). No Az context is read.
+        # with (ObjectId). No Az context is read: the Az boundary gate in
+        # tests/QA/sourcehygiene.tests.ps1 refuses any Az call under source/.
         It 'returns nothing when the token is for the session''s tenant and account' {
             Set-ArmTestState -State (New-ArmTestState -ArmToken (New-ArmTestToken))
             InModuleScope Omnicit.PIM {
@@ -154,16 +153,14 @@ Describe 'Get-OPIMArmRefusal' {
             }
         }
 
-        It 'reads the token''s own claims and no Az context' {
+        It 'reads the token''s own claims' {
             Set-ArmTestState -State (New-ArmTestState -ArmToken (New-ArmTestToken))
             InModuleScope Omnicit.PIM {
                 Mock Get-OPIMTokenTenantId { '22222222-2222-2222-2222-222222222222' }
-                Mock Get-AzContext { [pscustomobject]@{ Tenant = [pscustomobject]@{ Id = '33333333-3333-3333-3333-333333333333' } } }
                 @(Get-OPIMArmRefusal).Count | Should -Be 0
                 Should -Invoke Get-OPIMTokenTenantId -Times 1 -Exactly -Scope It -ParameterFilter {
                     $AccessToken -is [System.Security.SecureString] -and $AccessToken.Length -gt 0
                 }
-                Should -Invoke Get-AzContext -Times 0 -Scope It
             }
         }
 
@@ -272,40 +269,10 @@ Describe 'Get-OPIMArmRefusal' {
             InModuleScope Omnicit.PIM {
                 Mock Get-OPIMTokenTenantId { '33333333-3333-3333-3333-333333333333' }
                 Mock Get-OPIMTokenObjectId { 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' }
-                Mock Get-AzContext {}
                 @(Get-OPIMArmRefusal).Count | Should -Be 0
                 Should -Invoke Get-OPIMTokenTenantId -Times 0 -Scope It
                 Should -Invoke Get-OPIMTokenObjectId -Times 0 -Scope It
-                Should -Invoke Get-AzContext -Times 0 -Scope It
             }
-        }
-    }
-
-    Context 'When the module is read as it loaded' {
-        It 'leaves no Az.Resources call in the module' {
-            # Static check on every function as the module loaded it: no command of the Az.Resources
-            # schedule family is called any more. Every Azure request goes through the module's own ARM
-            # transport, which gates each request itself, so no call site is left to stand behind a gate.
-            $Az = @('Get-AzRoleEligibilitySchedule', 'Get-AzRoleAssignmentScheduleInstance',
-                'New-AzRoleAssignmentScheduleRequest', 'Get-AzRoleAssignmentScheduleRequest')
-            $Functions = @(InModuleScope Omnicit.PIM { Get-Command -Module Omnicit.PIM -CommandType Function })
-            # The walk reaches the three cmdlets that held the Az.Resources calls, so a pass is no
-            # empty walk.
-            $Functions.Name | Should -Contain 'Get-OPIMAzureRole'
-            $Functions.Name | Should -Contain 'Enable-OPIMAzureRole'
-            $Functions.Name | Should -Contain 'Disable-OPIMAzureRole'
-            $Calls = @(foreach ($Function in $Functions) {
-                    $Ast = $Function.ScriptBlock.Ast
-                    foreach ($Command in @($Ast.FindAll({
-                                    param($Node)
-                                    $Node -is [System.Management.Automation.Language.CommandAst] -and $Az -contains $Node.GetCommandName()
-                                }, $true))) {
-                        '{0}:{1} {2}' -f $Function.Name, $Command.Extent.StartLineNumber, $Command.GetCommandName()
-                    }
-                })
-            # The sites are the failure text, so a call that comes back is found by its place.
-            ($Calls -join '; ') | Should -BeNullOrEmpty -Because 'every Az.Resources schedule call was replaced by a request through the module''s own ARM transport'
-            $Calls.Count | Should -Be 0
         }
     }
 }

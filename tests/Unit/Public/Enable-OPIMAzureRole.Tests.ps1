@@ -102,9 +102,7 @@ Describe 'Enable-OPIMAzureRole' {
             $Where = & $script:ParseRequestPath $Path
             & $script:NewArmRequest $Where.Name $Where.Scope $Answer.Status $Body.properties.linkedRoleEligibilityScheduleId $null
         } -ParameterFilter { $Method -eq 'PUT' }
-        # No Az command and no gate of its own is called any more: the transport gates every request.
-        Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest { }
-        Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleRequest { }
+        # No gate of its own is called: the transport gates every request.
         Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
     }
     BeforeEach {
@@ -138,11 +136,9 @@ Describe 'Enable-OPIMAzureRole' {
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It
         }
 
-        It 'calls no Az command and no ARM gate of its own' {
+        It 'calls no ARM gate of its own' {
             Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)' -Wait
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Get-OPIMArmRefusal -Times 0 -Scope It
         }
 
@@ -950,7 +946,6 @@ Describe 'Enable-OPIMAzureRole' {
             $Sent.Polls[0].All | Should -BeTrue
             # A GET by the transport's default: a poll sent with any -Method would be a write.
             $Sent.Polls[0].MethodBound | Should -BeFalse
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Get-OPIMArmRefusal -Times 0 -Scope It
         }
 
@@ -1396,10 +1391,9 @@ Describe 'Enable-OPIMAzureRole' {
             Should -Invoke -ModuleName Omnicit.PIM Start-Sleep -Times 0 -Scope It
         }
 
-        It 'calls no Az command and no ARM gate of its own' {
+        It 'calls no ARM gate of its own' {
             $Refusal.Id = 'SignInRefused'
             $null = Enable-OPIMAzureRole -RoleName 'Contributor (elig-001)' -ErrorAction SilentlyContinue
-            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Get-OPIMArmRefusal -Times 0 -Scope It
         }
     }

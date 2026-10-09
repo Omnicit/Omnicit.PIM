@@ -19,28 +19,6 @@ BeforeDiscovery {
         # AzAuth's sign-in to Azure Resource Manager. A compiled cmdlet without IDynamicParameters
         # (measured 2026-10-09, AzAuth 2.9.0), so it is replaced in the plain Cmdlet form.
         @{ Name = 'Get-AzToken'; Module = 'AzAuth'; Form = 'Cmdlet'; Arguments = @{ Resource = 'https://management.azure.com'; Tenant = 'contoso.onmicrosoft.com' } }
-        @{ Name = 'Connect-AzAccount'; Module = 'Az.Accounts'; Form = 'DynamicCmdlet'; Arguments = @{} }
-        @{ Name = 'Disconnect-AzAccount'; Module = 'Az.Accounts'; Form = 'DynamicCmdlet'; Arguments = @{} }
-        @{ Name = 'Get-AzContext'; Module = 'Az.Accounts'; Form = 'DynamicCmdlet'; Arguments = @{} }
-        @{ Name = 'Get-AzAccessToken'; Module = 'Az.Accounts'; Form = 'DynamicCmdlet'; Arguments = @{ TenantId = 'contoso.onmicrosoft.com'; AsSecureString = $true } }
-        @{ Name = 'Update-AzConfig'; Module = 'Az.Accounts'; Form = 'DynamicCmdlet'; Arguments = @{ EnableLoginByWam = $false; Scope = 'Process' } }
-        @{ Name = 'Get-AzRoleEligibilitySchedule'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{ Scope = '/' } }
-        @{ Name = 'Get-AzRoleAssignmentScheduleInstance'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{ Scope = '/' } }
-        @{ Name = 'Get-AzRoleAssignmentScheduleRequest'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{ Scope = '/' } }
-        # The parameter shape Enable-OPIMAzureRole sent before it moved to the module's own ARM
-        # transport; module code calls the command no more, and the tripwire still refuses it.
-        @{ Name = 'New-AzRoleAssignmentScheduleRequest'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{
-                Name                            = 'opim-tripwire-request'
-                Scope                           = '/'
-                PrincipalId                     = 'opim-tripwire-principal'
-                RoleDefinitionId                = 'opim-tripwire-role-definition'
-                RequestType                     = 'SelfActivate'
-                LinkedRoleEligibilityScheduleId = 'opim-tripwire-eligibility'
-                Justification                   = 'opim tripwire known answer'
-                ExpirationType                  = 'AfterDuration'
-                ExpirationDuration              = 'PT1H'
-            }
-        }
         @{ Name = 'Invoke-WebRequest'; Module = 'Microsoft.PowerShell.Utility'; Form = 'Cmdlet'; Arguments = @{ Uri = 'https://opim-tripwire.invalid/known-answer' } }
         @{ Name = 'Invoke-RestMethod'; Module = 'Microsoft.PowerShell.Utility'; Form = 'Cmdlet'; Arguments = @{ Uri = 'https://opim-tripwire.invalid/known-answer' } }
     )
@@ -273,8 +251,8 @@ Describe 'OPIMTransportTripwire' {
         Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
     }
 
-    It 'names exactly the expected sixteen commands, with their modules and forms' -ForEach @(@{ ExpectedSpecs = $script:Expected }) {
-        @($ExpectedSpecs).Count | Should -Be 16 -Because 'the known-answer list itself must not be empty or short, or the comparison below proves nothing'
+    It 'names exactly the expected seven commands, with their modules and forms' -ForEach @(@{ ExpectedSpecs = $script:Expected }) {
+        @($ExpectedSpecs).Count | Should -Be 7 -Because 'the known-answer list itself must not be empty or short, or the comparison below proves nothing'
         $Actual = Get-OPIMTransportTripwireName
         (@($Actual.Keys) | Sort-Object) -join ',' | Should -Be ((@($ExpectedSpecs | ForEach-Object { $_.Name }) | Sort-Object) -join ',')
         foreach ($Spec in $ExpectedSpecs) {
@@ -296,28 +274,12 @@ Describe 'OPIMTransportTripwire' {
         $Real.Count | Should -Be 1 -Because ('exactly one real {0} must exist in {1}' -f $Name, $Module)
         $Real = $Real[0]
 
-        $ExpectedKeys = [System.Collections.Generic.List[string]]::new()
-        foreach ($Key in $Real.Parameters.Keys) { $ExpectedKeys.Add($Key) }
-        if ($Form -eq 'Cmdlet') {
-            $Real | Should -BeOfType ([System.Management.Automation.CmdletInfo])
-            [System.Management.Automation.IDynamicParameters].IsAssignableFrom($Real.ImplementingType) | Should -BeFalse
-        } elseif ($Form -eq 'DynamicCmdlet') {
-            $Real | Should -BeOfType ([System.Management.Automation.CmdletInfo])
-            # Which dynamic parameters a fresh instance returns depends on the Az.Accounts version:
-            # 5.3.3 (what CI resolved on 2026-10-06) returns none for four of the five cmdlets, 5.5.3
-            # (local, same day) returns AcquirePolicyToken and ChangeReference. So only the union is
-            # asserted per command; the next test pins the one dynamic parameter module code needs.
-            $Dynamic = ([System.Management.Automation.IDynamicParameters][Activator]::CreateInstance($Real.ImplementingType)).GetDynamicParameters()
-            $Dynamic | Should -BeOfType ([System.Management.Automation.RuntimeDefinedParameterDictionary])
-            foreach ($Key in $Dynamic.Keys) {
-                if (-not $ExpectedKeys.Contains($Key)) { $ExpectedKeys.Add($Key) }
-            }
-        } else {
-            $Real | Should -BeOfType ([System.Management.Automation.FunctionInfo])
-            $Real.Source | Should -Be 'Az.Resources'
-        }
+        # Every replacement is built in the Cmdlet form; a new form needs checks of its own here.
+        $Form | Should -Be 'Cmdlet'
+        $Real | Should -BeOfType ([System.Management.Automation.CmdletInfo])
+        [System.Management.Automation.IDynamicParameters].IsAssignableFrom($Real.ImplementingType) | Should -BeFalse
 
-        (@($Function.Parameters.Keys) | Sort-Object) -join ',' | Should -Be ((@($ExpectedKeys) | Sort-Object -Unique) -join ',')
+        (@($Function.Parameters.Keys) | Sort-Object) -join ',' | Should -Be ((@($Real.Parameters.Keys) | Sort-Object -Unique) -join ',')
         $Function.ParameterSets.Count | Should -Be $Real.ParameterSets.Count
 
         # A function made from scriptblock text carries a ScriptBlockAst, not a FunctionDefinitionAst,
@@ -329,27 +291,6 @@ Describe 'OPIMTransportTripwire' {
         $Ast.ParamBlock | Should -Not -BeNullOrEmpty
         $Ast.EndBlock | Should -Not -BeNullOrEmpty
         $Ast.DynamicParamBlock | Should -BeNullOrEmpty
-    }
-
-    It 'carries EnableLoginByWam on the Update-AzConfig replacement, a parameter the real cmdlet offers only dynamically' {
-        # Initialize-OPIMAuth passed -EnableLoginByWam before it signed in to Azure with AzAuth, and
-        # the replacement still carries it while Update-AzConfig stays on the tripwire. It is one of
-        # the configuration keys Update-AzConfig returns from GetDynamicParameters on Az.Accounts 5.3.x
-        # and 5.5.x alike, so this holds on every version, unlike the extra dynamic parameters of the
-        # other four cmdlets.
-        $Real = @(Get-TripwireKnownAnswerRealCommand -Name 'Update-AzConfig' -Module 'Az.Accounts')
-        $Real.Count | Should -Be 1 -Because 'exactly one real Update-AzConfig must exist in Az.Accounts'
-        $Real[0] | Should -BeOfType ([System.Management.Automation.CmdletInfo])
-        # CmdletInfo.Parameters already merges dynamic parameters in, so "static" is read from the
-        # implementing type: a static parameter would be a public member of it.
-        @($Real[0].ImplementingType.GetMember('EnableLoginByWam')).Count | Should -Be 0 -Because 'a static member would make the materialization below unnecessary and prove nothing'
-        $Dynamic =([System.Management.Automation.IDynamicParameters][Activator]::CreateInstance($Real[0].ImplementingType)).GetDynamicParameters()
-        $Dynamic.ContainsKey('EnableLoginByWam') | Should -BeTrue -Because 'the real cmdlet must offer EnableLoginByWam dynamically on the loaded Az.Accounts'
-
-        $Function = Resolve-TripwireKnownAnswerCommand -Name 'Update-AzConfig' -CommandType Function
-        Test-OPIMTransportTripwireFunction -Command $Function | Should -BeTrue
-        $Function.Parameters.ContainsKey('EnableLoginByWam') | Should -BeTrue -Because 'the replacement must carry the dynamic parameter as a static one, or the call fails to bind before it is recorded'
-        $Function.Parameters['EnableLoginByWam'].ParameterType | Should -Be $Dynamic['EnableLoginByWam'].ParameterType
     }
 
     It 'keeps a Mock -ModuleName on <Name> winning and records no hit' -ForEach $script:Expected {
@@ -414,24 +355,6 @@ Describe 'OPIMTransportTripwire' {
         }
     }
 
-    It 'binds a Mock -ModuleName on Update-AzConfig with a -ParameterFilter on EnableLoginByWam to the call shape module code uses' {
-        # The call shape Initialize-OPIMAuth used before it signed in to Azure with AzAuth:
-        # Update-AzConfig -EnableLoginByWam $false -Scope Process -WhatIf:$false -Confirm:$false
-        # -ErrorAction SilentlyContinue. EnableLoginByWam is a DYNAMIC parameter of the real cmdlet,
-        # so this proves the materialized static parameter binds under a mock and the filter sees it.
-        Mock -ModuleName Omnicit.PIM Update-AzConfig { 'mocked' } -ParameterFilter { $EnableLoginByWam -eq $false }
-        $Before = $global:OPIMTransportTripwireHits.Count
-
-        $Resolved = Resolve-TripwireKnownAnswerCommand -Name 'Update-AzConfig'
-        $Resolved.CommandType | Should -Be 'Alias'
-        $Module = Get-Module -Name Omnicit.PIM | Select-Object -First 1
-        Test-OPIMTransportTripwireFunction -Command (& $Module { param($A) $A.ResolvedCommand } $Resolved) | Should -BeFalse
-
-        Invoke-TripwireKnownAnswerCommand -Command $Resolved -Arguments @{ EnableLoginByWam = $false; Scope = 'Process'; ErrorAction = 'SilentlyContinue' } | Should -Be 'mocked'
-        $global:OPIMTransportTripwireHits.Count | Should -Be $Before
-        Should -Invoke -ModuleName Omnicit.PIM Update-AzConfig -ParameterFilter { $EnableLoginByWam -eq $false -and $Scope -eq 'Process' } -Times 1 -Exactly
-    }
-
     It 'throws from Assert-OPIMTransportTripwire on a recorded hit' {
         $global:OPIMTransportTripwireHits.Add([pscustomobject]@{ Command = 'Invoke-WebRequest'; Caller = 'known-answer'; Parameters = 'Uri' })
         try {
@@ -480,10 +403,8 @@ Describe 'OPIMTransportTripwire' {
         { Assert-OPIMTransportTripwire } | Should -Not -Throw -Because 'with PSModulePath restored the same check must pass, or the throw above came from something else'
     }
 
-    It 'reports a re-import of Omnicit.PIM from Assert-OPIMTransportTripwire, and restores the tripwire with Install-OPIMTransportTripwire' -ForEach @(@{ ExpectedSpecs = $script:Expected }) {
-        $FunctionNames = @($ExpectedSpecs | Where-Object { $_.Form -eq 'ModuleFunction' } | ForEach-Object { $_.Name })
-        $GlobalNames = @($ExpectedSpecs | Where-Object { $_.Form -ne 'ModuleFunction' } | ForEach-Object { $_.Name })
-        $FunctionNames.Count | Should -Be 4
+    It 'keeps every replacement resolving from the module scope through a re-import of Omnicit.PIM, and restores the tripwire with Install-OPIMTransportTripwire' -ForEach @(@{ ExpectedSpecs = $script:Expected }) {
+        # Every replacement is a global function, which a re-import does not touch.
         $Carry = Get-TripwireKnownAnswerCarry
         $Old = Get-Module -Name Omnicit.PIM | Select-Object -First 1
         try {
@@ -493,11 +414,10 @@ Describe 'OPIMTransportTripwire' {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
 
             $Message = try { Assert-OPIMTransportTripwire; 'PASSED' } catch { $_.Exception.Message }
-            foreach ($Name in $FunctionNames) {
-                $Message | Should -BeLike ('*{0} no longer resolves to the tripwire from the module scope*' -f $Name)
-            }
-            foreach ($Name in $GlobalNames) {
-                $Message | Should -Not -BeLike ('*{0} no longer resolves*' -f $Name) -Because 'a global replacement survives a re-import'
+            foreach ($Spec in $ExpectedSpecs) {
+                $Message | Should -Not -BeLike ('*{0} no longer resolves*' -f $Spec.Name) -Because 'a global replacement survives a re-import'
+                $FromNew = Resolve-TripwireKnownAnswerCommand -Name $Spec.Name -CommandType Function
+                Test-OPIMTransportTripwireFunction -Command $FromNew | Should -BeTrue -Because ('{0} must still resolve to the tripwire from the NEW module scope' -f $Spec.Name)
             }
         } finally {
             Install-OPIMTransportTripwire
@@ -610,56 +530,9 @@ Describe 'OPIMTransportTripwire' {
         }
     }
 
-    # Uninstalls twice, and puts the tripwire back in a finally. On the second uninstall the nearest
-    # definition seen from the module scope is the REAL Az.Resources function, which is the case
-    # Uninstall's module-scope guard exists for: without it, that unqualified Remove-Item deletes the
-    # real function. Measured 2026-10-06: the next Get-Command (Uninstall's own final check runs one)
-    # then brings it back by module autoloading as a NEW FunctionInfo around the SAME script block,
-    # so the test compares the FunctionInfo objects, read through the function: drive, which never
-    # autoloads.
-    It 'leaves the real Az.Resources functions in place when Uninstall-OPIMTransportTripwire runs a second time' -ForEach @(@{ ExpectedSpecs = $script:Expected }) {
-        $FunctionNames = @($ExpectedSpecs | Where-Object { $_.Form -eq 'ModuleFunction' } | ForEach-Object { $_.Name })
-        $FunctionNames.Count | Should -Be 4
-        $Carry = Get-TripwireKnownAnswerCarry
-        $Module = Get-Module -Name Omnicit.PIM | Select-Object -First 1
-        try {
-            Uninstall-OPIMTransportTripwire
-            $Original = @{}
-            foreach ($Name in $FunctionNames) {
-                $Real = Get-Item -Path ('function:' + $Name) -ErrorAction Ignore
-                $Real | Should -BeOfType ([System.Management.Automation.FunctionInfo])
-                $Real.Source | Should -Be 'Az.Resources' -Because 'after one uninstall the real function must be the nearest definition, or the second uninstall tests nothing'
-                $FromModule = & $Module { param($N) Get-Item -Path ('function:' + $N) -ErrorAction Ignore } $Name
-                [object]::ReferenceEquals($FromModule, $Real) | Should -BeTrue -Because 'the module scope must see the same real function before the second uninstall'
-                $Original[$Name] = $Real
-            }
-
-            Uninstall-OPIMTransportTripwire
-
-            foreach ($Name in $FunctionNames) {
-                $FromTest = Get-Item -Path ('function:' + $Name) -ErrorAction Ignore
-                $FromTest | Should -BeOfType ([System.Management.Automation.FunctionInfo])
-                $FromTest.Source | Should -Be 'Az.Resources'
-                [object]::ReferenceEquals($FromTest, $Original[$Name]) | Should -BeTrue -Because ('the second uninstall must leave the real {0} in place, not delete it for autoloading to recreate' -f $Name)
-                $FromModule = & $Module { param($N) Get-Item -Path ('function:' + $N) -ErrorAction Ignore } $Name
-                $FromModule | Should -BeOfType ([System.Management.Automation.FunctionInfo])
-                $FromModule.Source | Should -Be 'Az.Resources'
-                [object]::ReferenceEquals($FromModule, $Original[$Name]) | Should -BeTrue
-            }
-        } finally {
-            Install-OPIMTransportTripwire
-            Restore-TripwireKnownAnswerCarry -Carry $Carry
-        }
-        foreach ($Spec in $ExpectedSpecs) {
-            $Resolved = Resolve-TripwireKnownAnswerCommand -Name $Spec.Name
-            $Resolved | Should -BeOfType ([System.Management.Automation.FunctionInfo])
-            Test-OPIMTransportTripwireFunction -Command $Resolved | Should -BeTrue
-        }
-    }
-
     # LAST in the file: it uninstalls, and puts the tripwire back in a finally.
     It 'restores the real commands and removes the runspace form on uninstall, and puts the tripwire back on install' -ForEach @(@{ ExpectedSpecs = $script:Expected }) {
-        @($ExpectedSpecs).Count | Should -Be 16
+        @($ExpectedSpecs).Count | Should -Be 7
         $Carry = Get-TripwireKnownAnswerCarry
         $Root = $global:OPIMTransportTripwireRunspaceRoot
         $Root | Should -Not -BeNullOrEmpty
@@ -669,12 +542,7 @@ Describe 'OPIMTransportTripwire' {
             foreach ($Spec in $ExpectedSpecs) {
                 # Resolved only, never invoked: with the tripwire gone this is the real command.
                 $Resolved = Resolve-TripwireKnownAnswerCommand -Name $Spec.Name
-                if ($Spec.Form -eq 'ModuleFunction') {
-                    $Resolved | Should -BeOfType ([System.Management.Automation.FunctionInfo])
-                    $Resolved.Source | Should -Be 'Az.Resources'
-                } else {
-                    $Resolved | Should -BeOfType ([System.Management.Automation.CmdletInfo])
-                }
+                $Resolved | Should -BeOfType ([System.Management.Automation.CmdletInfo])
             }
             @($env:PSModulePath -split [System.IO.Path]::PathSeparator) | Should -Not -Contain $Root
             [System.IO.Directory]::Exists($Root) | Should -BeFalse

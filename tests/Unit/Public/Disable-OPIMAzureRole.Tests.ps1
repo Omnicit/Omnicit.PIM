@@ -95,8 +95,7 @@ Describe 'Disable-OPIMAzureRole' {
             $Where = & $script:ParseRequestPath $Path
             & $script:NewArmRequest $Where.Name $Where.Scope $Answer.Status 'SelfDeactivate'
         } -ParameterFilter { $Method -eq 'PUT' }
-        # No Az command and no gate of its own is called any more: the transport gates every request.
-        Mock -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest { }
+        # No gate of its own is called: the transport gates every request.
         Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
     }
     BeforeEach {
@@ -129,10 +128,9 @@ Describe 'Disable-OPIMAzureRole' {
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It
         }
 
-        It 'calls no Az command and no ARM gate of its own' {
+        It 'calls no ARM gate of its own' {
             Disable-OPIMAzureRole -RoleName 'Contributor (active-001)'
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Get-OPIMArmRefusal -Times 0 -Scope It
         }
 
@@ -585,10 +583,9 @@ Describe 'Disable-OPIMAzureRole' {
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It
         }
 
-        It 'calls no Az command and no ARM gate of its own' {
+        It 'calls no ARM gate of its own' {
             $Refusal.Id = 'SignInRefused'
             $null = Disable-OPIMAzureRole -RoleName 'Contributor (active-001)' -ErrorAction SilentlyContinue
-            Should -Invoke -ModuleName Omnicit.PIM New-AzRoleAssignmentScheduleRequest -Times 0 -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Get-OPIMArmRefusal -Times 0 -Scope It
         }
     }
