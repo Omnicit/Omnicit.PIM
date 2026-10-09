@@ -208,6 +208,22 @@ Describe 'ConvertTo-ActiveDurationTooShortError' {
                 $Cmdlet.Written.Count | Should -Be 0
             }
         }
+
+        It 'does not claim the ArmTransportError of an HTML 502' {
+            # A gateway's HTML page carries no ARM error code, so Invoke-OPIMArmRequest throws it as
+            # ArmTransportError; that is no cooldown, and the caller writes it as itself.
+            InModuleScope Omnicit.PIM {
+                $Record = Convert-OPIMArmHttpException -Response ([PSCustomObject]@{ StatusCode = 502; Content = '<html><body>Bad Gateway</body></html>' }) -Path '/providers/x'
+                $Record.FullyQualifiedErrorId | Should -BeExactly 'ArmTransportError'
+                $Cmdlet = [PSCustomObject]@{ Written = [System.Collections.Generic.List[object]]::new() }
+                Add-Member -InputObject $Cmdlet -MemberType ScriptMethod -Name WriteError -Value { param($E) $this.Written.Add($E) }
+
+                $Result = ConvertTo-ActiveDurationTooShortError -CaughtError $Record -ResourceType 'role' -Cmdlet $Cmdlet
+
+                $Result | Should -BeExactly $false
+                $Cmdlet.Written.Count | Should -Be 0
+            }
+        }
     }
 
     # The same converter serves the Graph cmdlets, whose record Convert-GraphHttpException builds the

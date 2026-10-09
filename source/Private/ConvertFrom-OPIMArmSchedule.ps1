@@ -10,7 +10,8 @@ function ConvertFrom-OPIMArmSchedule {
     property NAMES and value TYPES the Az.Resources cmdlets returned for the same resource, so
     everything that reads those objects keeps working: every property is a string except the dates,
     which are DateTime values of Kind Utc, and a property that ARM does not return is $null, never an
-    empty string. The properties are in alphabetical order. The Az .NET type names are not
+    empty string. The properties are in alphabetical order, compared ordinally without regard to
+    letter case, so the order is the same under every culture. The Az .NET type names are not
     reproduced, and no type name is inserted: the caller tags the object with the module's own.
 
     There are three kinds. EligibilitySchedule is a role eligibility schedule (27 properties),
@@ -119,8 +120,12 @@ function ConvertFrom-OPIMArmSchedule {
             $Out['TicketInfoTicketSystem'] = Get-Text $P.ticketInfo.ticketSystem
         }
 
+        # Ordinal and case-insensitive, so the order is the same under every culture: Sort-Object would
+        # sort by the session's culture, which can order letters differently (cs-CZ sorts 'ch' after 'h').
+        [string[]]$Keys = @($Out.Keys)
+        [System.Array]::Sort($Keys, [System.StringComparer]::OrdinalIgnoreCase)
         $Sorted = [ordered]@{}
-        foreach ($Key in @($Out.Keys | Sort-Object)) { $Sorted[$Key] = $Out[$Key] }
+        foreach ($Key in $Keys) { $Sorted[$Key] = $Out[$Key] }
         [pscustomobject]$Sorted
     }
 }

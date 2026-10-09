@@ -205,6 +205,20 @@ Describe 'ConvertFrom-OPIMArmSchedule' {
             $Result.PSObject.Properties.Name -join ',' | Should -BeExactly ($script:A4Names[$Kind] -join ',')
         }
 
+        It 'returns the properties of <Kind> in the same order under a culture that sorts ch after h' -ForEach $Kinds {
+            # cs-CZ sorts the letter pair ch after h, so a sort by the culture would put Scope before
+            # ScheduleInfoStartDateTime. The order is ordinal and case-insensitive under every culture.
+            $Thread = [System.Threading.Thread]::CurrentThread
+            $Before = $Thread.CurrentCulture
+            try {
+                $Thread.CurrentCulture = [System.Globalization.CultureInfo]::GetCultureInfo('cs-CZ')
+                $Result = Invoke-Converter -InputObject (Get-FixtureItem -Kind $Kind -Index 0) -Kind $Kind
+            } finally {
+                $Thread.CurrentCulture = $Before
+            }
+            $Result.PSObject.Properties.Name -join ',' | Should -BeExactly ($script:A4Names[$Kind] -join ',')
+        }
+
         It 'returns the <Kind> property list starting with <First>' -ForEach @(
             @{ Kind = 'EligibilitySchedule';        First = 'Condition,ConditionVersion,CreatedOn' }
             @{ Kind = 'AssignmentScheduleInstance'; First = 'AssignmentType,Condition,ConditionVersion' }

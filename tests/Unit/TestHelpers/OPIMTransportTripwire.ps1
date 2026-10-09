@@ -41,8 +41,8 @@
 function Get-OPIMTransportTripwireName {
     <#
     .SYNOPSIS
-    The sixteen commands through which module code reaches a tenant or the network, with the module
-    that owns the real command and the form of its replacement.
+    The sixteen commands through which module code reaches, or once reached, a tenant or the network,
+    with the module that owns the real command and the form of its replacement.
     #>
     [CmdletBinding()]
     [OutputType([System.Collections.Specialized.OrderedDictionary])]
