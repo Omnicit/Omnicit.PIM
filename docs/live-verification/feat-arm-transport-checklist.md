@@ -193,6 +193,7 @@ git check-ignore -q $Raw
 "The raw folder is git-ignored: $($LASTEXITCODE -eq 0)"
 $Saved = Join-Path $Raw 'module-0.6.0'
 if (-not (Test-Path -LiteralPath (Join-Path $Saved 'Omnicit.PIM/0.6.0/Omnicit.PIM.psd1'))) {
+    $null = New-Item -ItemType Directory -Force -Path $Saved
     Save-PSResource -Name Omnicit.PIM -Version '[0.6.0]' -Repository PSGallery -Path $Saved -SkipDependencyCheck -TrustRepository -ErrorAction Stop
 }
 Import-Module Az.Resources -RequiredVersion 9.0.3 -ErrorAction Stop
