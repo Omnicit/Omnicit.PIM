@@ -184,8 +184,10 @@ BeforeAll {
           - Call: a command whose static name matches '-Az' (Connect-AzAccount), or that is
             module-qualified with an Az module (Az.Accounts\Get-AzContext). GetCommandName() also
             returns a quoted first element, so & 'Disconnect-AzAccount' is a call.
-          - String: a quoted string -- not a command's own name -- whose text parses as such a call,
-            the form a command takes through [scriptblock]::Create('...') or Invoke-Expression.
+          - String: a quoted string whose text parses as such a call, the form a command takes
+            through [scriptblock]::Create('...') or Invoke-Expression, and a command name built in
+            an expandable string (& "Connect-AzAccount$Suffix"), which has no static name. A quoted
+            string that IS a command's static name is the Call shape and is not reported twice.
           - Module: an Az module (Az, Az.Accounts, Az.Resources, ...) named as a quoted string or a
             bareword (Import-Module Az.Accounts, a manifest's RequiredModules entry), or required
             by #requires -Modules.
@@ -194,10 +196,14 @@ BeforeAll {
         Az modules, and acquiring a token is the whole design. The module's own nested helper
         Invoke-OPIMAzTokenCall does not match '-Az' and needs no entry.
 
-        KNOWN LIMIT, stated rather than papered over. A command name assembled at run time (a name
+        KNOWN LIMITS, stated rather than papered over. A command name assembled at run time (a name
         held in a variable and run with & $Name, or a string built from parts) is invisible to a
-        parser: GetCommandName() returns $null for it, and no string holds the whole name. Review
-        must catch that shape; this pass cannot.
+        parser: GetCommandName() returns $null for it, and no string holds the whole name. So is an
+        Az command named by a bareword argument rather than called, as in
+        & (Get-Command Connect-AzAccount) or $C = Get-Command -Name Get-AzContext; & $C, since a
+        bareword argument is neither a call nor a quoted string. And so is an alias the Az modules
+        export without -Az in its name (Resolve-Error, say), called bare. Review must catch these
+        shapes; this pass cannot.
 
         The positive controls are the known-answer It, which runs the detector over a text holding
         every refused shape, and the named control: the two Get-AzToken calls of
@@ -238,14 +244,17 @@ BeforeAll {
             if ([string]::IsNullOrEmpty($Name) -or -not (& $IsAzCall $Name)) { continue }
             [pscustomobject]@{ Kind = 'Call'; Line = $Node.Extent.StartLineNumber; Name = $Name; Allowed = [bool](& $IsAllowed $Name) }
         }
-        # String: a quoted string, not a command's own name, that parses as an Az call.
+        # String: a quoted string that parses as an Az call. A string that is a command's first element
+        # is skipped only when it gives the command a static name, which the Call pass has seen; an
+        # expandable first element (& "Connect-AzAccount$Suffix") gives none, so it is read here.
         foreach ($Node in $Ast.FindAll({
                     ($args[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
                         $args[0].StringConstantType -ne [System.Management.Automation.Language.StringConstantType]::BareWord) -or
                     $args[0] -is [System.Management.Automation.Language.ExpandableStringExpressionAst]
                 }, $true)) {
             if ($Node.Parent -is [System.Management.Automation.Language.CommandAst] -and
-                [object]::ReferenceEquals($Node.Parent.CommandElements[0], $Node)) { continue }
+                [object]::ReferenceEquals($Node.Parent.CommandElements[0], $Node) -and
+                -not [string]::IsNullOrEmpty($Node.Parent.GetCommandName())) { continue }
             $Inner = [System.Management.Automation.Language.Parser]::ParseInput([string]$Node.Value, [ref]$null, [ref]$null)
             foreach ($Call in $Inner.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
                 $Name = $Call.GetCommandName()
@@ -689,7 +698,11 @@ Describe 'Az boundary' -Tags 'SourceHygiene' {
 
     It 'recognises every Az shape it refuses, and allows only AzAuth''s Get-AzToken (known answer)' {
         # The positive control of the gate: if the matcher, the string pass or the module pass stops
-        # matching, this text no longer yields its findings.
+        # matching, this text no longer yields its findings. Every branch of the detector has a line
+        # of its own: line 7 is an expandable string (it holds a variable), the form a run-time
+        # argument takes; line 15 is a command name built in an expandable string, which has no
+        # static name; line 16 is the allow list's module qualifier; line 17 is an allowed name under
+        # an Az module, refused; and line 18 is an Az module qualifier on a name without -Az.
         $Text = @'
 #requires -Modules Az.Resources
 function Test-AzShape {
@@ -697,7 +710,7 @@ function Test-AzShape {
     Az.Accounts\Get-AzContext
     & 'Disconnect-AzAccount'
     $null = [scriptblock]::Create('Get-AzAccessToken')
-    Invoke-Expression "Update-AzConfig -Scope Process"
+    Invoke-Expression "Update-AzConfig -Scope $Scope"
     Import-Module Az.Accounts
     $Manifest = @{ RequiredModules = @(@{ ModuleName = 'Az.Resources'; ModuleVersion = '9.0.3' }) }
     # Connect-AzAccount in a comment is no call
@@ -705,6 +718,10 @@ function Test-AzShape {
     Invoke-OPIMAzTokenCall
     Write-Verbose 'Run Connect-AzAccount yourself for an Az session of your own.'
     Get-OPIMAzureRole
+    & "Connect-AzAccount$Suffix"
+    AzAuth\Get-AzToken -Resource 'https://management.azure.com'
+    Az.Accounts\Get-AzToken
+    Az.Accounts\Resolve-Error
 }
 '@
         $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$null)
@@ -718,11 +735,17 @@ function Test-AzShape {
             '7 String Update-AzConfig'
             '8 Module Az.Accounts'
             '9 Module Az.Resources'
+            '15 String Connect-AzAccount$Suffix'
+            '17 Call Az.Accounts\Get-AzToken'
+            '18 Call Az.Accounts\Resolve-Error'
         )
-        @($All | Where-Object Allowed | ForEach-Object { '{0} {1}' -f $_.Line, $_.Name }) | Should -Be @('11 Get-AzToken')
+        @($All | Where-Object Allowed | ForEach-Object { '{0} {1}' -f $_.Line, $_.Name }) | Should -Be @('11 Get-AzToken', '16 AzAuth\Get-AzToken')
     }
 
     It 'parses every source file and walks a meaningful number of command nodes' {
+        # A missing floor would compare with $null, which every count passes.
+        $script:AzParsedFileFloor | Should -BeGreaterThan 0
+        $script:AzCommandAstFloor | Should -BeGreaterThan 0
         $script:ParseFailures | Should -BeNullOrEmpty
         $script:AzParsedFileCount | Should -BeGreaterOrEqual $script:AzParsedFileFloor
         $script:AzCommandAstCount | Should -BeGreaterOrEqual $script:AzCommandAstFloor
