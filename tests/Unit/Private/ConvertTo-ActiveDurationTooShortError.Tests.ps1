@@ -23,14 +23,6 @@ Describe 'ConvertTo-ActiveDurationTooShortError' {
 
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Write-CmdletError {}
-
-            $FakeException = [System.Exception]::new('Activation still pending')
-            $FakeRecord = [System.Management.Automation.ErrorRecord]::new(
-                $FakeException,
-                'ActiveDurationTooShortForRole,Microsoft.Azure.Commands.Resources.Cmdlets',
-                [System.Management.Automation.ErrorCategory]::InvalidOperation,
-                $null
-            )
         }
 
         It 'returns $true' {
@@ -122,6 +114,194 @@ Describe 'ConvertTo-ActiveDurationTooShortError' {
             }
             Should -Invoke Write-CmdletError -ModuleName Omnicit.PIM -Times 1 -Scope It `
                 -ParameterFilter { $Category -eq 'ResourceUnavailable' }
+        }
+    }
+
+    # The record is the one Convert-OPIMArmHttpException (Azure) or Convert-GraphHttpException (Graph)
+    # built: its id is the service's error.code and its message carries error.message, with no inner
+    # exception. The converter reads the id and the message of the record itself, never an inner
+    # exception, so a keyword held only there is not a cooldown error.
+    Context 'reads no inner exception' {
+
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Write-CmdletError {}
+        }
+
+        It 'returns $false and writes nothing when only the inner exception names ActiveDurationTooShort' {
+            InModuleScope Omnicit.PIM {
+                $InnerEx = [System.Exception]::new('ActiveDurationTooShort: must wait')
+                $OuterEx = [System.Exception]::new('The request failed.', $InnerEx)
+                $FakeRecord = [System.Management.Automation.ErrorRecord]::new(
+                    $OuterEx,
+                    'SomeOtherErrorId',
+                    [System.Management.Automation.ErrorCategory]::InvalidOperation,
+                    $null
+                )
+                $FakeCmdlet = [PSCustomObject]@{}
+                Add-Member -InputObject $FakeCmdlet -MemberType ScriptMethod -Name WriteError -Value { param($E) }
+                $Result = ConvertTo-ActiveDurationTooShortError -CaughtError $FakeRecord -ResourceType 'role' -Cmdlet $FakeCmdlet
+                $Result | Should -Be $false
+            }
+            Should -Invoke Write-CmdletError -ModuleName Omnicit.PIM -Times 0 -Scope It
+        }
+    }
+
+    # The ARM bodies (tests/Unit/TestHelpers/ArmResponse/error-*.json) are shaped as ARM's CloudError;
+    # replaced by the bodies recorded live where they differ. Each record is built by
+    # Convert-OPIMArmHttpException, as Invoke-OPIMArmRequest throws it, and the real Write-CmdletError
+    # runs against a cmdlet stand-in that keeps what is written.
+    Context 'ARM error body' {
+
+        BeforeAll {
+            $FixtureDirectory = "$PSScriptRoot/../TestHelpers/ArmResponse"
+        }
+
+        It 'writes the cooldown error once and returns $true' {
+            $Body = Get-Content -Raw -LiteralPath "$FixtureDirectory/error-ActiveDurationTooShort.json"
+            InModuleScope Omnicit.PIM -Parameters @{ Body = $Body } {
+                param($Body)
+                $Record = Convert-OPIMArmHttpException -Response ([PSCustomObject]@{ StatusCode = 400; Content = $Body }) -Path '/providers/x'
+                $Record.FullyQualifiedErrorId | Should -BeExactly 'ActiveDurationTooShort'
+                $Cmdlet = [PSCustomObject]@{ Written = [System.Collections.Generic.List[object]]::new() }
+                Add-Member -InputObject $Cmdlet -MemberType ScriptMethod -Name WriteError -Value { param($E) $this.Written.Add($E) }
+
+                $Result = ConvertTo-ActiveDurationTooShortError -CaughtError $Record -ResourceType 'role' -Cmdlet $Cmdlet
+
+                $Result | Should -Be $true
+                $Cmdlet.Written.Count | Should -Be 1
+                $Cmdlet.Written[0].FullyQualifiedErrorId | Should -BeExactly 'ActiveDurationTooShort'
+                $Cmdlet.Written[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ResourceUnavailable)
+                $Cmdlet.Written[0].Exception.Message | Should -BeExactly 'You must wait at least 5 minutes after activating a role before you can deactivate it.'
+            }
+        }
+
+        It 'names the resource type of the caller in the message' {
+            $Body = Get-Content -Raw -LiteralPath "$FixtureDirectory/error-ActiveDurationTooShort.json"
+            InModuleScope Omnicit.PIM -Parameters @{ Body = $Body } {
+                param($Body)
+                $Record = Convert-OPIMArmHttpException -Response ([PSCustomObject]@{ StatusCode = 400; Content = $Body }) -Path '/providers/x'
+                $Cmdlet = [PSCustomObject]@{ Written = [System.Collections.Generic.List[object]]::new() }
+                Add-Member -InputObject $Cmdlet -MemberType ScriptMethod -Name WriteError -Value { param($E) $this.Written.Add($E) }
+
+                $Result = ConvertTo-ActiveDurationTooShortError -CaughtError $Record -ResourceType 'group' -Cmdlet $Cmdlet
+
+                $Result | Should -Be $true
+                $Cmdlet.Written[0].Exception.Message | Should -BeExactly 'You must wait at least 5 minutes after activating a group before you can deactivate it.'
+            }
+        }
+
+        It 'returns $false and writes nothing for the <Name> body' -ForEach @(
+            @{ Name = 'InsufficientPermissions'; Body = $null; File = 'error-InsufficientPermissions.json' }
+            @{ Name = 'policy validation'; Body = $null; File = 'error-PolicyValidationFailed.json' }
+            @{ Name = 'body without an ARM error'; Body = '{"value":[]}'; File = $null }
+        ) {
+            $Content = if ($File) { Get-Content -Raw -LiteralPath "$FixtureDirectory/$File" } else { $Body }
+            InModuleScope Omnicit.PIM -Parameters @{ Content = $Content } {
+                param($Content)
+                $Record = Convert-OPIMArmHttpException -Response ([PSCustomObject]@{ StatusCode = 400; Content = $Content }) -Path '/providers/x'
+                $Cmdlet = [PSCustomObject]@{ Written = [System.Collections.Generic.List[object]]::new() }
+                Add-Member -InputObject $Cmdlet -MemberType ScriptMethod -Name WriteError -Value { param($E) $this.Written.Add($E) }
+
+                $Result = ConvertTo-ActiveDurationTooShortError -CaughtError $Record -ResourceType 'role' -Cmdlet $Cmdlet
+
+                $Result | Should -Be $false
+                $Cmdlet.Written.Count | Should -Be 0
+            }
+        }
+
+        It 'does not claim the ArmTransportError of an HTML 502' {
+            # A gateway's HTML page carries no ARM error code, so Invoke-OPIMArmRequest throws it as
+            # ArmTransportError; that is no cooldown, and the caller writes it as itself.
+            InModuleScope Omnicit.PIM {
+                $Record = Convert-OPIMArmHttpException -Response ([PSCustomObject]@{ StatusCode = 502; Content = '<html><body>Bad Gateway</body></html>' }) -Path '/providers/x'
+                $Record.FullyQualifiedErrorId | Should -BeExactly 'ArmTransportError'
+                $Cmdlet = [PSCustomObject]@{ Written = [System.Collections.Generic.List[object]]::new() }
+                Add-Member -InputObject $Cmdlet -MemberType ScriptMethod -Name WriteError -Value { param($E) $this.Written.Add($E) }
+
+                $Result = ConvertTo-ActiveDurationTooShortError -CaughtError $Record -ResourceType 'role' -Cmdlet $Cmdlet
+
+                $Result | Should -BeExactly $false
+                $Cmdlet.Written.Count | Should -Be 0
+            }
+        }
+    }
+
+    # The 400 bodies ARM answered in the live run of docs/live-verification/feat-arm-transport-checklist.md
+    # (tests/Unit/TestHelpers/ArmResponse/recorded-error-*.json), redacted. They differ from the Learn
+    # based bodies above in their message: ARM spells it "The Active duration is too short. Miniumum
+    # Required is 5 minutes.", and the converter reads the code, not the text. Each record is built by
+    # Convert-OPIMArmHttpException, as Invoke-OPIMArmRequest throws it, and the real Write-CmdletError
+    # runs against a cmdlet stand-in that keeps what is written.
+    Context 'recorded ARM bodies' {
+
+        BeforeAll {
+            $FixtureDirectory = "$PSScriptRoot/../TestHelpers/ArmResponse"
+        }
+
+        It 'writes the cooldown error once and returns $true for the recorded body' {
+            $Body = Get-Content -Raw -LiteralPath "$FixtureDirectory/recorded-error-ActiveDurationTooShort.json"
+            $Recorded = ($Body | ConvertFrom-Json).error
+            InModuleScope Omnicit.PIM -Parameters @{ Body = $Body; Code = $Recorded.code; Message = $Recorded.message } {
+                param($Body, $Code, $Message)
+                $Record = Convert-OPIMArmHttpException -Response ([pscustomobject]@{ StatusCode = 400; Content = $Body }) -Path '/providers/x'
+                $Record.FullyQualifiedErrorId | Should -BeExactly $Code
+                $Record.Exception.Message | Should -BeExactly ('{0}: {1}' -f $Code, $Message)
+                $Cmdlet = [PSCustomObject]@{ Written = [System.Collections.Generic.List[object]]::new() }
+                Add-Member -InputObject $Cmdlet -MemberType ScriptMethod -Name WriteError -Value { param($E) $this.Written.Add($E) }
+
+                $Result = ConvertTo-ActiveDurationTooShortError -CaughtError $Record -ResourceType 'role' -Cmdlet $Cmdlet
+
+                $Result | Should -Be $true
+                $Cmdlet.Written.Count | Should -Be 1
+                $Cmdlet.Written[0].FullyQualifiedErrorId | Should -BeExactly 'ActiveDurationTooShort'
+                $Cmdlet.Written[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ResourceUnavailable)
+                $Cmdlet.Written[0].Exception.Message | Should -BeExactly 'You must wait at least 5 minutes after activating a role before you can deactivate it.'
+            }
+        }
+
+        It 'returns $false and writes nothing for the recorded <Name> body' -ForEach @(
+            @{ Name = 'RoleAssignmentRequestPolicyValidationFailed'; File = 'recorded-error-PolicyValidationFailed.json' }
+            @{ Name = 'RoleAssignmentExists'; File = 'recorded-error-RoleAssignmentExists.json' }
+            @{ Name = 'RoleAssignmentDoesNotExist'; File = 'recorded-error-RoleAssignmentDoesNotExist.json' }
+        ) {
+            $Body = Get-Content -Raw -LiteralPath "$FixtureDirectory/$File"
+            $Recorded = ($Body | ConvertFrom-Json).error
+            InModuleScope Omnicit.PIM -Parameters @{ Body = $Body; Code = $Recorded.code } {
+                param($Body, $Code)
+                $Record = Convert-OPIMArmHttpException -Response ([pscustomobject]@{ StatusCode = 400; Content = $Body }) -Path '/providers/x'
+                $Record.FullyQualifiedErrorId | Should -BeExactly $Code
+                $Cmdlet = [PSCustomObject]@{ Written = [System.Collections.Generic.List[object]]::new() }
+                Add-Member -InputObject $Cmdlet -MemberType ScriptMethod -Name WriteError -Value { param($E) $this.Written.Add($E) }
+
+                $Result = ConvertTo-ActiveDurationTooShortError -CaughtError $Record -ResourceType 'role' -Cmdlet $Cmdlet
+
+                $Result | Should -BeExactly $false
+                $Cmdlet.Written.Count | Should -Be 0
+            }
+        }
+    }
+
+    # The same converter serves the Graph cmdlets, whose record Convert-GraphHttpException builds the
+    # same way: the Graph error.code as the id, "<code>: <message>" as the message.
+    Context 'Graph error body' {
+
+        It 'writes the cooldown error once and returns $true' {
+            InModuleScope Omnicit.PIM {
+                $Ex = [System.Net.Http.HttpRequestException]::new('{"error":{"code":"ActiveDurationTooShort","message":"The role was activated less than 5 minutes ago."}}')
+                $Raw = [System.Management.Automation.ErrorRecord]::new($Ex, 'HttpError', [System.Management.Automation.ErrorCategory]::ConnectionError, $null)
+                $Record = Convert-GraphHttpException -InputRecord $Raw
+                $Record.FullyQualifiedErrorId | Should -BeExactly 'ActiveDurationTooShort'
+                $Cmdlet = [PSCustomObject]@{ Written = [System.Collections.Generic.List[object]]::new() }
+                Add-Member -InputObject $Cmdlet -MemberType ScriptMethod -Name WriteError -Value { param($E) $this.Written.Add($E) }
+
+                $Result = ConvertTo-ActiveDurationTooShortError -CaughtError $Record -ResourceType 'group' -Cmdlet $Cmdlet
+
+                $Result | Should -Be $true
+                $Cmdlet.Written.Count | Should -Be 1
+                $Cmdlet.Written[0].FullyQualifiedErrorId | Should -BeExactly 'ActiveDurationTooShort'
+                $Cmdlet.Written[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ResourceUnavailable)
+                $Cmdlet.Written[0].Exception.Message | Should -BeExactly 'You must wait at least 5 minutes after activating a group before you can deactivate it.'
+            }
         }
     }
 

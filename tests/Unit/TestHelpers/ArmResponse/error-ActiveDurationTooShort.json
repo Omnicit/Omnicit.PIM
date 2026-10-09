@@ -1,0 +1,1 @@
+{"error":{"code":"ActiveDurationTooShort","message":"The role assignment cannot be removed: the active duration is shorter than the minimum of 5 minutes."}}

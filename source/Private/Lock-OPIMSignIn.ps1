@@ -9,16 +9,18 @@ function Lock-OPIMSignIn {
     command that called Initialize-OPIMAuth -- the first frame of the call stack, after this function's
     own frame and Initialize-OPIMAuth's, that carries an invocation -- records it in the module's
     sign-in latch, and returns it. That command is a pillar cmdlet (Get-, Enable- and Disable- for
-    DirectoryRole, AzureRole and EntraIDGroup), Wait-OPIMDirectoryRole, Connect-OPIM, or
+    DirectoryRole, AzureRole and EntraIDGroup), Wait-OPIMDirectoryRole, Connect-OPIM,
     Invoke-OPIMGraphSingle, the function nested in Invoke-OPIMGraphRequest that makes every Graph
     request, for the sign-in of its claims step-up or its token-rejected retry, which it calls from
-    its own body.
+    its own body, or Invoke-OPIMArmWithRefresh, the function nested in Invoke-OPIMArmRequest, for
+    the sign-in of its one refresh after a 401, which it calls from its own body as well.
 
     Initialize-OPIMAuth hands that invocation to Unlock-OPIMSignIn when the sign-in succeeds; every
     refusal, terminating error and early return leaves it latched -- except the BL-74 refusal before
     this call, which latches nothing of its own. Both transports then refuse every request that
     command makes: Get-OPIMSignInRefusal finds it on the call stack and the request is refused with
-    SignInRefused, in Invoke-OPIMGraphRequest and in the ARM gate Get-OPIMArmRefusal -- except that
+    SignInRefused, in Invoke-OPIMGraphRequest and in the ARM gate Get-OPIMArmRefusal, which
+    Invoke-OPIMArmRequest calls before every Azure Resource Manager request -- except that
     the Graph wrapper's session gate, which comes first, still reports a changed session as
     GraphSessionChanged.
 

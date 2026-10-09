@@ -45,14 +45,23 @@ Describe 'New-OPIMTenantMismatchError' {
         }
     }
 
-    Context 'When Azure is signed in to another tenant' {
-        It 'names Azure in the Azure message' {
+    Context 'When the Azure Resource Manager token is for another tenant' {
+        It 'names the Azure Resource Manager token in the Azure message, word for word' {
             $Record = InModuleScope Omnicit.PIM {
                 New-OPIMTenantMismatchError -RequestedTenant 'contoso.onmicrosoft.com' -Source Azure
             }
             $Record.FullyQualifiedErrorId | Should -Be 'TenantMismatch'
-            $Record.Exception.Message | Should -BeLike "Azure is signed in to another tenant than 'contoso.onmicrosoft.com'*"
-            $Record.Exception.Message | Should -BeLike '*sends no Azure request*'
+            $Record.Exception.Message | Should -BeExactly ("The Azure Resource Manager token was issued for another tenant than 'contoso.onmicrosoft.com', " +
+                "the tenant of this session's Microsoft Graph sign-in. Omnicit.PIM sends no Azure request with it. " +
+                'Run Connect-OPIM -IncludeARM, or Disconnect-OPIM and sign in again.')
+        }
+
+        It 'targets the requested tenant and uses the category AuthenticationError' {
+            $Record = InModuleScope Omnicit.PIM {
+                New-OPIMTenantMismatchError -RequestedTenant 'contoso.onmicrosoft.com' -Source Azure
+            }
+            $Record.TargetObject | Should -BeExactly 'contoso.onmicrosoft.com'
+            $Record.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
         }
     }
 
@@ -65,6 +74,47 @@ Describe 'New-OPIMTenantMismatchError' {
             $Record.Exception.Message | Should -BeLike '*could not be read*'
             $Record.Exception.Message | Should -BeLike "*'organizations'*"
             $Record.Exception.Message | Should -BeLike '*The token was not used and nothing was sent.'
+        }
+
+        It 'differs from the message for a Graph token of another tenant' {
+            $Records = InModuleScope Omnicit.PIM {
+                @(
+                    New-OPIMTenantMismatchError -RequestedTenant 'contoso.onmicrosoft.com' -Unreadable
+                    New-OPIMTenantMismatchError -RequestedTenant 'contoso.onmicrosoft.com'
+                )
+            }
+            $Records[0].Exception.Message | Should -Not -Be $Records[1].Exception.Message
+        }
+    }
+
+    Context 'When the tenant of the Azure Resource Manager token cannot be read' {
+        BeforeAll {
+            $Unreadable = InModuleScope Omnicit.PIM {
+                New-OPIMTenantMismatchError -RequestedTenant 'aaaaaaaa-0000-0000-0000-00000000000a' -Source Azure -Unreadable
+            }
+            $Mismatch = InModuleScope Omnicit.PIM {
+                New-OPIMTenantMismatchError -RequestedTenant 'aaaaaaaa-0000-0000-0000-00000000000a' -Source Azure
+            }
+            $GraphUnreadable = InModuleScope Omnicit.PIM {
+                New-OPIMTenantMismatchError -RequestedTenant 'aaaaaaaa-0000-0000-0000-00000000000a' -Unreadable
+            }
+        }
+
+        It 'keeps the id, the category and the target' {
+            $Unreadable.FullyQualifiedErrorId | Should -BeExactly 'TenantMismatch'
+            $Unreadable.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+            $Unreadable.TargetObject | Should -BeExactly 'aaaaaaaa-0000-0000-0000-00000000000a'
+        }
+
+        It 'says the tenant of the Azure Resource Manager token could not be read and names the requested tenant' {
+            $Unreadable.Exception.Message | Should -BeLike 'The tenant of the Azure Resource Manager token could not be read*'
+            $Unreadable.Exception.Message | Should -BeLike "*'aaaaaaaa-0000-0000-0000-00000000000a', the tenant of this session's Microsoft Graph sign-in*"
+            $Unreadable.Exception.Message | Should -BeLike '*The token was not used and nothing was sent to Azure.'
+        }
+
+        It 'differs from the Azure message for another tenant and from the Graph message' {
+            $Unreadable.Exception.Message | Should -Not -Be $Mismatch.Exception.Message
+            $Unreadable.Exception.Message | Should -Not -Be $GraphUnreadable.Exception.Message
         }
     }
 }

@@ -14,16 +14,18 @@ function Get-OPIMSignInRefusal {
     sign-in succeeds (Lock-OPIMSignIn, Unlock-OPIMSignIn). A command whose sign-in was refused
     carries on past the refusal when no try is active up the call stack. Both transports call this
     function before every request -- Invoke-OPIMGraphRequest after its session gate, which still
-    refuses a changed session as GraphSessionChanged and so comes first, and the ARM gate
-    Get-OPIMArmRefusal before every Az.Resources call -- so every request such a command makes,
-    directly or through a command it calls, finds its frame here. A command that has finished is on
-    no call stack, so the latch does not refuse the command after it.
+    refuses a changed session as GraphSessionChanged and so comes first, and Invoke-OPIMArmRequest
+    through the ARM gate Get-OPIMArmRefusal before every Azure Resource Manager request -- so every
+    request such a command makes, directly or through a command it calls, finds its frame here. A
+    command that has finished is on no call stack, so the latch does not refuse the command after it.
 
     The latched command is the one that called Initialize-OPIMAuth directly: a pillar cmdlet,
     Wait-OPIMDirectoryRole or Connect-OPIM. Inside the Graph wrapper's own refresh (the claims
     step-up or the token-rejected retry) it is Invoke-OPIMGraphSingle, the function nested in
     Invoke-OPIMGraphRequest that makes every request and calls Initialize-OPIMAuth from its own
-    body, so the name returned for that retry is the nested function's.
+    body, so the name returned for that retry is the nested function's. Inside the ARM transport's
+    one refresh after a 401 it is Invoke-OPIMArmWithRefresh, the function nested in
+    Invoke-OPIMArmRequest that calls Initialize-OPIMAuth -IncludeARM -ForceRefresh from its own body.
 
     With -OutsideCaller, which only Initialize-OPIMAuth passes, for its BL-74 check before it
     latches its own caller, the walk starts after the command that called Initialize-OPIMAuth: frame

@@ -32,7 +32,7 @@ function ConvertTo-OPIMTenantMapKey {
     and the instance's ScopeId. An
     object is such an instance when it carries the type
     Omnicit.PIM.AzureAssignmentScheduleInstance or a LinkedRoleEligibilityScheduleId property; an
-    Az.Resources eligibility schedule has no such property. pim activates an eligibility at the
+    eligibility schedule has no such property. pim activates an eligibility at the
     eligibility's own scope, so a reader matches an eligible post with an entry equal to its Name
     (stored from the eligibility) or to its -WithScope key, Name|ScopeId (stored from an active
     role): an entry from an activation at a narrower scope than its eligibility then matches no

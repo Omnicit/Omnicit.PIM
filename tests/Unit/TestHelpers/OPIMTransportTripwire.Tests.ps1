@@ -2,9 +2,10 @@
 #
 # Rule for every test below: a transport name is NEVER called by name. It is resolved first, what it
 # resolved to is asserted, and only the resolved command object is invoked -- so a broken
-# installation fails an assertion and can never reach a real cmdlet. The one place module code
-# calls a transport name itself (the Get-OPIMMsalApplication test) first asserts that the name
-# resolves to the tripwire from the module scope.
+# installation fails an assertion and can never reach a real cmdlet. The places that call a
+# transport name themselves from the module's scope (the Get-OPIMMsalApplication test and the
+# module-code-path cases of the first Describe) first assert that the name resolves to the
+# tripwire from the module scope.
 #
 # The suite holds its OWN expected list, never Get-OPIMTransportTripwireName, so deleting a name from
 # the helper turns it red.
@@ -15,6 +16,9 @@ BeforeDiscovery {
         @{ Name = 'Connect-MgGraph'; Module = 'Microsoft.Graph.Authentication'; Form = 'Cmdlet'; Arguments = @{} }
         @{ Name = 'Disconnect-MgGraph'; Module = 'Microsoft.Graph.Authentication'; Form = 'Cmdlet'; Arguments = @{} }
         @{ Name = 'Get-MgContext'; Module = 'Microsoft.Graph.Authentication'; Form = 'Cmdlet'; Arguments = @{} }
+        # AzAuth's sign-in to Azure Resource Manager. A compiled cmdlet without IDynamicParameters
+        # (measured 2026-10-09, AzAuth 2.9.0), so it is replaced in the plain Cmdlet form.
+        @{ Name = 'Get-AzToken'; Module = 'AzAuth'; Form = 'Cmdlet'; Arguments = @{ Resource = 'https://management.azure.com'; Tenant = 'contoso.onmicrosoft.com' } }
         @{ Name = 'Connect-AzAccount'; Module = 'Az.Accounts'; Form = 'DynamicCmdlet'; Arguments = @{} }
         @{ Name = 'Disconnect-AzAccount'; Module = 'Az.Accounts'; Form = 'DynamicCmdlet'; Arguments = @{} }
         @{ Name = 'Get-AzContext'; Module = 'Az.Accounts'; Form = 'DynamicCmdlet'; Arguments = @{} }
@@ -23,7 +27,8 @@ BeforeDiscovery {
         @{ Name = 'Get-AzRoleEligibilitySchedule'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{ Scope = '/' } }
         @{ Name = 'Get-AzRoleAssignmentScheduleInstance'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{ Scope = '/' } }
         @{ Name = 'Get-AzRoleAssignmentScheduleRequest'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{ Scope = '/' } }
-        # The parameter shape source/Public/Enable-OPIMAzureRole.ps1:208-224 sends.
+        # The parameter shape Enable-OPIMAzureRole sent before it moved to the module's own ARM
+        # transport; module code calls the command no more, and the tripwire still refuses it.
         @{ Name = 'New-AzRoleAssignmentScheduleRequest'; Module = 'Az.Resources'; Form = 'ModuleFunction'; Arguments = @{
                 Name                            = 'opim-tripwire-request'
                 Scope                           = '/'
@@ -115,6 +120,151 @@ AfterAll {
     try { Assert-OPIMTransportTripwire } finally { Uninstall-OPIMTransportTripwire }
 }
 
+# The tripwire as module code meets it: a transport command reached from the module's own scope, not
+# through a resolved command object. First in the file and without the BeforeEach below, which mocks
+# Initialize-OPIMAuth -- the last case here runs the real function.
+Describe 'OPIMTransportTripwire module code paths' {
+    It 'gives the Get-AzToken replacement the parameters module code passes, and no dynamic parameters' {
+        $Function = Resolve-TripwireKnownAnswerCommand -Name 'Get-AzToken' -CommandType Function
+        Test-OPIMTransportTripwireFunction -Command $Function | Should -BeTrue
+        $Real = @(Get-TripwireKnownAnswerRealCommand -Name 'Get-AzToken' -Module 'AzAuth')
+        $Real.Count | Should -Be 1 -Because 'exactly one real Get-AzToken must exist in AzAuth'
+        $Real[0] | Should -BeOfType ([System.Management.Automation.CmdletInfo])
+        [System.Management.Automation.IDynamicParameters].IsAssignableFrom($Real[0].ImplementingType) | Should -BeFalse
+
+        foreach ($Name in 'Resource', 'Tenant', 'Interactive', 'DeviceCode', 'Force') {
+            $Function.Parameters.ContainsKey($Name) | Should -BeTrue -Because ('the replacement must carry -{0}, or a call that passes it fails to bind before it is recorded' -f $Name)
+            $Function.Parameters[$Name].ParameterType | Should -Be $Real[0].Parameters[$Name].ParameterType
+        }
+        foreach ($Name in 'Interactive', 'DeviceCode', 'Force') {
+            $Function.Parameters[$Name].SwitchParameter | Should -BeTrue -Because ('-{0} is a switch on the real cmdlet' -f $Name)
+        }
+
+        $Ast = $Function.ScriptBlock.Ast
+        if ($Ast -is [System.Management.Automation.Language.FunctionDefinitionAst]) { $Ast = $Ast.Body }
+        $Ast.ParamBlock | Should -Not -BeNullOrEmpty
+        $Ast.EndBlock | Should -Not -BeNullOrEmpty
+        $Ast.DynamicParamBlock | Should -BeNullOrEmpty
+    }
+
+    It 'records and refuses Get-AzToken reached through module code, parameter names only' {
+        $Resolved = Resolve-TripwireKnownAnswerCommand -Name 'Get-AzToken'
+        Test-OPIMTransportTripwireFunction -Command $Resolved | Should -BeTrue -Because 'Get-AzToken must resolve to the tripwire from the module scope before module code calls it'
+        $Before = $global:OPIMTransportTripwireHits.Count
+
+        $Message = try {
+            & (Get-Module -Name Omnicit.PIM | Select-Object -First 1) { Get-AzToken -Resource 'https://management.azure.com' -Tenant 'contoso.onmicrosoft.com' -DeviceCode }
+            'RETURNED'
+        } catch {
+            $_.Exception.Message
+        }
+
+        try {
+            $Message | Should -BeLike 'OPIM transport tripwire: a unit test reached the real Get-AzToken.*'
+            $global:OPIMTransportTripwireHits.Count | Should -Be ($Before + 1)
+            $Record = $global:OPIMTransportTripwireHits[$global:OPIMTransportTripwireHits.Count - 1]
+            $Record.Command | Should -Be 'Get-AzToken'
+            (@($Record.Parameters -split ',') | Sort-Object) -join ',' | Should -Be 'DeviceCode,Resource,Tenant'
+            ($Record | Out-String) | Should -Not -BeLike '*contoso*'
+            ($Record | Out-String) | Should -Not -BeLike '*management.azure.com*'
+        } finally {
+            while ($global:OPIMTransportTripwireHits.Count -gt $Before) {
+                $global:OPIMTransportTripwireHits.RemoveAt($global:OPIMTransportTripwireHits.Count - 1)
+            }
+        }
+    }
+
+    It 'records and refuses Invoke-WebRequest reached through module code, parameter names only' {
+        $Resolved = Resolve-TripwireKnownAnswerCommand -Name 'Invoke-WebRequest'
+        Test-OPIMTransportTripwireFunction -Command $Resolved | Should -BeTrue -Because 'Invoke-WebRequest must resolve to the tripwire from the module scope before module code calls it'
+        $Before = $global:OPIMTransportTripwireHits.Count
+
+        $Message = try {
+            & (Get-Module -Name Omnicit.PIM | Select-Object -First 1) { Invoke-WebRequest -Uri 'https://management.azure.com/opim-tripwire-known-answer' }
+            'RETURNED'
+        } catch {
+            $_.Exception.Message
+        }
+
+        try {
+            $Message | Should -BeLike 'OPIM transport tripwire: a unit test reached the real Invoke-WebRequest.*'
+            $global:OPIMTransportTripwireHits.Count | Should -Be ($Before + 1)
+            $Record = $global:OPIMTransportTripwireHits[$global:OPIMTransportTripwireHits.Count - 1]
+            $Record.Command | Should -Be 'Invoke-WebRequest'
+            $Record.Parameters | Should -Be 'Uri'
+            ($Record | Out-String) | Should -Not -BeLike '*management.azure.com*'
+        } finally {
+            while ($global:OPIMTransportTripwireHits.Count -gt $Before) {
+                $global:OPIMTransportTripwireHits.RemoveAt($global:OPIMTransportTripwireHits.Count - 1)
+            }
+        }
+    }
+
+    # Runs the real Initialize-OPIMAuth -IncludeARM against a cached Graph state that holds no ARM
+    # token, with nothing but the tripwire in front of the AzAuth sign-in: the tripwire records the
+    # Get-AzToken call and refuses it, and the refusal ends the function in AzureConnectFailed.
+    It 'records Get-AzToken, parameter names only, when Initialize-OPIMAuth -IncludeARM reaches it unmocked, and ends in AzureConnectFailed' {
+        # Asserted before module code runs, so a broken installation fails here and the sign-in
+        # below can never reach the real Get-AzToken.
+        $Resolved = Resolve-TripwireKnownAnswerCommand -Name 'Get-AzToken'
+        Test-OPIMTransportTripwireFunction -Command $Resolved | Should -BeTrue -Because 'Get-AzToken must resolve to the tripwire from the module scope before module code calls it'
+        $Real = @(Get-TripwireKnownAnswerRealCommand -Name 'Get-AzToken' -Module 'AzAuth')
+        $Real.Count | Should -Be 1 -Because 'exactly one real Get-AzToken must exist in AzAuth'
+        # Get-OPIMMsalApplication is never reached with a cached Graph token; the mock keeps it so.
+        Mock -ModuleName Omnicit.PIM Get-OPIMMsalApplication {}
+        $Before = $global:OPIMTransportTripwireHits.Count
+
+        $Caught = InModuleScope Omnicit.PIM {
+            # A cached Graph sign-in as Initialize-OPIMAuth writes it, with its account and no ARM token.
+            $script:_OPIMAuthState = @{
+                TenantId         = '22222222-2222-2222-2222-222222222222'
+                TokenTenantId    = '22222222-2222-2222-2222-222222222222'
+                AuthorityTenant  = '22222222-2222-2222-2222-222222222222'
+                Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                ObjectId         = '33333333-3333-3333-3333-333333333333'
+                GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                ClaimsSatisfied  = $false
+                DeviceCode       = $true
+                ArmToken         = $null
+                ArmTokenExpiry   = $null
+                ArmTokenTenantId = $null
+                ArmTokenObjectId = $null
+                ArmResourceUrl   = $null
+            }
+            $Outcome = $null
+            try {
+                Initialize-OPIMAuth -IncludeARM
+            } catch {
+                $Outcome = $PSItem
+            } finally {
+                $script:_OPIMAuthState = $null
+            }
+            $Outcome
+        }
+
+        try {
+            $Caught | Should -Not -BeNullOrEmpty -Because 'the unmocked ARM sign-in must end the function'
+            $Caught.FullyQualifiedErrorId | Should -BeLike 'AzureConnectFailed*'
+            $Hits = @($global:OPIMTransportTripwireHits | Select-Object -Skip $Before)
+            $TokenHits = @($Hits | Where-Object { $_.Command -eq 'Get-AzToken' })
+            $TokenHits.Count | Should -Be 1 -Because ('the hit list must hold the one Get-AzToken call; it holds: {0}' -f ((@($Hits | ForEach-Object { $_.Command }) -join ', ')))
+            @($TokenHits[0].Parameters -split ',') | Should -Contain 'Resource'
+            @($TokenHits[0].Parameters -split ',') | Should -Contain 'Tenant'
+            foreach ($Hit in $TokenHits) {
+                foreach ($Name in @($Hit.Parameters -split ',')) {
+                    @($Real[0].Parameters.Keys) | Should -Contain $Name -Because 'a hit holds parameter names only, each one a parameter of the real Get-AzToken'
+                }
+                ($Hit | Out-String) | Should -Not -BeLike '*22222222*'
+                ($Hit | Out-String) | Should -Not -BeLike '*contoso*'
+            }
+        } finally {
+            while ($global:OPIMTransportTripwireHits.Count -gt $Before) {
+                $global:OPIMTransportTripwireHits.RemoveAt($global:OPIMTransportTripwireHits.Count - 1)
+            }
+        }
+    }
+}
+
 Describe 'OPIMTransportTripwire' {
     # Per test, not only once: the re-import test below replaces the module instance, and a mock
     # made before it stays on the old one, so every test after it would otherwise run against a
@@ -123,8 +273,8 @@ Describe 'OPIMTransportTripwire' {
         Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
     }
 
-    It 'names exactly the expected fifteen commands, with their modules and forms' -ForEach @(@{ ExpectedSpecs = $script:Expected }) {
-        @($ExpectedSpecs).Count | Should -Be 15 -Because 'the known-answer list itself must not be empty or short, or the comparison below proves nothing'
+    It 'names exactly the expected sixteen commands, with their modules and forms' -ForEach @(@{ ExpectedSpecs = $script:Expected }) {
+        @($ExpectedSpecs).Count | Should -Be 16 -Because 'the known-answer list itself must not be empty or short, or the comparison below proves nothing'
         $Actual = Get-OPIMTransportTripwireName
         (@($Actual.Keys) | Sort-Object) -join ',' | Should -Be ((@($ExpectedSpecs | ForEach-Object { $_.Name }) | Sort-Object) -join ',')
         foreach ($Spec in $ExpectedSpecs) {
@@ -182,9 +332,11 @@ Describe 'OPIMTransportTripwire' {
     }
 
     It 'carries EnableLoginByWam on the Update-AzConfig replacement, a parameter the real cmdlet offers only dynamically' {
-        # Initialize-OPIMAuth.ps1:522 passes -EnableLoginByWam. It is one of the configuration keys
-        # Update-AzConfig returns from GetDynamicParameters on Az.Accounts 5.3.x and 5.5.x alike, so
-        # this holds on every version, unlike the extra dynamic parameters of the other four cmdlets.
+        # Initialize-OPIMAuth passed -EnableLoginByWam before it signed in to Azure with AzAuth, and
+        # the replacement still carries it while Update-AzConfig stays on the tripwire. It is one of
+        # the configuration keys Update-AzConfig returns from GetDynamicParameters on Az.Accounts 5.3.x
+        # and 5.5.x alike, so this holds on every version, unlike the extra dynamic parameters of the
+        # other four cmdlets.
         $Real = @(Get-TripwireKnownAnswerRealCommand -Name 'Update-AzConfig' -Module 'Az.Accounts')
         $Real.Count | Should -Be 1 -Because 'exactly one real Update-AzConfig must exist in Az.Accounts'
         $Real[0] | Should -BeOfType ([System.Management.Automation.CmdletInfo])
@@ -263,9 +415,9 @@ Describe 'OPIMTransportTripwire' {
     }
 
     It 'binds a Mock -ModuleName on Update-AzConfig with a -ParameterFilter on EnableLoginByWam to the call shape module code uses' {
-        # Initialize-OPIMAuth.ps1:522 calls Update-AzConfig -EnableLoginByWam $false -Scope Process
-        # -WhatIf:$false -Confirm:$false -ErrorAction SilentlyContinue (and :533 makes the
-        # -LoginExperienceV2 call of its own). EnableLoginByWam is a DYNAMIC parameter of the real cmdlet,
+        # The call shape Initialize-OPIMAuth used before it signed in to Azure with AzAuth:
+        # Update-AzConfig -EnableLoginByWam $false -Scope Process -WhatIf:$false -Confirm:$false
+        # -ErrorAction SilentlyContinue. EnableLoginByWam is a DYNAMIC parameter of the real cmdlet,
         # so this proves the materialized static parameter binds under a mock and the filter sees it.
         Mock -ModuleName Omnicit.PIM Update-AzConfig { 'mocked' } -ParameterFilter { $EnableLoginByWam -eq $false }
         $Before = $global:OPIMTransportTripwireHits.Count
@@ -507,7 +659,7 @@ Describe 'OPIMTransportTripwire' {
 
     # LAST in the file: it uninstalls, and puts the tripwire back in a finally.
     It 'restores the real commands and removes the runspace form on uninstall, and puts the tripwire back on install' -ForEach @(@{ ExpectedSpecs = $script:Expected }) {
-        @($ExpectedSpecs).Count | Should -Be 15
+        @($ExpectedSpecs).Count | Should -Be 16
         $Carry = Get-TripwireKnownAnswerCarry
         $Root = $global:OPIMTransportTripwireRunspaceRoot
         $Root | Should -Not -BeNullOrEmpty

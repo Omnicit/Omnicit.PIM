@@ -14,8 +14,14 @@ function ConvertTo-ActiveDurationTooShortError {
     When the caught error is NOT an ActiveDurationTooShort error, the function returns $false
     so the caller can re-emit the original error and continue with its own flow.
 
+    The record is the one Convert-OPIMArmHttpException (Azure Resource Manager) or
+    Convert-GraphHttpException (Microsoft Graph) built: its FullyQualifiedErrorId is the service's
+    error.code and its exception message carries error.message, with no inner exception. The
+    keyword is searched in the id and the message only; an inner exception is never read.
+
     .PARAMETER CaughtError
-    The ErrorRecord caught in the deactivation catch block.
+    The ErrorRecord caught in the deactivation catch block, as built by Convert-OPIMArmHttpException
+    or Convert-GraphHttpException.
 
     .PARAMETER ResourceType
     Human-readable noun used in the error message (e.g. 'role' or 'group').

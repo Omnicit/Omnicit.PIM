@@ -1,0 +1,80 @@
+{
+  "value": [
+    {
+      "properties": {
+        "scope": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/opim-fixture-rg",
+        "roleDefinitionId": "/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/roleDefinitions/44444444-4444-4444-4444-444444444444",
+        "principalId": "33333333-3333-3333-3333-333333333333",
+        "principalType": "User",
+        "status": "Provisioned",
+        "roleEligibilityScheduleRequestId": "/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/RoleEligibilityScheduleRequests/88888888-8888-8888-8888-888888888888",
+        "startDateTime": "2020-09-09T21:33:14.557Z",
+        "endDateTime": "2021-09-09T21:32:28.49Z",
+        "memberType": "Direct",
+        "createdOn": "2020-09-09T21:33:06.3Z",
+        "updatedOn": "2020-09-09T22:27:00.513Z",
+        "condition": "@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:ContainerName] StringEqualsIgnoreCase 'foo_storage_container'",
+        "conditionVersion": "1.0",
+        "expandedProperties": {
+          "scope": {
+            "id": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/opim-fixture-rg",
+            "displayName": "opim-fixture-rg",
+            "type": "resourcegroup"
+          },
+          "roleDefinition": {
+            "id": "/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/roleDefinitions/44444444-4444-4444-4444-444444444444",
+            "displayName": "Reader",
+            "type": "BuiltInRole"
+          },
+          "principal": {
+            "id": "33333333-3333-3333-3333-333333333333",
+            "displayName": "User Account",
+            "email": "user@contoso.com",
+            "type": "User"
+          }
+        }
+      },
+      "name": "55555555-5555-5555-5555-555555555555",
+      "id": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/opim-fixture-rg/providers/Microsoft.Authorization/RoleEligibilitySchedules/55555555-5555-5555-5555-555555555555",
+      "type": "Microsoft.Authorization/RoleEligibilitySchedules"
+    },
+    {
+      "properties": {
+        "scope": "/subscriptions/22222222-2222-2222-2222-222222222222",
+        "roleDefinitionId": "/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/roleDefinitions/44444444-4444-4444-4444-444444444444",
+        "principalId": "33333333-3333-3333-3333-333333333333",
+        "principalType": "User",
+        "status": "Provisioned",
+        "roleEligibilityScheduleRequestId": "/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/RoleEligibilityScheduleRequests/88888888-8888-8888-8888-888888888889",
+        "startDateTime": "2020-09-09T21:35:14.557Z",
+        "endDateTime": null,
+        "memberType": "Direct",
+        "createdOn": "2020-09-09T21:35:06.3Z",
+        "updatedOn": "2020-09-09T22:29:00.513Z",
+        "condition": null,
+        "conditionVersion": null,
+        "expandedProperties": {
+          "scope": {
+            "id": "/subscriptions/22222222-2222-2222-2222-222222222222",
+            "displayName": "Fixture Subscription",
+            "type": "subscription"
+          },
+          "roleDefinition": {
+            "id": "/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/roleDefinitions/44444444-4444-4444-4444-444444444444",
+            "displayName": "Reader",
+            "type": "BuiltInRole"
+          },
+          "principal": {
+            "id": "33333333-3333-3333-3333-333333333333",
+            "displayName": "User Account",
+            "email": "user@contoso.com",
+            "type": "User"
+          }
+        }
+      },
+      "name": "55555555-5555-5555-5555-555555555556",
+      "id": "/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/RoleEligibilitySchedules/55555555-5555-5555-5555-555555555556",
+      "type": "Microsoft.Authorization/RoleEligibilitySchedules"
+    }
+  ]
+}

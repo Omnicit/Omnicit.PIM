@@ -10,55 +10,110 @@ AfterAll {
 }
 
 Describe 'Get-OPIMAzureRole' {
+    # The cmdlet reads through the module's own ARM transport, Invoke-OPIMArmRequest, which every
+    # context mocks at the module boundary: the mock answers the path of the list it is asked for
+    # with a response shaped like ARM's, { value = [...] }, and the converter that turns an ARM item
+    # into the module's object runs for real. The ARM items are the Microsoft Learn api-version
+    # 2020-10-01 examples of tests/Unit/TestHelpers/ArmResponse, redacted to digit-repeat ids, with the
+    # names, roles and scopes a context needs set on a fresh copy.
+    BeforeAll {
+        $FixtureDirectory = "$PSScriptRoot/../TestHelpers/ArmResponse"
+        $script:EligJson = Get-Content -Raw -LiteralPath "$FixtureDirectory/roleEligibilitySchedules.json"
+        $script:InstJson = Get-Content -Raw -LiteralPath "$FixtureDirectory/roleAssignmentScheduleInstances.json"
+
+        # One ARM item, from item 1 of the fixture of its kind. ScopeId lives at
+        # properties.expandedProperties.scope.id, as it does in ARM's answer.
+        function New-ArmItem {
+            param(
+                [Parameter(Mandatory)][ValidateSet('Eligibility', 'Instance')][string]$Kind,
+                [Parameter(Mandatory)][string]$Name,
+                [string]$Role = 'Reader',
+                [string]$ScopeId = '/subscriptions/sub-001',
+                [string]$ScopeName = 'Subscription One',
+                [string]$AssignmentType = 'Activated'
+            )
+            $Json = if ($Kind -eq 'Eligibility') { $script:EligJson } else { $script:InstJson }
+            $Item = ($Json | ConvertFrom-Json).value[0]
+            $Item.name = $Name
+            $Item.properties.scope = $ScopeId
+            $Item.properties.expandedProperties.scope.id = $ScopeId
+            $Item.properties.expandedProperties.scope.displayName = $ScopeName
+            $Item.properties.expandedProperties.roleDefinition.displayName = $Role
+            if ($Kind -eq 'Instance') { $Item.properties.assignmentType = $AssignmentType }
+            $Item
+        }
+
+        function New-ArmResponse {
+            param($Item)
+            [pscustomobject]@{ value = @($Item) }
+        }
+
+        # The safety net: a path that no context answers fails the call instead of reaching the
+        # real transport.
+        Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { throw "No mock answers the ARM path $Path" }
+    }
+
     Context 'When called with default parameters (eligible roles)' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            $FakeEligible = [PSCustomObject]@{
-                Name                      = 'elig-001'
-                RoleDefinitionId          = '/providers/Microsoft.Authorization/roleDefinitions/role-def-001'
-                RoleDefinitionDisplayName = 'Contributor'
-                ScopeId                   = '/subscriptions/sub-001'
-                ScopeDisplayName          = 'My Subscription'
-                PrincipalId               = 'principal-001'
-            }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule { return $FakeEligible } -ParameterFilter { $Filter -eq 'asTarget()' }
+            $EligResponse = New-ArmResponse (New-ArmItem Eligibility -Name 'elig-001' -Role 'Contributor' -ScopeName 'My Subscription')
+            $InstResponse = New-ArmResponse @()
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EligResponse } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $InstResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
         }
 
-        It 'calls Get-AzRoleEligibilitySchedule with the asTarget() filter' {
-            Get-OPIMAzureRole
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Scope It -ParameterFilter { $Filter -eq 'asTarget()' }
+        It 'reads the eligibility schedules through the transport with the asTarget() filter' {
+            $null = Get-OPIMAzureRole
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Path -like '*/roleEligibilitySchedules?$filter=asTarget()&api-version=2020-10-01'
+            }
+        }
+
+        It 'reads the eligible list at the root without a double slash, across every page' {
+            $null = Get-OPIMAzureRole
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Path -ceq '/providers/Microsoft.Authorization/roleEligibilitySchedules?$filter=asTarget()&api-version=2020-10-01' -and $All.IsPresent
+            }
+        }
+
+        It 'reads nothing else' {
+            $null = Get-OPIMAzureRole
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It
         }
 
         It 'returns objects tagged with Omnicit.PIM.AzureEligibilitySchedule' {
             $Result = Get-OPIMAzureRole
             $Result.PSObject.TypeNames | Should -Contain 'Omnicit.PIM.AzureEligibilitySchedule'
         }
+
+        It 'returns the post ARM listed' {
+            $Result = @(Get-OPIMAzureRole)
+            $Result | Should -HaveCount 1
+            $Result[0].Name | Should -BeExactly 'elig-001'
+            $Result[0].RoleDefinitionDisplayName | Should -BeExactly 'Contributor'
+            $Result[0].ScopeDisplayName | Should -BeExactly 'My Subscription'
+        }
     }
 
     Context 'When -Activated is specified' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            $FakeActive = [PSCustomObject]@{
-                Name                      = 'active-001'
-                AssignmentType            = 'Activated'
-                RoleDefinitionId          = '/providers/Microsoft.Authorization/roleDefinitions/role-def-001'
-                RoleDefinitionDisplayName = 'Contributor'
-                ScopeId                   = '/subscriptions/sub-001'
-                ScopeDisplayName          = 'My Subscription'
-                PrincipalId               = 'principal-001'
+            $EligResponse = New-ArmResponse @()
+            $InstResponse = New-ArmResponse (New-ArmItem Instance -Name 'active-001' -Role 'Contributor' -ScopeName 'My Subscription')
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EligResponse } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $InstResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
+        }
+
+        It 'reads the role assignment schedule instances through the transport with the asTarget() filter' {
+            $null = Get-OPIMAzureRole -Activated
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Path -ceq '/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?$filter=asTarget()&api-version=2020-10-01' -and $All.IsPresent
             }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance { return $FakeActive } -ParameterFilter { $Filter -eq 'asTarget()' }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule { }
         }
 
-        It 'calls Get-AzRoleAssignmentScheduleInstance with the asTarget() filter' {
-            Get-OPIMAzureRole -Activated
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 1 -Scope It -ParameterFilter { $Filter -eq 'asTarget()' }
-        }
-
-        It 'does not call Get-AzRoleEligibilitySchedule' {
-            Get-OPIMAzureRole -Activated
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
+        It 'does not read the eligibility schedules' {
+            $null = Get-OPIMAzureRole -Activated
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 0 -Scope It -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
         }
 
         It 'returns objects tagged with Omnicit.PIM.AzureAssignmentScheduleInstance' {
@@ -70,17 +125,14 @@ Describe 'Get-OPIMAzureRole' {
     Context 'When -Activated returns mixed assignment types' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            $FakeActive = [PSCustomObject]@{
-                Name           = 'active-001'
-                AssignmentType = 'Activated'
-                PrincipalId    = 'principal-001'
+            $InstResponse = [pscustomobject]@{
+                value = @(
+                    (New-ArmItem Instance -Name 'inherited-001' -AssignmentType 'Assigned')
+                    (New-ArmItem Instance -Name 'active-001' -AssignmentType 'Activated')
+                )
             }
-            $FakeInherited = [PSCustomObject]@{
-                Name           = 'inherited-001'
-                AssignmentType = 'Assigned'
-                PrincipalId    = 'principal-001'
-            }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance { return @($FakeInherited, $FakeActive) }
+            $InstFixture = $script:InstJson | ConvertFrom-Json
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $InstResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
         }
 
         It 'filters out non-Activated assignment types and returns only Activated entries' {
@@ -88,46 +140,80 @@ Describe 'Get-OPIMAzureRole' {
             $Result | Should -HaveCount 1
             $Result[0].AssignmentType | Should -Be 'Activated'
         }
+
+        It 'keeps only the Activated instance of the fixture and drops the Assigned one' {
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $InstFixture } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
+            $Result = @(Get-OPIMAzureRole -Activated)
+            $Result | Should -HaveCount 1
+            $Result[0].Name | Should -BeExactly '55555555-5555-5555-5555-555555555557'
+            $Result[0].AssignmentType | Should -BeExactly 'Activated'
+        }
+    }
+
+    Context 'When -Activated reads the listing recorded live' {
+        # The answer ARM gave to the roleAssignmentScheduleInstances listing in the live run of
+        # docs/live-verification/feat-arm-transport-checklist.md, redacted: an Activated row, and the
+        # Assigned row ARM lists for a few minutes after an activation is revoked.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $RecordedDirectory = "$PSScriptRoot/../TestHelpers/ArmResponse"
+            $RecordedListing = Get-Content -Raw -LiteralPath "$RecordedDirectory/recorded-roleAssignmentScheduleInstances.json" | ConvertFrom-Json
+            $RecordedResponse = [pscustomobject]@{ value = $RecordedListing.value }
+            $RecordedActivated = @($RecordedListing.value | Where-Object { $_.properties.assignmentType -ceq 'Activated' })
+            $RecordedAssigned = @($RecordedListing.value | Where-Object { $_.properties.assignmentType -ceq 'Assigned' })
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $RecordedResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
+        }
+
+        It 'keeps only the Activated instance of the recorded listing' {
+            @($RecordedListing.value) | Should -HaveCount 2 -Because 'the recorded listing must carry both rows for the filter to have something to drop'
+            $RecordedActivated | Should -HaveCount 1
+            $RecordedAssigned | Should -HaveCount 1
+
+            $Result = @(Get-OPIMAzureRole -Activated)
+
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Path -ceq '/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?$filter=asTarget()&api-version=2020-10-01'
+            }
+            $Result | Should -HaveCount 1
+            $Result[0].Name | Should -BeExactly $RecordedActivated[0].name
+            $Result[0].Id | Should -BeExactly $RecordedActivated[0].id
+            $Result[0].AssignmentType | Should -BeExactly 'Activated'
+            $Result[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.PIM.AzureAssignmentScheduleInstance'
+            @($Result | Where-Object Name -EQ $RecordedAssigned[0].name) | Should -HaveCount 0
+        }
     }
 
     Context 'When -All is specified' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule { return @() } -ParameterFilter { $Filter -eq 'asTarget()' }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance { return @() } -ParameterFilter { $Filter -eq 'asTarget()' }
+            $EligResponse = New-ArmResponse @()
+            $InstResponse = New-ArmResponse @()
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EligResponse } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $InstResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
         }
 
-        It 'calls Get-AzRoleEligibilitySchedule with the asTarget() filter' {
-            Get-OPIMAzureRole -All
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Scope It -ParameterFilter { $Filter -eq 'asTarget()' }
+        It 'reads the eligibility schedules at the root with the asTarget() filter, across every page' {
+            $null = Get-OPIMAzureRole -All
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Path -ceq '/providers/Microsoft.Authorization/roleEligibilitySchedules?$filter=asTarget()&api-version=2020-10-01' -and $All.IsPresent
+            }
         }
 
-        It 'calls Get-AzRoleAssignmentScheduleInstance with the asTarget() filter' {
-            Get-OPIMAzureRole -All
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 1 -Scope It -ParameterFilter { $Filter -eq 'asTarget()' }
+        It 'reads the role assignment schedule instances at the root with the asTarget() filter, across every page' {
+            $null = Get-OPIMAzureRole -All
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Path -ceq '/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?$filter=asTarget()&api-version=2020-10-01' -and $All.IsPresent
+            }
         }
     }
 
     Context 'When -All returns both eligible and active results' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            $FakeEligible = [PSCustomObject]@{
-                Name                      = 'elig-001'
-                RoleDefinitionDisplayName = 'Contributor'
-                ScopeDisplayName          = 'My Subscription'
-                ScopeId                   = '/subscriptions/sub-001'
-                PrincipalId               = 'principal-001'
-            }
-            $FakeActive = [PSCustomObject]@{
-                Name                      = 'active-001'
-                AssignmentType            = 'Activated'
-                RoleDefinitionDisplayName = 'Contributor'
-                ScopeDisplayName          = 'My Subscription'
-                ScopeId                   = '/subscriptions/sub-001'
-                PrincipalId               = 'principal-001'
-            }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule { return $FakeEligible } -ParameterFilter { $Filter -eq 'asTarget()' }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance { return $FakeActive } -ParameterFilter { $Filter -eq 'asTarget()' }
+            $EligResponse = New-ArmResponse (New-ArmItem Eligibility -Name 'elig-001' -Role 'Contributor' -ScopeName 'My Subscription')
+            $InstResponse = New-ArmResponse (New-ArmItem Instance -Name 'active-001' -Role 'Contributor' -ScopeName 'My Subscription')
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EligResponse } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $InstResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
         }
 
         It 'tags all results with Omnicit.PIM.AzureCombinedSchedule' {
@@ -142,47 +228,119 @@ Describe 'Get-OPIMAzureRole' {
             ($Result | Where-Object Status -EQ 'Eligible').Count | Should -Be 1
             ($Result | Where-Object Status -EQ 'Active').Count | Should -Be 1
         }
+
+        It 'tags each row with the type of its state as well' {
+            $Result = @(Get-OPIMAzureRole -All)
+            $Result[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.PIM.AzureCombinedSchedule'
+            $Result[0].PSObject.TypeNames[1] | Should -BeExactly 'Omnicit.PIM.AzureEligibilitySchedule'
+            $Result[1].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.PIM.AzureCombinedSchedule'
+            $Result[1].PSObject.TypeNames[1] | Should -BeExactly 'Omnicit.PIM.AzureAssignmentScheduleInstance'
+        }
+    }
+
+    Context 'When the rows are returned' {
+        # The A4 contract: the objects carry exactly the properties and the value types the
+        # Az.Resources objects had, so a row is what the converter makes of the same ARM item.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $EligFixture = $script:EligJson | ConvertFrom-Json
+            $InstFixture = $script:InstJson | ConvertFrom-Json
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EligFixture } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $InstFixture } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
+
+            function Assert-SameProperty {
+                param($Actual, $Expected, [string[]]$Except = @())
+                ($Actual.PSObject.Properties.Name | Sort-Object) -join ',' | Should -BeExactly (($Expected.PSObject.Properties.Name | Sort-Object) -join ',')
+                foreach ($Name in $Expected.PSObject.Properties.Name | Where-Object { $_ -notin $Except }) {
+                    if ($null -eq $Expected.$Name) {
+                        $null -eq $Actual.$Name | Should -BeTrue -Because "$Name is null in ARM's item"
+                    } else {
+                        $Actual.$Name | Should -BeExactly $Expected.$Name -Because "$Name is the converter's"
+                    }
+                }
+            }
+        }
+
+        It 'returns the A4 properties of an eligible row, property by property' {
+            $Expected = InModuleScope Omnicit.PIM -Parameters @{ Item = $EligFixture.value[0] } {
+                param($Item)
+                ConvertFrom-OPIMArmSchedule -InputObject $Item -Kind EligibilitySchedule
+            }
+            $Result = @(Get-OPIMAzureRole)
+            $Result | Should -HaveCount 2
+            Assert-SameProperty -Actual $Result[0] -Expected $Expected
+            $Result[0].EndDateTime.Kind | Should -Be 'Utc'
+            $Result[0].Status | Should -BeExactly 'Provisioned'
+            $Result[0].ResourceGroupName | Should -BeExactly 'opim-fixture-rg'
+        }
+
+        It 'returns the A4 properties of an active row, property by property' {
+            $Expected = InModuleScope Omnicit.PIM -Parameters @{ Item = $InstFixture.value[0] } {
+                param($Item)
+                ConvertFrom-OPIMArmSchedule -InputObject $Item -Kind AssignmentScheduleInstance
+            }
+            $Result = @(Get-OPIMAzureRole -Activated)
+            $Result | Should -HaveCount 1
+            Assert-SameProperty -Actual $Result[0] -Expected $Expected
+            $Result[0].EndDateTime.Kind | Should -Be 'Utc'
+            $Result[0].AssignmentType | Should -BeExactly 'Activated'
+        }
+
+        It 'returns the A4 properties of the -All rows, with Status as the state' {
+            $EligExpected = InModuleScope Omnicit.PIM -Parameters @{ Item = $EligFixture.value[1] } {
+                param($Item)
+                ConvertFrom-OPIMArmSchedule -InputObject $Item -Kind EligibilitySchedule
+            }
+            $InstExpected = InModuleScope Omnicit.PIM -Parameters @{ Item = $InstFixture.value[0] } {
+                param($Item)
+                ConvertFrom-OPIMArmSchedule -InputObject $Item -Kind AssignmentScheduleInstance
+            }
+            $Result = @(Get-OPIMAzureRole -All)
+            $Result | Should -HaveCount 3
+            Assert-SameProperty -Actual ($Result | Where-Object Status -EQ 'Active') -Expected $InstExpected -Except Status
+            $Eligible = @($Result | Where-Object Status -EQ 'Eligible')
+            $Eligible | Should -HaveCount 2
+            Assert-SameProperty -Actual ($Eligible | Where-Object Name -EQ $EligExpected.Name) -Expected $EligExpected -Except Status
+        }
+
+        It 'drops the Assigned instance with -All' {
+            # The fixture lists two instances: one Activated (...557) and one Assigned (...558), a
+            # permanent assignment the user cannot self-deactivate.
+            @($InstFixture.value | Where-Object { $_.properties.assignmentType -eq 'Assigned' }).name |
+                Should -BeExactly '55555555-5555-5555-5555-555555555558' -Because 'the fixture must carry the Assigned instance the cmdlet drops'
+            $Active = @(Get-OPIMAzureRole -All | Where-Object Status -EQ 'Active')
+            $Active | Should -HaveCount 1
+            $Active[0].Name | Should -BeExactly '55555555-5555-5555-5555-555555555557'
+            $Active[0].AssignmentType | Should -BeExactly 'Activated'
+        }
     }
 
     Context 'When -Identity is specified' {
         # OPIM-23: a normal user is refused a GET of one schedule by Name at the root scope
         # (InsufficientPermissions), while the asTarget() listing is allowed. A Name is therefore found
-        # among the posts that listing returns and is never handed to Az.Resources. The mocks answer
-        # a listing with every post whatever it is asked for, so a call that sent -Name would still get
-        # them all: what separates the post is the cmdlet's own filter, and the arguments of each call
-        # are asserted on their own. The fakes are built inside the mocks, so each call gets objects
-        # that no earlier call has decorated.
+        # among the posts that listing returns and is never put in an ARM path. The mocks answer
+        # a listing with every post whatever it is asked for, so a call that sent the Name would still
+        # get them all: what separates the post is the cmdlet's own filter, and the path of each call
+        # is asserted on its own. The converter makes a new object of every item it reads, so each call
+        # gets objects that no earlier call has decorated.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
-                [PSCustomObject]@{
-                    Name = 'azure-001'; RoleDefinitionDisplayName = 'Reader'
-                    ScopeId = '/subscriptions/sub-001/resourceGroups/rg-one'; ScopeDisplayName = 'rg-one'; PrincipalId = 'principal-001'
-                }
-                [PSCustomObject]@{
-                    Name = 'azure-002'; RoleDefinitionDisplayName = 'Reader'
-                    ScopeId = '/subscriptions/sub-001/resourceGroups/rg-two'; ScopeDisplayName = 'rg-two'; PrincipalId = 'principal-001'
-                }
-                [PSCustomObject]@{
-                    Name = 'azure-003'; RoleDefinitionDisplayName = 'Contributor'
-                    ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'Subscription One'; PrincipalId = 'principal-001'
-                }
+            $EligResponse = [pscustomobject]@{
+                value = @(
+                    (New-ArmItem Eligibility -Name 'azure-001' -Role 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one')
+                    (New-ArmItem Eligibility -Name 'azure-002' -Role 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-two' -ScopeName 'rg-two')
+                    (New-ArmItem Eligibility -Name 'azure-003' -Role 'Contributor' -ScopeId '/subscriptions/sub-001' -ScopeName 'Subscription One')
+                )
             }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance {
-                [PSCustomObject]@{
-                    Name = 'azure-act-001'; AssignmentType = 'Activated'; RoleDefinitionDisplayName = 'Reader'
-                    ScopeId = '/subscriptions/sub-001/resourceGroups/rg-one'; ScopeDisplayName = 'rg-one'; PrincipalId = 'principal-001'
-                }
-                [PSCustomObject]@{
-                    Name = 'azure-act-002'; AssignmentType = 'Activated'; RoleDefinitionDisplayName = 'Reader'
-                    ScopeId = '/subscriptions/sub-001/resourceGroups/rg-two'; ScopeDisplayName = 'rg-two'; PrincipalId = 'principal-001'
-                }
-                [PSCustomObject]@{
-                    Name = 'azure-act-003'; AssignmentType = 'Activated'; RoleDefinitionDisplayName = 'Contributor'
-                    ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'Subscription One'; PrincipalId = 'principal-001'
-                }
+            $InstResponse = [pscustomobject]@{
+                value = @(
+                    (New-ArmItem Instance -Name 'azure-act-001' -Role 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one')
+                    (New-ArmItem Instance -Name 'azure-act-002' -Role 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-two' -ScopeName 'rg-two')
+                    (New-ArmItem Instance -Name 'azure-act-003' -Role 'Contributor' -ScopeId '/subscriptions/sub-001' -ScopeName 'Subscription One')
+                )
             }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EligResponse } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $InstResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
         }
 
         Context 'in the default dual search' {
@@ -211,18 +369,18 @@ Describe 'Get-OPIMAzureRole' {
 
             It 'lists both states with the asTarget() filter at the root scope' {
                 $null = Get-OPIMAzureRole -Identity 'azure-002'
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $Filter -eq 'asTarget()' -and $Scope -eq '/'
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Path -ceq '/providers/Microsoft.Authorization/roleEligibilitySchedules?$filter=asTarget()&api-version=2020-10-01' -and $All.IsPresent
                 }
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $Filter -eq 'asTarget()' -and $Scope -eq '/'
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Path -ceq '/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?$filter=asTarget()&api-version=2020-10-01' -and $All.IsPresent
                 }
             }
 
-            It 'hands no Name to Az.Resources' {
+            It 'hands no Name to the transport' {
                 $null = Get-OPIMAzureRole -Identity 'azure-002'
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It -ParameterFilter { $Name }
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 0 -Scope It -ParameterFilter { $Name }
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 0 -Scope It -ParameterFilter { $Path -like '*azure-002*' }
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 0 -Scope It -ParameterFilter { $PesterBoundParameters.ContainsKey('Body') }
             }
         }
 
@@ -241,18 +399,19 @@ Describe 'Get-OPIMAzureRole' {
 
             It 'lists the active posts with the asTarget() filter at the root scope, passes no Name and reads no eligible list' {
                 $null = Get-OPIMAzureRole -Activated -Identity 'azure-act-002'
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $Filter -eq 'asTarget()' -and $Scope -eq '/' -and -not $Name
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Path -ceq '/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?$filter=asTarget()&api-version=2020-10-01' -and $All.IsPresent
                 }
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 0 -Scope It -ParameterFilter { $Path -like '*azure-act-002*' }
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 0 -Scope It -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
             }
 
             It 'lists the active posts at the scope that -Scope names, and keeps the instance there' {
                 $Result = @(Get-OPIMAzureRole -Activated -Identity 'azure-act-002' -Scope '/subscriptions/sub-001/resourceGroups/rg-two')
                 $Result | Should -HaveCount 1
                 $Result[0].Name | Should -BeExactly 'azure-act-002'
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $Scope -eq '/subscriptions/sub-001/resourceGroups/rg-two' -and $Filter -eq 'asTarget()'
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Path -ceq '/subscriptions/sub-001/resourceGroups/rg-two/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?$filter=asTarget()&api-version=2020-10-01'
                 }
             }
 
@@ -304,11 +463,11 @@ Describe 'Get-OPIMAzureRole' {
 
             It 'lists at the root scope all the same, whatever scope -Scope names' {
                 $null = Get-OPIMAzureRole -Identity 'azure-001' -Scope '/subscriptions/sub-001/resourceGroups/rg-one'
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $Filter -eq 'asTarget()' -and $Scope -eq '/'
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Path -ceq '/providers/Microsoft.Authorization/roleEligibilitySchedules?$filter=asTarget()&api-version=2020-10-01'
                 }
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $Filter -eq 'asTarget()' -and $Scope -eq '/'
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Path -ceq '/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?$filter=asTarget()&api-version=2020-10-01'
                 }
             }
 
@@ -324,6 +483,16 @@ Describe 'Get-OPIMAzureRole' {
                 $Result = @(Get-OPIMAzureRole -All -Scope '/subscriptions/sub-001/resourceGroups/rg-two')
                 ($Result | Sort-Object Name | ForEach-Object { "$($_.Status):$($_.Name)" }) -join ',' |
                     Should -BeExactly 'Eligible:azure-002,Active:azure-act-002'
+            }
+
+            It 'reads the -All listing at the root as well, whatever scope -Scope names' {
+                $null = Get-OPIMAzureRole -All -Scope '/subscriptions/sub-001/resourceGroups/rg-two'
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Path -ceq '/providers/Microsoft.Authorization/roleEligibilitySchedules?$filter=asTarget()&api-version=2020-10-01'
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Path -ceq '/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?$filter=asTarget()&api-version=2020-10-01'
+                }
             }
         }
 
@@ -346,9 +515,9 @@ Describe 'Get-OPIMAzureRole' {
         # binds, like the -Scope of Enable and Disable, so nothing runs: no sign-in and no ARM call.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {}
-            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance {}
+            $EmptyResponse = New-ArmResponse @()
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EmptyResponse } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EmptyResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
         }
 
         It 'refuses the scope before anything runs (<Name>)' -ForEach @(
@@ -360,8 +529,7 @@ Describe 'Get-OPIMAzureRole' {
             { Get-OPIMAzureRole @Parameters -Scope '/subscriptions/sub-001/' } |
                 Should -Throw -ErrorId 'ParameterArgumentValidationError*' -ExpectedMessage '*ends with*'
             Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 0 -Scope It
         }
 
         It 'refuses a piped scope before anything runs' {
@@ -371,51 +539,65 @@ Describe 'Get-OPIMAzureRole' {
             $Written[0].FullyQualifiedErrorId | Should -BeLike 'ParameterArgumentValidationError*'
             @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
             Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 0 -Scope It
         }
 
         It 'binds the root scope ''/''' {
             { Get-OPIMAzureRole -Scope '/' -ErrorAction Stop } | Should -Not -Throw
             Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Path -like '*/roleEligibilitySchedules?*'
+            }
         }
 
         It 'binds a scope without a trailing slash' {
             { Get-OPIMAzureRole -Scope '/subscriptions/sub-001' -ErrorAction Stop } | Should -Not -Throw
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Exactly -Scope It -ParameterFilter {
-                $Scope -eq '/subscriptions/sub-001'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Path -ceq '/subscriptions/sub-001/providers/Microsoft.Authorization/roleEligibilitySchedules?$filter=asTarget()&api-version=2020-10-01'
+            }
+        }
+    }
+
+    Context 'When -Scope is typed without its leading slash' {
+        # The ARM path prefix of a scope is the scope with exactly one leading slash, so a scope typed
+        # without it is read at that scope, and its path stays on the ARM host instead of extending
+        # the host name. Only the request path changes.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $EmptyResponse = New-ArmResponse @()
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EmptyResponse } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EmptyResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
+        }
+
+        It 'reads the <List> at that scope (<Name>)' -ForEach @(
+            @{ Name = 'eligible'; Parameters = @{}; List = 'roleEligibilitySchedules' }
+            @{ Name = '-Activated'; Parameters = @{ Activated = $true }; List = 'roleAssignmentScheduleInstances' }
+        ) {
+            $null = Get-OPIMAzureRole @Parameters -Scope 'subscriptions/22222222-2222-2222-2222-222222222222' -ErrorAction Stop
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $All.IsPresent -and
+                $Path -ceq ('/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/{0}?$filter=asTarget()&api-version=2020-10-01' -f $List)
             }
         }
     }
 
     Context 'When -RoleName is specified' {
         # A name resolves through Resolve-OPIMSchedule, as on Enable and Disable. The resolver lists by
-        # calling this cmdlet without a name, so the Az.Resources mocks below answer the nested listing
-        # and the whole path runs for real. The fakes are built inside the mocks, so each call gets
-        # fresh objects that no earlier call has decorated.
+        # calling this cmdlet without a name, so the transport mocks below answer the nested listing
+        # and the whole path runs for real.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
-                [PSCustomObject]@{
-                    Name = 'azure-001'; RoleDefinitionDisplayName = 'Reader'
-                    ScopeId = '/subscriptions/sub-001/resourceGroups/rg-one'; ScopeDisplayName = 'rg-one'; PrincipalId = 'principal-001'
-                }
-                [PSCustomObject]@{
-                    Name = 'azure-002'; RoleDefinitionDisplayName = 'Reader'
-                    ScopeId = '/subscriptions/sub-001/resourceGroups/rg-two'; ScopeDisplayName = 'rg-two'; PrincipalId = 'principal-001'
-                }
-                [PSCustomObject]@{
-                    Name = 'azure-003'; RoleDefinitionDisplayName = 'Contributor'
-                    ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'Subscription One'; PrincipalId = 'principal-001'
-                }
+            $EligResponse = [pscustomobject]@{
+                value = @(
+                    (New-ArmItem Eligibility -Name 'azure-001' -Role 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one')
+                    (New-ArmItem Eligibility -Name 'azure-002' -Role 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-two' -ScopeName 'rg-two')
+                    (New-ArmItem Eligibility -Name 'azure-003' -Role 'Contributor' -ScopeId '/subscriptions/sub-001' -ScopeName 'Subscription One')
+                )
             }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance {
-                [PSCustomObject]@{
-                    Name = 'azure-act-003'; AssignmentType = 'Activated'; RoleDefinitionDisplayName = 'Contributor'
-                    ScopeId = '/subscriptions/sub-001'; ScopeDisplayName = 'Subscription One'; PrincipalId = 'principal-001'
-                }
-            }
+            $InstResponse = New-ArmResponse (New-ArmItem Instance -Name 'azure-act-003' -Role 'Contributor' -ScopeId '/subscriptions/sub-001' -ScopeName 'Subscription One')
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EligResponse } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $InstResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
         }
 
         Context 'a display name that names one role' {
@@ -436,11 +618,11 @@ Describe 'Get-OPIMAzureRole' {
 
             It 'reads the listing at the root scope with the asTarget() filter and passes no Name' {
                 $null = Get-OPIMAzureRole -RoleName 'Contributor'
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $Scope -eq '/' -and $Filter -eq 'asTarget()' -and -not $Name
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Path -ceq '/providers/Microsoft.Authorization/roleEligibilitySchedules?$filter=asTarget()&api-version=2020-10-01' -and $All.IsPresent
                 }
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $Scope -eq '/' -and $Filter -eq 'asTarget()' -and -not $Name
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Path -ceq '/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?$filter=asTarget()&api-version=2020-10-01' -and $All.IsPresent
                 }
             }
         }
@@ -455,7 +637,7 @@ Describe 'Get-OPIMAzureRole' {
 
             It 'does not read the eligible list when the active instance is found' {
                 $null = Get-OPIMAzureRole -Activated -RoleName 'Contributor'
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 0 -Scope It -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
             }
 
             It 'keeps the instance when -Scope names its scope' {
@@ -519,8 +701,7 @@ Describe 'Get-OPIMAzureRole' {
                 { Get-OPIMAzureRole -RoleName 'Reader' -Scope '/subscriptions/sub-001/resourceGroups/rg-one/' } |
                     Should -Throw -ErrorId 'ParameterArgumentValidationError*' -ExpectedMessage '*ends with*'
                 Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 0 -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 0 -Scope It
             }
         }
 
@@ -567,21 +748,25 @@ Describe 'Get-OPIMAzureRole' {
     Context 'When -RoleName is specified and the listing fails' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance { }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
-                Write-Error -Message 'Service unavailable' `
-                    -ErrorId 'ServiceUnavailable' `
-                    -Category ResourceUnavailable `
-                    -ErrorAction Stop
-            }
+            $InstResponse = New-ArmResponse @()
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $InstResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest {
+                $PSCmdlet.ThrowTerminatingError(
+                    [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Service unavailable'),
+                        'ServiceUnavailable',
+                        [System.Management.Automation.ErrorCategory]::ResourceUnavailable,
+                        $null
+                    )
+                )
+            } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
         }
 
         It 'writes the listing''s own error and never EligibleRoleNotFound' {
             $Output = @(Get-OPIMAzureRole -RoleName 'Contributor' -ErrorAction Continue 2>&1)
             $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
             $Written | Should -HaveCount 1
-            $Written[0].FullyQualifiedErrorId | Should -BeExactly 'ServiceUnavailable,Get-OPIMAzureRole'
+            $Written[0].FullyQualifiedErrorId.Split(',')[0] | Should -BeExactly 'ServiceUnavailable'
             @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
         }
 
@@ -590,7 +775,7 @@ Describe 'Get-OPIMAzureRole' {
             $Output = @(Get-OPIMAzureRole -RoleName 'Contributor' -ErrorVariable Errs -ErrorAction SilentlyContinue)
             $Output | Should -HaveCount 0
             # -ErrorVariable collects every nested frame's copy as well; the cmdlet's own record is the last.
-            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'ServiceUnavailable,Get-OPIMAzureRole'
+            $Errs[-1].FullyQualifiedErrorId.Split(',')[0] | Should -BeExactly 'ServiceUnavailable'
             @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'EligibleRoleNotFound*' }) | Should -HaveCount 0
         }
     }
@@ -598,9 +783,9 @@ Describe 'Get-OPIMAzureRole' {
     Context 'When -RoleName is specified and the resolver is mocked' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal { $null }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {}
-            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance {}
+            $EmptyResponse = New-ArmResponse @()
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EmptyResponse } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EmptyResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
             Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule {
                 [PSCustomObject]@{ Name = 'resolved-001'; Status = 'Eligible' }
             }
@@ -653,8 +838,7 @@ Describe 'Get-OPIMAzureRole' {
 
         It 'lists nothing itself, since the resolver lists' {
             $null = Get-OPIMAzureRole -RoleName 'Contributor'
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 0 -Scope It
         }
 
         It 'does not call the resolver without a name' {
@@ -696,19 +880,13 @@ Describe 'Get-OPIMAzureRole' {
     Context 'When -Activated -Scope filters to a specific scope' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            $FakeActiveOnScope = [PSCustomObject]@{
-                Name           = 'active-sub-001'
-                AssignmentType = 'Activated'
-                ScopeId        = '/subscriptions/sub-001'
+            $InstResponse = [pscustomobject]@{
+                value = @(
+                    (New-ArmItem Instance -Name 'active-sub-001' -ScopeId '/subscriptions/sub-001')
+                    (New-ArmItem Instance -Name 'active-parent-001' -ScopeId '/')
+                )
             }
-            $FakeActiveOnParent = [PSCustomObject]@{
-                Name           = 'active-parent-001'
-                AssignmentType = 'Activated'
-                ScopeId        = '/'
-            }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance {
-                return @($FakeActiveOnScope, $FakeActiveOnParent)
-            } -ParameterFilter { $Filter -eq 'asTarget()' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $InstResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
         }
 
         It 'returns only instances matching the exact scope' {
@@ -716,18 +894,33 @@ Describe 'Get-OPIMAzureRole' {
             $Result | Should -HaveCount 1
             $Result[0].ScopeId | Should -Be '/subscriptions/sub-001'
         }
+
+        It 'reads the instances at that scope' {
+            $null = Get-OPIMAzureRole -Activated -Scope '/subscriptions/sub-001'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Path -ceq '/subscriptions/sub-001/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?$filter=asTarget()&api-version=2020-10-01'
+            }
+        }
     }
 
     Context 'When -Scope is specified' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule { return @() }
+            $EmptyResponse = New-ArmResponse @()
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EmptyResponse } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
         }
 
-        It 'passes the scope to Get-AzRoleEligibilitySchedule' {
-            Get-OPIMAzureRole -Scope '/subscriptions/sub-001'
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 1 -Scope It -ParameterFilter {
-                $Scope -eq '/subscriptions/sub-001'
+        It 'reads the eligible list at that scope, which starts the path' {
+            $null = Get-OPIMAzureRole -Scope '/subscriptions/sub-001'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Path -ceq '/subscriptions/sub-001/providers/Microsoft.Authorization/roleEligibilitySchedules?$filter=asTarget()&api-version=2020-10-01' -and $All.IsPresent
+            }
+        }
+
+        It 'reads a resource group scope as it is' {
+            $null = Get-OPIMAzureRole -Scope '/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/opim-fixture-rg'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Path -ceq '/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/opim-fixture-rg/providers/Microsoft.Authorization/roleEligibilitySchedules?$filter=asTarget()&api-version=2020-10-01'
             }
         }
     }
@@ -735,7 +928,8 @@ Describe 'Get-OPIMAzureRole' {
     Context 'When the result set is empty' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule { return @() }
+            $EmptyResponse = New-ArmResponse @()
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EmptyResponse } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
         }
 
         It 'returns nothing without throwing' {
@@ -748,15 +942,32 @@ Describe 'Get-OPIMAzureRole' {
         }
     }
 
+    Context 'When the response carries no value' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $NoValue = [pscustomobject]@{ value = $null }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $NoValue } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+        }
+
+        It 'returns no objects, not an empty one' {
+            $Result = @(Get-OPIMAzureRole)
+            $Result | Should -HaveCount 0
+        }
+    }
+
     Context 'When the API returns an InsufficientPermissions error' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
-                Write-Error -Message 'Insufficient permissions' `
-                    -ErrorId 'InsufficientPermissions' `
-                    -Category PermissionDenied `
-                    -ErrorAction Stop
-            }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest {
+                $PSCmdlet.ThrowTerminatingError(
+                    [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient permissions'),
+                        'InsufficientPermissions',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied,
+                        $null
+                    )
+                )
+            } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
         }
 
         It 'writes a non-terminating error' {
@@ -775,7 +986,8 @@ Describe 'Get-OPIMAzureRole' {
     Context 'When -All is specified and the API returns an InsufficientPermissions error' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
+            $InstResponse = New-ArmResponse @()
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest {
                 $PSCmdlet.ThrowTerminatingError(
                     [System.Management.Automation.ErrorRecord]::new(
                         [System.Exception]::new('Insufficient permissions'),
@@ -784,20 +996,21 @@ Describe 'Get-OPIMAzureRole' {
                         $null
                     )
                 )
-            }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance { return @() }
-            Mock -ModuleName Omnicit.PIM Write-CmdletError { } -Verifiable
+            } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $InstResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
         }
 
         It 'writes a non-terminating error with Owner or UserAccessAdministrator guidance' {
-            $Errors = @()
-            Get-OPIMAzureRole -All -ErrorVariable Errors -ErrorAction SilentlyContinue
-            $Errors.Count | Should -BeGreaterThan 0
+            $Errs = $null
+            Get-OPIMAzureRole -All -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Rewrap = @($Errs | Where-Object { $_.Exception.Message -like 'You do not have sufficient rights to view*' })
+            $Rewrap | Should -HaveCount 1
+            $Rewrap[0].Exception.Message | Should -Match 'Owner or UserAccessAdministrator'
         }
     }
 
     Context 'When the InsufficientPermissions rewrap is written' {
-        # OPIM-11: the rewrapped record keeps no reference to the raw Az record, which can carry the
+        # OPIM-11: the rewrapped record keeps no reference to the raw record, which can carry the
         # request it failed on -- no inner exception, and the scope as its target object. Each read
         # throws a record whose target object is a request message, as a failed ARM call's can be.
         BeforeAll {
@@ -810,8 +1023,8 @@ Describe 'Get-OPIMAzureRole' {
                         [System.Management.Automation.ErrorCategory]::PermissionDenied,
                         [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://management.azure.com/providers/Microsoft.Authorization/roleEligibilitySchedules')))
             }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule $RawFailure
-            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance $RawFailure
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest $RawFailure -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest $RawFailure -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
         }
 
         It 'writes the rewrap for the <Name> read with the scope as its target and no inner exception' -ForEach @(
@@ -847,12 +1060,16 @@ Describe 'Get-OPIMAzureRole' {
     Context 'When the API returns a non-permissions error' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {
-                Write-Error -Message 'Service unavailable' `
-                    -ErrorId 'ServiceUnavailable' `
-                    -Category ResourceUnavailable `
-                    -ErrorAction Stop
-            }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest {
+                $PSCmdlet.ThrowTerminatingError(
+                    [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Service unavailable'),
+                        'ServiceUnavailable',
+                        [System.Management.Automation.ErrorCategory]::ResourceUnavailable,
+                        $null
+                    )
+                )
+            } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
         }
 
         It 'writes a non-terminating error' {
@@ -865,86 +1082,104 @@ Describe 'Get-OPIMAzureRole' {
     Context 'When scope is provided via pipeline' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule { return @() }
+            $EmptyResponse = New-ArmResponse @()
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EmptyResponse } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
         }
 
-        It 'calls Get-AzRoleEligibilitySchedule once per piped scope' {
+        It 'reads the eligible list once per piped scope' {
             '/subscriptions/sub-001', '/subscriptions/sub-002' | Get-OPIMAzureRole
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 2 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 2 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Path -ceq '/subscriptions/sub-001/providers/Microsoft.Authorization/roleEligibilitySchedules?$filter=asTarget()&api-version=2020-10-01'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Path -ceq '/subscriptions/sub-002/providers/Microsoft.Authorization/roleEligibilitySchedules?$filter=asTarget()&api-version=2020-10-01'
+            }
         }
     }
 
-    Context 'When the ARM gate refuses' {
-        # SEC (EntraRBAC A19): the gate stands inside the try that holds each Az.Resources call,
-        # directly before it, so the cmdlet's own catch reports the refusal as itself.
+    Context 'When the transport throws a record' {
+        # The transport gates every request itself (the sign-in latch, the tenant and the account of
+        # the ARM token) and converts every failure, so the cmdlet only writes what it is given: the
+        # record as itself, once per read, and nothing is returned. -All and a Name make two reads,
+        # each with its own try, and the second is still made.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal {
-                [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('refused'), 'SignInRefused', 'AuthenticationError', 'x')
-            }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {}
-            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance {}
         }
 
-        It 'sends no ARM request (<Name>)' -ForEach @(
-            @{ Name = 'eligible'; Parameters = @{} }
-            @{ Name = '-Activated'; Parameters = @{ Activated = $true } }
-            @{ Name = '-All'; Parameters = @{ All = $true } }
-            @{ Name = '-Identity'; Parameters = @{ Identity = 'azure-001' } }
-        ) {
-            Get-OPIMAzureRole @Parameters -ErrorAction SilentlyContinue
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 0 -Scope It
-        }
-
-        It 'writes the refusal as itself (<Name>)' -ForEach @(
-            @{ Name = 'eligible'; Parameters = @{}; Expected = 1 }
-            @{ Name = '-Activated'; Parameters = @{ Activated = $true }; Expected = 1 }
-            @{ Name = '-All'; Parameters = @{ All = $true }; Expected = 2 }
-            @{ Name = '-Identity'; Parameters = @{ Identity = 'azure-001' }; Expected = 2 }
-        ) {
-            $Errs = @()
-            Get-OPIMAzureRole @Parameters -ErrorVariable Errs -ErrorAction SilentlyContinue
-            $Errs[0].FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
-            # One written record per try that holds an Az.Resources call (-All has two), each the
-            # refusal itself and not the InsufficientPermissions rewrap.
-            @($Errs | Where-Object FullyQualifiedErrorId -EQ 'SignInRefused,Get-OPIMAzureRole').Count | Should -Be $Expected
-            @($Errs | Where-Object FullyQualifiedErrorId -Like 'InsufficientPermissions*').Count | Should -Be 0
-            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMArmRefusal -Times $Expected -Exactly -Scope It
-        }
-    }
-
-    Context 'When Azure is signed in to another tenant than the Graph session' {
-        # Acceptance (OPIM-08): the real ARM gate, an auth state a Graph sign-in for one tenant wrote,
-        # and an Az context for another tenant: TenantMismatch before any ARM call.
-        BeforeAll {
-            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            Mock -ModuleName Omnicit.PIM Get-AzContext {
-                [PSCustomObject]@{ Tenant = [PSCustomObject]@{ Id = 'bbbbbbbb-0000-0000-0000-00000000000b' } }
-            }
-            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {}
-            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance {}
-            InModuleScope Omnicit.PIM {
-                $script:_OPIMSignInLatch = $null
-                $script:_OPIMAuthState = @{
-                    TenantId      = 'aaaaaaaa-0000-0000-0000-00000000000a'
-                    TokenTenantId = 'aaaaaaaa-0000-0000-0000-00000000000a'
+        It 'writes <Id> as itself for each read and returns nothing (<ModeName>)' -ForEach @(
+            foreach ($Id in 'ArmTransportError', 'ArmTokenAcquisitionFailed', 'SignInRefused', 'TenantMismatch', 'AccountMismatch') {
+                foreach ($Mode in @(
+                        @{ Name = 'eligible'; Parameters = @{}; Expected = 1 }
+                        @{ Name = '-Activated'; Parameters = @{ Activated = $true }; Expected = 1 }
+                        @{ Name = '-All'; Parameters = @{ All = $true }; Expected = 2 }
+                        @{ Name = '-Identity'; Parameters = @{ Identity = 'azure-001' }; Expected = 2 }
+                    )) {
+                    @{ Id = $Id; ModeName = $Mode.Name; Parameters = $Mode.Parameters; Expected = $Mode.Expected }
                 }
             }
-        }
-        AfterAll {
-            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        ) {
+            $Thrown = [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("$Id raised by the transport"), $Id,
+                [System.Management.Automation.ErrorCategory]::NotSpecified, '/providers/Microsoft.Authorization')
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $PSCmdlet.ThrowTerminatingError($Thrown) }
+
+            $Output = @(Get-OPIMAzureRole @Parameters -ErrorAction Continue 2>&1)
+
+            $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written | Should -HaveCount $Expected
+            foreach ($Record in $Written) {
+                $Record.FullyQualifiedErrorId.Split(',')[0] | Should -BeExactly $Id
+                $Record.Exception.Message | Should -BeExactly "$Id raised by the transport"
+            }
+            @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times $Expected -Exactly -Scope It
         }
 
-        It 'sends no ARM request and writes TenantMismatch (<Name>)' -ForEach @(
-            @{ Name = 'eligible'; Parameters = @{} }
-            @{ Name = '-Activated'; Parameters = @{ Activated = $true } }
+        It 'writes ArmTransportError once for the eligible read, with its id kept, and returns nothing' {
+            $Thrown = [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('The ARM request failed.'), 'ArmTransportError',
+                [System.Management.Automation.ErrorCategory]::ConnectionError, '/providers/Microsoft.Authorization/roleEligibilitySchedules')
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $PSCmdlet.ThrowTerminatingError($Thrown) } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+            $Output = @(Get-OPIMAzureRole -ErrorAction Continue 2>&1)
+            $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written | Should -HaveCount 1
+            $Written[0].FullyQualifiedErrorId | Should -BeExactly 'ArmTransportError,Get-OPIMAzureRole'
+            $Written[0].Exception.Message | Should -BeExactly 'The ARM request failed.'
+            @($Output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Should -HaveCount 0
+        }
+    }
+
+    Context 'When any mode reads' {
+        # G15: after the move to the module's own transport no Az command is called.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $EligResponse = New-ArmResponse (New-ArmItem Eligibility -Name 'azure-001' -Role 'Reader')
+            $InstResponse = New-ArmResponse (New-ArmItem Instance -Name 'azure-act-001' -Role 'Reader')
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EligResponse } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $InstResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
+            Mock -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule {}
+            Mock -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance {}
+        }
+
+        It 'calls no Az command and reads through the transport (<Name>)' -ForEach @(
+            @{ Name = 'eligible'; Parameters = @{}; Reads = 1 }
+            @{ Name = '-Activated'; Parameters = @{ Activated = $true }; Reads = 1 }
+            @{ Name = '-All'; Parameters = @{ All = $true }; Reads = 2 }
+            @{ Name = '-Identity'; Parameters = @{ Identity = 'azure-001' }; Reads = 2 }
+            @{ Name = '-RoleName'; Parameters = @{ RoleName = 'Reader' }; Reads = 2 }
+            @{ Name = '-Scope'; Parameters = @{ Scope = '/subscriptions/sub-001' }; Reads = 1 }
         ) {
-            $Errs = @()
-            Get-OPIMAzureRole @Parameters -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $null = Get-OPIMAzureRole @Parameters -ErrorAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleEligibilitySchedule -Times 0 -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Get-AzRoleAssignmentScheduleInstance -Times 0 -Scope It
-            @($Errs | Where-Object FullyQualifiedErrorId -Like 'TenantMismatch*').Count | Should -BeGreaterThan 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times $Reads -Exactly -Scope It
+        }
+
+        It 'runs no ARM gate of its own, since the transport gates every request' {
+            Mock -ModuleName Omnicit.PIM Get-OPIMArmRefusal {}
+            $null = Get-OPIMAzureRole -All
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMArmRefusal -Times 0 -Scope It
         }
     }
 }

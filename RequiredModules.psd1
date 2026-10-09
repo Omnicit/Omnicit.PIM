@@ -32,6 +32,10 @@
     # RequiredModules floors.
     'Az.Resources'                    = '9.0.3'
     'Microsoft.Graph.Authentication'  = '2.36.0'
+    # AzAuth signs in to Azure Resource Manager (Get-AzToken). Pinned exactly, never 'latest'
+    # (OPIM-36). The build and the tests need it; the manifest gains it with the removal of the Az
+    # modules from the dependencies, so the package and publish jobs do not install it yet.
+    'AzAuth'                          = '2.9.0'
 
 
 }

@@ -6,14 +6,21 @@
 # tests/QA/testhygiene.tests.ps1 proves every file does. Ported from Omnicit.EntraRBAC.
 #
 # Record AND throw: a throw alone is not enough, since the module's own catch blocks turn it into a
-# WriteError, a verbose line or nothing at all (Initialize-OPIMAuth discards an Update-AzConfig
-# failure). The record is what the AfterAll check reads. It holds parameter NAMES only -- never a
-# value, which may be a secret or a token.
+# WriteError, a verbose line or nothing at all (Invoke-OPIMArmRequest turns an Invoke-WebRequest
+# failure into a record of its own, ArmTransportError). The record is what the AfterAll check reads.
+# It holds parameter NAMES only -- never a value, which may be a secret or a token.
+#
+# The five Az.Accounts and the four Az.Resources commands stay on the list although module code no
+# longer calls them: Az.Resources is still a declared dependency, and a call that came back would be
+# refused here, until the Az modules leave the dependencies (Sprint 2 step 1b).
 #
 # Three forms, measured 2026-10-06 (Microsoft.Graph.Authentication 2.36.0, Az.Accounts 5.5.3,
-# Az.Resources 9.0.3):
+# Az.Resources 9.0.3) and, for AzAuth's Get-AzToken, 2026-10-09 (AzAuth 2.9.0, a compiled cmdlet
+# without IDynamicParameters):
 #   Cmdlet         A global function built from the cmdlet's metadata. A function outranks a cmdlet,
 #                  and a Pester Mock -ModuleName (an alias in the module scope) outranks both.
+#                  AzAuth is not a dependency of Omnicit.PIM yet, so the definition builder imports
+#                  it first (it runs inside the root BeforeAll, where an import is allowed).
 #   DynamicCmdlet  The Az.Accounts cmdlets implement IDynamicParameters. A Pester mock of a function
 #                  cannot evaluate a dynamicparam block, so the replacement carries the parameters
 #                  GetDynamicParameters() returns as STATIC parameters -- otherwise a call such as
@@ -34,8 +41,8 @@
 function Get-OPIMTransportTripwireName {
     <#
     .SYNOPSIS
-    The fifteen commands through which module code reaches a tenant or the network, with the module
-    that owns the real command and the form of its replacement.
+    The sixteen commands through which module code reaches, or once reached, a tenant or the network,
+    with the module that owns the real command and the form of its replacement.
     #>
     [CmdletBinding()]
     [OutputType([System.Collections.Specialized.OrderedDictionary])]
@@ -46,6 +53,7 @@ function Get-OPIMTransportTripwireName {
         'Connect-MgGraph'                      = [pscustomobject]@{ Module = $Graph; Form = 'Cmdlet' }
         'Disconnect-MgGraph'                   = [pscustomobject]@{ Module = $Graph; Form = 'Cmdlet' }
         'Get-MgContext'                        = [pscustomobject]@{ Module = $Graph; Form = 'Cmdlet' }
+        'Get-AzToken'                          = [pscustomobject]@{ Module = 'AzAuth'; Form = 'Cmdlet' }
         'Connect-AzAccount'                    = [pscustomobject]@{ Module = 'Az.Accounts'; Form = 'DynamicCmdlet' }
         'Disconnect-AzAccount'                 = [pscustomobject]@{ Module = 'Az.Accounts'; Form = 'DynamicCmdlet' }
         'Get-AzContext'                        = [pscustomobject]@{ Module = 'Az.Accounts'; Form = 'DynamicCmdlet' }
@@ -88,6 +96,11 @@ function New-OPIMTransportTripwireDefinition {
     $Names = Get-OPIMTransportTripwireName
     foreach ($Name in @($Names.Keys)) {
         $Spec = $Names[$Name]
+        # Load-bearing only when module autoloading is off: with it on, the Get-Command below loads
+        # AzAuth from PSModulePath by itself.
+        if ($Spec.Module -eq 'AzAuth' -and -not (Get-Module -Name AzAuth)) {
+            Import-Module -Name AzAuth -ErrorAction Stop
+        }
         $Found = @(Get-Command -Name $Name -Module $Spec.Module -ErrorAction SilentlyContinue | Where-Object {
                 $_.CommandType -in 'Cmdlet', 'Function' -and -not (Test-OPIMTransportTripwireFunction -Command $_)
             })
