@@ -331,7 +331,8 @@ if (-not (Test-Path -LiteralPath $Map)) {
         @(Get-OPIMAzureRole -ErrorAction Stop | Where-Object ScopeDisplayName -EQ 'opim-s2-rg')
     )
     "Rows to store: $($Rows.Count)"
-    $Rows | Install-OPIMConfiguration -TenantAlias 's21b-all' -TenantMapPath $Map -Confirm:$false
+    # Its host lines name the stored keys, which hold ids, so they go nowhere.
+    $Rows | Install-OPIMConfiguration -TenantAlias 's21b-all' -TenantMapPath $Map -Confirm:$false 6>$null
 }
 $Config = Get-OPIMConfiguration -TenantAlias 's21b-all' -TenantMapPath $Map -ErrorAction Stop
 "Entries: directory $(@($Config.DirectoryRoles).Count), group $(@($Config.EntraIDGroups).Count), Azure $(@($Config.AzureRoles).Count)"
