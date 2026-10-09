@@ -343,8 +343,9 @@ jobs:
       - name: Check out the verification script
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Also what gives the install step RequiredModules.psd1, and the gh CLI in the last step
-          # its repository context.
+          # Also what gives the install step RequiredModules.psd1, the last step
+          # .github/scripts/ReleaseTag.ps1 and an origin for git ls-remote, and the gh CLI there its
+          # repository context.
           fetch-depth: 1
 
       - name: Download the tested module artefact
@@ -490,14 +491,15 @@ jobs:
           }
 
           # IDEMPOTENCE. A re-run after a partial failure -- most likely a publish that succeeded
-          # while the release step did not -- must be able to carry on instead of dying on a
-          # version that is already out there. Find-PSResource -Version takes NuGet RANGE syntax,
-          # so a bare version means "at least this one"; the brackets are what make it exact.
-          # This also settles the race between two pushes to main computing the same version.
+          # while the release step did not -- must not die on a version that is already out there.
+          # Find-PSResource -Version takes NuGet RANGE syntax, so a bare version means "at least
+          # this one"; the brackets are what make it exact. This also settles the race between two
+          # pushes to main computing the same version. A skip here is NOT a publish by this job:
+          # PublishedByThisJob stays unset, and the tag step then tags nothing (see that step).
           $Existing = @(Find-PSResource -Name $ModuleName -Repository 'PSGallery' -Version "[$Version]" -Prerelease -ErrorAction SilentlyContinue)
 
           if ($Existing.Count -gt 0) {
-              Write-Host "SKIPPING THE PUBLISH: $ModuleName $Version is already on the PowerShell Gallery. A version cannot be republished or deleted, so this run goes straight on to the tag and release step."
+              Write-Host "SKIPPING THE PUBLISH: $ModuleName $Version is already on the PowerShell Gallery. A version cannot be republished or deleted. This job did not publish it, so the tag step creates nothing: it skips if the release v$Version exists, and otherwise goes red with the hand repair."
               return
           }
 
@@ -506,6 +508,10 @@ jobs:
           # (measured in Omnicit.EntraRBAC).
           Write-Host "Publishing $ModuleName $Version from $env:ModulePath ..."
           Publish-PSResource -Path $env:ModulePath -Repository 'PSGallery' -ApiKey $env:GALLERY_API_TOKEN
+          # Written HERE and nowhere else, after Publish-PSResource returned: the tag step creates a
+          # tag or a release only on a commit whose build THIS job published. The skip above never
+          # writes it, and neither does a re-run of this job, which finds the version on the Gallery.
+          'PublishedByThisJob=true' | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "Publish-PSResource returned without error. That is not yet proof -- the next step asks the Gallery."
 
       - name: Confirm the version is on the Gallery
@@ -545,29 +551,50 @@ jobs:
         # adding a commit computed 1.0.1-preview0002; adding a SECOND commit with no new tag
         # computed 1.0.1-preview0002 AGAIN.
         #
-        # SO, IF THIS STEP FAILS AFTER THE PUBLISH SUCCEEDED: the next merge to main computes the
-        # same version, the idempotence check above finds it on the Gallery and skips, and that
-        # merge publishes NOTHING. It is not a lost release, and nothing is broken on the Gallery,
-        # but the line stalls until someone pushes the missing tag by hand onto the commit that was
-        # published -- after which the next build counts up again.
+        # SO THE TAG GOES ON THE COMMIT WHOSE BUILD THIS JOB PUBLISHED, OR NOWHERE.
+        # .github/scripts/ReleaseTag.ps1 holds the decision, and tests/Workflow/ReleaseTag.Tests.ps1
+        # its tests and this wiring. This step only gathers the facts -- whether the publish step
+        # above published (PublishedByThisJob), whether the release exists, where the tag points --
+        # and acts on the answer. When the publish step SKIPPED because the version was already on
+        # the Gallery, this job cannot tell which commit's build the Gallery holds: the next merge
+        # after a failed tag step computes the same version, and used to tag ITS OWN commit here.
+        # Now a missing release turns this job RED, naming the version and the hand repair, and
+        # nothing is tagged. A re-run of this job finds the version on the Gallery too, so it goes
+        # red the same way: the repair after a failed tag step is by hand. See "Publishing" in
+        # CLAUDE.md.
         #
-        # On a v-tag run the tag already exists and gh uses it rather than creating one. It must
-        # stay that way: the 'Stable Version' ruleset refuses GITHUB_TOKEN any create, move or
-        # delete of a v<X.Y.Z> tag, so a stable run that tried would fail HERE, after the publish.
+        # On a v-tag run the tag already exists, on GITHUB_SHA, and gh uses it rather than creating
+        # one. It must stay that way: the 'Stable Version' ruleset refuses GITHUB_TOKEN any create,
+        # move or delete of a v<X.Y.Z> tag, so a stable run that tried would fail HERE, after the
+        # publish.
         run: |
           # gh reports "no release found" with exit code 1, which is an ANSWER here, not a failure.
-          # Every gh exit code is checked explicitly instead, the way the GitVersion step does it.
+          # Every native exit code is checked explicitly instead, the way the GitVersion step does it.
           $PSNativeCommandUseErrorActionPreference = $false
 
           $ModuleName = 'Omnicit.PIM'
           $Version = $env:PublishVersion
           $Tag = "v$Version"
 
+          # A failed lookup reads as "no release". That leads only to a refusal or to a create that
+          # fails on the existing release: red either way, never a tag on another commit.
           $null = gh release view $Tag 2>$null
-          if ($LASTEXITCODE -eq 0) {
-              Write-Host "SKIPPING: the release $Tag already exists. Nothing to create."
-              return
+          $ReleaseExists = $LASTEXITCODE -eq 0
+
+          # Where the tag points, if it exists: no line, one (lightweight) or two (annotated, the ^{}
+          # line naming the commit). The checkout above gives this job its origin.
+          $Answer = @(git ls-remote origin "refs/tags/$Tag" "refs/tags/$($Tag)^{}" 2>&1)
+          $ExitCode = $LASTEXITCODE
+          if ($ExitCode -ne 0) {
+              $Detail = (@($Answer | ForEach-Object { "$_".Trim() }) -join ' ').Trim()
+              throw "git ls-remote exited with $ExitCode ($Detail), so this job cannot tell where $Tag points, and it tags nothing. $ModuleName $Version may already be published -- read the comment on this step before re-running."
           }
+          $RemoteTag = @($Answer | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$_" })
+
+          # Throws, red, on every refusal; otherwise answers Skip or Create.
+          $Decision = ./.github/scripts/ReleaseTag.ps1 -Version $Version -Sha $env:GITHUB_SHA -Ref $env:GITHUB_REF -PublishedByThisJob $env:PublishedByThisJob -ReleaseExists $ReleaseExists -RemoteTag $RemoteTag -Prerelease $env:PublishPrerelease
+          Write-Host $Decision.Message
+          if ($Decision.Action -ceq 'Skip') { return }
 
           # From the BUILT MANIFEST's ReleaseNotes -- this version's notes. NOT output/ReleaseNotes.md,
           # which is the whole changelog (measured in Omnicit.EntraRBAC).
@@ -582,7 +609,7 @@ jobs:
           $NotesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
           [System.IO.File]::WriteAllText($NotesPath, $Notes)
 
-          $Arguments = @('release', 'create', $Tag, '--target', $env:GITHUB_SHA, '--title', $Tag, '--notes-file', $NotesPath)
+          $Arguments = @('release', 'create', $Decision.Tag, '--target', $Decision.Target, '--title', $Decision.Tag, '--notes-file', $NotesPath)
           if (-not [string]::IsNullOrEmpty($env:PublishPrerelease)) {
               $Arguments += '--prerelease'
               Write-Host "$Version carries the prerelease label '$env:PublishPrerelease', so the release is marked as a prerelease."
@@ -591,4 +618,4 @@ jobs:
           gh @Arguments
           if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE. $ModuleName $Version IS ALREADY PUBLISHED -- read the comment on this step before re-running." }
 
-          Write-Host "Created the release $Tag on $env:GITHUB_SHA. The next build on main counts up from it."
+          Write-Host "Created the release $($Decision.Tag) on $($Decision.Target). The next build on main counts up from it."

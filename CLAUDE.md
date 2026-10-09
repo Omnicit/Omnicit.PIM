@@ -110,6 +110,7 @@ tests/
                               #   Testing Conventions -- and OPIMTestToken.ps1
                               #   (New-OPIMTestAccessToken: token-shaped fixtures built at
                               #   runtime, NOT-A-REAL-TOKEN)
+  Workflow/                   # ReleaseTag.Tests.ps1 -- the tag decision and its YAML wiring
 docs/live-verification/       # README.md: the redaction and credential rules, the placeholder
                               #   register dochygiene reads, and the checklist template
 build.yaml, build.ps1         # Sampler/ModuleBuilder config and bootstrap entry point
@@ -119,6 +120,9 @@ GitVersion.yml                # Version computation -- see CHANGELOG and Version
                               #   publish. The ONLY path that publishes -- see Publishing.
 .github/scripts/PublishArtefact.ps1   # -Record / -Verify: proves the published bytes are the
                               #   tested bytes. Single owner of both halves; do not split it.
+.github/scripts/ReleaseTag.ps1        # The tag step's decision: a tag or release only on the
+                              #   commit whose build THIS job published. Tested, with the
+                              #   workflow wiring, by tests/Workflow/ReleaseTag.Tests.ps1.
 ```
 
 **The load order is Classes -> Private -> Public, and it is intentional.** The dev-mode psm1
@@ -321,12 +325,18 @@ publish it.
   as a prerelease for a preview). `GitVersion.yml` runs `mode: ContinuousDelivery`, where the
   preview counter advances on a TAG and not per commit: measured in Omnicit.EntraRBAC with
   GitVersion 5.12.0, two merges with no tag between them compute the SAME version. If a publish
-  succeeds but the tag step fails, the next merge computes the same version, skips the publish
-  (the idempotence check finds the version on the Gallery) and then creates the tag and release on
-  ITS OWN commit -- not on the commit whose build the Gallery holds. So re-run the failed job
-  before anything else merges: the re-run tags the commit it published. If a merge has already
-  happened, move the tag and its release to the published commit by hand (a preview tag is outside
-  the `Stable Version` ruleset; a stable tag can be moved only by that ruleset's bypass list).
+  succeeds but the tag step fails, the next merge computes the same version and the publish step
+  skips it, as it is on the Gallery. The tag step then tags nothing: it creates a tag or a release
+  only on a commit whose build THIS job published (`.github/scripts/ReleaseTag.ps1`), so with the
+  release missing it goes RED, naming the version and the hand repair, and until the tag exists
+  every merge to `main` publishes nothing. A re-run of the failed job goes red the same way, since
+  it too finds the version on the Gallery. The repair is by hand: tag the commit of the run whose
+  publish job logged `Publishing Omnicit.PIM <version>` and create its release --
+  `git tag v<version> <commit>`, `git push origin v<version>`, then
+  `gh release create v<version> --verify-tag --title v<version> --prerelease --notes-file <notes>`
+  with that commit's `[Unreleased]` section as the notes (a preview tag is outside the
+  `Stable Version` ruleset; a stable tag can be created or moved only by that ruleset's bypass
+  list).
 - **Never create a version tag by hand outside that repair or a deliberate release.** The rule
   under **CHANGELOG and Version** has teeth here: a stray tag changes what gets PUBLISHED.
 - **No approval stands between a merge or a `v` tag and the Gallery**, by decision, as in
@@ -355,7 +365,8 @@ publish it.
 - **A failed Gallery confirmation is not proof of a failed publish.** The job asks the Gallery for
   the exact version for up to 10 minutes and goes red if it cannot see it; check the Gallery before
   re-running, and never assume the version is free. A re-run is safe: the publish step skips a
-  version that is already on the Gallery, and the release step skips a release that already exists.
+  version that is already on the Gallery, and the tag step skips a release that already exists --
+  and refuses, red, to tag anything when the release is missing, since that job did not publish.
 
 **To cut a full release:**
 
