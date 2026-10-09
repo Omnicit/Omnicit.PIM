@@ -52,11 +52,11 @@ BeforeAll {
     function Get-DocSyncRosterName {
         <#
         .SYNOPSIS
-        Returns each distinct Verb-OPIM name in a text, compared ordinally.
+        Returns each distinct Verb-OPIM name in a text, compared case-sensitively.
         .DESCRIPTION
-        Distinct by ordinal comparison, as this gate's header says: a name spelled in another case
-        is a separate token, kept so the checks below can report it as unknown rather than fold it
-        into the correctly spelled one.
+        Distinct by a case-sensitive comparison, which is what the -cin and -cnotin checks below
+        use too: a name spelled in another case is a separate token, kept so the checks below can
+        report it as unknown rather than fold it into the correctly spelled one.
         #>
         param([string]$Text)
         @($script:CmdletNamePattern.Matches($Text) | ForEach-Object { $_.Value } | Sort-Object -Unique -CaseSensitive)
@@ -175,6 +175,42 @@ Describe 'README and about topic stay in step' -Tags 'helpQuality' {
         $Names.Count | Should -Be 2 -Because 'a name spelled in another case is a separate token; folding it into the right spelling hides it from the unknown-name check'
         ($Names -ccontains 'Get-OPIMdirectoryRole') | Should -BeTrue
         ($Names -ccontains 'Get-OPIMDirectoryRole') | Should -BeTrue
+    }
+
+    It 'Should dedupe roster names only through Get-DocSyncRosterName (static)' {
+        # The known answer above pins the helper, not its callers: a site reverted to an inline
+        # Sort-Object -Unique would stay green on today's documents. This reads the file itself
+        # with the parser (no module is imported) and holds both halves.
+        $Tokens = $null
+        $ParseErrors = $null
+        $Ast = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref]$Tokens, [ref]$ParseErrors)
+        $ParseErrors | Should -BeNullOrEmpty -Because 'this test file must parse; a parse error would leave the checks below measuring nothing'
+
+        $Helpers = @($Ast.FindAll({
+                    param($Node)
+                    $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $Node.Name -eq 'Get-DocSyncRosterName'
+                }, $true))
+        $Helpers.Count | Should -Be 1 -Because 'the file must define Get-DocSyncRosterName exactly once'
+        $HelperStart = $Helpers[0].Extent.StartOffset
+        $HelperEnd = $Helpers[0].Extent.EndOffset
+
+        $Commands = @($Ast.FindAll({ param($Node) $Node -is [System.Management.Automation.Language.CommandAst] }, $true))
+
+        $Sorts = @($Commands | Where-Object { $_.GetCommandName() -in 'Sort-Object', 'sort' })
+        $Sorts.Count | Should -BeGreaterThan 0 -Because 'the helper itself sorts; zero Sort-Object commands means the parse found nothing and the check below is vacuous'
+        $SortsOutside = @($Sorts | Where-Object { $_.Extent.StartOffset -lt $HelperStart -or $_.Extent.EndOffset -gt $HelperEnd })
+        $SortsOutside | Should -BeNullOrEmpty -Because (
+            'every Sort-Object in this file must sit inside Get-DocSyncRosterName, where it is case-sensitive; an inline dedup elsewhere folds a name spelled in another case into the right spelling. Found outside at offsets: {0}' -f
+                (($SortsOutside | ForEach-Object { $_.Extent.StartOffset }) -join ', '))
+
+        # The known answer above calls the helper too, with a literal text; counting it would let one
+        # roster site go missing unnoticed. A site is a call that is fed a roster section.
+        $Calls = @($Commands | Where-Object {
+                $_.GetCommandName() -eq 'Get-DocSyncRosterName' -and
+                ($_.Extent.StartOffset -lt $HelperStart -or $_.Extent.EndOffset -gt $HelperEnd) -and
+                $_.Extent.Text -match 'script:(Readme|About)Roster\b'
+            })
+        $Calls.Count | Should -BeGreaterOrEqual 4 -Because 'the four roster sites (two rosters, two sets) must each call Get-DocSyncRosterName with a roster section; fewer means a site stopped using it'
     }
 
     It 'Should find the roster section in both documents' {
