@@ -55,18 +55,23 @@ function Initialize-OPIMAuth {
     (TokenTenantId), always a GUID, also for a session pinned by domain or first signed in under
     'organizations'. It comes from AzAuth's Get-AzToken for the resource https://management.azure.com
     and that tenant -- interactively in the system browser, or with a device code in device code
-    mode -- with AzAuth's own authentication, separate from the Graph sign-in. Every new ARM token is
-    checked before it is kept (A3): its tid must be the session's tenant (TenantMismatch otherwise,
-    also when it cannot be read) and its oid the account of the session's Graph token
-    (AccountMismatch otherwise, also when either cannot be read). Only then is it kept, as a
-    SecureString in the auth state and in memory only, never on disk, with its expiry, tenant and
-    account, for Invoke-OPIMArmRequest to send. A cached ARM token is reused silently only when it was
-    issued for the same tenant and the same account and has more than 5 minutes left. A new Graph
-    token for another tenant or another account drops the cached ARM token, so the next -IncludeARM
-    acquires a new one. A failed Get-AzToken ends this function with the terminating
-    AzureConnectFailed, which keeps the AzAuth message but neither its exception nor its record.
-    AzAuth keeps one credential per process, so the first ARM sign-in of a session and every
-    -ForceRefresh pass -Force to rebuild it.
+    mode -- with AzAuth's own authentication, separate from the Graph sign-in, waiting up to 900
+    seconds for it (TimeoutSeconds), as long as a device code lives. A session that records no account
+    (the oid of its Graph token) is refused with AccountMismatch before Get-AzToken is called, since no
+    ARM token could be kept for it. Every new ARM token is checked before it is kept (A3): its tid must
+    be the session's tenant (TenantMismatch otherwise, also when it cannot be read) and its oid the
+    account of the session's Graph token (AccountMismatch otherwise, also when it cannot be read). A
+    refused token also drops the ARM token the state held, so the next -IncludeARM sign-in rebuilds
+    AzAuth's credential. Only a token that passed is kept, as a SecureString in the auth state and in
+    memory only, never on disk, with its expiry, tenant and account, for Invoke-OPIMArmRequest to send.
+    A cached ARM token is reused silently only when it was issued for the same tenant and the same
+    account and has more than 5 minutes left. A new Graph token for another tenant or another account
+    drops the cached ARM token, so the next -IncludeARM acquires a new one. A failed Get-AzToken ends
+    this function with the terminating AzureConnectFailed, which keeps the AzAuth message but neither
+    its exception nor its record; when Get-AzToken cannot be found at all, its message says that AzAuth
+    is not installed or could not be loaded (AzAuth 2.9.0 needs PowerShell 7.4 or later). AzAuth keeps
+    one credential per process, so the first ARM sign-in of a session and every -ForceRefresh pass
+    -Force to rebuild it.
 
     Graph auth and Azure auth are intentionally independent -- the Microsoft Graph Command Line
     Tools app registration (used by MSAL here) is not authorised for Azure Resource Manager.
@@ -523,17 +528,25 @@ function Initialize-OPIMAuth {
             return
         }
         [string]$SessionObjectId = [string]$script:_OPIMAuthState.ObjectId
+        # SEC (A3): an ARM token is kept only for the account of the Graph session, so a session that
+        # records no account can keep none. Refused before Get-AzToken, so no AzAuth sign-in is shown
+        # for a token that would be refused.
+        if (-not $SessionObjectId) {
+            Write-CmdletError -ErrorRecord (New-OPIMAccountMismatchError -RequestedTenant $ArmTenant -Unreadable) -Cmdlet $PSCmdlet -Terminating
+            return
+        }
 
         # Silent reuse only for the same tenant and the same account with more than 5 minutes left.
         [bool]$ArmCached = -not $ForceRefresh -and
             ($null -ne $script:_OPIMAuthState.ArmToken) -and
             $script:_OPIMAuthState.ArmTokenExpiry -gt [DateTime]::UtcNow.AddMinutes(5) -and
             [string]$script:_OPIMAuthState.ArmTokenTenantId -eq $ArmTenant -and
-            [bool]$SessionObjectId -and
             [string]$script:_OPIMAuthState.ArmTokenObjectId -eq $SessionObjectId
 
         if (-not $ArmCached) {
-            $ArmTokenParams = @{ Resource = $ArmResource; Tenant = $ArmTenant; ErrorAction = 'Stop' }
+            # TimeoutSeconds: AzAuth stops waiting for the sign-in after 120 seconds by default, much less
+            # than a device code lives (15 minutes), so the sign-in waits as long as the code can be used.
+            $ArmTokenParams = @{ Resource = $ArmResource; Tenant = $ArmTenant; TimeoutSeconds = 900; ErrorAction = 'Stop' }
             if ($UseDeviceCode) { $ArmTokenParams.DeviceCode = $true } else { $ArmTokenParams.Interactive = $true }
             # AzAuth keeps one credential per process (EntraRBAC A6 rule). -Force rebuilds it: on a forced
             # refresh, and on the first ARM sign-in of a session -- after Disconnect-OPIM, or when the
@@ -546,9 +559,16 @@ function Initialize-OPIMAuth {
                 Remove-OPIMErrorRecord -Record $PSItem
                 # Terminating, and the calling command stays latched (EntraRBAC A19), so its ARM requests
                 # are refused with SignInRefused. The AzAuth message only: no inner exception, and the
-                # session tenant as the target object.
+                # session tenant as the target object. A Get-AzToken that cannot be found at all means
+                # AzAuth is missing, or did not load (it needs PowerShell 7.4), and the message says so.
+                $AzureFailure = if ($PSItem.Exception -is [System.Management.Automation.CommandNotFoundException] -or
+                    ([string]$PSItem.FullyQualifiedErrorId).StartsWith('CommandNotFoundException', [System.StringComparison]::Ordinal)) {
+                    'Azure connection failed: the AzAuth module is not installed or could not be loaded. Install AzAuth 2.9.0 from the PowerShell Gallery; it needs PowerShell 7.4 or later.'
+                } else {
+                    "Azure connection failed: $($PSItem.Exception.Message)"
+                }
                 Write-CmdletError `
-                    -Message ([System.Exception]::new("Azure connection failed: $($PSItem.Exception.Message)")) `
+                    -Message ([System.Exception]::new($AzureFailure)) `
                     -ErrorId 'AzureConnectFailed' `
                     -Category AuthenticationError `
                     -TargetObject $ArmTenant `
@@ -572,23 +592,30 @@ function Initialize-OPIMAuth {
             $ArmResult = $null
 
             # SEC (A3, OPIM-47): the ARM token must be for the tenant AND the account of the Graph
-            # session. Refused before it reaches the auth state, so no ARM request ever carries it.
+            # session. Refused before it reaches the auth state, so no ARM request ever carries it. The
+            # account is read only once the tenant matched.
             [string]$ArmTokenTenant = Get-OPIMTokenTenantId -AccessToken $SecureArmToken
-            if (-not $ArmTokenTenant) {
-                Write-CmdletError -ErrorRecord (New-OPIMTenantMismatchError -RequestedTenant $ArmTenant -Source Azure -Unreadable) -Cmdlet $PSCmdlet -Terminating
-                return
+            [string]$ArmTokenObject = ''
+            $ArmTokenRefusal = if (-not $ArmTokenTenant) {
+                New-OPIMTenantMismatchError -RequestedTenant $ArmTenant -Source Azure -Unreadable
+            } elseif ($ArmTokenTenant -ne $ArmTenant) {
+                New-OPIMTenantMismatchError -RequestedTenant $ArmTenant -Source Azure
+            } else {
+                $ArmTokenObject = Get-OPIMTokenObjectId -AccessToken $SecureArmToken
+                if (-not $ArmTokenObject) {
+                    New-OPIMAccountMismatchError -RequestedTenant $ArmTenant -Unreadable
+                } elseif ($ArmTokenObject -ne $SessionObjectId) {
+                    New-OPIMAccountMismatchError -RequestedTenant $ArmTenant
+                }
             }
-            if ($ArmTokenTenant -ne $ArmTenant) {
-                Write-CmdletError -ErrorRecord (New-OPIMTenantMismatchError -RequestedTenant $ArmTenant -Source Azure) -Cmdlet $PSCmdlet -Terminating
-                return
-            }
-            [string]$ArmTokenObject = Get-OPIMTokenObjectId -AccessToken $SecureArmToken
-            if (-not $ArmTokenObject -or -not $SessionObjectId) {
-                Write-CmdletError -ErrorRecord (New-OPIMAccountMismatchError -RequestedTenant $ArmTenant -Unreadable) -Cmdlet $PSCmdlet -Terminating
-                return
-            }
-            if ($ArmTokenObject -ne $SessionObjectId) {
-                Write-CmdletError -ErrorRecord (New-OPIMAccountMismatchError -RequestedTenant $ArmTenant) -Cmdlet $PSCmdlet -Terminating
+            if ($null -ne $ArmTokenRefusal) {
+                # A refused token drops the ARM token the state held as well: AzAuth's credential just
+                # answered for another tenant or account, so the next -IncludeARM sign-in rebuilds it
+                # (-Force) instead of reusing it, and no earlier ARM token outlives the refusal.
+                foreach ($ArmKey in 'ArmToken', 'ArmTokenExpiry', 'ArmTokenTenantId', 'ArmTokenObjectId', 'ArmResourceUrl') {
+                    $script:_OPIMAuthState[$ArmKey] = $null
+                }
+                Write-CmdletError -ErrorRecord $ArmTokenRefusal -Cmdlet $PSCmdlet -Terminating
                 return
             }
 

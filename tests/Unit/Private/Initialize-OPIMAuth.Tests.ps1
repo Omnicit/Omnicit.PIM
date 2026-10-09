@@ -388,6 +388,22 @@ Describe 'Initialize-OPIMAuth' {
                 Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
             }
 
+            It 'waits 900 seconds for the Azure sign-in, as long as a device code lives, in <Mode>' -ForEach @(
+                @{ Mode = 'device code mode'; DeviceCode = $true }
+                @{ Mode = 'the system browser'; DeviceCode = $false }
+            ) {
+                # AzAuth stops waiting after 120 seconds by default, much less than a device code lives.
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $State.DeviceCode = $DeviceCode
+                InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    Initialize-OPIMAuth -IncludeARM
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter { $TimeoutSeconds -eq 900 }
+            }
+
             It 'refuses ARM with TenantMismatch, before any Get-AzToken, when the state records no tenant' {
                 # A state the module built always records the token's tenant; one without it is refused
                 # rather than signed in to Azure without a tenant.
@@ -540,9 +556,9 @@ Describe 'Initialize-OPIMAuth' {
                 Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
             }
 
-            It 'never reuses a cached token for a session that records no account' {
-                # Two unknown accounts are not the same account: the call is made, and the oid check
-                # after it refuses.
+            It 'never reuses a cached token for a session that records no account, and shows no sign-in for one' {
+                # Two unknown accounts are not the same account, and no ARM token can be kept for a
+                # session without one: AccountMismatch before Get-AzToken, so AzAuth shows no sign-in.
                 $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
                 $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId ''
                 $State.ArmTokenObjectId = $null
@@ -551,8 +567,10 @@ Describe 'Initialize-OPIMAuth' {
                     $script:_OPIMAuthState = $State
                     try { Initialize-OPIMAuth -IncludeARM } catch { $PSItem }
                 }
-                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 0 -Scope It
                 $Caught.FullyQualifiedErrorId | Should -BeLike 'AccountMismatch*'
+                $Caught.Exception.Message | Should -BeLike 'The account of the Azure Resource Manager token could not be read*'
+                $Caught.TargetObject | Should -BeExactly $TenantA
             }
         }
 
@@ -561,11 +579,13 @@ Describe 'Initialize-OPIMAuth' {
             # calling command latched. The command is a module-scope test function with a try of its
             # own, so it carries on and reads the latch after the refusal.
             It 'refuses a token for <Name> with <ErrorId>, stores nothing and keeps the caller latched' -ForEach @(
-                @{ Name = 'another tenant'; Fixture = @{ ArmTid = 'bbbbbbbb-0000-0000-0000-00000000000b' }; NoSessionOid = $false; ErrorId = 'TenantMismatch'; Message = 'The Azure Resource Manager token was issued for another tenant than *' }
-                @{ Name = 'no readable tenant'; Fixture = @{ ArmNoTid = $true }; NoSessionOid = $false; ErrorId = 'TenantMismatch'; Message = 'The tenant of the Azure Resource Manager token could not be read*' }
-                @{ Name = 'another account'; Fixture = @{ ArmOid = '33333333-3333-3333-3333-333333333333' }; NoSessionOid = $false; ErrorId = 'AccountMismatch'; Message = 'The Azure Resource Manager token was issued to another account*' }
-                @{ Name = 'no readable account'; Fixture = @{ ArmNoOid = $true }; NoSessionOid = $false; ErrorId = 'AccountMismatch'; Message = 'The account of the Azure Resource Manager token could not be read*' }
-                @{ Name = 'a session that records no account'; Fixture = @{}; NoSessionOid = $true; ErrorId = 'AccountMismatch'; Message = 'The account of the Azure Resource Manager token could not be read*' }
+                @{ Name = 'another tenant'; Fixture = @{ ArmTid = 'bbbbbbbb-0000-0000-0000-00000000000b' }; NoSessionOid = $false; ErrorId = 'TenantMismatch'; Message = 'The Azure Resource Manager token was issued for another tenant than *'; Calls = 1 }
+                @{ Name = 'no readable tenant'; Fixture = @{ ArmNoTid = $true }; NoSessionOid = $false; ErrorId = 'TenantMismatch'; Message = 'The tenant of the Azure Resource Manager token could not be read*'; Calls = 1 }
+                @{ Name = 'another account'; Fixture = @{ ArmOid = '33333333-3333-3333-3333-333333333333' }; NoSessionOid = $false; ErrorId = 'AccountMismatch'; Message = 'The Azure Resource Manager token was issued to another account*'; Calls = 1 }
+                @{ Name = 'no readable account'; Fixture = @{ ArmNoOid = $true }; NoSessionOid = $false; ErrorId = 'AccountMismatch'; Message = 'The account of the Azure Resource Manager token could not be read*'; Calls = 1 }
+                # Refused before Get-AzToken: no ARM token can be kept for a session without an account,
+                # so no AzAuth sign-in is shown for one.
+                @{ Name = 'a session that records no account'; Fixture = @{}; NoSessionOid = $true; ErrorId = 'AccountMismatch'; Message = 'The account of the Azure Resource Manager token could not be read*'; Calls = 0 }
             ) {
                 foreach ($Entry in $Fixture.GetEnumerator()) {
                     Set-Variable -Scope Script -Name $Entry.Key -Value $Entry.Value
@@ -595,7 +615,60 @@ Describe 'Initialize-OPIMAuth' {
                     $Result.State[$Key] | Should -BeNullOrEmpty -Because "nothing of a refused token may be stored ($Key)"
                 }
                 $Result.Refusal | Should -BeExactly 'Invoke-ArmSignInCommand'
+                if ($Calls -eq 0) {
+                    Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 0 -Scope It
+                } else {
+                    Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times $Calls -Exactly -Scope It
+                }
+            }
+
+            It 'drops the ARM token the state held when it refuses a new token for <Name>, and rebuilds the credential on the next sign-in' -ForEach @(
+                @{ Name = 'another tenant'; Fixture = @{ ArmTid = 'bbbbbbbb-0000-0000-0000-00000000000b' }; ErrorId = 'TenantMismatch' }
+                @{ Name = 'no readable tenant'; Fixture = @{ ArmNoTid = $true }; ErrorId = 'TenantMismatch' }
+                @{ Name = 'another account'; Fixture = @{ ArmOid = '33333333-3333-3333-3333-333333333333' }; ErrorId = 'AccountMismatch' }
+                @{ Name = 'no readable account'; Fixture = @{ ArmNoOid = $true }; ErrorId = 'AccountMismatch' }
+            ) {
+                # The state holds an ARM token of the session's own tenant and account with 4 minutes
+                # left, so the first call acquires a new one WITHOUT -Force -- and that one is refused.
+                # AzAuth's credential has just answered for another tenant or account: the refusal drops
+                # the held token too, so the next sign-in rebuilds the credential (-Force).
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid -Expiry ([DateTime]::UtcNow.AddMinutes(4))
+                foreach ($Entry in $Fixture.GetEnumerator()) {
+                    Set-Variable -Scope Script -Name $Entry.Key -Value $Entry.Value
+                }
+                $First = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    function Invoke-ArmSignInCommand {
+                        $Result = @{}
+                        try { Initialize-OPIMAuth -IncludeARM } catch { $Result.SignIn = $PSItem }
+                        $Result.State = $script:_OPIMAuthState
+                        $Result
+                    }
+                    Invoke-ArmSignInCommand
+                }
+                $First.SignIn.FullyQualifiedErrorId | Should -BeLike "$ErrorId*"
+                foreach ($Key in 'ArmToken', 'ArmTokenExpiry', 'ArmTokenTenantId', 'ArmTokenObjectId', 'ArmResourceUrl') {
+                    $First.State.ContainsKey($Key) | Should -BeTrue
+                    $First.State[$Key] | Should -BeNullOrEmpty -Because "a refused token drops the ARM token the state held ($Key)"
+                }
                 Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 0 -Scope It -ParameterFilter { $Force }
+
+                # The next sign-in, of a new command: AzAuth now answers for the session's tenant and account.
+                Reset-ArmTestFixture
+                $Next = InModuleScope Omnicit.PIM {
+                    function Invoke-NextSignInCommand {
+                        Initialize-OPIMAuth -IncludeARM
+                        $script:_OPIMAuthState
+                    }
+                    Invoke-NextSignInCommand
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 2 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter { $Force }
+                $Next.ArmToken | Should -BeOfType [securestring]
+                $Next.ArmTokenObjectId | Should -BeExactly $SessionOid
             }
         }
 
@@ -628,6 +701,42 @@ Describe 'Initialize-OPIMAuth' {
                 $Result.State.ArmTokenTenantId | Should -BeNullOrEmpty
                 $Result.Refusal | Should -BeExactly 'Invoke-ArmSignInCommand'
                 Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+            }
+
+            It 'says that AzAuth is missing when Get-AzToken cannot be found (<Name>)' -ForEach @(
+                @{ Name = 'the error a missing command raises'; Shape = 'Missing' }
+                @{ Name = 'a CommandNotFoundException under another error id'; Shape = 'Exception' }
+                @{ Name = 'the CommandNotFoundException error id with another exception'; Shape = 'ErrorId' }
+            ) {
+                $script:MissingShape = $Shape
+                Mock -ModuleName Omnicit.PIM Get-AzToken {
+                    $Missing = [System.Management.Automation.CommandNotFoundException]::new("The term 'Get-AzToken' is not recognized as a name of a cmdlet, function, script file, or executable program.")
+                    switch ($script:MissingShape) {
+                        'Missing' { throw $Missing }
+                        'Exception' {
+                            $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                                    $Missing, 'GetAzTokenFailed', [System.Management.Automation.ErrorCategory]::ObjectNotFound, $null))
+                        }
+                        'ErrorId' {
+                            $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                                    [System.Exception]::new("The term 'Get-AzToken' is not recognized."), 'CommandNotFoundException',
+                                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, $null))
+                        }
+                    }
+                }
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $Caught = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    try { Initialize-OPIMAuth -IncludeARM } catch { $PSItem }
+                }
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'AzureConnectFailed*'
+                $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+                $Caught.Exception.Message | Should -BeExactly 'Azure connection failed: the AzAuth module is not installed or could not be loaded. Install AzAuth 2.9.0 from the PowerShell Gallery; it needs PowerShell 7.4 or later.'
+                $Caught.Exception.InnerException | Should -BeNullOrEmpty
+                $Caught.TargetObject | Should -BeExactly $TenantA
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                $script:MissingShape = $null
             }
 
             It 'throws AzureConnectFailed when Get-AzToken returns no token, and keeps the caller latched' {
@@ -1549,6 +1658,9 @@ namespace OPIMTest {
                 $Element | Should -BeOfType [System.Management.Automation.Language.CommandAst]
                 $Element.InvocationOperator | Should -Be ([System.Management.Automation.Language.TokenKind]::Ampersand)
                 $Element.CommandElements[0] | Should -BeOfType [System.Management.Automation.Language.ScriptBlockExpressionAst]
+                # No param block either: a pipeline parameter of the script block would bind the token
+                # object, and module logging records every bound value.
+                $Element.CommandElements[0].ScriptBlock.ParamBlock | Should -BeNullOrEmpty
             }
             @($Pipelines | ForEach-Object { $_.PipelineElements } | Where-Object {
                     $_ -is [System.Management.Automation.Language.CommandAst] -and
@@ -2121,7 +2233,6 @@ namespace OPIMTest {
                 }
                 Mock Connect-MgGraph {}
                 Mock Invoke-MgGraphRequest { @{ id = 'me-001' } }
-                Mock Get-AzContext {}
                 Mock Get-MgContext { $null }
             }
         }
@@ -2204,6 +2315,9 @@ namespace OPIMTest {
             InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; ArmToken = $ArmToken; TenantA = $TenantA } {
                 param($Token, $ArmToken, $TenantA)
                 $script:_OPIMTestToken = $Token
+                # Mocked here only, for the -Times 0 guard below beside its positive control (one
+                # Connect-MgGraph): no other test of this context reads it.
+                Mock Get-AzContext {}
                 function Invoke-SignedInCommand {
                     Initialize-OPIMAuth -TenantId $TenantA
                     $script:_OPIMAuthState.ArmToken = $ArmToken
