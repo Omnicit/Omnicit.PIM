@@ -81,10 +81,10 @@ Describe 'Changelog Management' -Tag 'Changelog' {
             The floor on the release-note BODY -- the section after its heading line, trimmed.
             About one sentence. It exists to catch a MECHANICAL failure, not a thin note: an
             emptied or hand-converted Unreleased section publishes ReleaseNotes of length 0 while
-            the build reports success (measured in Omnicit.EntraRBAC on 2026-09-17). Whether the
-            text is any good is decided in review, which no length floor can do: filler of any
-            length passes one.
-            See "## CHANGELOG and Version" in CLAUDE.md.
+            the build reports success (measured in this repository on 2026-10-09 with Sampler
+            0.120.1: the build succeeded and the built manifest's ReleaseNotes were empty). Whether
+            the text is any good is decided in review, which no length floor can do: filler of any
+            length passes one. See "## CHANGELOG and Version" in CLAUDE.md.
         #>
         $releaseNoteBodyMinimumLength = 50
 

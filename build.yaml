@@ -146,9 +146,9 @@ Pester:
   #  - FunctionalQuality
   #  - TestQuality
   Tag:
-  # Lowered from 85 to 80: Invoke-GraphWithAcrsRetry contains ~100 lines of
-  # MSAL reflection code (assembly lookup, token builder, interactive auth)
-  # that cannot be exercised without a live MSAL runtime in the test process.
+  # Lowered from 85 to 80: the MSAL reflection in Get-OPIMMsalApplication builds a real MSAL client,
+  # so no unit test runs it (see "Testing Conventions" in CLAUDE.md); the threshold stays at 80
+  # while the measured margin is wide (see "Build and Test Commands" in CLAUDE.md).
   CodeCoverageThreshold: 80 # Set to 0 to bypass
   #CodeCoverageOutputFile: JaCoCo_$OsShortName.xml
   #CodeCoverageOutputFileEncoding: ascii

@@ -488,7 +488,9 @@ preview number each. A bump message does move it: the minor bump token in the bo
 took the base `v0.5.2-preview0002` to `0.6.0-preview0001`. From the stable base `v0.5.1`, measured
 on 2026-10-05, `feat/x` built `0.6.0-x0001`, a `fix/` branch `0.5.2-fix...` and a `chore/` branch
 `0.5.2-chore...`. GitVersion 5.12 also needs a resolvable `main` ref to compute anything on a
-branch that matches no configuration, so a clone without one cannot build such a branch.
+branch that matches no configuration, so a clone without one cannot build such a branch. Create the
+local branch without checking it out, after a `git fetch origin` when `origin/main` is missing too:
+`git branch --track main origin/main`.
 
 **Do not create a version tag, or a `release/x.y.z` branch, outside a deliberate release.** Any
 newer tag becomes the base, and one sitting on HEAD ships verbatim whatever its value. GitVersion's
