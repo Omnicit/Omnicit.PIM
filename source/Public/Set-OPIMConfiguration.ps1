@@ -11,7 +11,7 @@ function Set-OPIMConfiguration {
 
     Categories not supplied via pipeline retain their existing stored values, and so does the
     stored cloud when -Environment is omitted, a cloud Omnicit.PIM does not know included, except
-    a stored Global, which means the same as none and is dropped: Set changes only what it is
+    a stored Global, which means the same as none and is dropped: Set changes no cloud it is not
     asked to. -Environment Global removes the stored cloud, since the global cloud is the default
     and is not written. To remove a stored list for a category, use Remove-OPIMConfiguration
     followed by Install-OPIMConfiguration, or edit the TenantMap.psd1 file directly.

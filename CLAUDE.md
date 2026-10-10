@@ -1510,8 +1510,9 @@ since `Global` is never written -- an alias without the key is `Global` too, so 
 it is not asked to -- and `-Environment Global` removes the key. The confirmation prompt of both
 names the cloud the alias will store (`in cloud '<cloud>'`, `Global` when it stores none).
 `Get-OPIMConfiguration` shows the stored value as written and `Global` for an alias that stores
-none. A 0.6.x module ignores the key and writes the file back without it (so do the 0.7.0 previews
-before this one), and this version then signs in to `Global` for those aliases.
+none. A 0.6.x module ignores the key and writes the file back without it (so do 0.7.0-preview0001
+to 0.7.0-preview0003; preview0004 reads and writes it), and this version then signs in to `Global`
+for those aliases.
 
 **The stored keys (OPIM-10, A13, OPIM-22).** `DirectoryRoles` holds
 `roleDefinitionId|directoryScopeId`, `EntraIDGroups` holds `groupId_accessId`, and `AzureRoles` the

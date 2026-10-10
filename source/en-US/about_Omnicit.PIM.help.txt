@@ -138,8 +138,8 @@ LONG DESCRIPTION
     does not know is an error, and nothing is signed in. A 0.6.x module ignores the key and signs
     in to the global cloud, where a sovereign tenant does not exist. It also writes the map back
     without the key of every alias whenever it changes it (Install-, Set- or
-    Remove-OPIMConfiguration), as do the earlier 0.7.0 previews, and this version then signs in
-    to Global for those aliases.
+    Remove-OPIMConfiguration), as do 0.7.0-preview0001 to 0.7.0-preview0003, and this version
+    then signs in to Global for those aliases.
 
     AzAuth has no authority parameter; Azure.Identity reads the AZURE_AUTHORITY_HOST environment
     variable. For a sovereign cloud the module sets it only around the Azure sign-in and puts it
