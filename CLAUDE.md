@@ -910,11 +910,11 @@ token-rejected retry -- a refresh and a third send. On a failure:
    throws when it gives up, which holds one exception per attempt, oldest first. The newest response
    decides: the walk takes the attempts newest first, and the first status it finds and that same
    exception's own `Retry-After` are the ones used, never a header borrowed from another exception.
-   `Retry-After` is the only header ever read. The loop wraps only the first attempt: the claims
-   step-up and the refresh below run on the last attempt's failure, once each, and a bound that is
-   reached ends the request with the converted error of item 4, so a `-All` read fails whole. One
-   verbose line per retry names the status, the wait, its source and the budgets, never a header or
-   the uri.
+   `Retry-After` is the only header the throttle step reads. The loop wraps only the first attempt:
+   the claims step-up and the refresh below run on the last attempt's failure, once each, and a
+   bound that is reached ends the request with the converted error of item 4, so a `-All` read fails
+   whole. One verbose line per retry names the status, the wait, its source and the budgets, never a
+   header or the uri.
 2. **ACRS claims-challenge retry.** It looks for `claims=` in the `WWW-Authenticate` header, the
    response body and the exception message, and decodes the value as URL-encoded JSON (the PIM 400
    `RoleAssignmentRequestAcrsValidationFailed` body form), base64url JSON (the 401 step-up header

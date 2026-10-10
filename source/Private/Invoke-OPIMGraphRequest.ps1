@@ -50,19 +50,19 @@ function Invoke-OPIMGraphRequest {
 
     6. Paging (OPIM-13): with -All it follows @odata.nextLink until a page carries none and returns
        one response, @{ value = <the items of every page> }. Every page is one request through the
-       five layers above. A page that fails throws its own error -- never a shorter list -- with
-       three note properties on the record's Exception: PartialValue (the items of the pages read
-       before it), NextLink (the URI of the failed page) and PageNumber (its number, from 1). A
-       later page that comes back with no body is a failed read as well: it throws an error with no
-       error id (category InvalidResult) and the same three facts, since the list is incomplete. A
-       first page with no body is an empty list. A next link is followed only when it is an
-       absolute https URI on the host of the first request (OPIM-46): the host of -Uri when that
-       is an absolute https URI, else graph.microsoft.com. Any other link would carry the session's
-       bearer token to another host, so it is never sent: the same kind of error is thrown, with
-       no error id (category SecurityError), the same three facts (PageNumber is the page that
-       would have been read) and a message that names neither the link nor its host. The verbose
-       stream names a page by its number and item count, never by its link, which can carry a skip
-       token.
+       five layers above and the throttling of item 7. A page that fails throws its own error --
+       never a shorter list -- with three note properties on the record's Exception: PartialValue
+       (the items of the pages read before it), NextLink (the URI of the failed page) and PageNumber
+       (its number, from 1). A later page that comes back with no body is a failed read as well: it
+       throws an error with no error id (category InvalidResult) and the same three facts, since the
+       list is incomplete. A first page with no body is an empty list. A next link is followed only
+       when it is an absolute https URI on the host of the first request (OPIM-46): the host of -Uri
+       when that is an absolute https URI, else graph.microsoft.com. Any other link would carry the
+       session's bearer token to another host, so it is never sent: the same kind of error is
+       thrown, with no error id (category SecurityError), the same three facts (PageNumber is the
+       page that would have been read) and a message that names neither the link nor its host. The
+       verbose stream names a page by its number and item count, never by its link, which can carry
+       a skip token.
 
     7. Throttling (OPIM-28): a request Microsoft Graph throttles is sent again after a bounded wait,
        with the rules of the ARM transport (A5). A 429 is always waited out; a 503 only when it
@@ -198,7 +198,8 @@ function Invoke-OPIMGraphRequest {
     # RetryAfter: the header is read from THAT exception only (its ResponseHeaders, else its own
     # Response.Headers), never borrowed from another one. A stale header from an earlier attempt would
     # make the wrapper wait for a throttle Graph has since replaced. The raw header value is parsed by
-    # ConvertFrom-GraphRetryAfterHeader, its only reader; no other header is ever read.
+    # ConvertFrom-GraphRetryAfterHeader, its only reader; no other header is read for the throttle
+    # decision (Get-ClaimsFromException reads WWW-Authenticate for the claims step-up).
     #
     # Statuses holds the status of EVERY status-carrying exception the walk visits, so that
     # Get-GraphThrottleDelay can refuse to send a write again when ANY recorded response was not a 429.

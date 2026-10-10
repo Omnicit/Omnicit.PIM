@@ -24,7 +24,7 @@ BeforeAll {
         $Response.RequestMessage = $Request
         $Response.Content = [System.Net.Http.StringContent]::new($Content)
         if ($RetryAfter) { $null = $Response.Headers.TryAddWithoutValidation('Retry-After', $RetryAfter) }
-        $Exception =[Microsoft.PowerShell.Commands.HttpResponseException]::new('Response status code does not indicate success.', $Response)
+        $Exception = [Microsoft.PowerShell.Commands.HttpResponseException]::new('Response status code does not indicate success.', $Response)
         [pscustomobject]@{
             Request = $Request
             Record  = [System.Management.Automation.ErrorRecord]::new($Exception, 'HttpFail', 'InvalidOperation', $Request)
@@ -751,6 +751,21 @@ Describe 'Invoke-OPIMGraphRequest' {
             # The newest answer is a 429, but the 503 before it may have come after Graph acted.
             $Failure = New-KiotaAttempts -Attempt @(
                 @{ StatusCode = 503; Header = @{ 'Retry-After' = '5' }; Message = $script:UnavailableMessage }
+                @{ StatusCode = 429; Header = @{ 'Retry-After' = '3' }; Message = $script:TooManyMessage }
+            )
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Failure) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                { Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{ action = 'selfActivate' } } | Should -Throw
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 0 -Scope It
+            }
+        }
+
+        It 'does not send a POST again when an earlier recorded attempt was a 504' {
+            # A 504 can come after Graph acted as well; only a chain of 429s lets a write go again.
+            $Failure = New-KiotaAttempts -Attempt @(
+                @{ StatusCode = 504; Header = @{ 'Retry-After' = '5' }; Message = 'HTTP request failed with status code: GatewayTimeout.{"error":{"code":"GatewayTimeout","message":"Gateway timeout."}}' }
                 @{ StatusCode = 429; Header = @{ 'Retry-After' = '3' }; Message = $script:TooManyMessage }
             )
             InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Failure) } {
