@@ -107,7 +107,7 @@ Describe 'Omnicit.PIM.Types.ps1xml' {
             $Fake = New-TypedFake -TypeName $TypeName -Notes @{ id = 'fake-001' }
             $Value = $Fake.$Property
             if ($null -eq $Expected) {
-                $Value | Should -BeNull
+                $null -eq $Value | Should -BeTrue -Because 'without the note the echo returns $null, not an empty string'
             } else {
                 $Value | Should -BeExactly $Expected
             }
@@ -138,7 +138,7 @@ Describe 'Omnicit.PIM.Types.ps1xml' {
 
         It 'returns null from EndDateTime of a <TypeName> whose endDateTime note is null' -ForEach $script:NullEndCases {
             $Fake = New-TypedFake -TypeName $TypeName -Notes $Notes
-            $Fake.EndDateTime | Should -BeNull
+            $null -eq $Fake.EndDateTime | Should -BeTrue -Because 'the null note shadows the ScriptProperty, so the value is $null, not an empty string'
         }
 
         It 'formats a <TypeName> with the notes as a table' -ForEach $script:NoteCases.Where({ $_.Property -eq 'EndDateTime' }) {
