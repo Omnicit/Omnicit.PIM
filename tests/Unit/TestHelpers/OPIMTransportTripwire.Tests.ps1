@@ -530,6 +530,30 @@ Describe 'OPIMTransportTripwire' {
         }
     }
 
+    # Uninstalls too, so it puts the tripwire back in a finally, like the one below. A marked function
+    # left in the module scope is not a global replacement and the uninstall does not remove it; the
+    # leftover check has to report it, and this proves that half of the check.
+    It 'reports a marked function left in the module scope as still defined after uninstall' {
+        $Carry = Get-TripwireKnownAnswerCarry
+        $Module = Get-Module -Name Omnicit.PIM | Select-Object -First 1
+        try {
+            & $Module { Set-Item -Path 'function:script:Invoke-MgGraphRequest' -Value ([scriptblock]::Create('# OPIM-TRANSPORT-TRIPWIRE planted by the test')) }
+            $Planted = Resolve-TripwireKnownAnswerCommand -Name 'Invoke-MgGraphRequest' -CommandType Function
+            Test-OPIMTransportTripwireFunction -Command $Planted | Should -BeTrue
+            $Planted.ScriptBlock.ToString() | Should -BeLike '*planted by the test*' -Because 'the module scope has to hold the planted function, or the uninstall below proves nothing'
+
+            { Uninstall-OPIMTransportTripwire } | Should -Throw -ExpectedMessage '*still defined after uninstall: Invoke-MgGraphRequest*'
+        } finally {
+            # Unqualified, as the helper explains: the nearest definition from here is the planted one.
+            & $Module { Remove-Item -Path 'function:Invoke-MgGraphRequest' -ErrorAction SilentlyContinue }
+            Install-OPIMTransportTripwire
+            Restore-TripwireKnownAnswerCarry -Carry $Carry
+        }
+        $Resolved = Resolve-TripwireKnownAnswerCommand -Name 'Invoke-MgGraphRequest' -CommandType Function
+        Test-OPIMTransportTripwireFunction -Command $Resolved | Should -BeTrue
+        $Resolved.ScriptBlock.ToString() | Should -Not -BeLike '*planted by the test*' -Because 'the planted function has to be gone from the module scope'
+    }
+
     # LAST in the file: it uninstalls, and puts the tripwire back in a finally.
     It 'restores the real commands and removes the runspace form on uninstall, and puts the tripwire back on install' -ForEach @(@{ ExpectedSpecs = $script:Expected }) {
         @($ExpectedSpecs).Count | Should -Be 7
