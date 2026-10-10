@@ -232,7 +232,10 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   through any module function it calls -- every `catch` starts with
   `Remove-OPIMErrorRecord -Record $PSItem`, with floors on the files and catches scanned and the
   exact catch count of `Invoke-OPIMGraphRequest.ps1` as its named control. The six completer
-  classes are outside that call closure (see **Error Handling**). And the Az boundary (decision
+  classes are inside that call closure, through its run-string edge -- a command in a constant
+  string handed to `[scriptblock]::Create` is a call, so the `Get-OPIM*` listing each class runs
+  puts it on a transport path -- and a second named control holds all six there, beside a
+  known-answer `It` for the edge (see **Error Handling**). And the Az boundary (decision
   A7): on the AST of every `.ps1`, `.psm1` and `.psd1` under `source/`, the manifest included, it
   refuses three shapes -- a command whose static name matches `-Az` or is qualified with an Az
   module, other than AzAuth's `Get-AzToken` (bare or `AzAuth\`-qualified), the one entry of its
@@ -1751,11 +1754,14 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   in `Initialize-OPIMAuth` sits in a `try` whose `catch` scrubs first and rethrows, AzAuth's
   `Get-AzToken` runs inside the `try` around its nested `Invoke-OPIMAzTokenCall`, and
   `Invoke-WebRequest` inside the one in `Invoke-OPIMArmSingle` -- so wrap any new raw call. And its
-  call closure follows command names and string constants that name a PRIVATE function, never a
-  public name in a string, so the six completer classes, which reach the
-  `Get-OPIM*` cmdlets through `[scriptblock]::Create('Get-OPIM...')`, are outside it: their catches
-  print the message with `Write-Host` and do not scrub. Any request behind the error they catch was
-  already scrubbed by the catch inside the cmdlet that failed.
+  call closure follows command names, string constants that name a PRIVATE function, and every
+  command in a constant string handed to `[scriptblock]::Create`, public or private, since that
+  string is run -- but never a public name in a plain string, a string built at run time or one
+  run by `Invoke-Expression`, so review has to catch a call made that way. The run-string edge is
+  what brings the six completer classes inside the closure: they reach the `Get-OPIM*` cmdlets
+  through `[scriptblock]::Create('Get-OPIM...')`, and their catches scrub first, like every other,
+  before they print the message with `Write-Host`. A request behind the error they catch has
+  normally been scrubbed already by a catch inside the cmdlet that failed; theirs makes sure of it.
 - **Error flow patterns:**
   ```powershell
   # In process blocks (single-item cmdlets: Disable-*, Get-*): use return

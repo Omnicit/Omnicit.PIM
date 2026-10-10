@@ -147,10 +147,10 @@ BeforeAll {
     $script:ScrubExemptions = @{}
 
     <#
-        The floors sit just under the counts measured on 2026-10-07, after every catch in a
-        transport-reaching file was made to scrub first and the Connect-MgGraph hand-off in
-        Initialize-OPIMAuth was wrapped: 20 transport-reaching files under source/ holding 30 of the
-        52 catch clauses in source/. The named control,
+        The floors sit just under the counts measured on 2026-10-10, after the six completer classes
+        under source/Classes joined the closure through the run-string edge (below) and their
+        catches were made to scrub first: 26 transport-reaching files under source/, the six classes
+        among them, holding 85 of the 103 catch clauses in source/. The named control,
         source/Private/Invoke-OPIMGraphRequest.ps1, is asserted with its EXACT count instead (9: the three in its nested
         Get-ClaimsFromException; the one in each of its nested Get-GraphResponseFact and
         Get-GraphRetryAfterHeaderValue, which read a failure's status and Retry-After in both
@@ -159,10 +159,54 @@ BeforeAll {
         OPIM-13), so a catch that stops being seen fails there with a clear cause instead of
         quietly shrinking a total.
     #>
-    $script:ScrubTransportFileFloor = 18
-    $script:ScrubCatchFloor = 28
+    $script:ScrubTransportFileFloor = 24
+    $script:ScrubCatchFloor = 83
     $script:ScrubControlPath = 'source/Private/Invoke-OPIMGraphRequest.ps1'
     $script:ScrubControlCatchCount = 9
+
+    <#
+        THE RUN-STRING EDGE. A constant string handed to [scriptblock]::Create is code its file runs,
+        so every command the string names is a call of that file, just as a command written out is.
+        That is how the six completer classes reach the Get-OPIM* cmdlets:
+        & ([scriptblock]::Create('Get-OPIMDirectoryRole -WarningAction SilentlyContinue')). Pass 1
+        collects those names per file with Get-SourceHygieneRunnableName, and Pass 2 makes an edge of
+        every one that names a module function, public or private.
+
+        KNOWN LIMITS: only a static call of Create on a type written [scriptblock] or
+        [System.Management.Automation.ScriptBlock] (in any letter case) whose first argument is a
+        constant string is read. A string built at run time ([scriptblock]::Create($Text), or an
+        expandable string that holds a variable), the type written another way
+        ([Management.Automation.ScriptBlock]), and a string run by Invoke-Expression or by & $Name
+        make no edge. Review has to catch those shapes; this pass cannot.
+    #>
+    function Get-SourceHygieneRunnableName {
+        <#
+        .SYNOPSIS
+        Returns the name of every command a parsed file runs through a constant string handed to
+        [scriptblock]::Create, in the order the strings and their commands appear.
+        #>
+        [OutputType([string])]
+        param(
+            [Parameter(Mandatory)]
+            [System.Management.Automation.Language.Ast]$Ast
+        )
+        foreach ($Node in $Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true)) {
+            if (-not $Node.Static) { continue }
+            if ($Node.Expression -isnot [System.Management.Automation.Language.TypeExpressionAst]) { continue }
+            $TypeName = $Node.Expression.TypeName.FullName
+            if (-not ([string]::Equals($TypeName, 'scriptblock', [System.StringComparison]::OrdinalIgnoreCase) -or
+                    [string]::Equals($TypeName, 'System.Management.Automation.ScriptBlock', [System.StringComparison]::OrdinalIgnoreCase))) { continue }
+            if ($Node.Member -isnot [System.Management.Automation.Language.StringConstantExpressionAst] -or
+                -not [string]::Equals($Node.Member.Value, 'Create', [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+            $Argument = @($Node.Arguments)[0]
+            if ($Argument -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) { continue }
+            $Inner = [System.Management.Automation.Language.Parser]::ParseInput($Argument.Value, [ref]$null, [ref]$null)
+            foreach ($Call in $Inner.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+                $Name = $Call.GetCommandName()
+                if (-not [string]::IsNullOrEmpty($Name)) { $Name }
+            }
+        }
+    }
 
     <#
         =====================================================================================
@@ -539,7 +583,9 @@ BeforeAll {
             source/Private/Remove-OPIMErrorRecord.ps1 carries the literal 'Invoke-MgGraphRequest
             @InvokeParams' inside its .EXAMPLE help block, and a grep would score it as a transport
             file. The AST never sees comment tokens. ONE FindAll walk collects the three node kinds
-            the passes below need; the walk count is what costs time, not the bucketing.
+            the passes below need; the walk count is what costs time, not the bucketing. The names
+            run through [scriptblock]::Create take one walk more, in Get-SourceHygieneRunnableName,
+            so the known-answer It runs the very code this pass runs.
         #>
         $Nodes = $FileAst.FindAll({
                 $args[0] -is [System.Management.Automation.Language.CommandAst] -or
@@ -579,6 +625,7 @@ BeforeAll {
                 IsPrivate      = [bool]($File.RelativePath -like 'source/Private/*')
                 CommandNames   = $CommandNames
                 StringValues   = $StringValues
+                RunnableNames  = @(Get-SourceHygieneRunnableName -Ast $FileAst)
                 Catches        = $Catches
                 CallsTransport = $CallsTransport
                 Edges          = $null
@@ -592,10 +639,12 @@ BeforeAll {
         transitively, any module function that does: a public cmdlet that reaches Graph only through
         Initialize-OPIMAuth or Get-OPIMCurrentTenantInfo receives the same records. A string
         constant naming a PRIVATE module function also counts as an edge, so a helper called through
-        a name held in a variable is not missed; a public name does not, since the completer classes
-        and the manifest name public cmdlets without being their callers. Comment-based help is a
-        comment token and never an AST expression, so a name that appears only in help creates no
-        edge.
+        a name held in a variable is not missed. A public name in a plain string is no edge (the
+        manifest names every public cmdlet), but a command in a string handed to
+        [scriptblock]::Create is one, public or private, since that string is run -- which is how
+        the six completer classes reach the Get-OPIM* cmdlets (the run-string edge, above Pass 1).
+        Comment-based help is a comment token and never an AST expression, so a name that appears
+        only in help creates no edge.
 
         Reachability is a FIXED-POINT iteration over a boolean, not a memoized depth-first walk: a
         DFS that caches results its own re-entry guard truncated can silently under-reach across a
@@ -618,6 +667,9 @@ BeforeAll {
         }
         foreach ($Value in $Unit.StringValues) {
             if ($script:PrivateFunctions.Contains($Value)) { $null = $Edges.Add($Value) }
+        }
+        foreach ($Name in $Unit.RunnableNames) {
+            if ($script:AllFunctions.Contains($Name)) { $null = $Edges.Add($Name) }
         }
         $Unit.Edges = $Edges
     }
@@ -807,9 +859,9 @@ exclude the file
             they sit under are in the BeforeAll.
         #>
         $script:ScrubTransportFiles.Count | Should -BeGreaterThan $script:ScrubTransportFileFloor -Because (
-            'source/ held 20 transport-reaching files on 2026-10-07; a scan at the floor or below has broken transport detection, not found fewer files. Found: {0}' -f ($script:ScrubTransportFiles -join ', '))
+            'source/ held 26 transport-reaching files on 2026-10-10, the six completer classes among them; a scan at the floor or below has broken transport detection, not found fewer files. Found: {0}' -f ($script:ScrubTransportFiles -join ', '))
         $script:ScrubCatchCount | Should -BeGreaterThan $script:ScrubCatchFloor -Because (
-            'those files held 30 of the 52 catch clauses in source/ on 2026-10-07; a count at the floor or below has broken the catch enumeration, not found fewer catches')
+            'those files held 85 of the 103 catch clauses in source/ on 2026-10-10; a count at the floor or below has broken the catch enumeration, not found fewer catches')
     }
 
     It 'counts every catch of the named control file' {
@@ -822,6 +874,49 @@ exclude the file
             Should -BeTrue -Because 'the Graph wrapper must be detected as a transport file; if it is not, transport detection is broken'
         $script:ScrubCatchByFile[$script:ScrubControlPath] | Should -Be $script:ScrubControlCatchCount -Because (
             'source/Private/Invoke-OPIMGraphRequest.ps1 holds {0} catch clauses, every one of them scrubbing first' -f $script:ScrubControlCatchCount)
+    }
+
+    It 'reaches the six completer classes through the commands their [scriptblock]::Create strings run' {
+        <#
+            The second named control. Each completer class lists through a Get-OPIM* cmdlet that it
+            names only inside a string handed to [scriptblock]::Create, so the classes are on a
+            transport path through the run-string edge of Pass 2 alone. The paths are read from
+            the files on disk, not from the parsed units, so a class that stopped parsing is
+            missing here as well as in the parse It above.
+        #>
+        $ClassPaths = @($script:HygieneFiles | Where-Object { $_.RelativePath -like 'source/Classes/*.ps1' } | ForEach-Object { $_.RelativePath })
+        $ClassPaths.Count | Should -Be 6 -Because 'source/Classes holds the six completer classes; fewer means the scan lost them, more means a class was added and this control must name it'
+        $Missing = @($ClassPaths | Where-Object { $script:ScrubTransportFiles -notcontains $_ })
+        $Missing -join ', ' | Should -BeNullOrEmpty -Because (
+            'a command in a string handed to [scriptblock]::Create is run, so it is a call; a class that lists through one is on a transport path and its catches must scrub first. Classes outside the closure')
+    }
+
+    It 'counts a command in a [scriptblock]::Create string as a call, and a public name in a plain string as none (known answer)' {
+        # The positive control of the run-string edge, run through the function Pass 1 calls. Line 1
+        # is the completers' own form and line 2 the full type name: both are calls. Line 3 is a
+        # public name in a plain string, which is no call. Line 4 hands Create a variable, whose
+        # text no parser can see. Line 5 writes the type and the method in other letter cases, which
+        # PowerShell resolves the same. Line 6 calls Create on an instance and line 7 on another
+        # type, and neither builds a script block from a constant: no call either.
+        $Text = @'
+$Listed = @(& ([scriptblock]::Create('Get-OPIMDirectoryRole -Activated')))
+$Group = [System.Management.Automation.ScriptBlock]::Create('Get-OPIMEntraIDGroup')
+$X = 'Get-OPIMAzureRole'
+$Run = [scriptblock]::Create($Variable)
+$Config = [ScriptBlock]::create('Get-OPIMConfiguration -TenantAlias contoso')
+$Again = $Factory.Create('Disable-OPIMMyRole')
+$Other = [string]::Create('Enable-OPIMMyRole')
+'@
+        $Errors = $null
+        $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$Errors)
+        $Errors | Should -BeNullOrEmpty -Because 'the known-answer text must parse, or it proves nothing'
+        @(Get-SourceHygieneRunnableName -Ast $Ast) | Should -Be @('Get-OPIMDirectoryRole', 'Get-OPIMEntraIDGroup', 'Get-OPIMConfiguration')
+
+        # The real-tree half of line 3: the source manifest names every public cmdlet in a plain
+        # string (FunctionsToExport) and runs none of them, so Pass 2 gives it no edge and it is on
+        # no transport path.
+        @($script:ScrubTransportFiles) | Should -Not -Contain 'source/Omnicit.PIM.psd1' -Because (
+            'a public name in a plain string is no call; the manifest lists the public cmdlets without running them')
     }
 
     It 'calls Remove-OPIMErrorRecord as the first statement of every catch on a transport path' {
