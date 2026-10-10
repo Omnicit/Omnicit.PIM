@@ -487,6 +487,13 @@ Describe 'Get-OPIMCompletionText' {
     # and one ends in the key of another post. A third of the directory roles sit at an
     # administrative unit, some groups are held only as owner, and every Azure role name that
     # repeats sits at several scopes.
+    # The SHA-256 pins hold the texts of all 200 posts, as the scan-per-post implementation gave
+    # them. The oracle runs that loop against today's matcher and scans every post twice per post,
+    # so it reads only the first 60 posts of each list, in every scenario: about a tenth of the work
+    # of 200. That prefix still holds three posts that stand twice, three that share the key of
+    # another post, the straight and the typographic quotes and names in parentheses, and the
+    # oracle's It checks the first three; the name that ends in another post's key and the bare
+    # names lie beyond it, and the pins alone hold them.
     Context 'When 200 posts are completed' {
         BeforeDiscovery {
             # Word, Bound and Command go to Get-OPIMCompletionText; OracleWord and OracleFilters are
@@ -650,8 +657,13 @@ Describe 'Get-OPIMCompletionText' {
         }
 
         It 'offers the texts of the scan-per-post loop, in its order, for <Title>' -ForEach $Scenarios {
-            $Result = InModuleScope Omnicit.PIM -Parameters @{ Pillar = $Pillar; Posts = $Fixture[$Pillar]; Word = $Word; Bound = $Bound; Command = $Command; OracleWord = $OracleWord; OracleFilters = $OracleFilters } {
+            # The first 60 posts of the list (see the Context's comment).
+            $Prefix = @($Fixture[$Pillar][0..59])
+            $Result = InModuleScope Omnicit.PIM -Parameters @{ Pillar = $Pillar; Posts = $Prefix; Word = $Word; Bound = $Bound; Command = $Command; OracleWord = $OracleWord; OracleFilters = $OracleFilters } {
                 param($Pillar, $Posts, $Word, $Bound, $Command, $OracleWord, $OracleFilters)
+                $Distinct = [System.Collections.Generic.HashSet[object]]::new([System.Collections.Generic.ReferenceEqualityComparer]::Instance)
+                foreach ($Post in $Posts) { $null = $Distinct.Add($Post) }
+                $DistinctNames = @($Distinct | ForEach-Object { Get-OPIMScheduleName -Pillar $Pillar -InputObject $PSItem })
                 # The oracle: the loop of Get-OPIMCompletionText as it was before the index, verbatim,
                 # which scans every post twice per post through the 'One' set of the matcher.
                 function Get-OracleCompletionText {
@@ -675,10 +687,20 @@ Describe 'Get-OPIMCompletionText' {
                     }
                 }
                 [PSCustomObject]@{
-                    Got    = @(Get-OPIMCompletionText -Pillar $Pillar -InputObject $Posts -WordToComplete $Word -FakeBoundParameters $Bound -CommandName $Command)
-                    Oracle = @(Get-OracleCompletionText -Pillar $Pillar -InputObject $Posts -Word $OracleWord -Filters $OracleFilters)
+                    Count       = $Posts.Count
+                    Distinct    = $Distinct.Count
+                    SharedKey   = @($DistinctNames.Key | Group-Object -CaseSensitive | Where-Object { $PSItem.Count -gt 1 }).Count
+                    Straight    = @($DistinctNames.DisplayName | Where-Object { $PSItem.Contains("'") }).Count
+                    Typographic = @($DistinctNames.DisplayName | Where-Object { $PSItem.IndexOfAny([char[]](0x2018, 0x2019, 0x201A, 0x201B)) -ge 0 }).Count
+                    Got         = @(Get-OPIMCompletionText -Pillar $Pillar -InputObject $Posts -WordToComplete $Word -FakeBoundParameters $Bound -CommandName $Command)
+                    Oracle      = @(Get-OracleCompletionText -Pillar $Pillar -InputObject $Posts -Word $OracleWord -Filters $OracleFilters)
                 }
             }
+            $Result.Count | Should -Be 60
+            $Result.Distinct | Should -Be 57 -Because 'three posts of the prefix stand in it twice, as the same object'
+            $Result.SharedKey | Should -Be 3 -Because 'three distinct posts of the prefix share the key of another post'
+            $Result.Straight | Should -BeGreaterThan 0 -Because 'a name of the prefix holds a straight apostrophe'
+            $Result.Typographic | Should -BeGreaterThan 0 -Because 'a name of the prefix holds a typographic single quote'
             $Result.Oracle.Count | Should -BeGreaterThan 0
             $Result.Got.Count | Should -Be $Result.Oracle.Count
             ($Result.Got -join "`n") | Should -BeExactly ($Result.Oracle -join "`n")
