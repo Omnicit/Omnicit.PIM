@@ -1150,6 +1150,113 @@ Describe 'Disable-OPIMMyRole' {
         }
     }
 
+    Context 'When a configured Azure entry matches several active posts (OPIM-56)' {
+        # The AmbiguousName of an Azure entry names the configured entry as the tenant map reads it --
+        # Name, or Name|ScopeId -- like the directory path does, never the eligibility's bare Name when
+        # the entry carries a scope. The role's display name is in each candidate's old form in the same
+        # message. When both forms of one eligibility are configured, the scoped entry is named.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
+            $RgScope = '/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-one'
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    scopedentry = @{ TenantId = '00000000-0000-0000-0000-000000000006'; AzureRoles = @("elig-reader|$RgScope") }
+                    bareentry   = @{ TenantId = '00000000-0000-0000-0000-000000000006'; AzureRoles = @('elig-reader') }
+                    bothentries = @{ TenantId = '00000000-0000-0000-0000-000000000006'; AzureRoles = @('elig-reader', "elig-reader|$RgScope") }
+                    upperentry  = @{ TenantId = '00000000-0000-0000-0000-000000000006'; AzureRoles = @('ELIG-READER|' + $RgScope.ToUpperInvariant()) }
+                    dupentry    = @{ TenantId = '00000000-0000-0000-0000-000000000006'; AzureRoles = @('Elig-Reader', 'elig-reader') }
+                }
+            }
+
+            $EligibleReader = [PSCustomObject]@{
+                Name = 'elig-reader'; ScopeId = $RgScope; ScopeDisplayName = 'rg-one'
+                RoleDefinitionId = 'role-az-reader'; RoleDefinitionDisplayName = 'Reader'
+            }
+            $EligibleReader.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
+            # Two overlapping activations of the Reader eligibility at its own scope.
+            $ActiveReaderFirst = [PSCustomObject]@{
+                Name = 'az-active-r1'; ScopeId = $RgScope; ScopeDisplayName = 'rg-one'
+                RoleDefinitionId = 'role-az-reader'; RoleDefinitionDisplayName = 'Reader'
+                LinkedRoleEligibilityScheduleId = 'elig-reader'
+            }
+            $ActiveReaderSecond = [PSCustomObject]@{
+                Name = 'az-active-r2'; ScopeId = $RgScope; ScopeDisplayName = 'rg-one'
+                RoleDefinitionId = 'role-az-reader'; RoleDefinitionDisplayName = 'Reader'
+                LinkedRoleEligibilityScheduleId = 'elig-reader'
+            }
+            foreach ($Post in @($ActiveReaderFirst, $ActiveReaderSecond)) {
+                $Post.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+            }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { return @() } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { return @() } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($EligibleReader) } -ParameterFilter { -not $Activated }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { return @($ActiveReaderFirst, $ActiveReaderSecond) } -ParameterFilter { $Activated }
+        }
+
+        It 'writes one AmbiguousName that names the entry with its scope, and says configured entry' {
+            $Out = Disable-OPIMMyRole -TenantAlias 'scopedentry' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -Be 'AmbiguousName,Disable-OPIMMyRole'
+            $Written[0].TargetObject | Should -BeExactly 'elig-reader|/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-one'
+            $Written[0].Exception.Message | Should -BeExactly (
+                "The configured entry 'elig-reader|/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-one' " +
+                'matches 2 active Azure roles, so it names none of them: ' +
+                "'Reader -> rg-one (az-active-r1)' at scope '/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-one'; " +
+                "'Reader -> rg-one (az-active-r2)' at scope '/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-one'. " +
+                'Deactivate the one you mean with Disable-OPIMAzureRole and its tab-completed form, as listed.')
+        }
+
+        It 'deactivates none of the posts that the scoped entry matches' {
+            Disable-OPIMMyRole -TenantAlias 'scopedentry' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 0 -Exactly -Scope It
+        }
+
+        It 'names an entry stored as the bare eligibility Name as that Name' {
+            $Out = Disable-OPIMMyRole -TenantAlias 'bareentry' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -Be 'AmbiguousName,Disable-OPIMMyRole'
+            $Written[0].TargetObject | Should -BeExactly 'elig-reader'
+            $Written[0].Exception.Message | Should -BeLike "The configured entry 'elig-reader' matches 2 active Azure roles*"
+            $Written[0].Exception.Message | Should -BeLike "*'Reader -> rg-one (az-active-r1)'*"
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 0 -Exactly -Scope It
+        }
+
+        It 'names the scoped entry when both forms of the eligibility are configured, and writes one error' {
+            $Out = Disable-OPIMMyRole -TenantAlias 'bothentries' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].TargetObject | Should -BeExactly 'elig-reader|/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-one'
+            $Written[0].Exception.Message | Should -BeLike "The configured entry 'elig-reader|/subscriptions/*' matches 2 active Azure roles*"
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 0 -Exactly -Scope It
+        }
+
+        It 'names the entry in the letter case it is configured in' {
+            $Out = Disable-OPIMMyRole -TenantAlias 'upperentry' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].TargetObject | Should -BeExactly (
+                'ELIG-READER|/SUBSCRIPTIONS/00000000-0000-0000-0000-000000000001/RESOURCEGROUPS/RG-ONE')
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 0 -Exactly -Scope It
+        }
+
+        It 'names an entry configured twice in other letter case once, in the spelling it was first configured in' {
+            $Out = Disable-OPIMMyRole -TenantAlias 'dupentry' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].TargetObject | Should -BeExactly 'Elig-Reader'
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 0 -Exactly -Scope It
+        }
+
+        It 'writes the ambiguity as an error and ends the command under -ErrorAction Stop, before anything is deactivated' {
+            { Disable-OPIMMyRole -TenantAlias 'scopedentry' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorAction Stop } |
+                Should -Throw -ExpectedMessage "The configured entry 'elig-reader|/subscriptions/*' matches 2*"
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 0 -Exactly -Scope It
+        }
+    }
+
     Context 'When a tenant alias lists directory roles (OPIM-10, A13)' {
         # A directory role is deactivated only at the scope its entry names. An entry written before
         # 0.6.0 holds the roleDefinitionId alone and means the role at '/' only.

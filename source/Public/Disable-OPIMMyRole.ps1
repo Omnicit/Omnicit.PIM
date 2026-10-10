@@ -393,15 +393,17 @@ function Disable-OPIMMyRole {
                         # matches nothing. OPIM-22: an entry stored from an active role is Name|ScopeId and selects
                         # the eligibility only at that scope. Active instances are different objects -- correlate
                         # via RoleDefinitionId + ScopeId.
-                        $ConfiguredAzureKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                        # OPIM-56: the keys are kept as a dictionary, so an ambiguous match can name the entry as it
+                        # is configured (compared without regard to letter case, the value is its first spelling).
+                        $ConfiguredAzureEntries = [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::OrdinalIgnoreCase)
                         foreach ($Entry in $Config.AzureRoles) {
                             $Key = ConvertTo-OPIMTenantMapKey -Pillar Azure -Entry $Entry
                             if (-not $Key) { continue }
-                            [void]$ConfiguredAzureKeys.Add($Key)
+                            if (-not $ConfiguredAzureEntries.ContainsKey($Key)) { $ConfiguredAzureEntries[$Key] = $Key }
                         }
                         $ConfiguredEligible = Get-OPIMAzureRole -ErrorAction Stop | Where-Object {
-                            $ConfiguredAzureKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem)) -or
-                            $ConfiguredAzureKeys.Contains((ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem -WithScope))
+                            $ConfiguredAzureEntries.ContainsKey((ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem)) -or
+                            $ConfiguredAzureEntries.ContainsKey((ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $PSItem -WithScope))
                         }
                     }
                     $ListRead = $true
@@ -419,8 +421,17 @@ function Disable-OPIMMyRole {
                                 })
                             if ($ActiveMatches.Count -gt 1) {
                                 # OPIM-17: an entry that matches several active posts names none of them.
+                                # OPIM-56: name the configured entry, as the directory path does -- the scoped entry when
+                                # both forms of the eligibility are configured; the role's display name is in each
+                                # candidate's old form in the message.
+                                $ScopedKey = ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $EligibleRole -WithScope
+                                $EntryName = if ($ConfiguredAzureEntries.ContainsKey($ScopedKey)) {
+                                    $ConfiguredAzureEntries[$ScopedKey]
+                                } else {
+                                    $ConfiguredAzureEntries[(ConvertTo-OPIMTenantMapKey -Pillar Azure -InputObject $EligibleRole)]
+                                }
                                 $PSCmdlet.WriteError((New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Azure `
-                                    -Name $EligibleRole.Name -Status Active -Candidate $ActiveMatches -Configuration))
+                                    -Name $EntryName -Status Active -Candidate $ActiveMatches -Configuration))
                             } elseif ($ActiveMatches.Count -eq 1) {
                                 $ActiveMatches[0] | Disable-OPIMAzureRole @DeactivateParams 2>&1 | ConvertTo-OPIMMyRoleResult -Cmdlet $PSCmdlet
                             } else {
