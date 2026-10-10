@@ -89,6 +89,17 @@ function Initialize-OPIMAuth {
     code flow ends this function with the helper's DeviceCodeAuthFailed error and no second error
     after it.
 
+    The cloud (OPIM-29) is a property of the tenant, so it follows the tenant. -Environment names it:
+    Global, USGov, USGovDoD or China, in any letter case, resolved by Get-OPIMCloudEndpoint, which
+    owns every cloud host. Microsoft 365 GCC is a commercial-cloud tenant and is Global. A call that
+    names no cloud takes the session's cloud when it names the session's tenant, by label or by the
+    GUID of its Graph token, or no tenant at all, and is Global for any other tenant. A state written
+    before the cloud was recorded is Global. The cloud joins the session match: a call that names
+    another cloud than the session's is a new sign-in, even for the same tenant, and the new session
+    records it as Environment in the auth state. The Azure Resource Manager token of one cloud is
+    never carried into another, even for the same tenant and account. An unknown cloud is an error,
+    never a fallback to Global.
+
     .PARAMETER TenantId
     The Entra ID tenant GUID or domain. When omitted or empty, the session keeps the tenant it is
     signed in to. Only before the first sign-in is 'organizations' used (the home tenant of the
@@ -123,6 +134,13 @@ function Initialize-OPIMAuth {
     auth state for every later sign-in in the session, even when this first sign-in fails. When a
     valid token is already cached, no new sign-in happens; only the mode is remembered.
 
+    .PARAMETER Environment
+    The cloud to sign in to: 'Global', 'USGov', 'USGovDoD' or 'China', in any letter case. Microsoft
+    365 GCC is a commercial-cloud tenant and is 'Global'. When omitted, the session's cloud is kept
+    for a call that names the session's tenant or none, and any other tenant is 'Global'. Naming a
+    cloud other than the session's is a new sign-in, also for the same tenant. The cloud signed in
+    to is recorded as Environment in the auth state.
+
     .EXAMPLE
     Initialize-OPIMAuth -TenantId 'contoso.onmicrosoft.com'
 
@@ -134,6 +152,9 @@ function Initialize-OPIMAuth {
 
     .EXAMPLE
     Initialize-OPIMAuth -TenantId $TenantId -DeviceCode
+
+    .EXAMPLE
+    Initialize-OPIMAuth -TenantId $TenantId -Environment USGov
     #>
     [CmdletBinding()]
     param(
@@ -141,7 +162,9 @@ function Initialize-OPIMAuth {
         [switch]$IncludeARM,
         [string]$ClaimsChallenge,
         [switch]$ForceRefresh,
-        [switch]$DeviceCode
+        [switch]$DeviceCode,
+        [ValidateSet('Global', 'USGov', 'USGovDoD', 'China')]
+        [string]$Environment
     )
 
     # The Azure Resource Manager resource. A constant until the cloud table owns it (OPIM-29).
@@ -202,6 +225,34 @@ function Initialize-OPIMAuth {
     $ParsedTenant = [guid]::Empty
     [bool]$EffectiveIsGuid = [guid]::TryParse($EffectiveTenant, [ref]$ParsedTenant)
 
+    # -- Cloud (OPIM-29, A11) ------------------------------------------------------
+    # The request names the session's tenant: its label, or the GUID its Graph token was issued for.
+    # A state that holds only DeviceCode has no TenantId, so it never matches.
+    [bool]$SessionTenantMatches = $script:_OPIMAuthState -and $script:_OPIMAuthState.TenantId -and (
+        $script:_OPIMAuthState.TenantId -eq $EffectiveTenant -or
+        ($EffectiveIsGuid -and $script:_OPIMAuthState.TokenTenantId -eq $ParsedTenant.ToString('D')))
+    # A state written before the cloud was recorded is Global, the only cloud there was.
+    [string]$StateEnvironment = if ($script:_OPIMAuthState -and $script:_OPIMAuthState.Environment) {
+        [string]$script:_OPIMAuthState.Environment
+    } else {
+        'Global'
+    }
+    # The cloud is a property of the tenant (EntraRBAC): a request for the session's tenant that names no
+    # cloud keeps the session's cloud; a request for another tenant that names none is Global.
+    [string]$EffectiveEnvironment = if ($Environment) {
+        $Environment
+    } elseif ($SessionTenantMatches) {
+        $StateEnvironment
+    } else {
+        'Global'
+    }
+    # Get-OPIMCloudEndpoint owns every cloud host and returns the canonical name.
+    $Endpoint = Get-OPIMCloudEndpoint -Environment $EffectiveEnvironment
+    $EffectiveEnvironment = $Endpoint.Environment
+    # -- Session match -----------------------------------------------------------
+    # The same tenant AND the same cloud: another cloud is another session, so a switch signs in again.
+    [bool]$SessionMatches = $SessionTenantMatches -and $StateEnvironment -eq $EffectiveEnvironment
+
     # -- Sign-in mode ------------------------------------------------------------
     # -DeviceCode is remembered in the auth state, so every later sign-in in the session uses it:
     # the silent refresh, the token-rejected retry and the ACRS step-up in Invoke-OPIMGraphRequest
@@ -218,13 +269,6 @@ function Initialize-OPIMAuth {
         }
     }
     [bool]$UseDeviceCode = $DeviceCode -or ($script:_OPIMAuthState -and $script:_OPIMAuthState.DeviceCode)
-
-    # -- Session match -----------------------------------------------------------
-    # The request names the session's tenant: its label, or the GUID its Graph token was issued for.
-    # A state that holds only DeviceCode has no TenantId, so it never matches.
-    [bool]$SessionMatches = $script:_OPIMAuthState -and $script:_OPIMAuthState.TenantId -and (
-        $script:_OPIMAuthState.TenantId -eq $EffectiveTenant -or
-        ($EffectiveIsGuid -and $script:_OPIMAuthState.TokenTenantId -eq $ParsedTenant.ToString('D')))
 
     # -- Graph SDK session check (OPIM-09, EntraRBAC A18) -----------------------
     # The SDK keeps one session per process, and every Graph call goes out under it. Compare it with
@@ -286,7 +330,7 @@ function Initialize-OPIMAuth {
             ''
         }
 
-        Write-Verbose "[Initialize-OPIMAuth] Acquiring Graph token for tenant '$EffectiveTenant' (authority '$Authority'). ClaimsChallenge=$(if ($ClaimsChallenge) { 'YES' } else { 'NO' })"
+        Write-Verbose "[Initialize-OPIMAuth] Acquiring Graph token for tenant '$EffectiveTenant' (authority '$Authority', cloud '$EffectiveEnvironment'). ClaimsChallenge=$(if ($ClaimsChallenge) { 'YES' } else { 'NO' })"
 
         $MsalApp = Get-OPIMMsalApplication -TenantId $Authority
 
@@ -490,16 +534,18 @@ function Initialize-OPIMAuth {
         [string]$GraphObjectId = Get-OPIMTokenObjectId -AccessToken $SecureToken
         # SEC (A3): an ARM token survives a new Graph token only when it was issued for the same tenant
         # and the same account; otherwise it is dropped, never carried, and -IncludeARM acquires a new
-        # one.
+        # one. OPIM-29: and only in the same cloud -- a token minted in another cloud is never carried.
         $PreviousState = $script:_OPIMAuthState
         [bool]$KeepArmToken = ($PreviousState -is [System.Collections.IDictionary]) -and
             ($null -ne $PreviousState['ArmToken']) -and
             [bool]$GraphObjectId -and
+            $StateEnvironment -eq $EffectiveEnvironment -and
             [string]$PreviousState['ArmTokenTenantId'] -eq $TokenTenant -and
             [string]$PreviousState['ArmTokenObjectId'] -eq $GraphObjectId
         $script:_OPIMAuthState = @{
             TenantId                = if ($EffectiveTenant -eq 'organizations') { $TokenTenant } else { $EffectiveTenant }
             TokenTenantId           = $TokenTenant
+            Environment             = $EffectiveEnvironment
             AuthorityTenant         = $Authority
             Account                 = $AuthResult.Account
             ObjectId                = if ($GraphObjectId) { $GraphObjectId } else { $null }

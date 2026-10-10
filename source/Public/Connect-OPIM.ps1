@@ -43,6 +43,11 @@ function Connect-OPIM {
     command shows a code and the address to open; open the address on any device and enter the
     code. With -IncludeARM, Azure shows a second code.
 
+    .EXAMPLE
+    Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -Environment USGov
+    Sign in to the Contoso tenant in the US Government (GCC High) cloud. Later commands for that
+    tenant keep the cloud.
+
     .PARAMETER TenantAlias
     Short alias for the target tenant, resolved from the TenantMap.psd1 managed by
     Install-OPIMConfiguration. Mutually exclusive with -TenantId.
@@ -73,6 +78,14 @@ function Connect-OPIM {
     the output in a variable shows nothing until the flow ends, which can take 15 minutes. The mode
     is remembered for this PowerShell session: the refresh stays silent while it can, and any later
     sign-in that needs a prompt, a step-up included, uses a device code until Disconnect-OPIM.
+
+    .PARAMETER Environment
+    The cloud to sign in to: 'Global', 'USGov' (US Government, GCC High), 'USGovDoD' (US Government,
+    DoD) or 'China', in any letter case. Microsoft 365 GCC is a commercial-cloud tenant and is
+    'Global'. The cloud follows the tenant: without -Environment, a call for the tenant the session
+    is signed in to keeps the session's cloud, and any other tenant is 'Global'. Naming a cloud other
+    than the session's signs in again, also for the same tenant. The session's cloud is kept until
+    Disconnect-OPIM.
     #>
     [Alias('Connect-PIM')]
     [CmdletBinding(DefaultParameterSetName = 'ByTenantId')]
@@ -88,7 +101,10 @@ function Connect-OPIM {
 
         [string]$TenantMapPath = (Join-Path $HOME '.config/Omnicit.PIM/TenantMap.psd1'),
 
-        [switch]$DeviceCode
+        [switch]$DeviceCode,
+
+        [ValidateSet('Global', 'USGov', 'USGovDoD', 'China')]
+        [string]$Environment
     )
 
     # -- Resolve TenantAlias -> TenantId ----------------------------------------
@@ -120,5 +136,9 @@ function Connect-OPIM {
         $TenantId = if ($Config -is [hashtable]) { $Config.TenantId } else { [string]$Config }
     }
 
-    Initialize-OPIMAuth -TenantId $TenantId -IncludeARM:$IncludeARM -DeviceCode:$DeviceCode
+    $AuthParams = @{ TenantId = $TenantId; IncludeARM = $IncludeARM; DeviceCode = $DeviceCode }
+    # Only a cloud the caller named is passed on: without one, Initialize-OPIMAuth keeps the session's
+    # cloud for the session's tenant (OPIM-29).
+    if ($Environment) { $AuthParams.Environment = $Environment }
+    Initialize-OPIMAuth @AuthParams
 }

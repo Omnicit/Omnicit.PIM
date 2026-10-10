@@ -352,6 +352,50 @@ Describe 'Enable-OPIMMyRole' {
                 $DeviceCode
             }
         }
+
+        It 'passes -Environment to both Connect-OPIM calls' {
+            # OPIM-29: Graph and then Azure sign in to the same cloud.
+            Enable-OPIMMyRole -AllEligible -Environment USGov -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 2 -Exactly -Scope It -ParameterFilter {
+                $Environment -eq 'USGov'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Environment -eq 'USGov' -and $IncludeARM
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Environment -eq 'USGov' -and -not $IncludeARM
+            }
+        }
+
+        It 'passes -Environment Global to both Connect-OPIM calls when it is given' {
+            Enable-OPIMMyRole -AllEligible -Environment Global -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 2 -Exactly -Scope It -ParameterFilter {
+                $PesterBoundParameters.ContainsKey('Environment') -and $Environment -eq 'Global'
+            }
+        }
+
+        It 'passes no Environment to Connect-OPIM without -Environment' {
+            # OPIM-29: without a cloud the session keeps its own for its tenant.
+            Enable-OPIMMyRole -AllEligible -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 2 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 0 -Scope It -ParameterFilter {
+                $PesterBoundParameters.ContainsKey('Environment')
+            }
+        }
+
+        It 'keeps -Environment the last parameter, after -DeviceCode, so no position moves' {
+            $Names = @((Get-Command Enable-OPIMMyRole).ScriptBlock.Ast.Body.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+            $Names[-1] | Should -BeExactly 'Environment'
+            $Names[-2] | Should -BeExactly 'DeviceCode'
+        }
+
+        It 'refuses an unknown -Environment at binding, before a sign-in' {
+            $Caught = $null
+            try { Enable-OPIMMyRole -AllEligible -Environment Germany -Confirm:$false } catch { $Caught = $PSItem }
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -BeExactly 'ParameterArgumentValidationError,Enable-OPIMMyRole'
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 0 -Scope It
+        }
     }
 
     Context 'When the Graph sign-in fails' {

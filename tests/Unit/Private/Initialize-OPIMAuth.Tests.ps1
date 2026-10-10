@@ -1545,6 +1545,271 @@ namespace OPIMTest {
         }
     }
 
+    Context 'When the session is in a cloud (OPIM-29)' {
+        # A11. The cloud is a property of the tenant: a call that names the session's tenant and no cloud
+        # keeps the session's cloud, a call for another tenant that names none is Global, and a call that
+        # names another cloud than the session's is a new sign-in. The mocks are those of the -IncludeARM
+        # context: the Graph SDK session is the module's own, and Invoke-OPIMDeviceCodeAuth hands back a
+        # token built from this file's $script:Graph* values (Reset-ArmTestFixture sets them before every
+        # It), so the acquisition runs in device code mode and reflects into no MSAL.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionState { 'Own' }
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionFingerprint { 'fp' }
+            Mock -ModuleName Omnicit.PIM Get-OPIMMsalApplication { [PSCustomObject]@{} }
+            Mock -ModuleName Omnicit.PIM Connect-MgGraph {}
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMDeviceCodeAuth {
+                $GraphTokenArgs = @{ TenantId = $script:GraphTid; ObjectId = $script:GraphOid }
+                if ($script:GraphNoOid) { $GraphTokenArgs.NoObjectId = $true }
+                [PSCustomObject]@{
+                    AccessToken = New-OPIMTestAccessToken @GraphTokenArgs
+                    ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
+                    Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                }
+            }
+        }
+        BeforeEach {
+            Reset-ArmTestFixture
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMSignInLatch = $null
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMSignInLatch = $null
+            }
+        }
+
+        It 'records the cloud it signed in to as Environment in the state' {
+            $After = InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA } {
+                param($TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                Initialize-OPIMAuth -TenantId $TenantA -Environment USGov
+                $WithCloud = $script:_OPIMAuthState
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                $script:_OPIMSignInLatch = $null
+                Initialize-OPIMAuth -TenantId $TenantA
+                @{ WithCloud = $WithCloud; WithoutCloud = $script:_OPIMAuthState }
+            }
+            $After.WithCloud.ContainsKey('Environment') | Should -BeTrue
+            $After.WithCloud.Environment | Should -BeExactly 'USGov'
+            $After.WithoutCloud.ContainsKey('Environment') | Should -BeTrue
+            $After.WithoutCloud.Environment | Should -BeExactly 'Global'
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 2 -Exactly -Scope It
+        }
+
+        It 'returns the cached session for -Environment Global when the session was signed in without one' {
+            # Review Focus 3: a state written before the cloud was recorded is Global, so naming Global is the
+            # same session -- no new sign-in, no MSAL application, no Connect-MgGraph.
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+            $State.ContainsKey('Environment') | Should -BeFalse
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMAuthState = $State
+                Initialize-OPIMAuth -Environment Global
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMMsalApplication -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMDeviceCodeAuth -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
+        }
+
+        It 'returns the cached session for -Environment Global when the session was signed in to Global' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+            $State.Environment = 'Global'
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMAuthState = $State
+                Initialize-OPIMAuth -Environment Global
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMMsalApplication -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMDeviceCodeAuth -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
+        }
+
+        It 'keeps the session''s cloud when a call names neither a tenant nor a cloud' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+            $State.Environment = 'USGov'
+            $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMAuthState = $State
+                Initialize-OPIMAuth
+                $script:_OPIMAuthState
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMMsalApplication -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
+            $After.Environment | Should -BeExactly 'USGov'
+        }
+
+        It 'keeps the session''s cloud for the tenant label the session was signed in under' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+            $State.Environment = 'USGov'
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; TenantA = $TenantA } {
+                param($State, $TenantA)
+                $script:_OPIMAuthState = $State
+                Initialize-OPIMAuth -TenantId $TenantA
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMMsalApplication -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
+        }
+
+        It 'keeps the session''s cloud for a GUID equal to the session''s token tenant' {
+            # A session pinned by domain: the GUID its Graph token was issued for is the same tenant.
+            $State = New-PinState -TenantId 'contoso.onmicrosoft.com' -TokenTenantId $TenantA -AuthorityTenant 'contoso.onmicrosoft.com' -ObjectId $SessionOid
+            $State.Environment = 'USGov'
+            $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State; TenantA = $TenantA } {
+                param($State, $TenantA)
+                $script:_OPIMAuthState = $State
+                Initialize-OPIMAuth -TenantId $TenantA
+                $script:_OPIMAuthState
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMMsalApplication -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
+            $After.Environment | Should -BeExactly 'USGov'
+        }
+
+        It 'signs in again when a call names another cloud than the session''s' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+            $State.Environment = 'Global'
+            $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMAuthState = $State
+                Initialize-OPIMAuth -Environment USGov
+                $script:_OPIMAuthState
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMMsalApplication -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Exactly -Scope It
+            $After.Environment | Should -BeExactly 'USGov'
+            $After.TenantId | Should -BeExactly $TenantA
+        }
+
+        It 'signs in again when a call names another cloud than a session that records none' {
+            # A state written before the cloud was recorded is Global, so naming a sovereign cloud is a switch.
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+            $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMAuthState = $State
+                Initialize-OPIMAuth -Environment USGovDoD
+                $script:_OPIMAuthState
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMMsalApplication -Times 1 -Exactly -Scope It
+            $After.Environment | Should -BeExactly 'USGovDoD'
+        }
+
+        It 'signs in again for Global when the session is in a sovereign cloud and the call names Global' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+            $State.Environment = 'China'
+            $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMAuthState = $State
+                Initialize-OPIMAuth -Environment Global
+                $script:_OPIMAuthState
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMMsalApplication -Times 1 -Exactly -Scope It
+            $After.Environment | Should -BeExactly 'Global'
+        }
+
+        It 'is Global for another tenant that names no cloud, whatever the session''s cloud' {
+            $script:GraphTid = $TenantB
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+            $State.Environment = 'USGov'
+            $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State; TenantB = $TenantB } {
+                param($State, $TenantB)
+                $script:_OPIMAuthState = $State
+                Initialize-OPIMAuth -TenantId $TenantB
+                $script:_OPIMAuthState
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMMsalApplication -Times 1 -Exactly -Scope It
+            $After.TenantId | Should -BeExactly $TenantB
+            $After.Environment | Should -BeExactly 'Global'
+        }
+
+        It 'keeps the cloud on a forced refresh of the session and keeps its ARM token' {
+            # The positive control of the cloud term of the ARM token: the same cloud carries the token.
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+            $State.Environment = 'USGov'
+            $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
+            $Result = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMAuthState = $State
+                $Before = $State.ArmToken
+                Initialize-OPIMAuth -ForceRefresh
+                @{
+                    Same  = [object]::ReferenceEquals($Before, $script:_OPIMAuthState.ArmToken)
+                    State = $script:_OPIMAuthState
+                }
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It
+            $Result.State.Environment | Should -BeExactly 'USGov'
+            $Result.Same | Should -BeTrue
+        }
+
+        It 'drops the cached ARM token when the session signs in to another cloud' {
+            # Review Focus 4: an ARM token minted in one cloud is never carried into another, even for the
+            # same tenant and the same account.
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+            $State.Environment = 'Global'
+            $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
+            $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMAuthState = $State
+                Initialize-OPIMAuth -Environment USGov
+                $script:_OPIMAuthState
+            }
+            $After.Environment | Should -BeExactly 'USGov'
+            foreach ($Key in 'ArmToken', 'ArmTokenExpiry', 'ArmTokenTenantId', 'ArmTokenObjectId', 'ArmResourceUrl') {
+                $After.ContainsKey($Key) | Should -BeTrue
+                $After[$Key] | Should -BeNullOrEmpty -Because "the ARM token of another cloud must be dropped ($Key)"
+            }
+        }
+
+        It 'reads the cloud name in any letter case and records the canonical name' {
+            $After = InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA } {
+                param($TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                Initialize-OPIMAuth -TenantId $TenantA -Environment usgov
+                $script:_OPIMAuthState
+            }
+            $After.Environment | Should -BeExactly 'USGov'
+        }
+
+        It 'does not treat the same cloud in another letter case as a switch' {
+            $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+            $State.Environment = 'USGov'
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMAuthState = $State
+                Initialize-OPIMAuth -Environment USGOV
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMMsalApplication -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
+        }
+
+        It 'refuses a cloud outside the ValidateSet before anything is called' {
+            $Caught = InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $Caught = $null
+                try { Initialize-OPIMAuth -Environment Germany } catch { $Caught = $PSItem }
+                $Caught
+            }
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -BeExactly 'ParameterArgumentValidationError,Initialize-OPIMAuth'
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMMsalApplication -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMDeviceCodeAuth -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
+        }
+
+        It 'names the cloud in the verbose line of a sign-in' {
+            $Out = InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA } {
+                param($TenantA)
+                $script:_OPIMAuthState = @{ DeviceCode = $true }
+                Initialize-OPIMAuth -TenantId $TenantA -Environment USGov -Verbose 4>&1
+            }
+            $Lines = @($Out | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
+            @($Lines | Where-Object { $_ -like "*Acquiring Graph token for tenant*cloud 'USGov'*" }).Count | Should -Be 1
+        }
+    }
+
     Context 'When the Graph token and the ARM token are handed on' {
         It 'binds the plaintext token to no command' {
             # SECURITY rule 5: PowerShell module logging (LogPipelineExecutionDetails, event 4103)

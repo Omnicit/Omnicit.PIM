@@ -57,6 +57,9 @@ function Enable-OPIMMyRole {
     .EXAMPLE
     pim -TenantAlias contoso -DeviceCode
     Sign in with a device code instead of the system browser, then activate the configured roles.
+    .EXAMPLE
+    Enable-OPIMMyRole -AllEligibleDirectoryRoles -Environment USGov -Confirm:$false
+    Sign in to the US Government (GCC High) cloud and activate all eligible directory roles there.
     .PARAMETER TenantAlias
     Short alias for the target tenant matched against TenantMap.psd1. Run Install-OPIMConfiguration
     to create or update tenant aliases. Only categories explicitly listed in the configuration are
@@ -96,6 +99,10 @@ function Enable-OPIMMyRole {
     .PARAMETER DeviceCode
     Sign in with a device code instead of the system browser. Passed to Connect-OPIM, which
     remembers the mode for the session; see Get-Help Connect-OPIM -Parameter DeviceCode.
+    .PARAMETER Environment
+    The cloud to sign in to: 'Global', 'USGov', 'USGovDoD' or 'China'. Passed to both sign-ins,
+    Graph and Azure; see Get-Help Connect-OPIM -Parameter Environment. Without it, the session's
+    cloud is kept for the tenant it is signed in to, and any other tenant is 'Global'.
     #>
     [Alias('pim', 'Enable-OPIMMyRoles')]
     [CmdletBinding(SupportsShouldProcess)]
@@ -113,7 +120,9 @@ function Enable-OPIMMyRole {
         [string]$TenantMapPath = (Join-Path $HOME '.config/Omnicit.PIM/TenantMap.psd1'),
         [Switch]$Wait,
         [ValidateRange(1, 86400)][int]$TimeoutSeconds = 300,
-        [Switch]$DeviceCode
+        [Switch]$DeviceCode,
+        [ValidateSet('Global', 'USGov', 'USGovDoD', 'China')]
+        [string]$Environment
     )
 
     # -- Guard: require explicit activation target ------------------------------
@@ -175,8 +184,11 @@ function Enable-OPIMMyRole {
 
     # OPIM-08: Graph first. A failed Graph sign-in stops the command: nothing is listed or activated,
     # not even in the tenant an earlier sign-in pinned.
+    # OPIM-29: only a cloud the caller named is passed on, so a session keeps its own cloud otherwise.
+    $ConnectParams = @{ TenantId = $ResolvedTenantId; DeviceCode = $DeviceCode; ErrorAction = 'Stop' }
+    if ($Environment) { $ConnectParams.Environment = $Environment }
     try {
-        Connect-OPIM -TenantId $ResolvedTenantId -DeviceCode:$DeviceCode -ErrorAction Stop
+        Connect-OPIM @ConnectParams
     } catch {
         Remove-OPIMErrorRecord -Record $PSItem
         $PSCmdlet.WriteError($PSItem)
@@ -188,7 +200,7 @@ function Enable-OPIMMyRole {
     [bool]$ArmConnected = $false
     if ($NeedsArm) {
         try {
-            Connect-OPIM -TenantId $ResolvedTenantId -IncludeARM -DeviceCode:$DeviceCode -ErrorAction Stop
+            Connect-OPIM @ConnectParams -IncludeARM
             $ArmConnected = $true
         } catch {
             Remove-OPIMErrorRecord -Record $PSItem

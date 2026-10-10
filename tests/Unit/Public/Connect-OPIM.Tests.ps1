@@ -53,6 +53,73 @@ Describe 'Connect-OPIM' {
         }
     }
 
+    Context 'When called with -Environment (OPIM-29)' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+        }
+
+        It 'passes -Environment on to Initialize-OPIMAuth when it is given' {
+            Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -Environment USGov
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Environment -eq 'USGov' -and $TenantId -eq 'contoso.onmicrosoft.com'
+            }
+        }
+
+        It 'passes the cloud it is given as typed, for Initialize-OPIMAuth to resolve' {
+            Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -Environment usgovdod
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Environment -ceq 'usgovdod'
+            }
+        }
+
+        It 'passes -Environment Global on when it is given, so a sovereign session is left' {
+            Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -Environment Global
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                $PesterBoundParameters.ContainsKey('Environment') -and $Environment -eq 'Global'
+            }
+        }
+
+        It 'passes no Environment when it is not given, so the session keeps its cloud' {
+            # OPIM-29: Initialize-OPIMAuth keeps the session's cloud for the session's tenant only when the
+            # call names none. Connect-OPIM must never name Global on its own.
+            Connect-OPIM -TenantId 'contoso.onmicrosoft.com'
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It -ParameterFilter {
+                $PesterBoundParameters.ContainsKey('Environment')
+            }
+        }
+
+        It 'passes no Environment when it is not given, also with the other switches' {
+            Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -IncludeARM -DeviceCode
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                $IncludeARM -and $DeviceCode -and -not $PesterBoundParameters.ContainsKey('Environment')
+            }
+        }
+
+        It 'keeps -Environment the last parameter, after -DeviceCode, so no position moves' {
+            $Names = @((Get-Command Connect-OPIM).ScriptBlock.Ast.Body.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+            $Names[-1] | Should -BeExactly 'Environment'
+            $Names[-2] | Should -BeExactly 'DeviceCode'
+        }
+
+        It 'refuses an unknown -Environment at binding, before the command runs' {
+            # The mocked Initialize-OPIMAuth carries the same ValidateSet, so it would refuse the value too,
+            # and an error from there looks the same. An alias with no map file tells them apart: if
+            # Connect-OPIM's own ValidateSet is missing, its body runs and looks for the map file.
+            Mock -ModuleName Omnicit.PIM Test-Path { $false } -ParameterFilter { $Path -like '*.psd1' }
+            $Caught = $null
+            try {
+                Connect-OPIM -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\missing.psd1' -Environment Germany -ErrorAction SilentlyContinue
+            } catch {
+                $Caught = $PSItem
+            }
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -BeExactly 'ParameterArgumentValidationError,Connect-OPIM'
+            Should -Invoke -ModuleName Omnicit.PIM Test-Path -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
+        }
+    }
+
     Context 'When called with -TenantAlias (simple string config)' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
