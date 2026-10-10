@@ -546,7 +546,7 @@ Describe 'Install-OPIMConfiguration' {
             $Line = 'What if: Performing the operation "' +
                 "Add alias 'contoso' for tenant 'Mock Tenant' (00000000-0000-0000-0000-000000000001) in cloud 'USGov'" +
                 '" on target "TestDrive:\TenantMap.psd1".'
-            $Text | Should -Match ([regex]::Escape($Line))
+            $Text | Should -MatchExactly ([regex]::Escape($Line))
             Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
         }
 
@@ -555,7 +555,7 @@ Describe 'Install-OPIMConfiguration' {
             $Line = 'What if: Performing the operation "' +
                 "Add alias 'contoso' for tenant 'Mock Tenant' (00000000-0000-0000-0000-000000000001) in cloud 'Global'" +
                 '" on target "TestDrive:\TenantMap.psd1".'
-            $Text | Should -Match ([regex]::Escape($Line))
+            $Text | Should -MatchExactly ([regex]::Escape($Line))
             Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
         }
 
@@ -619,7 +619,7 @@ Describe 'Install-OPIMConfiguration' {
 
         It 'names the cloud of the sign-in in the confirmation when the alias takes it' {
             $Text = Get-WhatIfText { Install-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
-            $Text | Should -Match ([regex]::Escape("Add alias 'contoso' for tenant 'Mock Tenant' (00000000-0000-0000-0000-000000000001) in cloud 'USGov'"))
+            $Text | Should -MatchExactly ([regex]::Escape("Add alias 'contoso' for tenant 'Mock Tenant' (00000000-0000-0000-0000-000000000001) in cloud 'USGov'"))
         }
 
         It 'stores no cloud for another tenant than the sign-in''s' {
