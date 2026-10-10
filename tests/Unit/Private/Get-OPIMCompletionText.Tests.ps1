@@ -478,4 +478,224 @@ Describe 'Get-OPIMCompletionText' {
             $Calls | Should -Contain 'Get-OPIMScheduleName'
         }
     }
+
+    # OPIM-51: the completion text of a long list, pinned before the posts were indexed once per
+    # call. The fixture is built without randomness: per pillar 200 posts whose names come from a
+    # pool of 60, so most names repeat; ten posts stand in the list twice (the same object), ten
+    # more share the key of another post, names hold the straight and the four typographic single
+    # quotes (built from their code points, so this file stays ASCII), several end in parentheses,
+    # and one ends in the key of another post. A third of the directory roles sit at an
+    # administrative unit, some groups are held only as owner, and every Azure role name that
+    # repeats sits at several scopes.
+    Context 'When 200 posts are completed' {
+        BeforeDiscovery {
+            # Word, Bound and Command go to Get-OPIMCompletionText; OracleWord and OracleFilters are
+            # what its preamble makes of them, for the loop the oracle runs. Hash is the SHA-256 of
+            # the lines joined with LF, in UTF-8, recorded at 1470227 from the scan-per-post
+            # implementation (Get-OPIMCompletionText, Find-OPIMScheduleMatch and
+            # Get-OPIMScheduleName as at 45f2c97).
+            $Scenarios = @(
+                @{ Pillar = 'Directory'; Title = 'directory roles with no filter'; Word = ''; Bound = $null; Command = ''; OracleWord = ''; OracleFilters = @{}; Hash = '69088998BC6A05D27D1F65C194288D2FD2C68C277C54DB65BE56D1A0E4896A87' }
+                @{ Pillar = 'Directory'; Title = 'directory roles for a quoted word'; Word = "'Re"; Bound = $null; Command = ''; OracleWord = 'Re'; OracleFilters = @{}; Hash = '0E29C8BDD06A316611DE74BD540FA9AF32347D24FF923A6599E1BC7B57609BFB' }
+                @{ Pillar = 'Directory'; Title = 'directory roles under one administrative unit'; Word = ''; Bound = @{ Scope = '/administrativeUnits/au-005' }; Command = 'Enable-OPIMDirectoryRole'; OracleWord = ''; OracleFilters = @{ Scope = '/administrativeUnits/au-005' }; Hash = 'BD93CAE2E7BFB4692F519E6FCC329A8B10E89AE3FBE543EFE259CCE91963B442' }
+                @{ Pillar = 'Directory'; Title = 'directory roles on a Get- command under the root scope'; Word = ''; Bound = @{ Scope = '/' }; Command = 'Get-OPIMDirectoryRole'; OracleWord = ''; OracleFilters = @{}; Hash = '69088998BC6A05D27D1F65C194288D2FD2C68C277C54DB65BE56D1A0E4896A87' }
+                @{ Pillar = 'Group'; Title = 'groups with no filter'; Word = ''; Bound = $null; Command = ''; OracleWord = ''; OracleFilters = @{}; Hash = '0486225DCDC2B40EA43B3B77E8E35CC0EA97963185D5E4A4F4E0FF21EB28C064' }
+                @{ Pillar = 'Group'; Title = 'groups for a quoted word'; Word = "'Re"; Bound = $null; Command = ''; OracleWord = 'Re'; OracleFilters = @{}; Hash = 'D4F2A590E8F920AFCC70386BA5271C9B32F1D6FF1488201C3CBBCC03AB95F15C' }
+                @{ Pillar = 'Group'; Title = 'groups under -AccessType Owner'; Word = ''; Bound = @{ AccessType = 'Owner' }; Command = 'Enable-OPIMEntraIDGroup'; OracleWord = ''; OracleFilters = @{ AccessType = 'owner' }; Hash = '78580E35AAEB13D8CF3554856EECE997E1B0EF797555777FA19111528A858332' }
+                @{ Pillar = 'Azure'; Title = 'Azure roles with no filter'; Word = ''; Bound = $null; Command = ''; OracleWord = ''; OracleFilters = @{}; Hash = '9943B71F876CE4EA35AE8EAD8E77C74D2F90E935306360041DA0659723E5974C' }
+                @{ Pillar = 'Azure'; Title = 'Azure roles for a quoted word'; Word = "'Re"; Bound = $null; Command = ''; OracleWord = 'Re'; OracleFilters = @{}; Hash = '7D402406378E8056BB55CBDA9F7443CFDC58E6F2ADC3C7266E7549D18B8360F1' }
+                @{ Pillar = 'Azure'; Title = 'Azure roles under one subscription'; Word = ''; Bound = @{ Scope = '/subscriptions/sub-001' }; Command = 'Enable-OPIMAzureRole'; OracleWord = ''; OracleFilters = @{ Scope = '/subscriptions/sub-001' }; Hash = '32FEE0FF85CB5E275204385AB391FA3EB068638DA9BB892D59C2FBCF36596039' }
+                @{ Pillar = 'Azure'; Title = 'Azure roles on a Get- command under the root scope'; Word = ''; Bound = @{ Scope = '/' }; Command = 'Get-OPIMAzureRole'; OracleWord = ''; OracleFilters = @{}; Hash = '9943B71F876CE4EA35AE8EAD8E77C74D2F90E935306360041DA0659723E5974C' }
+            )
+        }
+
+        BeforeAll {
+            $Fixture = InModuleScope Omnicit.PIM {
+                $Q2018 = [string][char]0x2018
+                $Q2019 = [string][char]0x2019
+                $Q201A = [string][char]0x201A
+                $Q201B = [string][char]0x201B
+                # 0-49 are shared by the first 170 posts; 50-59 name one post each, so the list
+                # holds bare names too. 47 differs from 0 only in case; 59 ends in the key of the
+                # fourth post ({0} is the pillar's key prefix).
+                $Pool = @(
+                    'Reader', 'Reports Reader', 'Security Reader', 'Global Reader', 'Directory Readers'
+                    'Usage Summary Reports Reader', 'Message Center Reader', 'Message Center Privacy Reader'
+                    'Application Administrator', 'Cloud Application Administrator', 'Records Manager'
+                    'Retention Reviewer', 'Restricted Ops', 'Reports Admin', "O'Brien Reader", "Reader's Ops"
+                    "Partner${Q2018}s Admins", "Partner${Q2019}s Readers", "Re${Q201A}gional Ops"
+                    "Re${Q201B}view Board", "Re${Q2019}Org Admin", 'Contoso Ops (EU)', 'Contoso Ops (US)'
+                    'Ops (Tier 1)', 'Reader (Preview)', 'Teams Administrator', 'Exchange Administrator'
+                    'SharePoint Administrator', 'Intune Administrator', 'Billing Administrator', 'Billing Reader'
+                    'Compliance Administrator', 'Compliance Data Administrator', 'Conditional Access Administrator'
+                    'Security Administrator', 'Security Operator', 'Helpdesk Administrator', 'Password Administrator'
+                    'User Administrator', 'Groups Administrator', 'License Administrator', 'Authentication Administrator'
+                    'Privileged Authentication Administrator', 'Privileged Role Administrator', 'Insights Analyst'
+                    'Insights Business Leader', 'Knowledge Manager', 'reader', 'Network Administrator'
+                    'Printer Administrator'
+                    'Search Administrator', 'Search Editor', "D'Arcy Ops", "Re${Q2019}source Owner", 'Tenant Creator'
+                    'Usage Summary Reports Reader (Legacy)', 'Viva Goals Administrator', 'Windows 365 Administrator'
+                    'Yammer Administrator', 'Legacy Shadow ({0}-004)'
+                )
+                $AuName = @($null, 'Sales AU', "Ops' AU", 'Finance AU', "R${Q2018}D AU", 'Legal (EU) AU')
+                $AzureScope = @(
+                    @{ Id = '/'; Name = 'Tenant Root Group' }
+                    @{ Id = '/subscriptions/sub-001'; Name = 'Subscription One' }
+                    @{ Id = '/subscriptions/sub-001/resourceGroups/rg-one'; Name = 'rg-one' }
+                    @{ Id = '/subscriptions/sub-002'; Name = "Ops' Subscription" }
+                    @{ Id = '/subscriptions/sub-002/resourceGroups/rg-two'; Name = 'rg-two' }
+                )
+
+                # Slot: the administrative unit (0 is the root), the Azure scope, or 0/1 for
+                # member/owner.
+                function New-FixturePost {
+                    param([string]$Pillar, [string]$Key, [string]$Name, [int]$Slot)
+                    $Post = switch ($Pillar) {
+                        'Directory' {
+                            [PSCustomObject]@{
+                                id               = $Key
+                                roleDefinition   = [PSCustomObject]@{ displayName = $Name }
+                                directoryScopeId = if ($Slot -eq 0) { '/' } else { "/administrativeUnits/au-00$Slot" }
+                                directoryScope   = if ($Slot -eq 0) { $null } else { [PSCustomObject]@{ displayName = $AuName[$Slot] } }
+                                scheduleInfo     = $null
+                            }
+                        }
+                        'Group' {
+                            [PSCustomObject]@{
+                                id           = $Key
+                                groupId      = "g-$Name"
+                                accessId     = if ($Slot -eq 0) { 'member' } else { 'owner' }
+                                memberType   = 'direct'
+                                group        = [PSCustomObject]@{ displayName = $Name }
+                                scheduleInfo = $null
+                            }
+                        }
+                        'Azure' {
+                            [PSCustomObject]@{
+                                Name                      = $Key
+                                RoleDefinitionDisplayName = $Name
+                                ScopeId                   = $AzureScope[$Slot].Id
+                                ScopeDisplayName          = $AzureScope[$Slot].Name
+                            }
+                        }
+                    }
+                    $TypeName = @{ Directory = 'DirectoryEligibilitySchedule'; Group = 'GroupEligibilitySchedule'; Azure = 'AzureEligibilitySchedule' }[$Pillar]
+                    $Post.PSObject.TypeNames.Insert(0, "Omnicit.PIM.$TypeName")
+                    $Post
+                }
+
+                $Out = @{}
+                foreach ($Pillar in 'Directory', 'Group', 'Azure') {
+                    $Prefix = @{ Directory = 'd'; Group = 'g'; Azure = 'a' }[$Pillar]
+                    $Base = [System.Collections.Generic.List[object]]::new()
+                    $BaseIndex = [System.Collections.Generic.List[int]]::new()
+                    $BaseSlot = [System.Collections.Generic.List[int]]::new()
+                    for ($I = 0; $I -lt 180; $I++) {
+                        $PoolIndex = if ($I -lt 170) { ($I * 7) % 50 } else { 50 + ($I - 170) }
+                        $Slot = switch ($Pillar) {
+                            'Directory' { if ($I % 3 -eq 2) { [int][math]::Floor(($I % 15) / 3) + 1 } else { 0 } }
+                            'Group' { if ($PoolIndex % 10 -eq 7 -or $I % 4 -eq 3) { 1 } else { 0 } }
+                            'Azure' { ($I + [math]::Floor($I / 50)) % 5 }
+                        }
+                        $Name = $Pool[$PoolIndex] -f $Prefix
+                        $Base.Add((New-FixturePost -Pillar $Pillar -Key ('{0}-{1:000}' -f $Prefix, ($I + 1)) -Name $Name -Slot $Slot))
+                        $BaseIndex.Add($PoolIndex)
+                        $BaseSlot.Add($Slot)
+                    }
+                    # Ten distinct posts that share the key of a base post, at another slot; every
+                    # second one carries the base post's name too.
+                    $Twins = for ($J = 0; $J -lt 10; $J++) {
+                        $Of = $J * 17 + 5
+                        $PoolIndex = if ($J % 2 -eq 0) { $BaseIndex[$Of] } else { ($J * 11 + 3) % 50 }
+                        $Slot = switch ($Pillar) {
+                            'Directory' { if ($BaseSlot[$Of] -eq 0) { ($J % 5) + 1 } else { 0 } }
+                            'Group' { 1 - $BaseSlot[$Of] }
+                            'Azure' { ($BaseSlot[$Of] + 1) % 5 }
+                        }
+                        New-FixturePost -Pillar $Pillar -Key ('{0}-{1:000}' -f $Prefix, ($Of + 1)) -Name ($Pool[$PoolIndex] -f $Prefix) -Slot $Slot
+                    }
+                    $List = [System.Collections.Generic.List[object]]::new()
+                    for ($I = 0; $I -lt 180; $I++) {
+                        $List.Add($Base[$I])
+                        # Ten base posts stand in the list a second time, as the same object.
+                        if ($I % 18 -eq 0) { $List.Add($Base[[int][math]::Floor($I / 2)]) }
+                        if ($I % 18 -eq 9) { $List.Add($Twins[[int](($I - 9) / 18)]) }
+                    }
+                    $Out[$Pillar] = $List.ToArray()
+                }
+                $Out
+            }
+        }
+
+        It 'builds 200 posts per pillar, ten of them twice and ten sharing a key' -ForEach @(
+            @{ Pillar = 'Directory'; KeyName = 'id' }
+            @{ Pillar = 'Group'; KeyName = 'id' }
+            @{ Pillar = 'Azure'; KeyName = 'Name' }
+        ) {
+            $Posts = $Fixture[$Pillar]
+            $Posts.Count | Should -Be 200
+            $Distinct = [System.Collections.Generic.HashSet[object]]::new([System.Collections.Generic.ReferenceEqualityComparer]::Instance)
+            foreach ($Post in $Posts) { $null = $Distinct.Add($Post) }
+            $Distinct.Count | Should -Be 190
+            @($Distinct | Group-Object -Property $KeyName | Where-Object { $PSItem.Count -gt 1 }).Count | Should -Be 10
+        }
+
+        It 'offers the recorded texts, in their order, for <Title>' -ForEach $Scenarios {
+            $Lines = @(InModuleScope Omnicit.PIM -Parameters @{ Pillar = $Pillar; Posts = $Fixture[$Pillar]; Word = $Word; Bound = $Bound; Command = $Command } {
+                param($Pillar, $Posts, $Word, $Bound, $Command)
+                Get-OPIMCompletionText -Pillar $Pillar -InputObject $Posts -WordToComplete $Word -FakeBoundParameters $Bound -CommandName $Command
+            })
+            $Got = [System.Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($Lines -join "`n")))
+            $Got | Should -BeExactly $Hash
+        }
+
+        It 'offers the texts of the scan-per-post loop, in its order, for <Title>' -ForEach $Scenarios {
+            $Result = InModuleScope Omnicit.PIM -Parameters @{ Pillar = $Pillar; Posts = $Fixture[$Pillar]; Word = $Word; Bound = $Bound; Command = $Command; OracleWord = $OracleWord; OracleFilters = $OracleFilters } {
+                param($Pillar, $Posts, $Word, $Bound, $Command, $OracleWord, $OracleFilters)
+                # The oracle: the loop of Get-OPIMCompletionText as it was before the index, verbatim,
+                # which scans every post twice per post through the 'One' set of the matcher.
+                function Get-OracleCompletionText {
+                    param([string]$Pillar, [object[]]$InputObject, [string]$Word, [hashtable]$Filters)
+                    $Ignore = [System.StringComparison]::OrdinalIgnoreCase
+                    $Items = @($InputObject | Where-Object { $null -ne $PSItem })
+                    foreach ($Item in $Items) {
+                        $Names = Get-OPIMScheduleName -Pillar $Pillar -InputObject $Item
+                        # A post the typed filters exclude is not offered: its own old form must still find it.
+                        if (@(Find-OPIMScheduleMatch -Pillar $Pillar -Name $Names.OldForm -InputObject $Items @Filters).Count -eq 0) {
+                            continue
+                        }
+                        $ByName = @(Find-OPIMScheduleMatch -Pillar $Pillar -Name $Names.DisplayName -InputObject $Items @Filters)
+                        $Unique = $ByName.Count -eq 1 -and
+                            (Get-OPIMScheduleName -Pillar $Pillar -InputObject $ByName[0]).Key -eq $Names.Key
+                        $Text = if ($Unique) { $Names.DisplayName } else { $Names.OldForm }
+                        if ($Word -and -not $Text.StartsWith($Word, $Ignore)) { continue }
+                        # The call PowerShell's own completers use: it doubles every kind of single quote the
+                        # tokenizer knows, not only the straight one (OPIM-26).
+                        "'" + [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($Text) + "'"
+                    }
+                }
+                [PSCustomObject]@{
+                    Got    = @(Get-OPIMCompletionText -Pillar $Pillar -InputObject $Posts -WordToComplete $Word -FakeBoundParameters $Bound -CommandName $Command)
+                    Oracle = @(Get-OracleCompletionText -Pillar $Pillar -InputObject $Posts -Word $OracleWord -Filters $OracleFilters)
+                }
+            }
+            $Result.Oracle.Count | Should -BeGreaterThan 0
+            $Result.Got.Count | Should -Be $Result.Oracle.Count
+            ($Result.Got -join "`n") | Should -BeExactly ($Result.Oracle -join "`n")
+        }
+
+        It 'offers bare names and old forms for the directory roles with no filter' {
+            $Result = InModuleScope Omnicit.PIM -Parameters @{ Posts = $Fixture.Directory } {
+                param($Posts)
+                [PSCustomObject]@{
+                    Got      = @(Get-OPIMCompletionText -Pillar Directory -InputObject $Posts)
+                    OldForms = @($Posts | ForEach-Object {
+                        "'" + [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent((Get-OPIMScheduleName -Pillar Directory -InputObject $PSItem).OldForm) + "'"
+                    })
+                }
+            }
+            @($Result.Got | Where-Object { $Result.OldForms -ccontains $PSItem }).Count | Should -BeGreaterThan 0
+            @($Result.Got | Where-Object { $Result.OldForms -cnotcontains $PSItem }).Count | Should -BeGreaterThan 0
+        }
+    }
 }
