@@ -151,16 +151,18 @@ BeforeAll {
         transport-reaching file was made to scrub first and the Connect-MgGraph hand-off in
         Initialize-OPIMAuth was wrapped: 20 transport-reaching files under source/ holding 30 of the
         52 catch clauses in source/. The named control,
-        source/Private/Invoke-OPIMGraphRequest.ps1, is asserted with its EXACT count instead (8: the three in its nested
-        Get-ClaimsFromException; the first attempt, the claims retry, the status read and the
-        refresh retry, all four in its nested Invoke-OPIMGraphSingle; and the paging catch of -All,
+        source/Private/Invoke-OPIMGraphRequest.ps1, is asserted with its EXACT count instead (9: the three in its nested
+        Get-ClaimsFromException; the one in each of its nested Get-GraphResponseFact and
+        Get-GraphRetryAfterHeaderValue, which read a failure's status and Retry-After in both
+        forms the Graph SDK raises (OPIM-28); the first attempt, the claims retry and the refresh
+        retry, all three in its nested Invoke-OPIMGraphSingle; and the paging catch of -All,
         OPIM-13), so a catch that stops being seen fails there with a clear cause instead of
         quietly shrinking a total.
     #>
     $script:ScrubTransportFileFloor = 18
     $script:ScrubCatchFloor = 28
     $script:ScrubControlPath = 'source/Private/Invoke-OPIMGraphRequest.ps1'
-    $script:ScrubControlCatchCount = 8
+    $script:ScrubControlCatchCount = 9
 
     <#
         =====================================================================================

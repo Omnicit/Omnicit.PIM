@@ -26,6 +26,15 @@ module. A script that used an Az.Resources or Az.Accounts command only because t
 it along must now install and import that module itself. The module now requires PowerShell 7.4 or
 later, which AzAuth needs: on PowerShell 7.2 or 7.3 it no longer imports.
 
+Microsoft Graph requests now wait out throttling that outlasts the Graph SDK's own retries. A
+request Graph answers with 429 is sent again after the wait Graph names in `Retry-After`, or after a
+short, growing wait when it names none; a read answered with 503 and a `Retry-After` is sent again
+the same way. A change such as an activation is sent again only after a 429, which Graph returns
+before it acts on the request. Each wait lasts at most two minutes, and a request waits at most five
+minutes in all, with at most ten retries; a list read page by page stops waiting after fifteen
+minutes. When they run out, the command fails with the same error as before. A token Graph rejects
+is now refreshed once also when the rejection arrives inside the Graph SDK's own retry error.
+
 ## [0.6.0] - 2026-10-09
 
 Roles and groups can be named by display name, as `Enable-OPIMEntraIDGroup 'Finance Team' -AccessType Owner` (a group name alone means membership), and completion offers the bare name when unique. A name or `-Identity` matching several is refused with the candidates (`AmbiguousName`) and nothing changes; `-Scope` (a role, where the command has it), `-AccessType` (a group) or the tab-completed form picks one. A name matching nothing is `EligibleRoleNotFound` (`ActiveRoleNotFound` when deactivating, saying if the role is only eligible or active under another name); neither stops the command or the next name. `Get-OPIMAzureRole -RoleName` and `-Identity` work below the root scope without extra rights, `-All -Scope` returns only that scope's roles, and a `-Scope` ending in a slash is refused.
