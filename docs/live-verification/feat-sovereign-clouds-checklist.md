@@ -122,7 +122,7 @@ in the fixture session), so every activation below passes one.
 
 ### S.1. Find the build under test and tie it to the branch head
 
-- [ ] **S.1** Window A (no module). The newest build in `output/module/Omnicit.PIM/` was made after the branch head was committed, and it holds the cloud table.
+- [x] **S.1** Window A (no module). The newest build in `output/module/Omnicit.PIM/` was made after the branch head was committed, and it holds the cloud table.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -146,11 +146,15 @@ committed: True`; `Tracked changes in the working tree: 0`; the two last lines `
 **Failure looks like:** `False` on the third line or a tracked change -- build again before any check
 below. `False` on the raw folder -- STOP: the tenant maps would be tracked.
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:36 UTC, window A (no module): Branch head: 728b1ee (the checklist commit); Built version folder: 0.7.0; Built after the branch head was committed: True (built again after the checklist commit, which changes no source); Tracked changes in the working tree: 0; The built module holds the cloud table: True; The raw folder is git-ignored: True.
+```
 
 ### S.2. Window B loads the pinned dependencies
 
-- [ ] **S.2** Window B, a fresh `pwsh -NoProfile`, before anything else runs in it. AzAuth 2.9.0 and Microsoft.Graph.Authentication 2.36.0 are loaded from the build's own dependencies, no Az module is loaded, and `AZURE_AUTHORITY_HOST` is not set.
+- [x] **S.2** Window B, a fresh `pwsh -NoProfile`, before anything else runs in it. AzAuth 2.9.0 and Microsoft.Graph.Authentication 2.36.0 are loaded from the build's own dependencies, no Az module is loaded, and `AZURE_AUTHORITY_HOST` is not set.
 
 ```powershell
 $env:PSModulePath = (Resolve-Path 'output/RequiredModules').Path + [System.IO.Path]::PathSeparator + $env:PSModulePath
@@ -170,11 +174,15 @@ loaded: 0`; `AZURE_AUTHORITY_HOST is set: False`; `PowerShell:` 7.4 or later.
 one. `AZURE_AUTHORITY_HOST is set: True` -- STOP: the operator's environment would steer the Azure
 sign-in; clear it in a fresh window first.
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:39 UTC, window B (the second; see 0.1 and 0.3): AzAuth loaded: 2.9.0; Microsoft.Graph.Authentication loaded: 2.36.0; Az modules loaded: 0; this window can find: 9 (recorded: the profile's Az modules); AZURE_AUTHORITY_HOST is set: False; PowerShell: 7.6.6. The first window B, 05:36 UTC: the same lines.
+```
 
 ### S.3. The fixture is in place, and nothing carries the step's prefix
 
-- [ ] **S.3** Window A, as `oer-live-cc`. The prerequisite script with `-WhatIf` finds every object of the fixture and would write nothing, and no object carries the prefix `opim-s23-`.
+- [x] **S.3** Window A, as `oer-live-cc`. The prerequisite script with `-WhatIf` finds every object of the fixture and would write nothing, and no object carries the prefix `opim-s23-`.
 
 ```powershell
 $Prereq = Join-Path $env:OPIMLIVE_HOME 'Initialize-OpimS2Prereq.ps1'
@@ -197,11 +205,15 @@ authentication context; `Objects with the prefix opim-s23-: 0`.
 prefixed object that is not the fixture's -- STOP: create nothing and ask for nothing. A 401 or 403
 -- STOP (G6).
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:36-05:37 UTC, window A as oer-live-cc: Lines 'exists; kept': 10; What if lines other than the transcript: 0. Sweep 'opim-s1-': 0; sweep 'opim-s2-': test user 1, test group 1, other prefixed objects 0. Group 'Exclude from CA': found 1, not role-assignable, not dynamic. Every PIM policy (both directory roles, the group member, Reader on opim-s2-rg and opim-s2-rg2): approval required False, authentication context False, on activation Justification. Residue: 2 rows, both from a Sprint 1 run, not touched. Every oer-live-cc identity line True. Objects with the prefix opim-s23-: 0.
+```
 
 ### S.4. The harness loads in window B
 
-- [ ] **S.4** Window B. OerLive is 1.0.3, OpimLive is 1.0.5, the harness reads the test values through it, and the TOTP implementation reproduces RFC 6238.
+- [x] **S.4** Window B. OerLive is 1.0.3, OpimLive is 1.0.5, the harness reads the test values through it, and the TOTP implementation reproduces RFC 6238.
 
 ```powershell
 Import-Module (Join-Path $env:OPIMLIVE_HOME 'OpimLive/OpimLive.psm1') -Force
@@ -215,13 +227,17 @@ $Target = Get-OpimLiveTarget
 **Expect:** `OerLive version: 1.0.3`; `OpimLive version: 1.0.5`; the next two lines `True`.
 **Failure looks like:** `False` on the self-test -- STOP: the harness would enter wrong codes.
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:39 UTC, window B (the second): OerLive version: 1.0.3; OpimLive version: 1.0.5; Test user and tenant read (values hidden): True; TOTP self-test: True. The first window B, 05:36 UTC: the same lines.
+```
 
 ### 0. Preparation
 
 ### 0.1. Identity check, in the global cloud
 
-- [ ] **0.1** Window B. `Connect-OpimLiveUser -IncludeARM`, which passes no `-Environment`, signs the build in to Graph and Azure with one device code each; the account is the test user, the tenant the test tenant, the ARM token the test user's in the test tenant; the session is in the global cloud on the global hosts; `AZURE_AUTHORITY_HOST` was never left set; and no Az module is loaded.
+- [x] **0.1** Window B. `Connect-OpimLiveUser -IncludeARM`, which passes no `-Environment`, signs the build in to Graph and Azure with one device code each; the account is the test user, the tenant the test tenant, the ARM token the test user's in the test tenant; the session is in the global cloud on the global hosts; `AZURE_AUTHORITY_HOST` was never left set; and no Az module is loaded.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -257,11 +273,15 @@ Information True ok` -- STOP: run `Disconnect-OPIM`, end window B and run no oth
 whose tenant or user is not the test user's is a STOP even though the module refused it (the harness
 signed in wrong). Another host or cloud -- a defect within this step's scope (G11).
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:39-05:40 UTC, window B (the second; 25 s): AzAuth 2.9.0; Microsoft.Graph.Authentication 2.36.0. Harness step line: Disconnect-OPIM and Disconnect-MgGraph ran first (no Disconnect-AzAccount: the module has its own ARM transport). The Graph code and then the AzAuth code were completed in Edge: rows Graph Information True ok and AzureCli Information True ok; Signed in to Graph as the test user: True; to the test tenant: True; the module remembers the device code mode: True; Azure token is the test user (the Graph sign-in's object id): True; Azure token is the test tenant: True. Session tenant is the test tenant: True; Session cloud: Global; MSAL app cloud: Global; MSAL authority host: login.microsoftonline.com; Graph SDK environment: Global; ARM resource: https://management.azure.com; ARM token held as a SecureString: True; minutes left: 64; AZURE_AUTHORITY_HOST is set: False; Az modules loaded: 0; this window can find: 9 (recorded: the harness 1.0.5 no longer loads them). No line printed the account or the tenant id. Run 1, the first window B, 05:37 UTC: the same harness and identity lines; the operator's window wrapper (not the module) stopped on the block's Format-Table line, so the remaining lines ran verbatim in the same window at 05:37 with the table through Out-String, with the same results. That window was ended after 0.3 (see there), and a second window B ran S.2, S.4 and 0.1 to T.2.
+```
 
 ### 0.2. What is eligible and what is active
 
-- [ ] **0.2** Window B. The fixture's eligibilities are listed, and nothing is active.
+- [x] **0.2** Window B. The fixture's eligibilities are listed, and nothing is active.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -275,11 +295,15 @@ if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
 **Failure looks like:** another eligible count -- STOP. Something already active -- record it; the
 checks below count before and after. A terminating error from a read is a failed read, never a `0`.
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:40 UTC, window B: Eligible: directory 2, group 1, Azure 2; Active: directory 0, group 0, Azure 0. (The first window B, 05:38 UTC: the same.)
+```
 
 ### 0.3. Without `-Environment` and with `-Environment Global` is one session (G8)
 
-- [ ] **0.3** Window B. `Connect-OPIM -IncludeARM` and `Connect-OPIM -Environment Global -IncludeARM`, each run twice, show no device code and change neither token: the session signed in by 0.1 without `-Environment` is the session of `-Environment Global`.
+- [x] **0.3** Window B. `Connect-OPIM -IncludeARM` and `Connect-OPIM -Environment Global -IncludeARM`, each run twice, show no device code and change neither token: the session signed in by 0.1 without `-Environment` is the session of `-Environment Global`.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -307,13 +331,17 @@ unchanged: True; same MSAL application: True; session cloud: Global`.
 cloud than the session's: a defect within this step's scope (G11). Do not complete a code that
 appears here; let it expire, and run 0.1 again.
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:40 UTC, window B (the second): no -Environment, first: device codes 0; other lines 0. no -Environment, second: device codes 0; other lines 0. -Environment Global, first: device codes 0; other lines 0. -Environment Global, second: device codes 0; other lines 0. Graph token unchanged: True; ARM token unchanged: True; same MSAL application: True; session cloud: Global. In the first window B (05:38 UTC) the block ran but printed nothing: the block's own variable Out overwrote the window wrapper's output-file variable of the same name, since the wrapper dot-sources each block. Nothing was written anywhere (the working tree stayed clean). That window was signed out (state cleared True, no Graph context, AZURE_AUTHORITY_HOST not set) and ended at 05:39; the wrapper's own variables now carry a prefix no block uses, and it renders Format-Table output in one piece.
+```
 
 ### 1. `pim` and `unpim` for all three kinds, from a tenant map (regression of steps 1a, 1b and 2)
 
 ### 1.1. The tenant map stores no cloud for the global cloud, and its alias is the same session
 
-- [ ] **1.1** Window B. A tenant map in the raw folder holds one alias, written without `-Environment` while the session is in the global cloud, with Usage Summary Reports Reader, the membership of `opim-s2-grp` and Reader on `opim-s2-rg`; the file holds no `Environment` line and the alias reads as `Global`; and `Connect-OPIM -TenantAlias` for it is the session of 0.1.
+- [x] **1.1** Window B. A tenant map in the raw folder holds one alias, written without `-Environment` while the session is in the global cloud, with Usage Summary Reports Reader, the membership of `opim-s2-grp` and Reader on `opim-s2-rg`; the file holds no `Environment` line and the alias reads as `Global`; and `Connect-OPIM -TenantAlias` for it is the session of 0.1.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -345,11 +373,15 @@ True; session cloud: Global`.
 **Failure looks like:** another count -- record it, and do not run section 1 until the map holds the
 three entries. An `Environment` line, or a device code -- a defect within this step's scope (G11).
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:40 UTC, window B: Rows to store: 3; Entries: directory 1, group 1, Azure 1; Environment: Global; The file holds an Environment line: False; Connect-OPIM -TenantAlias s23-all: device codes 0; tokens unchanged: True; session cloud: Global.
+```
 
 ### 1.2. `pim` activates all three
 
-- [ ] **1.2** Window B. `pim -TenantAlias s23-all` activates the directory role, the group membership and Reader on `opim-s2-rg`, with no error, and all three are then listed as active.
+- [x] **1.2** Window B. `pim -TenantAlias s23-all` activates the directory role, the group membership and Reader on `opim-s2-rg`, with no error, and all three are then listed as active.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -383,11 +415,15 @@ retry lines (1.6 reads it).
 seconds -- record it. A sign-in prompt -- STOP (0.1). An error naming a cloud or a host -- a defect
 within this step's scope (G11).
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:40-05:41 UTC, window B: First pim: results 3; DirectoryRole Usage Summary Reports Reader Provisioned; EntraIDGroup opim-s2-grp Provisioned; AzureRole Reader Provisioned. Errors: (none); warnings: 0. Verbose lines of a throttled or retried Graph or ARM request: 0. Listed as active after (seconds, the first check after the call): directory 46, group 46, Azure 46.
+```
 
 ### 1.3. A second `pim` sends nothing (G8)
 
-- [ ] **1.3** Window B. Once all three are listed as active, the same `pim` again writes "already active" for each and sends no request.
+- [x] **1.3** Window B. Once all three are listed as active, the same `pim` again writes "already active" for each and sends no request.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -403,11 +439,15 @@ $Second = @(Enable-OPIMMyRole -TenantAlias 's23-all' -TenantMapPath $Map -Justif
 (G8). ARM's and Graph's listing lag is known (OPIM-50, OPIM-53); 1.2 waits until each kind is
 listed, so a second request here is a finding.
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:41 UTC, window B: Second pim, 54 s after the first: results 0; already active warnings 3; errors (none).
+```
 
 ### 1.4. `unpim` deactivates all three after five minutes
 
-- [ ] **1.4** Window B. Five minutes after 1.2, `unpim -TenantAlias s23-all` deactivates all three, with no error.
+- [x] **1.4** Window B. Five minutes after 1.2, `unpim -TenantAlias s23-all` deactivates all three, with no error.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -429,11 +469,15 @@ $global:OpimS23Throttle += @($First | Where-Object { $_ -is [System.Management.A
 **Failure looks like:** `ActiveDurationTooShort` -- the five minutes were not waited out: run the block
 again after a minute. Another error, or fewer results -- record it.
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:41-05:46 UTC, window B (the block waited until 320 s after 1.2's pim): First unpim: results 3; DirectoryRole Usage Summary Reports Reader Revoked; EntraIDGroup opim-s2-grp Revoked; AzureRole Reader Revoked. Errors: (none). Verbose lines of a throttled or retried Graph or ARM request, 1.2 and 1.4: 0.
+```
 
 ### 1.5. A second `unpim` sends nothing (G8), and nothing is left active
 
-- [ ] **1.5** Window B. The same `unpim` again sends nothing and writes no error, and the listings show nothing active.
+- [x] **1.5** Window B. The same `unpim` again sends nothing and writes no error, and the listings show nothing active.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -456,11 +500,15 @@ directory 0, group 0, Azure 0`.
 **Record:** the seconds the listings took to settle, and the second call's other lines.
 **Failure looks like:** a crash, or a second request -- record it (G8).
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:46 UTC, window B: Listings settled after 46 s: True; Second unpim: results 0; errors 0; other lines 0; Active: directory 0, group 0, Azure 0.
+```
 
 ### 1.6. The Graph SDK's own retry of a POST (finding 6 of step 2)
 
-- [ ] **1.6** Window B, nothing to run. Whether the Graph SDK's own retry handler sent a POST of 1.2 or 1.4 again after a 503 or 504 that the module never saw.
+- [~] **1.6** Window B, nothing to run. Whether the Graph SDK's own retry handler sent a POST of 1.2 or 1.4 again after a 503 or 504 that the module never saw.
 
 **Record:** the count of throttle or retry lines from 1.2 and 1.4. The module writes a verbose line
 only for a 429 or 503 that reaches it, after the Graph SDK's own retries; a 503 or 504 that the
@@ -472,13 +520,17 @@ therefore we do not know: it is marked `[~]` and reported as unmeasured. A line 
 **Failure looks like:** two results for one kind in 1.2, or a `RoleAssignmentExists` there -- record
 it as the measured resend.
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Cannot be verified, and therefore we do not know. 1.2 and 1.4 wrote 0 verbose lines of a throttled or retried Graph or ARM request, so no 429, 503 or 504 reached the module. Whether the Graph SDK's own retry handler sent a POST of 1.2 or 1.4 again after a 503 or 504 that it then answered itself is visible neither to the module nor to this file. 1.2 listed one result per kind and no RoleAssignmentExists, so no second activation was seen. Unmeasured; finding 6 of step 2 stays open.
+```
 
 ### 2. A tenant alias in the US Government cloud (no sign-in in a sovereign cloud, P-12)
 
 ### 2.1. An alias that stores `USGov`
 
-- [ ] **2.1** Window B. `Install-OPIMConfiguration -Environment USGov` writes an alias for the test tenant with `Environment = 'USGov'` into a second map in the raw folder, and the alias reads as `USGov`.
+- [x] **2.1** Window B. `Install-OPIMConfiguration -Environment USGov` writes an alias for the test tenant with `Environment = 'USGov'` into a second map in the raw folder, and the alias reads as `USGov`.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -498,11 +550,15 @@ $Gov = Get-OPIMConfiguration -TenantAlias 's23-usgov' -TenantMapPath $GovMap -Er
 Environment    = 'USGov'`.
 **Failure looks like:** another value -- a defect within this step's scope (G11).
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:46 UTC, window B: Alias s23-usgov: Environment USGov; tenant is the test tenant: True; The file holds: Environment    = 'USGov'.
+```
 
 ### 2.2. The alias sends its sign-in to the US Government authority, where it is refused
 
-- [ ] **2.2** Window B, with the global session of 0.1 still signed in. `Connect-OPIM -TenantAlias s23-usgov` builds the module's MSAL application for the US Government authority and asks it for a device code for the test tenant; the authority refuses it, no device code is shown, nothing is signed in, and the global session is unchanged.
+- [x] **2.2** Window B, with the global session of 0.1 still signed in. `Connect-OPIM -TenantAlias s23-usgov` builds the module's MSAL application for the US Government authority and asks it for a device code for the test tenant; the authority refuses it, no device code is shown, nothing is signed in, and the global session is unchanged.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -537,11 +593,15 @@ tenant: do NOT complete it, let it expire (the block waits up to 15 minutes), an
 finding. `login.microsoftonline.com`, or a changed global session -- the alias fell back to the
 global cloud: STOP (a P0-family defect, G11 #3).
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:46-05:47 UTC, window B, with the global session of 0.1 signed in: Seconds: 1; Device codes shown: 0; Error: DeviceCodeAuthFailed,Initialize-OPIMAuth [AuthenticationError] (the block caught it under -ErrorAction Stop as Initialize-OPIMAuth raised it); AADSTS codes in it: AADSTS90038 (NationalCloudTenantRedirection: the tenant belongs to another national cloud); MSAL application rebuilt: True; its authority host: login.microsoftonline.us; its cloud: USGov; Session unchanged: cloud Global, tokens unchanged True, still the test tenant True; Graph SDK environment: Global; AZURE_AUTHORITY_HOST is set: False. The alias holds the real test tenant id, so a fallback to the global cloud would have shown a device code; none was shown.
+```
 
 ### 2.3. The global session still works, and `-Environment` overrides the alias's cloud
 
-- [ ] **2.3** Window B. After 2.2 the global session lists the fixture with no sign-in, and `Connect-OPIM -TenantAlias s23-usgov -Environment Global -IncludeARM` is the global session.
+- [x] **2.3** Window B. After 2.2 the global session lists the fixture with no sign-in, and `Connect-OPIM -TenantAlias s23-usgov -Environment Global -IncludeARM` is the global session.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -561,11 +621,15 @@ session cloud Global`.
 **Failure looks like:** a device code -- the refused attempt in 2.2 cost the global session: record it
 (G11). Do not complete the code.
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:47 UTC, window B: Eligible after 2.2: directory and Azure rows 4; device codes 0. Connect-OPIM -TenantAlias s23-usgov -Environment Global: device codes 0; tokens unchanged True; session cloud Global.
+```
 
 ### 2.4. `pim` and `unpim` sign in to the alias's cloud
 
-- [ ] **2.4** Window B. `pim -TenantAlias s23-usgov` and `unpim -TenantAlias s23-usgov` send their sign-in to the US Government authority, where it is refused; nothing is listed, activated or deactivated, and the global session is unchanged.
+- [x] **2.4** Window B. `pim -TenantAlias s23-usgov` and `unpim -TenantAlias s23-usgov` send their sign-in to the US Government authority, where it is refused; nothing is listed, activated or deactivated, and the global session is unchanged.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -593,11 +657,15 @@ tokens unchanged True; AZURE_AUTHORITY_HOST is set: False`; `Active: directory 0
 **Failure looks like:** a result, a device code, or `login.microsoftonline.com` -- the alias's cloud
 was not used: STOP (G11 #3).
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:47 UTC, window B: Enable-OPIMMyRole: results 0; device codes 0; error DeviceCodeAuthFailed,Enable-OPIMMyRole; MSAL authority host login.microsoftonline.us. Disable-OPIMMyRole: results 0; device codes 0; error DeviceCodeAuthFailed,Disable-OPIMMyRole; MSAL authority host login.microsoftonline.us. Session unchanged: cloud Global, tokens unchanged True; AZURE_AUTHORITY_HOST is set: False. Active: directory 0, group 0, Azure 0.
+```
 
 ### 2.5. An alias with a cloud the module does not know is refused before any sign-in
 
-- [ ] **2.5** Window B. A third map in the raw folder whose alias stores `Environment = 'Germany'` makes `Connect-OPIM` and `pim` write an error with no error id of their own, category `InvalidArgument`, and touch no sign-in: the MSAL application is not rebuilt.
+- [x] **2.5** Window B. A third map in the raw folder whose alias stores `Environment = 'Germany'` makes `Connect-OPIM` and `pim` write an error with no error id of their own, category `InvalidArgument`, and touch no sign-in: the MSAL application is not rebuilt.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -625,7 +693,11 @@ untouched: True`.
 **Failure looks like:** a sign-in attempt (a rebuilt MSAL application) or a fallback to the global
 cloud -- a defect within this step's scope (G11; a fallback is G11 #3).
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:47 UTC, window B: Connect-OPIM: error id 'Connect-OPIM' [InvalidArgument]; names Germany: True; suggests the quoted alias: True; device codes 0. pim: error id 'Enable-OPIMMyRole' [InvalidArgument]; results 0. MSAL application untouched: True.
+```
 
 ## Teardown
 
@@ -635,7 +707,7 @@ an `AZURE_AUTHORITY_HOST`, and that the raw folder with the three tenant maps is
 
 ### T.1. Nothing is left active
 
-- [ ] **T.1** Window B. The test user has no active directory role, group assignment or Azure role.
+- [x] **T.1** Window B. The test user has no active directory role, group assignment or Azure role.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -648,11 +720,15 @@ if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
 **Failure looks like:** an active role -- deactivate it (after five minutes) and record it. A
 terminating error is a failed read, never a `0`.
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:47 UTC, window B: Active: directory 0, group 0, Azure 0.
+```
 
 ### T.2. Window B signs out
 
-- [ ] **T.2** Window B. The window's session is cleared, `AZURE_AUTHORITY_HOST` is not set, no Az module is loaded, and the window ended.
+- [x] **T.2** Window B. The window's session is cleared, `AZURE_AUTHORITY_HOST` is not set, no Az module is loaded, and the window ended.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -668,11 +744,15 @@ try { Disconnect-MgGraph -ErrorAction Stop | Out-Null } catch { $null = $PSItem 
 `AZURE_AUTHORITY_HOST is set: False; Az modules loaded: 0`.
 **Failure looks like:** `False` / `True` -- record it, and end the window.
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:47 UTC, window B: Module state cleared: True; MSAL cloud cleared: True; Graph context left: False; AZURE_AUTHORITY_HOST is set: False; Az modules loaded: 0. Window B ended 05:47 UTC. (The first window B was signed out the same way at 05:39 UTC and ended.)
+```
 
 ### T.3. No object of the step, and the raw folder
 
-- [ ] **T.3** Window A, then the operator. No object carries `opim-s23-`; the raw folder, with the three tenant maps, is deleted once the results are written up.
+- [x] **T.3** Window A, then the operator. No object carries `opim-s23-`; the raw folder, with the three tenant maps, is deleted once the results are written up.
 
 ```powershell
 Import-Module (Join-Path $env:OPIMLIVE_HOME '../../Omnicit Entra RBAC/Live-verifiering/OerLive/OerLive.psm1') -Force
@@ -690,4 +770,8 @@ docs/live-verification: 0`.
 **Failure looks like:** a prefixed object -- STOP (it was not made by this file). The fixture
 `opim-s2-` stays on purpose until step 5.
 
-Result:
+Result: 2026-10-10 05:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+05:47 UTC, window A as oer-live-cc, after window B had ended: every oer-live-cc identity line True; Objects with the prefix opim-s23-: 0; Raw folder gone: True; Untracked files under docs/live-verification: 0. The fixture opim-s2- stays until step 5.
+```
