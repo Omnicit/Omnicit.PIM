@@ -67,9 +67,13 @@ function Get-OPIMTenantMapEnvironment {
         return (Get-OPIMCloudEndpoint -Environment $Stored -ErrorAction Stop).Environment
     } catch {
         $Where = if ($TenantMapPath) { "'$TenantMapPath'" } else { 'the tenant map' }
+        # The suggested command is meant to be pasted, so the alias is a single-quoted string of its
+        # own, with every kind of single quote in it doubled; an alias with a space or an apostrophe
+        # then still runs as written.
+        $QuotedAlias = "'" + [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($TenantAlias) + "'"
         $Message = "Tenant alias '$TenantAlias' in $Where names the cloud '$Stored', which Omnicit.PIM does not know, " +
             'so nothing was signed in. Use Global, USGov, USGovDoD or China, for example with ' +
-            "Set-OPIMConfiguration -TenantAlias $TenantAlias -Environment USGov."
+            "Set-OPIMConfiguration -TenantAlias $QuotedAlias -Environment USGov."
         $Record = [System.Management.Automation.ErrorRecord]::new(
             [System.ArgumentException]::new($Message),
             $null,

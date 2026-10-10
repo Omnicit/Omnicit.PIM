@@ -118,7 +118,29 @@ Describe 'Get-OPIMTenantMapEnvironment' {
         It 'names the alias, the path, the value and the four clouds, and says nothing was signed in' {
             $script:Facts.Message | Should -BeExactly ("Tenant alias 'contoso' in 'TestDrive:\TenantMap.psd1' names the cloud 'Germany', which Omnicit.PIM does not know, " +
                 'so nothing was signed in. Use Global, USGov, USGovDoD or China, for example with ' +
-                'Set-OPIMConfiguration -TenantAlias contoso -Environment USGov.')
+                "Set-OPIMConfiguration -TenantAlias 'contoso' -Environment USGov.")
+        }
+
+        It 'suggests a command whose alias is a single-quoted string, doubling every kind of single quote' -ForEach @(
+            @{ Alias = 'contoso'; Quoted = "'contoso'" }
+            @{ Alias = 'gov cloud'; Quoted = "'gov cloud'" }
+            @{ Alias = "o'brien"; Quoted = "'o''brien'" }
+            @{ Alias = "partner$([char]0x2019)s"; Quoted = "'partner$([char]0x2019)$([char]0x2019)s'" }
+        ) {
+            $Message = InModuleScope Omnicit.PIM -Parameters @{ Alias = $Alias } {
+                param($Alias)
+                try {
+                    Get-OPIMTenantMapEnvironment -Entry @{ Environment = 'Germany' } -TenantAlias $Alias -ErrorAction Stop
+                } catch {
+                    $PSItem.Exception.Message
+                }
+            }
+            $Message | Should -BeLike "*for example with Set-OPIMConfiguration -TenantAlias $Quoted -Environment USGov."
+            # The suggestion parses as one command whose alias argument is the alias itself.
+            $Suggested = $Message.Substring($Message.IndexOf('Set-OPIMConfiguration')).TrimEnd('.')
+            $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Suggested, [ref]$null, [ref]$null)
+            $Command = $Ast.Find({ param($Node) $Node -is [System.Management.Automation.Language.CommandAst] }, $true)
+            $Command.CommandElements[2].Value | Should -BeExactly $Alias
         }
 
         It 'never returns Global for an unknown cloud' {
