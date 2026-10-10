@@ -959,6 +959,10 @@ progress at the limit is an `ActivationWaitTimedOut` error and returns nothing; 
 submitted. Each role or group is reported on its own, so one that fails or times out never stops the
 next.
 
+`pim` and `unpim` write every refusal of an activation or a deactivation as an error of their own,
+with the error id the role or group cmdlet gave it. It is in `-ErrorVariable` too, also under
+`-ErrorAction SilentlyContinue`.
+
 ---
 
 ## Using -All, -Activated, and default (eligible only)

@@ -33,7 +33,9 @@ function Disable-OPIMMyRole {
     -ErrorAction), where that error ends the command before any category runs. A list of roles or
     groups that cannot be read is written as its own error, and nothing of that category is
     deactivated; the other categories still run, except under the error preference Stop, where the
-    first such error ends the command.
+    first such error ends the command. Every refusal of a deactivation is written as an error of
+    this command -- in -ErrorVariable too, also under -ErrorAction SilentlyContinue -- with the
+    error id the pillar gave it.
 
     Use the 'unpim' alias for quick deactivation:
 
@@ -215,6 +217,15 @@ function Disable-OPIMMyRole {
         }
     }
 
+    # OPIM-52: each pillar cmdlet's error stream is redirected into ConvertTo-OPIMMyRoleResult, which
+    # writes every refusal through this command, so it reaches the caller's -ErrorVariable (a pillar
+    # piped into the converter is not the last command of its pipeline, and the errors of such a
+    # command never reach it). Under SilentlyContinue the pillar runs with Continue, or its errors would
+    # never reach its error stream to be redirected; under Inquire too, so the user is asked once, by this
+    # command. Any other preference (Stop, Ignore) is inherited unchanged.
+    $DeactivateParams = @{}
+    if ($ErrorActionPreference -in 'SilentlyContinue', 'Inquire') { $DeactivateParams.ErrorAction = 'Continue' }
+
     # OPIM-12: in every pillar below, a listing that fails is written as its own error and ends that
     # pillar only. $ListRead is set only after every listing of the pillar returned, so nothing a
     # failed listing read is deactivated and the failure is never reported as "no active ..." or
@@ -257,7 +268,7 @@ function Disable-OPIMMyRole {
                                 $PSCmdlet.WriteError((New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Directory `
                                     -Name $Key -Status Active -Candidate $ActiveMatches -Configuration))
                             } elseif ($ActiveMatches.Count -eq 1) {
-                                $ActiveMatches[0] | Disable-OPIMDirectoryRole | ConvertTo-OPIMMyRoleResult
+                                $ActiveMatches[0] | Disable-OPIMDirectoryRole @DeactivateParams 2>&1 | ConvertTo-OPIMMyRoleResult -Cmdlet $PSCmdlet
                             } else {
                                 Write-Verbose "Directory role '$Key' is not currently activated at that scope. No deactivation needed."
                             }
@@ -266,7 +277,7 @@ function Disable-OPIMMyRole {
                         # Simple string config -- deactivate all active directory roles
                         if ($ActiveDirectoryRoles) {
                             Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveDirectoryRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                            $ActiveDirectoryRoles | Disable-OPIMDirectoryRole | ConvertTo-OPIMMyRoleResult
+                            $ActiveDirectoryRoles | Disable-OPIMDirectoryRole @DeactivateParams 2>&1 | ConvertTo-OPIMMyRoleResult -Cmdlet $PSCmdlet
                         } else {
                             Write-Verbose 'No active directory roles found.'
                         }
@@ -286,7 +297,7 @@ function Disable-OPIMMyRole {
             if ($ListRead) {
                 if ($ActiveDirectoryRoles) {
                     Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Directory roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveDirectoryRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                    $ActiveDirectoryRoles | Disable-OPIMDirectoryRole | ConvertTo-OPIMMyRoleResult
+                    $ActiveDirectoryRoles | Disable-OPIMDirectoryRole @DeactivateParams 2>&1 | ConvertTo-OPIMMyRoleResult -Cmdlet $PSCmdlet
                 } else {
                     Write-Verbose 'No active directory roles found.'
                 }
@@ -326,7 +337,7 @@ function Disable-OPIMMyRole {
                                 $PSCmdlet.WriteError((New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Group `
                                     -Name $Key -Status Active -Candidate $ActiveMatches -Configuration))
                             } elseif ($ActiveMatches.Count -eq 1) {
-                                $ActiveMatches[0] | Disable-OPIMEntraIDGroup | ConvertTo-OPIMMyRoleResult
+                                $ActiveMatches[0] | Disable-OPIMEntraIDGroup @DeactivateParams 2>&1 | ConvertTo-OPIMMyRoleResult -Cmdlet $PSCmdlet
                             } else {
                                 Write-Verbose "Entra ID group '$Key' is not currently activated. No deactivation needed."
                             }
@@ -335,7 +346,7 @@ function Disable-OPIMMyRole {
                         # Simple string config -- deactivate all active groups
                         if ($ActiveGroups) {
                             Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveGroups.Count) group(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                            $ActiveGroups | Disable-OPIMEntraIDGroup | ConvertTo-OPIMMyRoleResult
+                            $ActiveGroups | Disable-OPIMEntraIDGroup @DeactivateParams 2>&1 | ConvertTo-OPIMMyRoleResult -Cmdlet $PSCmdlet
                         } else {
                             Write-Verbose 'No active Entra ID group assignments found.'
                         }
@@ -355,7 +366,7 @@ function Disable-OPIMMyRole {
             if ($ListRead) {
                 if ($ActiveGroups) {
                     Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Entra ID groups ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveGroups.Count) group(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                    $ActiveGroups | Disable-OPIMEntraIDGroup | ConvertTo-OPIMMyRoleResult
+                    $ActiveGroups | Disable-OPIMEntraIDGroup @DeactivateParams 2>&1 | ConvertTo-OPIMMyRoleResult -Cmdlet $PSCmdlet
                 } else {
                     Write-Verbose 'No active Entra ID group assignments found.'
                 }
@@ -411,7 +422,7 @@ function Disable-OPIMMyRole {
                                 $PSCmdlet.WriteError((New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Azure `
                                     -Name $EligibleRole.Name -Status Active -Candidate $ActiveMatches -Configuration))
                             } elseif ($ActiveMatches.Count -eq 1) {
-                                $ActiveMatches[0] | Disable-OPIMAzureRole | ConvertTo-OPIMMyRoleResult
+                                $ActiveMatches[0] | Disable-OPIMAzureRole @DeactivateParams 2>&1 | ConvertTo-OPIMMyRoleResult -Cmdlet $PSCmdlet
                             } else {
                                 Write-Verbose "Azure role '$($EligibleRole.RoleDefinitionDisplayName)' on '$($EligibleRole.ScopeDisplayName)' is not currently activated. No deactivation needed."
                             }
@@ -420,7 +431,7 @@ function Disable-OPIMMyRole {
                         # Simple string config -- deactivate all active Azure roles
                         if ($ActiveAzureRoles) {
                             Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveAzureRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                            $ActiveAzureRoles | Disable-OPIMAzureRole | ConvertTo-OPIMMyRoleResult
+                            $ActiveAzureRoles | Disable-OPIMAzureRole @DeactivateParams 2>&1 | ConvertTo-OPIMMyRoleResult -Cmdlet $PSCmdlet
                         } else {
                             Write-Verbose 'No active Azure RBAC roles found.'
                         }
@@ -440,7 +451,7 @@ function Disable-OPIMMyRole {
             if ($ListRead) {
                 if ($ActiveAzureRoles) {
                     Write-Progress -Id 51808 -Activity 'Deactivating PIM roles' -Status "Azure RBAC roles ($($ProgressPillarIndex + 1) of $ProgressPillarCount) -- deactivating $($ActiveAzureRoles.Count) role(s)..." -PercentComplete (10 + $ProgressPillarIndex * $ProgressShare + [int]($ProgressShare / 2))
-                    $ActiveAzureRoles | Disable-OPIMAzureRole | ConvertTo-OPIMMyRoleResult
+                    $ActiveAzureRoles | Disable-OPIMAzureRole @DeactivateParams 2>&1 | ConvertTo-OPIMMyRoleResult -Cmdlet $PSCmdlet
                 } else {
                     Write-Verbose 'No active Azure RBAC roles found.'
                 }

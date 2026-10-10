@@ -1713,6 +1713,21 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   failed listing read is acted on, no "no eligible" or "not currently activated" message is
   written for it, and the other pillars still run -- except under the `Stop` error preference,
   where the first such write ends the command.
+- **Every refusal inside `pim` and `unpim` reaches the caller (OPIM-52).** Each of the six pillar
+  calls of `Enable-OPIMMyRole` and the nine of `Disable-OPIMMyRole` redirects the pillar's error
+  stream into the converter, `... 2>&1 | ConvertTo-OPIMMyRoleResult -Cmdlet $PSCmdlet`, which
+  removes the pillar's own entry of each error record from `$global:Error`
+  (`Remove-OPIMErrorRecord`) and writes the record through the calling command
+  (`$Cmdlet.WriteError`). A pillar piped into the converter is not the last command of its
+  pipeline, so without this its errors never reached the caller's `-ErrorVariable`. A refusal is now
+  in `-ErrorVariable` and on the error stream with the ErrorId and message the pillar gave it and
+  `pim`'s or `unpim`'s own name as the suffix
+  (`RoleAssignmentRequestPolicyValidationFailed,Enable-OPIMMyRole`).
+  The pillar runs with `-ErrorAction Continue` when the caller's preference is `SilentlyContinue`
+  (its errors would never reach the error stream to be redirected) or `Inquire` (so the user is
+  asked once, by the command, and never twice), and with the inherited preference otherwise: `Stop`
+  still ends the command at the first refusal, after the results already emitted, and `Ignore`
+  still records nothing. A new pillar call in either command takes the same shape.
 - **`Write-CmdletError`** (private) emits a structured record. Its `-Message` expects an
   `[Exception]`, not a string (`Write-CmdletError.ps1:76`) -- always wrap bare strings:
   `[System.Exception]::new('message')`. `-InnerException` chains a caught exception, `-Terminating`
@@ -2040,8 +2055,18 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   second even where the test expects the wait to end on its own, so a regression (or a mutant)
   that never ends the loop still reaches the deadline instead of hanging the run; the poll counts
   then follow exactly from the step and `-TimeoutSeconds`.
-- **`-ErrorVariable` collects more than the command's own error.** The engine fills it from every
-  nested frame's error stream, so a mock that throws can leave several entries -- wrapper
+- **A nested command's errors reach a caller's `-ErrorVariable` only when it is the last command
+  of its pipeline, or when its output is captured by an assignment or a parenthesised expression**
+  (measured 2026-10-10, PowerShell 7.6.6, OPIM-52). The list is registered on the caller's output
+  pipe, so a nested command feeds it only when its own output pipe is that one; in the middle of a
+  pipeline its errors reach the error stream (under `Continue`) and `$Error`, never the list, as
+  under `SilentlyContinue` (`1 | Inner | Conv` leaves it empty; `1 | Inner` and
+  `(1 | Inner) | Conv` fill it; a terminating error reaches it too). That is why `Enable-` and
+  `Disable-OPIMMyRole` redirect each pillar's error stream into `ConvertTo-OPIMMyRoleResult`
+  (see **Error Handling**). A test that expects a nested command's record in `-ErrorVariable`
+  has to shape the call the same way.
+- **`-ErrorVariable` also collects more than the command's own error.** The engine fills it from
+  every nested frame's error stream, so a mock that throws can leave several entries -- wrapper
   exceptions first -- before the record the command itself wrote, which is the LAST entry.
   Assert on the entry you mean, not on `$Errs[0]` by habit.
 - **Pin `-ErrorAction` on any call whose non-terminating error the test observes or has to

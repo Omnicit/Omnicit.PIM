@@ -416,6 +416,223 @@ Describe 'Disable-OPIMMyRole' {
         }
     }
 
+    Context 'When a pillar refuses a deactivation (OPIM-52)' {
+        # Each pillar's error stream is redirected into ConvertTo-OPIMMyRoleResult, which writes every
+        # refusal through unpim itself: it reaches unpim's -ErrorVariable, also under SilentlyContinue,
+        # where a pillar piped into the converter is not the last command of its pipeline and never
+        # reached it. Three active roles: the second is refused, the first and the third are deactivated.
+        # The mock takes its preference from an explicit -ErrorAction, else from $script:PillarPreference
+        # (what a real pillar inherits from unpim) and is Continue otherwise: a module-scoped mock body
+        # reads the test scope's preference (Stop under the build), never the caller's.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
+            $RoleA = [PSCustomObject]@{ id = 'active-a'; roleDefinitionId = 'def-a'; directoryScopeId = '/'; roleDefinition = [PSCustomObject]@{ displayName = 'Role A' } }
+            $RoleB = [PSCustomObject]@{ id = 'active-b'; roleDefinitionId = 'def-b'; directoryScopeId = '/'; roleDefinition = [PSCustomObject]@{ displayName = 'Role B' } }
+            $RoleC = [PSCustomObject]@{ id = 'active-c'; roleDefinitionId = 'def-c'; directoryScopeId = '/'; roleDefinition = [PSCustomObject]@{ displayName = 'Role C' } }
+            foreach ($R in $RoleA, $RoleB, $RoleC) { $R.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleInstance') }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { @($RoleA, $RoleB, $RoleC) } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole {
+                $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] }
+                elseif ($script:PillarPreference) { $script:PillarPreference } else { 'Continue' }
+                if ($Role.id -eq 'active-b') {
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('The role was activated less than 5 minutes ago'),
+                            'ActiveDurationTooShort',
+                            [System.Management.Automation.ErrorCategory]::InvalidOperation, $Role))
+                    return
+                }
+                $Out = [PSCustomObject]@{ action = 'selfDeactivate'; status = 'Revoked'; directoryScopeId = '/'; roleDefinition = $Role.roleDefinition }
+                $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleRequest')
+                $Out
+            }
+        }
+
+        BeforeEach {
+            $script:PillarPreference = $null
+        }
+
+        It 'puts the refusal in -ErrorVariable under -ErrorAction SilentlyContinue, once, and still returns both deactivations' {
+            # A real pillar inherits SilentlyContinue from unpim, which the mock cannot see.
+            $script:PillarPreference = 'SilentlyContinue'
+            $Out = @(Disable-OPIMMyRole -AllActivatedDirectoryRoles -Confirm:$false -ErrorVariable Caught -ErrorAction SilentlyContinue)
+            $Out.Count | Should -Be 2
+            $Out[0].DisplayName | Should -BeExactly 'Role A'
+            $Out[1].DisplayName | Should -BeExactly 'Role C'
+            $Refusals = @($Caught | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like 'ActiveDurationTooShort*' })
+            $Refusals.Count | Should -Be 1
+            $Refusals[0].FullyQualifiedErrorId | Should -BeExactly 'ActiveDurationTooShort,Disable-OPIMMyRole'
+            $Refusals[0].Exception.Message | Should -BeExactly 'The role was activated less than 5 minutes ago'
+        }
+
+        It 'writes the refusal to the error stream once and puts it in -ErrorVariable under -ErrorAction Continue' {
+            $All = @(Disable-OPIMMyRole -AllActivatedDirectoryRoles -Confirm:$false -ErrorVariable Caught -ErrorAction Continue 2>&1)
+            $OnStream = @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $OnStream.Count | Should -Be 1
+            $OnStream[0].FullyQualifiedErrorId | Should -BeExactly 'ActiveDurationTooShort,Disable-OPIMMyRole'
+            @($All | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }).Count | Should -Be 2
+            @($Caught | Where-Object { $_.FullyQualifiedErrorId -like 'ActiveDurationTooShort*' }).Count | Should -Be 1
+        }
+
+        It 'lists the refusal once in $global:Error' {
+            # The engine already skips a write of the record that sits first in the list, so this pins the
+            # end result; the removal itself is proven by ConvertTo-OPIMMyRoleResult.Tests.ps1.
+            $Before = @($global:Error | Where-Object { $_.FullyQualifiedErrorId -like 'ActiveDurationTooShort*' }).Count
+            Disable-OPIMMyRole -AllActivatedDirectoryRoles -Confirm:$false -ErrorAction SilentlyContinue
+            $After = @($global:Error | Where-Object { $_.FullyQualifiedErrorId -like 'ActiveDurationTooShort*' }).Count
+            ($After - $Before) | Should -Be 1
+        }
+
+        It 'ends at the first refusal under -ErrorAction Stop, after emitting the deactivation before it, when the pillar writes it as <PillarPreference>' -ForEach @(
+            @{ PillarPreference = 'Continue' }
+            @{ PillarPreference = 'Stop' }
+        ) {
+            # With Stop the pillar itself stops at the refusal, as a real pillar does when it inherits
+            # Stop; written non-terminating, unpim's own write of the record ends the command. Either way
+            # the deactivation before the refusal was emitted, and the one after it never reaches the
+            # pipeline.
+            $script:PillarPreference = $PillarPreference
+            $Collected = [System.Collections.Generic.List[object]]::new()
+            { Disable-OPIMMyRole -AllActivatedDirectoryRoles -Confirm:$false -ErrorAction Stop | ForEach-Object { $Collected.Add($_) } } | Should -Throw
+            $Collected.Count | Should -Be 1
+            $Collected[0].DisplayName | Should -BeExactly 'Role A'
+        }
+
+        It 'runs the pillar with -ErrorAction Continue when the caller asks for <Preference>' -ForEach @(
+            @{ Preference = 'SilentlyContinue' }
+            @{ Preference = 'Inquire' }
+        ) {
+            # Inquire: the pillar is told Continue so that the user is asked once, by unpim, and never
+            # twice. Only the first role is listed, so that nothing is refused and nothing is asked.
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { @($RoleA) } -ParameterFilter { $Activated }
+            Disable-OPIMMyRole -AllActivatedDirectoryRoles -Confirm:$false -ErrorAction $Preference
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $PesterBoundParameters.ContainsKey('ErrorAction') -and $PesterBoundParameters['ErrorAction'] -eq 'Continue'
+            }
+        }
+
+        It 'passes the caller''s own preference on, with no -ErrorAction of its own, under <Preference>' -ForEach @(
+            @{ Preference = 'Stop' }
+            @{ Preference = 'Continue' }
+            @{ Preference = 'Ignore' }
+        ) {
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { @($RoleA) } -ParameterFilter { $Activated }
+            Disable-OPIMMyRole -AllActivatedDirectoryRoles -Confirm:$false -ErrorAction $Preference
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                -not $PesterBoundParameters.ContainsKey('ErrorAction')
+            }
+        }
+    }
+
+    Context 'When a pillar refuses a deactivation (<Pillar>, <Mode>) (OPIM-52)' -ForEach @(
+        @{ Mode = 'AllActivated'; Pillar = 'Directory' }
+        @{ Mode = 'AllActivated'; Pillar = 'Group' }
+        @{ Mode = 'AllActivated'; Pillar = 'Azure' }
+        @{ Mode = 'StringAlias'; Pillar = 'Directory' }
+        @{ Mode = 'StringAlias'; Pillar = 'Group' }
+        @{ Mode = 'StringAlias'; Pillar = 'Azure' }
+        @{ Mode = 'ConfiguredAlias'; Pillar = 'Directory' }
+        @{ Mode = 'ConfiguredAlias'; Pillar = 'Group' }
+        @{ Mode = 'ConfiguredAlias'; Pillar = 'Azure' }
+    ) {
+        # The nine pillar calls of unpim are nine separate lines of code (the -AllActivated listing, the
+        # string form of an alias, and the configured entries of a hashtable alias, for each of the three
+        # pillars), so each one has a refusal of its own. Every listing returns one active item; the
+        # pillar named by $script:RefusingPillar writes the refusal and the other two deactivate theirs. The
+        # mocks take their preference from an explicit -ErrorAction, else from $script:PillarPreference (what a
+        # real pillar inherits from unpim, which a mock cannot see) and are Continue otherwise.
+        BeforeAll {
+            $script:RefusingPillar = $Pillar
+            $MyRoleParams = switch ($Mode) {
+                'StringAlias' { @{ TenantAlias = 'contoso'; TenantMapPath = 'TestDrive:\TenantMap.psd1' } }
+                'ConfiguredAlias' { @{ TenantAlias = 'fabrikam'; TenantMapPath = 'TestDrive:\TenantMap.psd1' } }
+                default { @{ AllActivated = $true; Confirm = $false } }
+            }
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    contoso  = '00000000-0000-0000-0000-000000000001'
+                    fabrikam = @{
+                        TenantId       = '00000000-0000-0000-0000-000000000002'
+                        DirectoryRoles = @('role-def-001')
+                        EntraIDGroups  = @('group-id-001_member')
+                        AzureRoles     = @('elig-az-rf-001')
+                    }
+                }
+            }
+            $FakeActiveDirectoryRole = [PSCustomObject]@{ id = 'active-rf-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'; roleDefinition = [PSCustomObject]@{ displayName = 'Role A' } }
+            $FakeActiveDirectoryRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleInstance')
+            $FakeActiveGroup = [PSCustomObject]@{ id = 'active-grp-rf-001'; groupId = 'group-id-001'; accessId = 'member'; group = [PSCustomObject]@{ displayName = 'Group A' } }
+            $FakeActiveGroup.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleInstance')
+            $FakeActiveAzureRole = [PSCustomObject]@{ Name = 'az-active-rf-001'; ScopeId = '/subscriptions/sub-001'; RoleDefinitionId = 'role-az-001' }
+            $FakeActiveAzureRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleInstance')
+            $FakeEligibleAzureRole = [PSCustomObject]@{ Name = 'elig-az-rf-001'; ScopeId = '/subscriptions/sub-001'; RoleDefinitionId = 'role-az-001' }
+            $FakeEligibleAzureRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureEligibilitySchedule')
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { $FakeActiveDirectoryRole }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $FakeActiveGroup }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { if ($Activated) { $FakeActiveAzureRole } else { $FakeEligibleAzureRole } }
+            Mock -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole {
+                if ($script:RefusingPillar -eq 'Directory') {
+                    $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] }
+                    elseif ($script:PillarPreference) { $script:PillarPreference } else { 'Continue' }
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('The directory role was refused'), 'ActiveDurationTooShort',
+                            [System.Management.Automation.ErrorCategory]::InvalidOperation, $null))
+                    return
+                }
+                $Out = [PSCustomObject]@{ action = 'selfDeactivate'; status = 'Revoked'; directoryScopeId = '/'; roleDefinition = $Role.roleDefinition }
+                $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryAssignmentScheduleRequest')
+                $Out
+            }
+            Mock -ModuleName Omnicit.PIM Disable-OPIMEntraIDGroup {
+                if ($script:RefusingPillar -eq 'Group') {
+                    $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] }
+                    elseif ($script:PillarPreference) { $script:PillarPreference } else { 'Continue' }
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('The group was refused'), 'ActiveDurationTooShort',
+                            [System.Management.Automation.ErrorCategory]::InvalidOperation, $null))
+                    return
+                }
+                $Out = [PSCustomObject]@{ action = 'selfDeactivate'; status = 'Revoked'; accessId = 'member'; group = [PSCustomObject]@{ displayName = 'Group A' } }
+                $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupAssignmentScheduleRequest')
+                $Out
+            }
+            Mock -ModuleName Omnicit.PIM Disable-OPIMAzureRole {
+                if ($script:RefusingPillar -eq 'Azure') {
+                    $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] }
+                    elseif ($script:PillarPreference) { $script:PillarPreference } else { 'Continue' }
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('The Azure role was refused'), 'ActiveDurationTooShort',
+                            [System.Management.Automation.ErrorCategory]::InvalidOperation, $null))
+                    return
+                }
+                $Out = [PSCustomObject]@{ RequestType = 'SelfDeactivate'; Status = 'Revoked'; RoleDefinitionDisplayName = 'Contributor'; ScopeDisplayName = 'Sub A' }
+                $Out.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.AzureAssignmentScheduleRequest')
+                $Out
+            }
+        }
+
+        BeforeEach {
+            $script:PillarPreference = $null
+        }
+
+        It 'puts the refusal in -ErrorVariable under -ErrorAction SilentlyContinue, once, and still deactivates the other two pillars' {
+            # A real pillar inherits SilentlyContinue from unpim, which the mock cannot see.
+            $script:PillarPreference = 'SilentlyContinue'
+            $Out = @(Disable-OPIMMyRole @MyRoleParams -ErrorVariable Caught -ErrorAction SilentlyContinue)
+            $Out.Count | Should -Be 2
+            $Refusals = @($Caught | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like 'ActiveDurationTooShort*' })
+            $Refusals.Count | Should -Be 1
+            $Refusals[0].FullyQualifiedErrorId | Should -BeExactly 'ActiveDurationTooShort,Disable-OPIMMyRole'
+        }
+
+        It 'writes the refusal to the error stream once and puts it in -ErrorVariable under -ErrorAction Continue' {
+            $All = @(Disable-OPIMMyRole @MyRoleParams -ErrorVariable Caught -ErrorAction Continue 2>&1)
+            @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 1
+            @($Caught | Where-Object { $_.FullyQualifiedErrorId -like 'ActiveDurationTooShort*' }).Count | Should -Be 1
+        }
+    }
+
     Context 'When -AllActivated is specified but no roles are active' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Connect-OPIM {}
