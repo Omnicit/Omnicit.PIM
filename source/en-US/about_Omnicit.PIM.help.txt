@@ -82,10 +82,13 @@ LONG DESCRIPTION
       Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -DeviceCode
 
     A script reads both messages as they arrive by merging the Information stream into a
-    pipeline. Capturing the output in a variable (for example, $x = Connect-OPIM -DeviceCode
-    6>&1) shows nothing until the flow ends, which can take 15 minutes.
+    pipeline that only shows them. The sign-in waits while that pipeline handles a message, so a
+    pipeline that also waits for the user, calls the module or waits for the sign-in holds the
+    sign-in up, and one that waits for the sign-in never returns: run the rest of the script after
+    the command has returned. Capturing the output in a variable (for example, $x = Connect-OPIM
+    -DeviceCode 6>&1) shows nothing until the flow ends, which can take 15 minutes.
 
-      Connect-OPIM -DeviceCode -IncludeARM 6>&1 | ForEach-Object { $PSItem.ToString() }
+      Connect-OPIM -DeviceCode -IncludeARM 6>&1 | ForEach-Object { Write-Host $PSItem.ToString() }
 
     The following Microsoft Graph scopes are requested automatically. These are listed for
     reference (least-privilege review, custom app registration scenarios):

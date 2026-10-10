@@ -164,7 +164,8 @@ $InTenant
 **Expect:** ten targets in the tenant or the vault on a first run (the user with its password into the
 vault, the group, two directory role, two group and two Azure eligibilities, two resource groups), `0` without
 the prefix and `0` lines with STOP; the list names only `opim-s1-` objects. The identity check lines
-of `oer-live-cc` are all `True`.
+of `oer-live-cc`, which the block writes to `prereq-whatif.txt` and does not print, are all `True`
+there.
 **Failure looks like:** a target without the prefix -- STOP (stop condition: a target without the
 step's or the fixture's prefix). A STOP line -- STOP and record it: a policy that requires approval or
 an authentication context, or a 401 or 403 on `oer-live-cc`'s path (section 5).

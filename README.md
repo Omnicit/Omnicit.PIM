@@ -104,12 +104,16 @@ pim -TenantAlias corp -DeviceCode                     # Enable-OPIMMyRole and Di
 The message with the code goes to the Information stream with the tag `OPIMDeviceCode`. AzAuth
 hands over the code Azure shows as a warning; Omnicit.PIM writes it on the Information stream
 instead, with the same tag, so it shows even where warnings are silenced. A script reads both as
-they arrive by merging the Information stream into a pipeline. Capturing the output in a variable
-instead (`$x = Connect-OPIM -DeviceCode 6>&1`) shows nothing until the flow ends, which can take 15
-minutes.
+they arrive by merging the Information stream into a pipeline that only shows them. The sign-in
+waits while that pipeline handles a message: a pipeline that also waits for the user, calls
+Omnicit.PIM or waits for the sign-in to finish holds the sign-in up until it returns, and one that
+waits for the sign-in never returns. Run the rest of the script after the command has returned.
+Capturing the output in a variable instead (`$x = Connect-OPIM -DeviceCode 6>&1`) shows nothing
+until the flow ends, which can take 15 minutes.
 
 ```powershell
-Connect-OPIM -TenantAlias corp -DeviceCode -IncludeARM 6>&1 | ForEach-Object { $PSItem.ToString() }
+Connect-OPIM -TenantAlias corp -DeviceCode -IncludeARM 6>&1 | ForEach-Object { Write-Host $PSItem.ToString() }
+Get-OPIMAzureRole    # the rest of the script runs once the sign-in has returned
 ```
 
 For Azure RBAC cmdlets (`Get-/Enable-/Disable-OPIMAzureRole`) an Azure Resource Manager token
