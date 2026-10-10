@@ -697,5 +697,21 @@ Describe 'Get-OPIMCompletionText' {
             @($Result.Got | Where-Object { $Result.OldForms -ccontains $PSItem }).Count | Should -BeGreaterThan 0
             @($Result.Got | Where-Object { $Result.OldForms -cnotcontains $PSItem }).Count | Should -BeGreaterThan 0
         }
+
+        # The scan per post read the names of every post twice for every post, about 80,000 reads
+        # for 200 posts; the index reads each post's names a bounded number of times. The mock
+        # counts every read, the matcher's included, and hands it on to the real function.
+        It 'reads the names of each post a bounded number of times, not once per other post' {
+            $script:RealScheduleName = InModuleScope Omnicit.PIM { ${function:Get-OPIMScheduleName} }
+            $script:ScheduleNameCalls = 0
+            Mock -ModuleName Omnicit.PIM Get-OPIMScheduleName { $script:ScheduleNameCalls++; & $script:RealScheduleName @PesterBoundParameters }
+            $Got = @(InModuleScope Omnicit.PIM -Parameters @{ Posts = $Fixture.Directory } {
+                param($Posts)
+                Get-OPIMCompletionText -Pillar Directory -InputObject $Posts -WordToComplete ''
+            })
+            $Got.Count | Should -Be 200
+            $script:ScheduleNameCalls | Should -BeGreaterOrEqual 200
+            $script:ScheduleNameCalls | Should -BeLessOrEqual 600
+        }
     }
 }
