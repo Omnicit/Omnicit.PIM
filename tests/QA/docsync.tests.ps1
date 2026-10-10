@@ -342,12 +342,14 @@ Describe 'README and about topic stay in step' -Tags 'helpQuality' {
             'the cohort counts partition the exported set, so they must sum to FunctionsToExport ({0}); they sum to {1}' -f $script:ExportedNames.Count, $Total)
     }
 
-    It 'Should compare roster names only case-sensitively (static)' {
+    It 'Should use only the case-sensitive membership operators on roster variables (static)' {
         # Comparisons are ordinal (see the header): -in, -notin, -contains and -notcontains fold
         # case, so a roster check written with one would take Get-OPIMdirectoryRole for
         # Get-OPIMDirectoryRole and stay green on a misspelt document. This reads the file itself
         # with the parser (no module is imported) and holds every membership comparison whose
-        # operand refers to a roster variable to the case-sensitive kinds.
+        # operand refers to one of the five roster variables below to the case-sensitive kinds.
+        # It reads nothing else: not a hashtable lookup ($Seen.ContainsKey), not Compare-Object,
+        # not -eq, and not a membership comparison on any other variable.
         $Tokens = $null
         $ParseErrors = $null
         $Ast = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref]$Tokens, [ref]$ParseErrors)
@@ -373,9 +375,9 @@ Describe 'README and about topic stay in step' -Tags 'helpQuality' {
                 })
 
         $Insensitive = @($Comparisons | Where-Object { $_.Operator.ToString() -cin $InsensitiveKinds } | ForEach-Object { $_.Extent.StartLineNumber })
-        $Insensitive.Count | Should -Be 0 -Because ('a roster name spelled in another case is a defect in the document, so every comparison of roster names must use -cin, -cnotin, -ccontains or -cnotcontains; case-insensitive comparisons at lines: {0}' -f ($Insensitive -join ', '))
+        $Insensitive.Count | Should -Be 0 -Because ('a roster name spelled in another case is a defect in the document, so every -in, -notin, -contains or -notcontains on a roster variable must use its case-sensitive form (-cin, -cnotin, -ccontains, -cnotcontains); case-insensitive ones at lines: {0}' -f ($Insensitive -join ', '))
 
         $Sensitive = @($Comparisons | Where-Object { $_.Operator.ToString() -cin $SensitiveKinds })
-        $Sensitive.Count | Should -BeGreaterOrEqual 9 -Because ('the roster checks held 9 case-sensitive comparisons of roster names on 2026-10-10; {0} means the scan lost them, and the check above then measures nothing' -f $Sensitive.Count)
+        $Sensitive.Count | Should -BeGreaterOrEqual 9 -Because ('the roster checks held 9 case-sensitive membership comparisons on a roster variable on 2026-10-10; {0} means the scan lost them, and the check above then measures nothing' -f $Sensitive.Count)
     }
 }
