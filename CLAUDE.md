@@ -1245,9 +1245,10 @@ the requestor's assignments", measured live 2026-10-08). A poll runs exactly whi
 still in progress, before the role is active, so `asRequestor()` would fail every real poll.
 
 Reads use the filter `asTarget()` at scope `/` unless `-Scope` names another. `Get-OPIMAzureRole`
-reads at `-Scope` for a plain listing (no switch, name or `-Identity`), which hands the scope to
-Azure as it is and filters nothing itself, and for `-Activated` (with or without `-Identity`),
-where the module also keeps only the instances whose `ScopeId` equals `-Scope`. With `-All`,
+reads at `-Scope` for a plain listing (no switch, name or `-Identity`) only, which hands the scope
+to Azure as it is and filters nothing itself. `-Activated` (with or without `-Identity`) reads at
+`/` and keeps the instances whose `ScopeId` equals `-Scope` (OPIM-41): ARM's list at a narrower
+scope lags a new activation by about 20 seconds, while the root list shows it at once. With `-All`,
 `-RoleName` or `-Identity` (without `-Activated`) it always reads at `/` and keeps the posts whose
 `ScopeId` equals `-Scope` (a `-Scope` of `/` keeps all); `-RoleName` reads at `/` also with
 `-Activated`, since the resolver calls `Get-OPIMAzureRole -Activated` with no scope. So a `Name` is

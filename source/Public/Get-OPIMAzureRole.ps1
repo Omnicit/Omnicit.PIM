@@ -50,7 +50,7 @@ function Get-OPIMAzureRole {
     it is and returns what Azure returns for that scope; the module filters nothing there.
     In the other modes the module filters by scope itself, and a scope other than '/' means exactly
     that scope, not the scopes below it, compared without regard to letter case. With -Activated
-    (alone, or with -Identity) the instances are read at this scope and only those at exactly this
+    (alone, or with -Identity) the instances are read at the root and only those at exactly this
     scope are returned. With -All, with -RoleName, or with -Identity but not -Activated, the roles
     are read at the root and only those at exactly this scope are kept.
     (On Enable-OPIMAzureRole and Disable-OPIMAzureRole, '/' means only a role at the root scope itself.)
@@ -63,7 +63,8 @@ function Get-OPIMAzureRole {
     Only return currently activated role assignment schedule instances instead of eligible
     (inactive) role eligibility schedules.
     Mutually exclusive with -All.
-    When combined with -Scope, only instances at that exact scope are returned.
+    The instances are read at the root, where a new activation shows at once, and with -Scope only
+    those at exactly that scope are returned.
     .PARAMETER RoleName
     The display name of the Azure role, or the tab-completed form the argument completer offers.
     Returns the eligible and the active post (only the active instance with -Activated); add -Scope
@@ -185,11 +186,16 @@ function Get-OPIMAzureRole {
             return
         }
 
-        # The ARM path prefix of the scope: '' for the root scope '/', so a root path starts with
-        # '/providers'; any other scope with exactly one leading slash, so a scope typed without it
-        # ('subscriptions/...') is read at that scope and the path stays on the ARM host. Only the
+        # OPIM-41: -Activated reads at the root and keeps the instances at exactly -Scope (the filter
+        # below), as the dual mode does: ARM's list at a narrower scope lags a new activation by about
+        # 20 seconds, while the root list shows it. A plain eligible listing still reads at -Scope.
+        $ReadScope = if ($Activated) { '/' } else { $Scope }
+
+        # The ARM path prefix of the scope read at: '' for the root scope '/', so a root path starts
+        # with '/providers'; any other scope with exactly one leading slash, so a scope typed without
+        # it ('subscriptions/...') is read at that scope and the path stays on the ARM host. Only the
         # request path: the scope filters above keep -Scope as it was given.
-        $ScopePath = ([string]$Scope).TrimStart('/')
+        $ScopePath = ([string]$ReadScope).TrimStart('/')
         $Prefix = if ($ScopePath) { '/' + $ScopePath } else { '' }
         try {
             if ($Activated) {
@@ -219,12 +225,12 @@ function Get-OPIMAzureRole {
             }
             # OPIM-11: no reference to the raw record -- no inner exception, and the scope as the
             # target object instead of the caught record.
-            $Message = "Insufficient permissions to list roles at scope ($Scope). If you are trying to view all users' roles, use -All (requires Owner or UserAccessAdministrator)."
+            $Message = "Insufficient permissions to list roles at scope ($ReadScope). If you are trying to view all users' roles, use -All (requires Owner or UserAccessAdministrator)."
             Write-CmdletError -Message ([System.Exception]::new($Message)) `
                 -ErrorId 'InsufficientPermissions' `
                 -Category PermissionDenied `
                 -Details $Message `
-                -TargetObject $Scope `
+                -TargetObject $ReadScope `
                 -cmdlet $PSCmdlet
             return
         }

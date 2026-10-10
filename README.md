@@ -335,7 +335,7 @@ Get-OPIMAzureRole -All
 # List eligible roles at a specific subscription scope
 Get-OPIMAzureRole -Scope '/subscriptions/00000000-...'
 
-# List active roles at a specific scope (exact scope match only)
+# List active roles at a specific scope (exact scope match only; read at the root, so a new activation shows at once)
 Get-OPIMAzureRole -Activated -Scope '/subscriptions/00000000-...'
 
 # Retrieve a role by display name (its eligible and its active post), at one scope if it has several

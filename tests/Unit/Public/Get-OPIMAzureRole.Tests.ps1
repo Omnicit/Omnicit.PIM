@@ -406,12 +406,19 @@ Describe 'Get-OPIMAzureRole' {
                 Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 0 -Scope It -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
             }
 
-            It 'lists the active posts at the scope that -Scope names, and keeps the instance there' {
+            It 'keeps the instance at the scope that -Scope names' {
                 $Result = @(Get-OPIMAzureRole -Activated -Identity 'azure-act-002' -Scope '/subscriptions/sub-001/resourceGroups/rg-two')
                 $Result | Should -HaveCount 1
                 $Result[0].Name | Should -BeExactly 'azure-act-002'
+            }
+
+            It 'reads at the root with -Activated -Identity -Scope as well, never at -Scope (OPIM-41)' {
+                $null = Get-OPIMAzureRole -Activated -Identity 'azure-act-002' -Scope '/subscriptions/sub-001/resourceGroups/rg-two'
                 Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $Path -ceq '/subscriptions/sub-001/resourceGroups/rg-two/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?$filter=asTarget()&api-version=2020-10-01'
+                    $Path -ceq '/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?$filter=asTarget()&api-version=2020-10-01' -and $All.IsPresent
+                }
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 0 -Scope It -ParameterFilter {
+                    $Path -like '/subscriptions/*'
                 }
             }
 
@@ -561,7 +568,8 @@ Describe 'Get-OPIMAzureRole' {
     Context 'When -Scope is typed without its leading slash' {
         # The ARM path prefix of a scope is the scope with exactly one leading slash, so a scope typed
         # without it is read at that scope, and its path stays on the ARM host instead of extending
-        # the host name. Only the request path changes.
+        # the host name. Only the request path changes. A plain listing is the one read made at the
+        # scope; -Activated reads at the root (OPIM-41) whatever -Scope says.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $EmptyResponse = New-ArmResponse @()
@@ -569,15 +577,15 @@ Describe 'Get-OPIMAzureRole' {
             Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EmptyResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
         }
 
-        It 'reads the <List> at that scope (<Name>)' -ForEach @(
-            @{ Name = 'eligible'; Parameters = @{}; List = 'roleEligibilitySchedules' }
-            @{ Name = '-Activated'; Parameters = @{ Activated = $true }; List = 'roleAssignmentScheduleInstances' }
+        It 'reads the <List> at <Where> (<Name>)' -ForEach @(
+            @{ Name = 'eligible'; Parameters = @{}; List = 'roleEligibilitySchedules'; Where = 'that scope'; Prefix = '/subscriptions/22222222-2222-2222-2222-222222222222' }
+            @{ Name = '-Activated'; Parameters = @{ Activated = $true }; List = 'roleAssignmentScheduleInstances'; Where = 'the root'; Prefix = '' }
         ) {
             $null = Get-OPIMAzureRole @Parameters -Scope 'subscriptions/22222222-2222-2222-2222-222222222222' -ErrorAction Stop
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $All.IsPresent -and
-                $Path -ceq ('/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/{0}?$filter=asTarget()&api-version=2020-10-01' -f $List)
+                $Path -ceq ('{0}/providers/Microsoft.Authorization/{1}?$filter=asTarget()&api-version=2020-10-01' -f $Prefix, $List)
             }
         }
     }
@@ -895,11 +903,97 @@ Describe 'Get-OPIMAzureRole' {
             $Result[0].ScopeId | Should -Be '/subscriptions/sub-001'
         }
 
-        It 'reads the instances at that scope' {
-            $null = Get-OPIMAzureRole -Activated -Scope '/subscriptions/sub-001'
+        It 'reads the active instances at the root, never at -Scope, and keeps only those at exactly -Scope (OPIM-41)' {
+            $Result = @(Get-OPIMAzureRole -Activated -Scope '/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-one')
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
-                $Path -ceq '/subscriptions/sub-001/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?$filter=asTarget()&api-version=2020-10-01'
+                $Path -ceq '/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?$filter=asTarget()&api-version=2020-10-01' -and $All.IsPresent
             }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 0 -Scope It -ParameterFilter {
+                $Path -like '/subscriptions/*'
+            }
+            $Result | Should -HaveCount 0 -Because 'the root listing of this context holds no instance at that resource group'
+        }
+
+        It 'reads the instances at the root for a subscription scope as well' {
+            $null = Get-OPIMAzureRole -Activated -Scope '/subscriptions/sub-001'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Path -ceq '/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?$filter=asTarget()&api-version=2020-10-01'
+            }
+        }
+    }
+
+    Context 'When -Activated -Scope reads a root listing that holds several scopes (OPIM-41)' {
+        # ARM's list at a narrower scope lags a new activation by about 20 seconds, so the module reads
+        # the root list, which shows it at once, and keeps the instances at exactly -Scope: neither the
+        # scope above it nor the scope below it, and not a prefix match.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $InstResponse = [pscustomobject]@{
+                value = @(
+                    (New-ArmItem Instance -Name 'active-sub' -Role 'Reader' -ScopeId '/subscriptions/sub-001' -ScopeName 'Subscription One')
+                    (New-ArmItem Instance -Name 'active-rg-one' -Role 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one')
+                    (New-ArmItem Instance -Name 'active-rg-two' -Role 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-two' -ScopeName 'rg-two')
+                    (New-ArmItem Instance -Name 'assigned-rg-one' -Role 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one' -AssignmentType 'Assigned')
+                )
+            }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $InstResponse } -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
+        }
+
+        It 'returns only the active instance at -Scope when the root listing holds several scopes' {
+            $Result = @(Get-OPIMAzureRole -Activated -Scope '/subscriptions/sub-001/resourceGroups/rg-one')
+            $Result | Should -HaveCount 1
+            $Result[0].Name | Should -BeExactly 'active-rg-one'
+            $Result[0].ScopeId | Should -BeExactly '/subscriptions/sub-001/resourceGroups/rg-one'
+            $Result[0].AssignmentType | Should -BeExactly 'Activated'
+            $Result[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.PIM.AzureAssignmentScheduleInstance'
+        }
+
+        It 'returns the instance of a parent scope only when -Scope names that parent' {
+            $Result = @(Get-OPIMAzureRole -Activated -Scope '/subscriptions/sub-001')
+            $Result | Should -HaveCount 1
+            $Result[0].Name | Should -BeExactly 'active-sub'
+        }
+
+        It 'returns every active instance at the root without -Scope, from one read' {
+            $Result = @(Get-OPIMAzureRole -Activated)
+            $Result | Should -HaveCount 3
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It
+        }
+
+        It 'returns every active instance for -Scope ''/'', which has always meant every scope' {
+            $Result = @(Get-OPIMAzureRole -Activated -Scope '/')
+            $Result | Should -HaveCount 3
+        }
+
+        It 'compares the scope without regard to case' {
+            $Result = @(Get-OPIMAzureRole -Activated -Scope '/SUBSCRIPTIONS/SUB-001/RESOURCEGROUPS/RG-TWO')
+            $Result | Should -HaveCount 1
+            $Result[0].Name | Should -BeExactly 'active-rg-two'
+        }
+
+        It 'returns nothing when no active instance is at -Scope' {
+            $Result = @(Get-OPIMAzureRole -Activated -Scope '/subscriptions/sub-002')
+            $Result | Should -HaveCount 0
+        }
+    }
+
+    Context 'When a plain eligible listing names -Scope (OPIM-41 leaves it as it was)' {
+        # Only the active read moved to the root. An eligible listing still hands -Scope to Azure and
+        # filters nothing itself.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $EligResponse = New-ArmResponse (New-ArmItem Eligibility -Name 'elig-001' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one')
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest { $EligResponse } -ParameterFilter { $Path -like '*/roleEligibilitySchedules?*' }
+        }
+
+        It 'reads the eligible list at -Scope and returns what Azure returns for it' {
+            $Result = @(Get-OPIMAzureRole -Scope '/subscriptions/sub-001')
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Path -ceq '/subscriptions/sub-001/providers/Microsoft.Authorization/roleEligibilitySchedules?$filter=asTarget()&api-version=2020-10-01'
+            }
+            $Result | Should -HaveCount 1
+            $Result[0].Name | Should -BeExactly 'elig-001'
         }
     }
 
@@ -1027,9 +1121,9 @@ Describe 'Get-OPIMAzureRole' {
             Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest $RawFailure -ParameterFilter { $Path -like '*/roleAssignmentScheduleInstances?*' }
         }
 
-        It 'writes the rewrap for the <Name> read with the scope as its target and no inner exception' -ForEach @(
-            @{ Name = 'eligible'; Activated = $false }
-            @{ Name = 'activated'; Activated = $true }
+        It 'writes the rewrap for the <Name> read with the scope it read at as its target and no inner exception' -ForEach @(
+            @{ Name = 'eligible'; Activated = $false; ReadAt = '/subscriptions/sub-001' }
+            @{ Name = 'activated'; Activated = $true; ReadAt = '/' }
         ) {
             $Errs = $null
             Get-OPIMAzureRole -Scope '/subscriptions/sub-001' -Activated:$Activated -ErrorVariable Errs -ErrorAction SilentlyContinue
@@ -1039,6 +1133,35 @@ Describe 'Get-OPIMAzureRole' {
             $Rewrap[0].Exception.InnerException | Should -BeNullOrEmpty
             $Rewrap[0].TargetObject | Should -Not -BeOfType ([System.Management.Automation.ErrorRecord])
             $Rewrap[0].TargetObject | Should -BeOfType ([string])
+            $Rewrap[0].TargetObject | Should -BeExactly $ReadAt
+        }
+
+        It 'names the root scope in the InsufficientPermissions error of an -Activated read (OPIM-41)' {
+            $Errs = $null
+            Get-OPIMAzureRole -Scope '/subscriptions/sub-001' -Activated -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Rewrap = @($Errs | Where-Object { $_.Exception.Message -like 'Insufficient permissions to list roles at scope*' })
+            $Rewrap.Count | Should -Be 1
+            $Rewrap[0].Exception.Message | Should -BeLike 'Insufficient permissions to list roles at scope (/).*'
+            $Rewrap[0].Exception.Message | Should -Not -BeLike '*sub-001*'
+            $Rewrap[0].ErrorDetails.Message | Should -BeLike 'Insufficient permissions to list roles at scope (/).*'
+            $Rewrap[0].TargetObject | Should -BeExactly '/'
+        }
+
+        It 'names the root scope in the InsufficientPermissions error of an -Activated -Identity read (OPIM-41)' {
+            $Errs = $null
+            Get-OPIMAzureRole -Scope '/subscriptions/sub-001' -Activated -Identity 'azure-act-001' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Rewrap = @($Errs | Where-Object { $_.Exception.Message -like 'Insufficient permissions to list roles at scope*' })
+            $Rewrap.Count | Should -Be 1
+            $Rewrap[0].Exception.Message | Should -BeLike 'Insufficient permissions to list roles at scope (/).*'
+            $Rewrap[0].TargetObject | Should -BeExactly '/'
+        }
+
+        It 'names the scope a plain eligible read was made at in its InsufficientPermissions error' {
+            $Errs = $null
+            Get-OPIMAzureRole -Scope '/subscriptions/sub-001' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Rewrap = @($Errs | Where-Object { $_.Exception.Message -like 'Insufficient permissions to list roles at scope*' })
+            $Rewrap.Count | Should -Be 1
+            $Rewrap[0].Exception.Message | Should -BeLike 'Insufficient permissions to list roles at scope (/subscriptions/sub-001).*'
             $Rewrap[0].TargetObject | Should -BeExactly '/subscriptions/sub-001'
         }
 
