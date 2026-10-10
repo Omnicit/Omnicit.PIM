@@ -2059,7 +2059,7 @@ Describe 'Invoke-OPIMGraphRequest' {
         }
 
         It 'follows a next link on the Graph host of the session''s cloud for a relative -Uri: <Name>' -ForEach @(
-            @{ Name = 'Global'; Cloud = 'Global'; Link = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+            @{ Name = 'Global (the baseline; the other rows and the refusal test tell the clouds apart)'; Cloud = 'Global'; Link = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
             @{ Name = 'USGov'; Cloud = 'USGov'; Link = 'https://graph.microsoft.us/v1.0/x?$skiptoken=2' }
             @{ Name = 'USGovDoD'; Cloud = 'USGovDoD'; Link = 'https://dod-graph.microsoft.us/v1.0/x?$skiptoken=2' }
             @{ Name = 'China'; Cloud = 'China'; Link = 'https://microsoftgraph.chinacloudapi.cn/v1.0/x?$skiptoken=2' }

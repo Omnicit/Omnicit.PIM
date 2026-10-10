@@ -504,8 +504,9 @@ Describe 'Set-OPIMConfiguration' {
     }
 
     Context 'When the cloud of an alias is set (A12)' {
-        # Set changes only what it is asked to: -Environment sets the cloud, -Environment Global removes
-        # it, and without -Environment whatever is stored stays, an unknown cloud included. Connect-OPIM,
+        # Set changes no cloud it is not asked to: -Environment sets the cloud, -Environment Global removes
+        # it, and without -Environment whatever is stored stays, an unknown cloud included, except a
+        # stored Global in any letter case, which is dropped since Global is never written. Connect-OPIM,
         # pim and unpim are the commands that refuse a cloud the module does not know. Set writes the
         # whole map, so each It reads the written text back as data and looks at its own alias.
         BeforeAll {
@@ -524,6 +525,8 @@ Describe 'Set-OPIMConfiguration' {
                     lower    = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = 'usgovdod' }
                     unknown  = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = 'Germany' }
                     globalc  = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = 'Global' }
+                    globall  = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = 'global' }
+                    globalu  = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = 'GLOBAL' }
                     blank    = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = '  ' }
                     oldstyle = '00000000-0000-0000-0000-000000000001'
                 }
@@ -629,6 +632,21 @@ Describe 'Set-OPIMConfiguration' {
             $script:writtenContent = $null
             Set-OPIMConfiguration -TenantAlias 'blank' -TenantMapPath 'TestDrive:\TenantMap.psd1'
             (Get-WrittenMap).blank.ContainsKey('Environment') | Should -BeFalse
+        }
+
+        It 'drops a stored Global in any letter case when -Environment is omitted' {
+            # Global is never written, so a stored Global (written by hand, in any letter case) means the
+            # same as none, and Set writes the entry back without the key. The documented exception to
+            # "the stored cloud is kept as it is written".
+            foreach ($Alias in 'globall', 'globalu') {
+                $script:writtenContent = $null
+                Set-OPIMConfiguration -TenantAlias $Alias -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+                $Errs.Count | Should -Be 0
+                $Map = Get-WrittenMap
+                $Map.$Alias.ContainsKey('Environment') | Should -BeFalse -Because "$Alias stores Global, which is never written"
+                $Map.$Alias.TenantId | Should -BeExactly '00000000-0000-0000-0000-000000000003'
+            }
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 2 -Exactly -Scope It
         }
 
         It 'writes no Environment without -Environment for an alias that stores none' {

@@ -2147,9 +2147,9 @@ namespace OPIMTestMsal {
         }
 
         It 'asks the new cloud''s MSAL application, not the old cloud''s, for a token on a switch of cloud' {
-            # Carried from the Task 2 review (load-bearing): the session was signed in to Global with an
-            # account cached. Naming USGov must build and use the USGov application; the Global
-            # application, which holds a token of the Global cloud, is never asked for one.
+            # The session was signed in to Global with an account cached. Naming USGov must build and use
+            # the USGov application; the Global application, which holds a token of the Global cloud, is
+            # never asked for one.
             $script:GlobalApp = [OPIMTestMsal.FakeApp]@{ Name = 'Global app' }
             $script:UsGovApp = [OPIMTestMsal.FakeApp]@{ Name = 'USGov app'; SilentFails = $true }
             Mock -ModuleName Omnicit.PIM Get-OPIMMsalApplication { $script:GlobalApp } -ParameterFilter { $Environment -ceq 'Global' }
@@ -2197,9 +2197,9 @@ namespace OPIMTestMsal {
         }
 
         It 'builds the MSAL app for the requested tenant, not the session''s authority, on a switch of cloud' {
-            # Carried from the Task 2 review: the session was built under 'organizations'. A refresh in the
-            # same cloud reuses that authority (the test above); a switch of cloud is a new application and
-            # authority, built for the tenant the call asked for.
+            # The session was built under 'organizations'. A refresh in the same cloud reuses that authority
+            # (tested above); a switch of cloud is a new application and authority, built for the tenant
+            # the call asked for.
             $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant 'organizations' -ObjectId $SessionOid
             $State.Environment = 'Global'
             $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
@@ -2216,9 +2216,9 @@ namespace OPIMTestMsal {
         }
 
         It 'holds the token of a domain session that switches cloud to no tenant, and records its tid' {
-            # Carried from the Task 2 review: nothing in the new cloud is known to compare with (a tenant has
-            # another GUID in another cloud), so a domain-labelled session is pinned afresh to the tid of
-            # the first token of the new session, as a first sign-in under a domain is.
+            # Nothing in the new cloud is known to compare with, since a tenant has another GUID in another
+            # cloud, so a domain-labelled session is pinned afresh to the tid of the new session's first
+            # token, as a first sign-in under a domain is.
             $script:GraphTid = $TenantB
             $State = New-PinState -TenantId 'contoso.onmicrosoft.com' -TokenTenantId $TenantA -AuthorityTenant 'contoso.onmicrosoft.com' -ObjectId $SessionOid
             $State.Environment = 'Global'
@@ -2333,112 +2333,191 @@ namespace OPIMTestMsal {
     }
 
     Context 'When the Graph token and the ARM token are handed on' {
-        It 'binds the plaintext token to no command' {
+        BeforeAll {
             # SECURITY rule 5: PowerShell module logging (LogPipelineExecutionDetails, event 4103)
-            # records every value bound to a command parameter. Static check on the function as the
-            # module loaded it: no argument of any command call reaches an .AccessToken member of the
-            # Graph result or a .Token member of the ARM result, so the plaintext only ever reaches
-            # .NET (the SecureString is what commands receive). The only reads of .AccessToken and
-            # .Token anywhere in the function -- in a hashtable that is splatted, behind a variable or
-            # in a method call as much as in a command's own arguments -- are the NetworkCredential
-            # constructor (once for each) and a truthiness test in an if (once for each), and the
-            # constructor's result is read only through .SecurePassword, never .Password.
+            # records every value bound to a command parameter. These three detectors read a function's
+            # AST statically: the first It runs them on Initialize-OPIMAuth as the module loaded it, and
+            # the known answer after it runs them on texts that break the rule, so a detector that stops
+            # seeing a shape turns red there instead of passing the function vacuously.
+            #
+            # A token member is read by its string VALUE, not by its source text: $Result.AccessToken,
+            # $Result.'AccessToken' and $Result."AccessToken" name the same member, and only the first
+            # has the text AccessToken. Member names are case-insensitive in PowerShell, so -in (which
+            # is too) is right. KNOWN LIMIT: a member named by an expression ($Result.$Name) has no
+            # constant value to read; review has to catch that shape.
+
+            # Every command call one of whose arguments reaches an .AccessToken or a .Token member, as
+            # 'line <n>: <command name>'.
+            function Get-PlaintextTokenCommandArgument {
+                param([Parameter(Mandatory)][System.Management.Automation.Language.Ast]$Ast)
+                $Commands = @($Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true))
+                foreach ($Command in $Commands) {
+                    foreach ($Element in @($Command.CommandElements | Select-Object -Skip 1)) {
+                        $Member = $Element.Find({
+                                param($Node)
+                                $Node -is [System.Management.Automation.Language.MemberExpressionAst] -and
+                                $Node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                                $Node.Member.Value -in 'AccessToken', 'Token'
+                            }, $true)
+                        if ($Member) { 'line {0}: {1}' -f $Command.Extent.StartLineNumber, $Command.GetCommandName() }
+                    }
+                }
+            }
+
+            # Every read of either plaintext member, wherever it sits (an argument, a splatted hashtable's
+            # value, an assignment to a local variable, a method call's argument), one entry per read:
+            # 'NetworkCredential:<member>' for an argument of the NetworkCredential constructor,
+            # 'IfTest:<member>' for a truthiness test in an if condition, and 'line <n>: <parent text>'
+            # for any other read. Only the first two are allowed.
+            function Get-PlaintextTokenUse {
+                param([Parameter(Mandatory)][System.Management.Automation.Language.Ast]$Ast)
+                $TokenMembers = @($Ast.FindAll({
+                            param($Node)
+                            $Node -is [System.Management.Automation.Language.MemberExpressionAst] -and
+                            $Node -isnot [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                            $Node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                            $Node.Member.Value -in 'AccessToken', 'Token'
+                        }, $true))
+                foreach ($Member in $TokenMembers) {
+                    $Parent = $Member.Parent
+                    if ($Parent -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                        $Parent.Member.Extent.Text -eq 'new' -and
+                        $Parent.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and
+                        $Parent.Expression.TypeName.FullName -eq 'System.Net.NetworkCredential' -and
+                        @($Parent.Arguments | Where-Object { [object]::ReferenceEquals($_, $Member) }).Count -eq 1) {
+                        'NetworkCredential:{0}' -f $Member.Member.Value
+                        continue
+                    }
+                    # A truthiness test: from the member up to an if condition through -not, -or, -and,
+                    # parentheses and the condition's own pipeline only.
+                    $Node = $Member
+                    $InIfCondition = $false
+                    while ($null -ne $Node.Parent) {
+                        $Up = $Node.Parent
+                        if (($Up -is [System.Management.Automation.Language.UnaryExpressionAst] -and $Up.TokenKind -in 'Not', 'Exclaim') -or
+                            ($Up -is [System.Management.Automation.Language.BinaryExpressionAst] -and $Up.Operator -in 'Or', 'And') -or
+                            $Up -is [System.Management.Automation.Language.ParenExpressionAst] -or
+                            $Up -is [System.Management.Automation.Language.CommandExpressionAst] -or
+                            $Up -is [System.Management.Automation.Language.PipelineAst]) {
+                            $Node = $Up
+                            continue
+                        }
+                        if ($Up -is [System.Management.Automation.Language.IfStatementAst] -and
+                            @($Up.Clauses | Where-Object { [object]::ReferenceEquals($_.Item1, $Node) }).Count -eq 1) {
+                            $InIfCondition = $true
+                        }
+                        break
+                    }
+                    if ($InIfCondition) { 'IfTest:{0}' -f $Member.Member.Value } else { 'line {0}: {1}' -f $Member.Extent.StartLineNumber, $Member.Parent.Extent.Text }
+                }
+            }
+
+            # How the result of every NetworkCredential constructor is read, one entry per constructor:
+            # 'SecurePassword' when the constructor is followed directly by .SecurePassword, the form
+            # the function writes, and 'line <n>: <parent text>' otherwise. The plaintext property
+            # (.Password) or the user name would hand the token on as a string. A constructor wrapped in
+            # parentheses is reported even when .SecurePassword follows, which errs on the side of
+            # refusing.
+            function Get-NetworkCredentialRead {
+                param([Parameter(Mandatory)][System.Management.Automation.Language.Ast]$Ast)
+                $Constructors = @($Ast.FindAll({
+                            param($Node)
+                            $Node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                            $Node.Member.Extent.Text -eq 'new' -and
+                            $Node.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and
+                            $Node.Expression.TypeName.FullName -eq 'System.Net.NetworkCredential'
+                        }, $true))
+                foreach ($Constructor in $Constructors) {
+                    $Up = $Constructor.Parent
+                    if ($Up -is [System.Management.Automation.Language.MemberExpressionAst] -and
+                        $Up -isnot [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                        [object]::ReferenceEquals($Up.Expression, $Constructor) -and
+                        $Up.Member.Extent.Text -ceq 'SecurePassword') {
+                        'SecurePassword'
+                    } else {
+                        'line {0}: {1}' -f $Constructor.Extent.StartLineNumber, $Up.Extent.Text
+                    }
+                }
+            }
+        }
+
+        It 'binds the plaintext token to no command' {
+            # Static check on the function as the module loaded it: no argument of any command call
+            # reaches an .AccessToken member of the Graph result or a .Token member of the ARM result,
+            # so the plaintext only ever reaches .NET (the SecureString is what commands receive). The
+            # only reads of .AccessToken and .Token anywhere in the function -- in a hashtable that is
+            # splatted, behind a variable or in a method call as much as in a command's own arguments
+            # -- are the NetworkCredential constructor (once for each) and a truthiness test in an if
+            # (once for each), and the constructor's result is read only through .SecurePassword, never
+            # .Password.
             $Ast = InModuleScope Omnicit.PIM { (Get-Command Initialize-OPIMAuth).ScriptBlock.Ast }
             $Commands = @($Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true))
             @($Commands | Where-Object { $_.GetCommandName() -eq 'Connect-MgGraph' }).Count |
                 Should -Be 1 -Because 'the walk must reach the Connect-MgGraph hand-off; a walk that reads nothing would pass vacuously'
             @($Commands | Where-Object { $_.GetCommandName() -eq 'Get-AzToken' }).Count |
                 Should -Be 2 -Because 'the walk must reach both AzAuth calls, with and without the device code pipeline'
-            # The member is read by its string VALUE, not by its source text: $Result.AccessToken,
-            # $Result.'AccessToken' and $Result."AccessToken" name the same member, and only the first
-            # has the text AccessToken. Member names are case-insensitive in PowerShell, so -in (which
-            # is too) is right. KNOWN LIMIT: a member named by an expression ($Result.$Name) has no
-            # constant value to read; review has to catch that shape.
-            $Hits = foreach ($Command in $Commands) {
-                foreach ($Element in @($Command.CommandElements | Select-Object -Skip 1)) {
-                    $Member = $Element.Find({
-                            param($Node)
-                            $Node -is [System.Management.Automation.Language.MemberExpressionAst] -and
-                            $Node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
-                            $Node.Member.Value -in 'AccessToken', 'Token'
-                        }, $true)
-                    if ($Member) { 'line {0}: {1}' -f $Command.Extent.StartLineNumber, $Command.GetCommandName() }
-                }
-            }
+            $Hits = Get-PlaintextTokenCommandArgument -Ast $Ast
             $Hits | Should -BeNullOrEmpty
 
-            # Every read of either plaintext member, wherever it sits (an argument, a splatted hashtable's
-            # value, an assignment to a local variable, a method call's argument): it is allowed in the
-            # NetworkCredential constructor and in an if condition, and nowhere else.
-            $TokenMembers = @($Ast.FindAll({
-                        param($Node)
-                        $Node -is [System.Management.Automation.Language.MemberExpressionAst] -and
-                        $Node -isnot [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
-                        $Node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
-                        $Node.Member.Value -in 'AccessToken', 'Token'
-                    }, $true))
-            $Uses = foreach ($Member in $TokenMembers) {
-                $Parent = $Member.Parent
-                if ($Parent -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
-                    $Parent.Member.Extent.Text -eq 'new' -and
-                    $Parent.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and
-                    $Parent.Expression.TypeName.FullName -eq 'System.Net.NetworkCredential' -and
-                    @($Parent.Arguments | Where-Object { [object]::ReferenceEquals($_, $Member) }).Count -eq 1) {
-                    'NetworkCredential:{0}' -f $Member.Member.Value
-                    continue
-                }
-                # A truthiness test: from the member up to an if condition through -not, -or, -and,
-                # parentheses and the condition's own pipeline only.
-                $Node = $Member
-                $InIfCondition = $false
-                while ($null -ne $Node.Parent) {
-                    $Up = $Node.Parent
-                    if (($Up -is [System.Management.Automation.Language.UnaryExpressionAst] -and $Up.TokenKind -in 'Not', 'Exclaim') -or
-                        ($Up -is [System.Management.Automation.Language.BinaryExpressionAst] -and $Up.Operator -in 'Or', 'And') -or
-                        $Up -is [System.Management.Automation.Language.ParenExpressionAst] -or
-                        $Up -is [System.Management.Automation.Language.CommandExpressionAst] -or
-                        $Up -is [System.Management.Automation.Language.PipelineAst]) {
-                        $Node = $Up
-                        continue
-                    }
-                    if ($Up -is [System.Management.Automation.Language.IfStatementAst] -and
-                        @($Up.Clauses | Where-Object { [object]::ReferenceEquals($_.Item1, $Node) }).Count -eq 1) {
-                        $InIfCondition = $true
-                    }
-                    break
-                }
-                if ($InIfCondition) { 'IfTest:{0}' -f $Member.Member.Value } else { 'line {0}: {1}' -f $Member.Extent.StartLineNumber, $Member.Parent.Extent.Text }
-            }
+            $Uses = @(Get-PlaintextTokenUse -Ast $Ast)
             foreach ($Name in 'AccessToken', 'Token') {
                 @($Uses | Where-Object { $_ -ieq "NetworkCredential:$Name" }).Count | Should -Be 1 -Because "the $Name member reaches .NET through the NetworkCredential constructor exactly once"
                 @($Uses | Where-Object { $_ -ieq "IfTest:$Name" }).Count | Should -Be 1 -Because "the walk must find the one test that the result carries a $Name"
             }
             @($Uses | Where-Object { $_ -inotmatch '^(NetworkCredential|IfTest):(AccessToken|Token)$' }) | Should -BeNullOrEmpty
 
-            # The constructor's result is read only through .SecurePassword: the plaintext property
-            # (.Password) or the user name would hand the token on as a string. Every constructor in the
-            # function is held to it, not only the two that take a token member.
-            $Constructors = @($Ast.FindAll({
-                        param($Node)
-                        $Node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
-                        $Node.Member.Extent.Text -eq 'new' -and
-                        $Node.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and
-                        $Node.Expression.TypeName.FullName -eq 'System.Net.NetworkCredential'
-                    }, $true))
-            $Constructors.Count | Should -Be 2 -Because 'the Graph token and the ARM token each become a SecureString through one constructor'
-            $Reads = foreach ($Constructor in $Constructors) {
-                $Up = $Constructor.Parent
-                if ($Up -is [System.Management.Automation.Language.MemberExpressionAst] -and
-                    $Up -isnot [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
-                    [object]::ReferenceEquals($Up.Expression, $Constructor) -and
-                    $Up.Member.Extent.Text -ceq 'SecurePassword') {
-                    'SecurePassword'
-                } else {
-                    'line {0}: {1}' -f $Constructor.Extent.StartLineNumber, $Up.Extent.Text
-                }
-            }
+            # Every constructor in the function is held to .SecurePassword, not only the two that take a
+            # token member.
+            $Reads = @(Get-NetworkCredentialRead -Ast $Ast)
+            $Reads.Count | Should -Be 2 -Because 'the Graph token and the ARM token each become a SecureString through one constructor'
             @($Reads | Where-Object { $_ -ceq 'SecurePassword' }).Count | Should -Be 2
             @($Reads | Where-Object { $_ -cne 'SecurePassword' }) | Should -BeNullOrEmpty
+        }
+
+        It 'flags every way a plaintext token member could reach a command (known answer)' {
+            # The negative known answer of the three detectors: each text below breaks the rule in one
+            # way and must be reported by the detector named beside it, and the two allowed shapes must
+            # be reported by none of them, while still being recognised as what they are. The texts are
+            # parsed, never run.
+            $ParseShape = {
+                param([string]$Text)
+                $Errors = $null
+                $ShapeAst = [System.Management.Automation.Language.Parser]::ParseInput("function Test-Shape {`n$Text`n}", [ref]$null, [ref]$Errors)
+                $Errors | Should -BeNullOrEmpty -Because "the known answer '$Text' must parse"
+                $ShapeAst
+            }
+            $Finding = @{
+                CommandArgument = { param($ShapeAst) @(Get-PlaintextTokenCommandArgument -Ast $ShapeAst) }
+                Use             = { param($ShapeAst) @(Get-PlaintextTokenUse -Ast $ShapeAst | Where-Object { $_ -inotmatch '^(NetworkCredential|IfTest):(AccessToken|Token)$' }) }
+                Read            = { param($ShapeAst) @(Get-NetworkCredentialRead -Ast $ShapeAst | Where-Object { $_ -cne 'SecurePassword' }) }
+            }
+            $Flagged = @(
+                @{ Detector = 'CommandArgument'; Text = 'Write-Verbose $Result.AccessToken' }
+                @{ Detector = 'Use'; Text = 'Write-Verbose $Result.AccessToken' }
+                @{ Detector = 'Use'; Text = '$Splat = @{ Token = $ArmResult.Token }; Get-Thing @Splat' }
+                @{ Detector = 'Use'; Text = '$Plain = $Result.''AccessToken''' }
+                @{ Detector = 'Use'; Text = '$List.Add($Result.AccessToken)' }
+                @{ Detector = 'Use'; Text = 'if ($Result.AccessToken -eq ''x'') { }' }
+                @{ Detector = 'Read'; Text = '[System.Net.NetworkCredential]::new('''', $Result.AccessToken).Password' }
+                @{ Detector = 'Read'; Text = '([System.Net.NetworkCredential]::new('''', $Result.AccessToken)).Password' }
+            )
+            foreach ($Case in $Flagged) {
+                $ShapeAst = & $ParseShape $Case.Text
+                @(& $Finding[$Case.Detector] $ShapeAst).Count | Should -BeGreaterThan 0 -Because "the $($Case.Detector) detector must report: $($Case.Text)"
+            }
+
+            $Allowed = @(
+                @{ Text = 'if (-not $Result.AccessToken) { }'; Use = 'IfTest:AccessToken'; Read = $null }
+                @{ Text = '[System.Net.NetworkCredential]::new('''', $Result.AccessToken).SecurePassword'; Use = 'NetworkCredential:AccessToken'; Read = 'SecurePassword' }
+            )
+            foreach ($Case in $Allowed) {
+                $ShapeAst = & $ParseShape $Case.Text
+                foreach ($Detector in 'CommandArgument', 'Use', 'Read') {
+                    @(& $Finding[$Detector] $ShapeAst) | Should -BeNullOrEmpty -Because "the $Detector detector must let this allowed shape pass: $($Case.Text)"
+                }
+                (@(Get-PlaintextTokenUse -Ast $ShapeAst) -join ',') | Should -BeExactly $Case.Use
+                (@(Get-NetworkCredentialRead -Ast $ShapeAst) -join ',') | Should -BeExactly ([string]$Case.Read)
+            }
         }
 
         It 'reads AzAuth through no command parameter in device code mode' {
