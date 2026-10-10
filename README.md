@@ -227,6 +227,8 @@ Get-OPIMConfiguration -TenantAlias gov                      # shows Environment,
   stores no cloud, also for the tenant of a sovereign sign-in.
 - `Set-OPIMConfiguration` without `-Environment` keeps the stored cloud as it is written, except a
   stored `Global`, which means the same as none and is dropped.
+- The confirmation prompt of `Install-` and `Set-OPIMConfiguration` names the cloud the alias will
+  store, `Global` when it stores none.
 - A cloud in the file that the module does not know, a hand-typed `Environment = 'Germany'` say, is an
   error, and nothing is signed in. The letter case of a known cloud does not matter.
 

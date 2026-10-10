@@ -235,7 +235,7 @@ function Install-OPIMConfiguration {
 
         $MapData[$TenantAlias] = $Entry
 
-        if ($PSCmdlet.ShouldProcess($TenantMapPath, "Add alias '$TenantAlias' for tenant '$TenantDisplayName' ($TenantId)")) {
+        if ($PSCmdlet.ShouldProcess($TenantMapPath, "Add alias '$TenantAlias' for tenant '$TenantDisplayName' ($TenantId) in cloud '$ResolvedEnvironment'")) {
             Export-OPIMTenantMap -MapData $MapData -Path $TenantMapPath
             Write-Information "Added tenant alias '$TenantAlias' in $TenantMapPath"
         }

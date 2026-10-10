@@ -1507,8 +1507,9 @@ stores no cloud, also for the tenant of a sovereign sign-in. `Set-OPIMConfigurat
 from `-Environment`; without it the stored value stays as written, an unknown cloud included (the
 sign-in commands refuse the value), except a stored `Global` (any letter case), which is dropped
 since `Global` is never written -- an alias without the key is `Global` too, so Set changes no cloud
-it is not asked to -- and `-Environment Global` removes the key. `Get-OPIMConfiguration` shows the
-stored value as written and `Global` for an alias that stores none. A 0.6.x module ignores the key
+it is not asked to -- and `-Environment Global` removes the key. The confirmation prompt of both
+names the cloud the alias will store (`in cloud '<cloud>'`, `Global` when it stores none).
+`Get-OPIMConfiguration` shows the stored value as written and `Global` for an alias that stores none. A 0.6.x module ignores the key
 and writes the file back without it (so do the 0.7.0 previews before this one), and this version
 then signs in to `Global` for those aliases.
 

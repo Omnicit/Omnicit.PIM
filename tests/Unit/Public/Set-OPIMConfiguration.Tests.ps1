@@ -674,6 +674,30 @@ Describe 'Set-OPIMConfiguration' {
             Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
         }
 
+        It 'names the cloud the alias will store in the confirmation' {
+            # The cloud -Environment names, and the stored cloud Set keeps without it.
+            $Text = Get-WhatIfText { Set-OPIMConfiguration -TenantAlias 'plain' -Environment USGov -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Line = 'What if: Performing the operation "' +
+                "Update alias 'plain' -> tenant 'Mock Tenant' (00000000-0000-0000-0000-000000000001) in cloud 'USGov'" +
+                '" on target "TestDrive:\TenantMap.psd1".'
+            $Text | Should -Match ([regex]::Escape($Line))
+            $Text = Get-WhatIfText { Set-OPIMConfiguration -TenantAlias 'gov' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Text | Should -Match ([regex]::Escape("Update alias 'gov' -> tenant 'N/A' (00000000-0000-0000-0000-000000000002) in cloud 'USGov'" + '"'))
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
+        }
+
+        It 'names Global in the confirmation when the alias will store no cloud' {
+            # An alias that stores none, and one whose stored Global (in another letter case) is dropped.
+            $Text = Get-WhatIfText { Set-OPIMConfiguration -TenantAlias 'plain' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Line = 'What if: Performing the operation "' +
+                "Update alias 'plain' -> tenant 'Mock Tenant' (00000000-0000-0000-0000-000000000001) in cloud 'Global'" +
+                '" on target "TestDrive:\TenantMap.psd1".'
+            $Text | Should -Match ([regex]::Escape($Line))
+            $Text = Get-WhatIfText { Set-OPIMConfiguration -TenantAlias 'globall' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Text | Should -Match ([regex]::Escape("Update alias 'globall' -> tenant 'N/A' (00000000-0000-0000-0000-000000000003) in cloud 'Global'" + '"'))
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
+        }
+
         It 'refuses an unknown -Environment at binding' {
             $Caught = $null
             try {

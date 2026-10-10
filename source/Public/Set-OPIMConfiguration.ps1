@@ -208,7 +208,9 @@ function Set-OPIMConfiguration {
 
         $MapData[$TenantAlias] = $Entry
 
-        if ($PSCmdlet.ShouldProcess($TenantMapPath, "Update alias '$TenantAlias' -> tenant '$TenantDisplayName' ($ResolvedTenantId)")) {
+        # The confirmation names the cloud the alias will store, Global when it stores none.
+        $CloudName = if ($ResolvedEnvironment -and $ResolvedEnvironment -ne 'Global') { $ResolvedEnvironment } else { 'Global' }
+        if ($PSCmdlet.ShouldProcess($TenantMapPath, "Update alias '$TenantAlias' -> tenant '$TenantDisplayName' ($ResolvedTenantId) in cloud '$CloudName'")) {
             Export-OPIMTenantMap -MapData $MapData -Path $TenantMapPath
             Write-Information "Updated tenant alias '$TenantAlias' in $TenantMapPath"
         }
