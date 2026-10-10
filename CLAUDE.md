@@ -1266,7 +1266,7 @@ category `InvalidArgument`, no target object), sends nothing for it and goes on 
 and is never counted as requested. An Azure schedule's id is its `Name`,
 not `id`; an activation is a PUT at the eligibility's own scope whose body names the principal,
 the role definition, `requestType` `SelfActivate` and `linkedRoleEligibilityScheduleId = $Role.Name`
-(`Enable-OPIMAzureRole.ps1:224-257`), with `scheduleInfo.startDateTime` (UTC) only when `-NotBefore`
+(`Enable-OPIMAzureRole.ps1:227-260`), with `scheduleInfo.startDateTime` (UTC) only when `-NotBefore`
 is given (without it Azure starts the activation now) and `scheduleInfo.expiration` as an ISO 8601
 `AfterDuration`, or as `AfterDateTime` with its `endDateTime` in UTC under `-Until` (OPIM-15); a
 justification and ticket information are added only when given. A deactivation sends
@@ -1336,33 +1336,44 @@ expand `group,principal`.
 - A post that is already active (by `Get-OPIM* -Activated`) is not requested again (OPIM-39): a
   warning, `"<Label> is already active, so no new request was sent and the active assignment is left
   as it is."`, and no request. The check stands after the skip above and before `ShouldProcess`, and
-  reads the active list lazily, at most once per command invocation (its state is set in `begin`),
-  at the first role or group that reaches it, so a pipeline of N posts reads it once. The keys are
+  reads the active list lazily, at most once per command invocation (its state is set in `begin`;
+  the one exception is the `RoleAssignmentExists` re-read of `Enable-OPIMAzureRole` in the next
+  bullet), at the first role or group that reaches it, so a pipeline of N posts reads it once. The keys are
   `roleDefinitionId` and `directoryScopeId`, `groupId` and `accessId`, and `RoleDefinitionId` and
   `ScopeId`, compared with `OrdinalIgnoreCase`. A failed read of the active list is written as
   itself once and the command sends nothing more, for every later name or piped post: a list that
   cannot be read is no proof that nothing is active. A permanent assignment is not in that list, so
-  Graph or ARM still refuses it (`RoleAssignmentExists`), and a group activation the listing does not
-  show yet (about 30 seconds, OPIM-50) is requested again by a later command.
+  Graph or ARM still refuses it (`RoleAssignmentExists`), and a directory-role or group activation
+  the listing does not show yet (about 30 seconds for a group, OPIM-50) is requested again by a later
+  command.
 - **An Azure activation refused with `RoleAssignmentExists` is settled by `Enable-OPIMAzureRole`
   itself (OPIM-53).** ARM can still see an assignment that ended or began moments ago, and refuses
   the request with that code -- a 400, so nothing was created. The cmdlet reads
   `Get-OPIMAzureRole -Activated -ErrorAction Stop` again (no `-Scope`): a role that is active gets
   the "already active" warning above and no request; otherwise it waits 10 seconds and sends a NEW
   request (a new GUID name, the path rebuilt, the body unchanged) -- the refused name was never
-  created. The 60 seconds of the window start at the first refusal and a retry is made only when
-  `now + 10 s` still fits in it, so at most six requests go out. After the window it writes
-  `RoleAssignmentExists` (ARM's own code, category `ResourceExists`, the label as target) with a
-  message saying that ARM still sees an earlier assignment, the active list does not show it, and
-  nothing was activated; so a permanent Azure assignment ends in that error after the minute. A
-  failed re-read is written as itself, sets `$ActiveReadFailed` (nothing more is sent by this
-  command) and ends that role. **Only that code starts a retry**: `ArmTransportError` (a 2xx answer
-  with no body, or no answer, may have been accepted), a policy refusal, a 5xx and every other error
-  are written as themselves and never sent again, because a write is repeated only after an answer
-  that proves it was not carried out. The retry does not ask `ShouldProcess` again, and `-Wait`
-  polls the request finally accepted. The role loop is labelled `:RoleLoop` for it; a `continue`
-  inside the inner `while` that means the next role is `continue RoleLoop`, since a bare one would
-  send the request again.
+  created. The 60 seconds of the window start at the first refusal, read in the catch before the
+  re-read, so the re-reads count against it; a retry is made only while `now + 10 s` is strictly
+  before the end of the window (`-ge` gives up), so at most six requests go out however long a round
+  takes. After the window it writes `RoleAssignmentExists` (ARM's own code, category
+  `ResourceExists`, the label as target) with a message saying that ARM still sees an earlier
+  assignment, the active list does not show it, the cause is a role deactivated or activated moments
+  ago OR one assigned to you permanently, and nothing was activated (try again in a minute unless it
+  is permanent). The two cases cannot be told apart, since a permanent assignment is never in the
+  active list and ARM also lists a just-revoked activation for minutes, so a permanent Azure
+  assignment ends in that error after the minute. A failed re-read is written as itself, sets
+  `$ActiveReadFailed` (nothing more is sent by this command) and ends that role.
+  **Only that code starts a retry**: `ArmTransportError` (a 2xx answer with no body, or no answer,
+  may have been accepted), a policy refusal, a 5xx and every other error are written as themselves
+  and never sent again, because a write is repeated only after an answer that proves it was not
+  carried out. The retry does not ask `ShouldProcess` again, and `-Wait` polls the request finally
+  accepted. A direct caller's `-ErrorVariable` also holds every intermediate `RoleAssignmentExists`
+  record the transport threw and the cmdlet caught (one per refused request, up to six), even when
+  the retry finally succeeds, since the engine collects a caught nested record; the cmdlet writes
+  none of them, and `pim` and `unpim` take only what the pillar cmdlet writes, so these records do
+  not reach theirs. The role loop is labelled `:RoleLoop` for the retry; a `continue` inside the
+  inner `while` that means the next role is `continue RoleLoop`, since a bare one would send the
+  request again.
 - The same post is requested at most once per command (OPIM-39): a `HashSet[string]`
   (`OrdinalIgnoreCase`, created in `begin`) holds the key pair above of every post the command has
   requested, added as soon as `ShouldProcess` returns true and BEFORE the request is sent, so a

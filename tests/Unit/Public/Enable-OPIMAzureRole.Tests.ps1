@@ -1923,7 +1923,7 @@ Describe 'Enable-OPIMAzureRole' {
     }
 
     Context 'When ARM answers RoleAssignmentExists right after a change (OPIM-53)' {
-        # A13: ARM refuses a request with RoleAssignmentExists (a 400: nothing was created) while it still
+        # OPIM-53: ARM refuses a request with RoleAssignmentExists (a 400: nothing was created) while it still
         # sees an assignment that ended or began moments ago. The cmdlet then reads the active list again:
         # an active role gets the OPIM-39 warning, and otherwise a NEW request (a new name) is sent after
         # 10 seconds, until 60 seconds after the first refusal. ONLY that ARM code starts a retry: a
@@ -1932,7 +1932,8 @@ Describe 'Enable-OPIMAzureRole' {
         # (at least one second, so a loop that never ends still reaches its bound) and the Start-Sleep
         # mock moves it by the seconds it is asked to sleep. The PUT mock answers per eligibility from
         # $Plan.Put (the last answer repeats), the -Activated listing from $Plan.Active (read 1 is the
-        # OPIM-39 read, read 2 the first re-read), and a runaway guard ends a loop that never stops.
+        # OPIM-39 read, read 2 the first re-read; a re-read moves the clock by $Plan.ReadSeconds), and a
+        # runaway guard ends a loop that never stops.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             $FixtureDirectory = "$PSScriptRoot/../TestHelpers/ArmResponse"
@@ -1950,7 +1951,7 @@ Describe 'Enable-OPIMAzureRole' {
             }
 
             $ActiveMessage = 'Reader -> rg-one is already active, so no new request was sent and the active assignment is left as it is.'
-            $GiveUpMessage = 'Reader -> rg-one: Azure Resource Manager still sees an earlier assignment of this role at this scope after 60 seconds, though the list of active roles does not show it: the role was deactivated or activated moments ago. Nothing was activated; try again in a minute.'
+            $GiveUpMessage = 'Reader -> rg-one: Azure Resource Manager still sees an earlier assignment of this role at this scope after 60 seconds, though the list of active roles does not show it: the role was deactivated or activated moments ago, or it is assigned to you permanently. Nothing was activated; unless the assignment is permanent, try again in a minute.'
             $NoBodyMessage = 'Azure Resource Manager returned no body for the request, so its answer could not be read; the request may have been accepted.'
 
             # What ARM answers with, as Invoke-OPIMArmRequest throws it: the real converter builds the
@@ -1982,7 +1983,7 @@ Describe 'Enable-OPIMAzureRole' {
                 @($Errors | Where-Object { $_.FullyQualifiedErrorId -like '*,Enable-OPIMAzureRole' })
             }
 
-            $Plan = @{ Put = @{}; PutCount = @{}; Active = @('None'); Reads = 0 }
+            $Plan = @{ Put = @{}; PutCount = @{}; Active = @('None'); Reads = 0; ReadSeconds = 0 }
             $Clock = @{ Now = [datetime]::new(2026, 10, 10, 12, 0, 0, [DateTimeKind]::Utc); Step = 1 }
             $GuidState = @{ N = 0 }
             $Sleeps = [System.Collections.Generic.List[int]]::new()
@@ -1996,6 +1997,8 @@ Describe 'Enable-OPIMAzureRole' {
             }
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole {
                 $Plan.Reads++
+                # A re-read (not the OPIM-39 read, which comes first) takes ReadSeconds of the clock.
+                if ($Plan.Reads -gt 1) { $Clock.Now = $Clock.Now.AddSeconds($Plan.ReadSeconds) }
                 $Next = $Plan.Active[[math]::Min($Plan.Reads - 1, $Plan.Active.Count - 1)]
                 if ($Next -eq 'Forbidden') {
                     $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
@@ -2051,6 +2054,7 @@ Describe 'Enable-OPIMAzureRole' {
             $Plan.PutCount.Clear()
             $Plan.Active = @('None')
             $Plan.Reads = 0
+            $Plan.ReadSeconds = 0
         }
 
         It 'warns "already active" and sends no second request when the role is active on the re-read' {
@@ -2155,6 +2159,44 @@ Describe 'Enable-OPIMAzureRole' {
             $Written[0].Exception.Message | Should -BeExactly $GiveUpMessage
             $Written[0].TargetObject | Should -BeExactly 'Reader -> rg-one'
             @($Warns).Count | Should -Be 0
+            @($Result).Count | Should -Be 0
+        }
+
+        It 'sends at most six requests when every round takes exactly 10 seconds' {
+            # The clock moves only by the 10 second waits (Step 0), so the window opens at T, a retry is
+            # read at T, T+10, ... and the sixth request goes out at T+50. A seventh would be sent at T+60,
+            # when the window closes: a retry is made only while its wait ends strictly before the end of
+            # the window. The runaway guard of the PUT mock would end a loop that did not stop.
+            $Clock.Step = 0
+            $Plan.Put['azure-001'] = @($Refusals.Exists)
+            $Result = Enable-OPIMAzureRole -Role $PostA `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Sent.Puts.Count | Should -Be 6
+            $Sleeps.Count | Should -Be 5
+            @($Sleeps | Where-Object { $_ -ne 10 }).Count | Should -Be 0
+            $Written = Get-WrittenError $Errs
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeExactly 'RoleAssignmentExists,Enable-OPIMAzureRole'
+            $Written[0].Exception.Message | Should -BeExactly $GiveUpMessage
+            @($Result).Count | Should -Be 0
+        }
+
+        It 'counts the re-reads against the 60 seconds, which open at the refusal and not after the first re-read' {
+            # Each re-read takes 25 seconds. The window opens at the first refusal (T): the first re-read
+            # ends at T+25, its wait ends at T+35, inside the window, so a second request goes out at T+35.
+            # Its re-read ends at T+60, and the window has closed. A window opened only after the first
+            # re-read (T+25, closing at T+85) would allow a third request.
+            $Clock.Step = 0
+            $Plan.ReadSeconds = 25
+            $Plan.Put['azure-001'] = @($Refusals.Exists)
+            $Result = Enable-OPIMAzureRole -Role $PostA `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Sent.Puts.Count | Should -Be 2
+            $Sleeps.Count | Should -Be 1
+            $Written = Get-WrittenError $Errs
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeExactly 'RoleAssignmentExists,Enable-OPIMAzureRole'
+            $Written[0].Exception.Message | Should -BeExactly $GiveUpMessage
             @($Result).Count | Should -Be 0
         }
 
