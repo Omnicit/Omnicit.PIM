@@ -812,7 +812,7 @@ Describe 'Initialize-OPIMAuth' {
                 Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
             }
 
-            It 'never reuses a cached token for a session that records no account, and shows no sign-in for one' {
+            It 'refuses to reuse a cached token for a session that records no account, and shows no sign-in for one' {
                 # Two unknown accounts are not the same account, and no ARM token can be kept for a
                 # session without one: AccountMismatch before Get-AzToken, so AzAuth shows no sign-in.
                 $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA
@@ -1067,7 +1067,7 @@ Describe 'Initialize-OPIMAuth' {
                 Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter { $DeviceCode }
             }
 
-            It 'still shows the instruction when the host silenced warnings and information' {
+            It 'shows the instruction when the host silenced warnings and information' {
                 $script:ArmWarning = $DeviceCodeText
                 $WarningPreference = 'SilentlyContinue'
                 $InformationPreference = 'SilentlyContinue'
@@ -2146,7 +2146,7 @@ namespace OPIMTestMsal {
             }
         }
 
-        It 'never asks the old cloud''s MSAL application for a token on a switch of cloud' {
+        It 'asks the new cloud''s MSAL application, not the old cloud''s, for a token on a switch of cloud' {
             # Carried from the Task 2 review (load-bearing): the session was signed in to Global with an
             # account cached. Naming USGov must build and use the USGov application; the Global
             # application, which holds a token of the Global cloud, is never asked for one.
@@ -2236,7 +2236,7 @@ namespace OPIMTestMsal {
             $Result.State.Environment | Should -BeExactly 'USGov'
         }
 
-        It 'still holds the token of a GUID session that switches cloud to that GUID' {
+        It 'refuses the token of another tenant when a GUID session switches cloud, and leaves the session as it was' {
             $script:GraphTid = $TenantB
             $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
             $State.Environment = 'Global'
@@ -2311,7 +2311,7 @@ namespace OPIMTestMsal {
             }
         }
 
-        It 'takes the Graph environment name from the table''s GraphEnvironment, never from the cloud name' {
+        It 'takes the Graph environment name from the table''s GraphEnvironment, not from the cloud name' {
             Mock -ModuleName Omnicit.PIM Get-OPIMCloudEndpoint {
                 [PSCustomObject]@{
                     Environment      = 'USGov'

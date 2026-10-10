@@ -75,7 +75,7 @@ Describe 'Get-OPIMGraphSessionFingerprint' {
             $Property.PropertyType.Name | Should -Be $Type
         }
 
-        It 'also carries <Name>, which the fingerprint never reads' -ForEach @(
+        It 'also carries <Name>, which the fingerprint does not read' -ForEach @(
             @{ Name = 'ClientSecret'; Type = 'SecureString' }
             @{ Name = 'Certificate'; Type = 'X509Certificate2' }
         ) {

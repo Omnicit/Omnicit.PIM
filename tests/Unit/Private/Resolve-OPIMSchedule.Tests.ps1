@@ -518,7 +518,7 @@ Describe 'Resolve-OPIMSchedule' {
             $Eligible = $Sets[$Pillar].Eligible
         }
 
-        It 'says a display name is already deactivated when it is still eligible (<Pillar>)' {
+        It 'says a display name is already deactivated when it is eligible but not active (<Pillar>)' {
             Mock -ModuleName Omnicit.PIM $Lister { $Eligible }
             Mock -ModuleName Omnicit.PIM $Lister { } -ParameterFilter { $Activated }
             $Record = & $Capture @{ Pillar = $Pillar; Name = $DisplayName; Status = 'Active' }
@@ -540,7 +540,7 @@ Describe 'Resolve-OPIMSchedule' {
             $Record.Exception.Message | Should -BeLike '*already deactivated*'
         }
 
-        It 'says the old form of an active post is already deactivated when its label is still eligible (<Pillar>)' {
+        It 'says the old form of an active post is already deactivated when its label is eligible but not active (<Pillar>)' {
             Mock -ModuleName Omnicit.PIM $Lister { $Eligible }
             Mock -ModuleName Omnicit.PIM $Lister { } -ParameterFilter { $Activated }
             foreach ($OldForm in $OldForms) {

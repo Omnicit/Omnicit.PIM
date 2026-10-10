@@ -666,7 +666,7 @@ Describe 'Invoke-OPIMGraphRequest' {
             }
         }
 
-        It 'takes the Retry-After from the same exception as the status, never from another one' {
+        It 'takes the Retry-After from the same exception as the status, not from another one' {
             # The status and its header are one response's facts: an inner exception that carries only
             # a Retry-After is no response, and its header is not borrowed for the outer 429. The
             # exponential fallback (1 s) applies, not the 17 s.
@@ -813,7 +813,7 @@ Describe 'Invoke-OPIMGraphRequest' {
             }
         }
 
-        It 'falls back to exponential backoff when Retry-After cannot be read, never to zero' {
+        It 'falls back to exponential backoff when Retry-After cannot be read, not to zero' {
             $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = 'soon' } -Message $script:TooManyMessage
             InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
                 param($Queue)

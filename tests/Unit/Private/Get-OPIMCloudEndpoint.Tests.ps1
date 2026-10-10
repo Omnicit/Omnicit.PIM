@@ -91,7 +91,7 @@ Describe 'Get-OPIMCloudEndpoint' {
     }
 
     Context 'When the cloud is unknown' {
-        It 'throws for <Name>, and never returns the Global row' -ForEach @(
+        It 'throws for <Name> instead of returning the Global row' -ForEach @(
             @{ Name = 'Germany' }, @{ Name = 'GCC' }, @{ Name = '' }, @{ Name = 'Global ' }
         ) {
             { InModuleScope Omnicit.PIM -Parameters @{ Name = $Name } { param($Name) Get-OPIMCloudEndpoint -Environment $Name } } |

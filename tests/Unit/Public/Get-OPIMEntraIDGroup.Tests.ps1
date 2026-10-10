@@ -610,7 +610,7 @@ Describe 'Get-OPIMEntraIDGroup' {
             }
         }
 
-        It 'writes the listing''s own error and never EligibleRoleNotFound' {
+        It 'writes the listing''s own error and no EligibleRoleNotFound' {
             $Output = @(Get-OPIMEntraIDGroup -GroupName 'opim-grp' -ErrorAction Continue 2>&1)
             $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
             $Written | Should -HaveCount 1

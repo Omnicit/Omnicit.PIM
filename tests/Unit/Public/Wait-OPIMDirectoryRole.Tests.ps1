@@ -352,7 +352,7 @@ Describe 'Wait-OPIMDirectoryRole' {
             }
         }
 
-        It 'times out with the last status Provisioned when the instance never appears' {
+        It 'times out with the last status Provisioned when the instance does not appear' {
             # Start read 12:00:30, deadline 12:01:30: two instance reads, then the timeout.
             $Clock.Step = 30
             $Plan.EmptyReads['req-a'] = -1

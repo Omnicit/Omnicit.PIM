@@ -158,7 +158,7 @@ Describe 'Get-OPIMConfiguration' {
             (@($Result.PSObject.Properties.Name | Select-Object -First 6) -join ',') | Should -BeExactly 'TenantAlias,TenantId,Environment,DirectoryRoles,EntraIDGroups,AzureRoles'
         }
 
-        It 'still tags the object with Omnicit.PIM.TenantConfiguration' {
+        It 'tags the object with Omnicit.PIM.TenantConfiguration' {
             $Result = Get-OPIMConfiguration -TenantMapPath 'TestDrive:\TenantMap.psd1'
             foreach ($Item in $Result) {
                 $Item.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.PIM.TenantConfiguration'
