@@ -680,8 +680,9 @@ public boundary, where `Connect-OPIM`, `Enable-OPIMMyRole`, `Disable-OPIMMyRole`
 `[ValidateSet('Global', 'USGov', 'USGovDoD', 'China')]` on `-Environment`, and its unit test holds
 every one of them to the table. Write a cloud host nowhere else (see the cloud-host pass of
 `sourcehygiene.tests.ps1` under **Module Layout** and **Common Pitfalls**). Only `Global` is verified
-live; the three sovereign clouds are covered by unit tests only (P-12), so do not describe one as
-verified until a live run has covered it.
+live; the three sovereign clouds are covered by unit tests only (P-12), apart from one live
+measurement of the US Government authority refusing a global tenant (below), so do not describe one
+as verified until a live run has covered it.
 
 `Initialize-OPIMAuth` resolves ONE effective cloud per call (`:245-275`): the explicit
 `-Environment`; else the session's cloud when the request names the session's tenant
@@ -696,10 +697,11 @@ key: the MSAL application (`$script:_OPIMMsalApp`, with `$script:_OPIMMsalAppTen
 cloud never asks the old cloud's application or token cache for a token. A session pinned by a tenant
 GUID (which a first sign-in under `organizations` also ends up as) that switches cloud without
 `-TenantId` is held to that GUID, and an organisation has a separate tenant, with its own GUID, in
-each cloud, so the switch fails:
-a token for the tenant of the other cloud is refused with `TenantMismatch` (the other cloud may
-refuse the GUID itself first; untested live). A switch of cloud names the tenant (or an alias) of the
-target cloud.
+each cloud, so the switch fails at the other cloud's authority, which refuses a tenant of another
+cloud (AADSTS90038, measured on 2026-10-10 for `USGov` in device code mode, where the module raises
+`DeviceCodeAuthFailed`; an interactive sign-in raises `InteractiveAuthFailed`), and a token it did
+issue for another tenant would be refused with `TenantMismatch`. A switch of cloud names the tenant
+(or an alias) of the target cloud.
 
 What the cloud selects, all from the table: the MSAL authority is `AuthorityHost` followed by the
 tenant (`Get-OPIMMsalApplication.ps1:122`, `https://login.microsoftonline.com/<tenant>` for `Global`,
@@ -1502,12 +1504,13 @@ the alias takes the cloud of the module's own sign-in (`Get-OPIMCurrentTenantInf
 also takes that sign-in's tenant -- no `-TenantId`, or one equal to the sign-in's tenant ID,
 compared `OrdinalIgnoreCase` -- and is `Global` for any other tenant, and `-Environment Global`
 stores no cloud, also for the tenant of a sovereign sign-in. `Set-OPIMConfiguration` resolves it
-from `-Environment`; without it the stored value stays EXACTLY as written, an unknown cloud
-included, since Set changes only what it is asked to (the sign-in commands refuse the value), and
-`-Environment Global` removes the key. `Get-OPIMConfiguration` shows the stored value as written and
-`Global` for an alias that stores none. A 0.6.x module ignores the key and writes the file back
-without it (so do the 0.7.0 previews before this one), and this version then signs in to `Global`
-for those aliases.
+from `-Environment`; without it the stored value stays as written, an unknown cloud included (the
+sign-in commands refuse the value), except a stored `Global` (any letter case), which is dropped
+since `Global` is never written -- an alias without the key is `Global` too, so Set changes no cloud
+it is not asked to -- and `-Environment Global` removes the key. `Get-OPIMConfiguration` shows the
+stored value as written and `Global` for an alias that stores none. A 0.6.x module ignores the key
+and writes the file back without it (so do the 0.7.0 previews before this one), and this version
+then signs in to `Global` for those aliases.
 
 **The stored keys (OPIM-10, A13, OPIM-22).** `DirectoryRoles` holds
 `roleDefinitionId|directoryScopeId`, `EntraIDGroups` holds `groupId_accessId`, and `AzureRoles` the

@@ -225,14 +225,15 @@ Get-OPIMConfiguration -TenantAlias gov                      # shows Environment,
   sign-in when, and only when, the alias also takes that sign-in's tenant: no `-TenantId`, or the tenant
   ID that sign-in was issued for. The alias of any other tenant is `Global`, and `-Environment Global`
   stores no cloud, also for the tenant of a sovereign sign-in.
-- `Set-OPIMConfiguration` without `-Environment` keeps the stored cloud as it is written.
+- `Set-OPIMConfiguration` without `-Environment` keeps the stored cloud as it is written, except a
+  stored `Global`, which means the same as none and is dropped.
 - A cloud in the file that the module does not know, a hand-typed `Environment = 'Germany'` say, is an
   error, and nothing is signed in. The letter case of a known cloud does not matter.
 
-A 0.6.x module ignores the stored cloud and signs in to the global cloud, where a sovereign tenant
-does not exist, so its sign-in fails. It also writes the file without the key whenever it changes
-it (`Install-`, `Set-` or `Remove-OPIMConfiguration`), so a map shared with a 0.6.x module loses its
-clouds.
+A 0.6.x module, and the 0.7.0 previews before this one, ignore the stored cloud and sign in to the
+global cloud, where a sovereign tenant does not exist, so the sign-in fails. They also write the file
+without the key whenever they change it (`Install-`, `Set-` or `Remove-OPIMConfiguration`), so a map
+shared with a 0.6.x module, or with one of those previews, loses its clouds.
 
 ### Azure and AZURE_AUTHORITY_HOST
 

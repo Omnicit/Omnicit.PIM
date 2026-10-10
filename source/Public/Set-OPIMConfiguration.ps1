@@ -10,11 +10,11 @@ function Set-OPIMConfiguration {
     Get-OPIMEntraIDGroup, or Get-OPIMAzureRole.
 
     Categories not supplied via pipeline retain their existing stored values, and so does the
-    stored cloud when -Environment is omitted, a cloud Omnicit.PIM does not know included: Set
-    changes only what it is asked to. -Environment Global removes the stored cloud, since the
-    global cloud is the default and is not written. To remove a stored list for a category, use
-    Remove-OPIMConfiguration followed by Install-OPIMConfiguration, or edit the TenantMap.psd1
-    file directly.
+    stored cloud when -Environment is omitted, a cloud Omnicit.PIM does not know included, except
+    a stored Global, which means the same as none and is dropped: Set changes only what it is
+    asked to. -Environment Global removes the stored cloud, since the global cloud is the default
+    and is not written. To remove a stored list for a category, use Remove-OPIMConfiguration
+    followed by Install-OPIMConfiguration, or edit the TenantMap.psd1 file directly.
 
     An alias in the old string form ('alias' = 'tenant id') is rewritten in the table form, with
     its tenant kept. From then on pim and unpim act only on the categories it lists, no longer on
@@ -69,7 +69,7 @@ function Set-OPIMConfiguration {
     (US Government, DoD) or 'China', in any letter case. Microsoft 365 GCC is a commercial-cloud
     tenant and is 'Global'. The cloud is written to the file only when it is not 'Global', so
     -Environment Global removes the stored cloud. When omitted, the stored cloud is kept as it is
-    written.
+    written, except a stored Global, which means the same as none and is dropped.
     #>
     [Alias('Set-PIMConfig')]
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
@@ -176,8 +176,8 @@ function Set-OPIMConfiguration {
         $ResolvedAzureRole = if ($StoredKeys.Azure.Count)     { @($StoredKeys.Azure)     } elseif ($ExistingEntry.AzureRoles)     { @($ExistingEntry.AzureRoles)     }
 
         # A12: -Environment sets the cloud, -Environment Global removes it (Global is the default and is
-        # never written), and without -Environment the stored one stays as it is written -- an unknown
-        # cloud too: Set changes only what it is asked to, and the sign-in commands refuse the value.
+        # never written), and without -Environment the stored one stays as written -- an unknown cloud
+        # too, which the sign-in commands refuse -- except Global in any letter case, dropped below.
         $ResolvedEnvironment = if ($Environment) {
             (Get-OPIMCloudEndpoint -Environment $Environment).Environment
         } elseif (-not [string]::IsNullOrWhiteSpace([string]$ExistingEntry.Environment)) {
