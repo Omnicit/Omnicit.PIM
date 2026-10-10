@@ -11,10 +11,8 @@ AfterAll {
 
 Describe 'Disable-OPIMDirectoryRole' {
     BeforeAll {
-        # A post as Get-OPIMDirectoryRole lists it, typed as it types it. Each carries the properties
-        # the self-referencing ScriptProperties of its type read (Omnicit.PIM.Types.ps1xml): the
-        # instance type reads memberType and endDateTime, and a typed fake without them overflows the
-        # stack when a failing assertion formats it.
+        # A post as Get-OPIMDirectoryRole lists it, typed as it types it. An active post also carries
+        # the memberType and endDateTime notes Graph returns for an instance.
         function New-DirectoryPost {
             param([string]$Id, [string]$DefinitionId, [string]$RoleName, [string]$ScopeId = '/', [string]$ScopeName, [switch]$Active)
             $Post = [PSCustomObject]@{

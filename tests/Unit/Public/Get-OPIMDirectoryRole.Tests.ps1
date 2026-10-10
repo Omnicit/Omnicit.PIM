@@ -680,8 +680,8 @@ Describe 'Get-OPIMDirectoryRole' {
         # and the whole path runs for real.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            # Typed fakes carry every property a self-referencing ScriptProperty of their type reads:
-            # memberType and endDateTime on an assignment instance.
+            # Typed fakes carry the notes Graph returns: memberType and endDateTime on an assignment
+            # instance.
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 @{
                     value = @(

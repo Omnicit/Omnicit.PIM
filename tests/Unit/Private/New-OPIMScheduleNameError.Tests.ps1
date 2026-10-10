@@ -11,7 +11,7 @@ AfterAll {
 
 Describe 'New-OPIMScheduleNameError' {
     BeforeAll {
-        # Fakes carry every property a self-referencing ScriptProperty reads (accessId, memberType).
+        # Fakes carry the notes Graph returns (accessId, memberType).
         $Fakes = InModuleScope Omnicit.PIM {
             $DirectoryRoot = [PSCustomObject]@{
                 id = 'elig-001'; directoryScopeId = '/'; directoryScope = $null

@@ -973,6 +973,75 @@ Describe 'suffix.ps1 / psm1 mirror sync' -Tags 'SourceHygiene' {
 
 Describe 'Format and type data' -Tags 'SourceHygiene' {
 
+    BeforeAll {
+        <#
+            A ScriptProperty of Omnicit.PIM.Types.ps1xml must not read a member of its own name
+            through $this (OPIM-48). An object's own NoteProperty shadows a type-data ScriptProperty
+            of the same name, compared without regard to case, so such a property runs only on an
+            object WITHOUT the note, and there $this.<same name> resolves to the ScriptProperty
+            itself: unbounded recursion that kills the process. The echoes read the note by member
+            type instead, $this.PSObject.Properties.Match('<name>', 'NoteProperty').
+
+            The detector is given the XML TEXT, so a test can feed it a copy of the file. It parses
+            every GetScriptBlock and SetScriptBlock of every Type/Members/ScriptProperty with the
+            PowerShell parser and reports each MemberExpressionAst whose expression is the variable
+            this and whose member is a constant string equal to the property's Name, ignoring case
+            (a method call on the member is a MemberExpressionAst too). It returns Walked (the
+            ScriptProperty members read, the floor of the walk), ParseErrors, and Findings.
+
+            KNOWN LIMITS, which review has to catch: a member name assembled at run time
+            ($this.$Name, $this.('member' + 'Type')), a read through $_ or $PSItem, which the
+            detector does not follow, and a self-read through another member of the same object
+            ($this.PSObject.Properties['MemberType'].Value). Nothing here runs module code.
+        #>
+        function Get-SourceHygieneSelfReadingProperty {
+            [OutputType([pscustomobject])]
+            param(
+                [Parameter(Mandatory)]
+                [string]$Xml
+            )
+            $Document = [xml]::new()
+            $Document.LoadXml($Xml)
+            $Walked = 0
+            $ParseErrors = [System.Collections.Generic.List[string]]::new()
+            $Findings = [System.Collections.Generic.List[pscustomobject]]::new()
+            foreach ($TypeNode in $Document.SelectNodes('/Types/Type')) {
+                $TypeName = $TypeNode.SelectSingleNode('Name').InnerText.Trim()
+                foreach ($PropertyNode in $TypeNode.SelectNodes('Members/ScriptProperty')) {
+                    $Walked++
+                    $PropertyName = $PropertyNode.SelectSingleNode('Name').InnerText.Trim()
+                    foreach ($Accessor in 'GetScriptBlock', 'SetScriptBlock') {
+                        $BlockNode = $PropertyNode.SelectSingleNode($Accessor)
+                        if ($null -eq $BlockNode) { continue }
+                        $Errors = $null
+                        $Ast = [System.Management.Automation.Language.Parser]::ParseInput($BlockNode.InnerText, [ref]$null, [ref]$Errors)
+                        foreach ($ParseError in $Errors) {
+                            $ParseErrors.Add(('{0}/{1} {2}: {3}' -f $TypeName, $PropertyName, $Accessor, $ParseError.Message))
+                        }
+                        foreach ($Node in $Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.MemberExpressionAst] }, $true)) {
+                            if ($Node.Expression -isnot [System.Management.Automation.Language.VariableExpressionAst]) { continue }
+                            if ($Node.Expression.VariablePath.UserPath -ne 'this') { continue }
+                            if ($Node.Member -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) { continue }
+                            if (-not [string]::Equals($Node.Member.Value, $PropertyName, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+                            $Findings.Add([pscustomobject]@{
+                                    Type     = $TypeName
+                                    Property = $PropertyName
+                                    Accessor = $Accessor
+                                    Line     = $Node.Extent.StartLineNumber
+                                    Read     = $Node.Extent.Text
+                                })
+                        }
+                    }
+                }
+            }
+            [pscustomobject]@{
+                Walked      = $Walked
+                ParseErrors = $ParseErrors.ToArray()
+                Findings    = $Findings.ToArray()
+            }
+        }
+    }
+
     It 'parses every .ps1xml file under source/ as XML' {
         <#
             suffix.ps1 loads Omnicit.PIM.Types.ps1xml with Update-TypeData -ErrorAction
@@ -993,6 +1062,109 @@ Describe 'Format and type data' -Tags 'SourceHygiene' {
             }
         }
         $Failures -join "`n" | Should -BeNullOrEmpty -Because 'every .ps1xml file under source/ must be well-formed XML, or PowerShell cannot load it'
+    }
+
+    It 'tells a ScriptProperty that reads its own name from one that reads the note by member type (known answer)' {
+        # The positive control of the next It: if the detector stops matching, this text no longer
+        # yields its findings. Each Type below is one case, named for what it holds.
+        $Text = @'
+<?xml version="1.0" encoding="utf-8"?>
+<Types>
+  <Type>
+    <Name>Case.OwnName</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>MemberType</Name>
+        <GetScriptBlock>
+          $this.memberType
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+  <Type>
+    <Name>Case.MatchForm</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>MemberType</Name>
+        <GetScriptBlock>
+          foreach ($Note in $this.PSObject.Properties.Match('memberType', [System.Management.Automation.PSMemberTypes]::NoteProperty)) { $Note.Value }
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+  <Type>
+    <Name>Case.OwnNameOtherCase</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>AccessId</Name>
+        <GetScriptBlock>
+          $this.AccessID
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+  <Type>
+    <Name>Case.OtherMember</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>RoleName</Name>
+        <GetScriptBlock>
+          $this.roleDefinition.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+  <Type>
+    <Name>Case.OtherObject</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>MemberType</Name>
+        <GetScriptBlock>
+          $Other.memberType
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+  <Type>
+    <Name>Case.OwnNameInSetter</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>AssignmentType</Name>
+        <GetScriptBlock>
+          $this.scheduleInfo
+        </GetScriptBlock>
+        <SetScriptBlock>
+          $this.assignmentType = $args[0]
+        </SetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+</Types>
+'@
+        $Result = Get-SourceHygieneSelfReadingProperty -Xml $Text
+        $Result.ParseErrors | Should -BeNullOrEmpty
+        $Result.Walked | Should -Be 6
+        @($Result.Findings | ForEach-Object { '{0} {1} {2} {3}' -f $_.Type, $_.Property, $_.Accessor, $_.Read }) | Should -Be @(
+            'Case.OwnName MemberType GetScriptBlock $this.memberType'
+            'Case.OwnNameOtherCase AccessId GetScriptBlock $this.AccessID'
+            'Case.OwnNameInSetter AssignmentType SetScriptBlock $this.assignmentType'
+        )
+    }
+
+    It 'reads no member of its own name through $this in any ScriptProperty of the Types file' {
+        # The path is named, not found by a pattern: a renamed Types file must turn this red instead
+        # of leaving it with nothing to read.
+        $TypesFile = @($script:HygieneFiles | Where-Object { $_.RelativePath -eq 'source/Formats/Omnicit.PIM.Types.ps1xml' })
+        $TypesFile.Count | Should -Be 1 -Because 'the gate reads the Types file by its path, and a renamed file would leave it with nothing to check'
+
+        $Result = Get-SourceHygieneSelfReadingProperty -Xml $TypesFile[0].Text
+        # 29 ScriptProperty members today; the floor sits under it, so an emptied walk cannot pass.
+        $Result.Walked | Should -BeGreaterOrEqual 25 -Because 'a walk that read almost no ScriptProperty proves nothing'
+        $Result.ParseErrors -join "`n" | Should -BeNullOrEmpty -Because 'a script block that does not parse cannot be checked'
+
+        $Report = $Result.Findings | ForEach-Object { '{0} / {1} ({2}, line {3}): {4}' -f $_.Type, $_.Property, $_.Accessor, $_.Line, $_.Read }
+        $Report -join "`n" | Should -BeNullOrEmpty -Because (
+            'an object''s own note of the same name shadows the ScriptProperty, so a ScriptProperty runs only on an object without that note, and there a $this read of its own name calls the property itself until the stack overflows and the process dies; read the note with $this.PSObject.Properties.Match(''<name>'', ''NoteProperty'') instead')
     }
 }
 

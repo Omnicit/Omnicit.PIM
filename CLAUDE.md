@@ -106,6 +106,7 @@ source/
 tests/
   QA/                         # The QA gate, six files (below), run by ./build.ps1 -Tasks test
   Unit/Classes/               # ArgumentCompleters.Tests.ps1 -- all six completer classes
+  Unit/Formats/               # Omnicit.PIM.Types.Tests.ps1 -- the type data's ScriptProperties
   Unit/Private/, Unit/Public/ # One *.Tests.ps1 per source file
   Unit/TestHelpers/           # OPIMTransportTripwire.ps1 (the transport tripwire every unit
                               #   test file installs) and its known-answer suite -- see
@@ -227,8 +228,9 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   `tests/` is ASCII without a BOM; every `Verb-OPIM` name in `source/**/*.ps1` resolves to a
   function file, an exported alias, or a function defined inside another function in a function
   file (found through the AST, such as `Invoke-OPIMGraphSingle`); the region `suffix.ps1` shares
-  with the dev-mode psm1 is byte-identical; every `.ps1xml` under `source/` parses as XML; and the
-  bearer scrub: in every file under `source/` that reaches a transport command -- directly or
+  with the dev-mode psm1 is byte-identical; every `.ps1xml` under `source/` parses as XML, and no
+  ScriptProperty of `Omnicit.PIM.Types.ps1xml` reads a member of its own name through `$this` (see
+  **Testing Conventions**); and the bearer scrub: in every file under `source/` that reaches a transport command -- directly or
   through any module function it calls -- every `catch` starts with
   `Remove-OPIMErrorRecord -Record $PSItem`, with floors on the files and catches scanned and the
   exact catch count of `Invoke-OPIMGraphRequest.ps1` as its named control. The six completer
@@ -1785,12 +1787,13 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
 
 ## Testing Conventions
 
-- **Tests are written in Pester 5 syntax** under `tests/Unit/{Classes,Private,Public}/`. The build
-  resolves the newest Pester (`RequiredModules.psd1` asks for `latest`), and CI resolves it afresh
-  on every run, so no version is a standing fact here; 6.2.0 was resolved when measured on
+- **Tests are written in Pester 5 syntax** under `tests/Unit/{Classes,Formats,Private,Public}/`. The
+  build resolves the newest Pester (`RequiredModules.psd1` asks for `latest`), and CI resolves it
+  afresh on every run, so no version is a standing fact here; 6.2.0 was resolved when measured on
   2026-10-06. One `*.Tests.ps1` per source file -- the six completer classes share
-  `Unit/Classes/ArgumentCompleters.Tests.ps1` -- plus the three test helpers' own suites: the
-  tripwire's known-answer suite, `Unit/TestHelpers/OPIMTransportTripwire.Tests.ps1`,
+  `Unit/Classes/ArgumentCompleters.Tests.ps1`, and `Unit/Formats/Omnicit.PIM.Types.Tests.ps1`
+  holds the type data's ScriptProperties on typed fakes -- plus the three test helpers' own suites:
+  the tripwire's known-answer suite, `Unit/TestHelpers/OPIMTransportTripwire.Tests.ps1`,
   `Unit/TestHelpers/OPIMTestToken.Tests.ps1`, which pins the claims `New-OPIMTestAccessToken`
   writes, and `Unit/TestHelpers/OPIMScrubFixture.Tests.ps1`, which pins what `New-ScrubFixture`
   builds. The QA gate (`tests/QA/module.tests.ps1`) requires a unit test file for every function.
@@ -2048,11 +2051,18 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
       $PesterBoundParameters['ErrorAction']
   } else { 'Continue' }
   ```
-- **Give a typed fake every property a self-referencing ScriptProperty reads.** `MemberType`,
-  `EndDateTime`, `AccessId` and `AssignmentType` in `Omnicit.PIM.Types.ps1xml` read
-  `$this.<same name>`, which resolves to the ScriptProperty itself on an object without the note
-  property; formatting such a fake (a failing `Should -Invoke` prints every piped argument)
-  overflows the stack and kills the test process.
+- **No ScriptProperty in `Omnicit.PIM.Types.ps1xml` reads a member of its own name through
+  `$this`**, and `tests/QA/sourcehygiene.tests.ps1` (Describe 'Format and type data') holds it. An
+  object's own NoteProperty shadows a type-data ScriptProperty of the same name, compared without
+  regard to case, so such a property runs only on an object WITHOUT the note -- a hand-built
+  object or a test fake -- and there a `$this.<same name>` read resolves to the ScriptProperty
+  itself and recurses until the stack overflows and the test process dies (formatting the object,
+  which a failing `Should -Invoke` does with every piped argument, is enough). A property that
+  echoes a note of its own name -- `MemberType`, `AccessId`, `AssignmentType` and the two
+  `EndDateTime` of the instance types -- reads it with
+  `$this.PSObject.Properties.Match('<name>', 'NoteProperty')`, so a typed fake needs no note it
+  does not use. `tests/Unit/Formats/Omnicit.PIM.Types.Tests.ps1` holds the behaviour for the
+  seven properties.
 - **Test `-WhatIf` by invocation count**, not by catching an exception:
   `Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It`.
 - **`Should -Invoke -Times N` is AT LEAST N for `N >= 1` -- add `-Exactly`.** `-Times 0` already

@@ -98,8 +98,8 @@ Describe 'Get-OPIMCompletionText' {
 
     Context 'When the pillar is Group' {
         BeforeAll {
-            # AccessId and MemberType read themselves on Omnicit.PIM.GroupEligibilitySchedule, so
-            # every fake carries accessId and memberType.
+            # Every fake carries accessId and memberType, as Graph returns them for
+            # Omnicit.PIM.GroupEligibilitySchedule.
             $Sets = InModuleScope Omnicit.PIM {
                 function New-GroupPost {
                     param([string]$Id, [string]$GroupId, [string]$Name, [string]$AccessId)

@@ -11,11 +11,9 @@ AfterAll {
 
 Describe 'Disable-OPIMEntraIDGroup' {
     BeforeAll {
-        # A post as Get-OPIMEntraIDGroup lists it, typed as it types it. Each carries the properties
-        # the self-referencing ScriptProperties of its type read (Omnicit.PIM.Types.ps1xml): the
-        # eligibility type reads accessId and memberType, the instance type accessId, assignmentType
-        # and endDateTime, and a typed fake without them overflows the stack when a failing assertion
-        # formats it.
+        # A post as Get-OPIMEntraIDGroup lists it, typed as it types it. Each carries the notes Graph
+        # returns for its type: accessId and memberType on an eligibility, accessId, assignmentType
+        # and endDateTime on an instance.
         function New-GroupPost {
             param([string]$Id, [string]$GroupId, [string]$Name, [string]$AccessId, [switch]$Active)
             $Post = [PSCustomObject]@{

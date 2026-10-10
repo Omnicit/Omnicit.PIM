@@ -12,11 +12,7 @@ AfterAll {
 Describe 'Find-OPIMScheduleMatch' {
     Context 'When the pillar is Directory' {
         BeforeAll {
-            # Typed fakes carry the module type name. None of the ScriptProperties of the eligibility
-            # type (Omnicit.PIM.DirectoryEligibilitySchedule) reads its own name, so these fakes need
-            # only the properties the matcher reads. The active instance type does (MemberType and
-            # EndDateTime), which is why the Resolve-OPIMSchedule tests give their active fakes
-            # memberType and endDateTime; the next It checks this set against the type data.
+            # Typed fakes carry the module type name and only the properties the matcher reads.
             $Sets = InModuleScope Omnicit.PIM {
                 function New-DirectoryPost {
                     param([string]$Id, [string]$Role, [string]$ScopeId = '/', [string]$ScopeName, [switch]$NoScopeObject)
@@ -48,29 +44,6 @@ Describe 'Find-OPIMScheduleMatch' {
                     NullScope = @(New-DirectoryPost -Id 'elig-020' -Role 'Usage Summary Reports Reader' -ScopeId '/administrativeUnits/au-009' -NoScopeObject)
                 }
             }
-        }
-
-        # A ScriptProperty that reads its own name resolves to itself on a typed fake without that
-        # note property, and formatting such a fake overflows the stack. Read from the type data:
-        # every self-referencing getter of every type name a fake carries needs a note property of
-        # that name on the fake. Nothing is evaluated here.
-        It 'gives every typed fake the properties its self-referencing ScriptProperties read' {
-            $Posts = foreach ($List in $Sets.Values) { $List }
-            $Missing = foreach ($Post in $Posts) {
-                foreach ($TypeName in $Post.PSObject.TypeNames) {
-                    $TypeData = Get-TypeData -TypeName $TypeName
-                    if ($null -eq $TypeData) { continue }
-                    foreach ($Entry in $TypeData.Members.GetEnumerator()) {
-                        $Getter = $Entry.Value.GetScriptBlock
-                        if ($null -eq $Getter -or $Getter.ToString() -notmatch "(?i)\`$this\.$([regex]::Escape($Entry.Key))\b") { continue }
-                        if ($Post.PSObject.Properties[$Entry.Key].MemberType -ne 'NoteProperty') {
-                            "$TypeName/$($Entry.Key)"
-                        }
-                    }
-                }
-            }
-            @($Missing | Sort-Object -Unique) | Should -BeNullOrEmpty -Because 'each self-referencing ScriptProperty needs its note property on the fake'
-            @($Posts | ForEach-Object { $PSItem.PSObject.TypeNames } | Sort-Object -Unique) | Should -Contain 'Omnicit.PIM.DirectoryEligibilitySchedule'
         }
 
         It 'returns <Expected> for <Title>' -ForEach @(
@@ -139,9 +112,8 @@ Describe 'Find-OPIMScheduleMatch' {
 
     Context 'When the pillar is Group' {
         BeforeAll {
-            # AccessId and MemberType read themselves on Omnicit.PIM.GroupEligibilitySchedule (the
-            # type these fakes carry), so every fake carries accessId and memberType; formatting a
-            # fake without them overflows the stack. The next It checks this set against the type data.
+            # Every fake carries accessId (the matcher reads it) and memberType, as Graph returns
+            # them for Omnicit.PIM.GroupEligibilitySchedule, the type these fakes carry.
             $Sets = InModuleScope Omnicit.PIM {
                 function New-GroupPost {
                     param([string]$Id, [string]$GroupId, [string]$Name, [string]$AccessId)
@@ -169,28 +141,6 @@ Describe 'Find-OPIMScheduleMatch' {
                     )
                 }
             }
-        }
-
-        It 'gives every typed fake the properties its self-referencing ScriptProperties read' {
-            $Posts = foreach ($List in $Sets.Values) { $List }
-            $Checked = [System.Collections.Generic.HashSet[string]]::new()
-            $Missing = foreach ($Post in $Posts) {
-                foreach ($TypeName in $Post.PSObject.TypeNames) {
-                    $TypeData = Get-TypeData -TypeName $TypeName
-                    if ($null -eq $TypeData) { continue }
-                    foreach ($Entry in $TypeData.Members.GetEnumerator()) {
-                        $Getter = $Entry.Value.GetScriptBlock
-                        if ($null -eq $Getter -or $Getter.ToString() -notmatch "(?i)\`$this\.$([regex]::Escape($Entry.Key))\b") { continue }
-                        $null = $Checked.Add("$TypeName/$($Entry.Key)")
-                        if ($Post.PSObject.Properties[$Entry.Key].MemberType -ne 'NoteProperty') {
-                            "$TypeName/$($Entry.Key)"
-                        }
-                    }
-                }
-            }
-            @($Missing | Sort-Object -Unique) | Should -BeNullOrEmpty -Because 'each self-referencing ScriptProperty needs its note property on the fake'
-            $Checked | Should -Contain 'Omnicit.PIM.GroupEligibilitySchedule/AccessId'
-            $Checked | Should -Contain 'Omnicit.PIM.GroupEligibilitySchedule/MemberType'
         }
 
         It 'returns <Expected> for <Title>' -ForEach @(

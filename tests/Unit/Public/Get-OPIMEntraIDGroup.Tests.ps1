@@ -427,9 +427,8 @@ Describe 'Get-OPIMEntraIDGroup' {
         # and the whole path runs for real.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            # Typed fakes carry every property a self-referencing ScriptProperty of their type reads:
-            # accessId and memberType on an eligibility, accessId, assignmentType and endDateTime on
-            # an instance.
+            # Typed fakes carry the notes Graph returns: accessId and memberType on an eligibility,
+            # accessId, assignmentType and endDateTime on an instance.
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 @{
                     value = @(
