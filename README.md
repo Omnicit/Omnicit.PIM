@@ -944,7 +944,10 @@ failure, never as a success; a deactivation succeeds only when it ends `Revoked`
 The `Enable-OPIM*` cmdlets never request a role or group that is already active (listed by
 `Get-OPIM* -Activated`, read once per command): they write a warning and send nothing for it, and
 when that list cannot be read they write that error and send nothing. A role or group named or piped
-twice in one command is requested once, with a warning for the second.
+twice in one command is requested once, with a warning for the second. When Azure refuses an Azure
+role with `RoleAssignmentExists` right after the role was deactivated or activated, `Enable-OPIMAzureRole`
+reads the active list again and, if the role is not active, sends a new request every 10 seconds for
+up to a minute before it writes that error; no other refusal is ever sent again.
 
 With `-Wait`, the `Enable-OPIM*` role and group cmdlets wait for at most `-TimeoutSeconds` (default
 300) and then report the request by its last status. For a directory role or a group that status is
