@@ -35,6 +35,18 @@ minutes in all, with at most ten retries; a list read page by page stops waiting
 minutes. When they run out, the command fails with the same error as before. A token Graph rejects
 is now refreshed once also when the rejection arrives inside the Graph SDK's own retry error.
 
+Omnicit.PIM now also signs in to the US Government clouds and the China cloud. `Connect-OPIM`,
+`Enable-OPIMMyRole` (`pim`) and `Disable-OPIMMyRole` (`unpim`) take `-Environment` with `Global`
+(the default, which is also the cloud of a Microsoft 365 GCC tenant), `USGov` (GCC High),
+`USGovDoD` (DoD) or `China` (21Vianet), and the sign-in and every Microsoft Graph and Azure
+Resource Manager request then go to that cloud. Without `-Environment` a command keeps the cloud
+of the session's tenant, and naming another cloud signs in again. `Install-` and
+`Set-OPIMConfiguration` take `-Environment` too and store it on the tenant alias when it is not
+`Global`, so `pim -TenantAlias` signs in to the alias's cloud; a stored cloud the module does not
+know is an error, and nothing is signed in. A 0.6 version of the module ignores the stored cloud
+and signs in to the global cloud, where the tenant does not exist, so its sign-in fails. The three
+sovereign clouds are covered by unit tests only and are untested live.
+
 ## [0.6.0] - 2026-10-09
 
 Roles and groups can be named by display name, as `Enable-OPIMEntraIDGroup 'Finance Team' -AccessType Owner` (a group name alone means membership), and completion offers the bare name when unique. A name or `-Identity` matching several is refused with the candidates (`AmbiguousName`) and nothing changes; `-Scope` (a role, where the command has it), `-AccessType` (a group) or the tab-completed form picks one. A name matching nothing is `EligibleRoleNotFound` (`ActiveRoleNotFound` when deactivating, saying if the role is only eligible or active under another name); neither stops the command or the next name. `Get-OPIMAzureRole -RoleName` and `-Identity` work below the root scope without extra rights, `-All -Scope` returns only that scope's roles, and a `-Scope` ending in a slash is refused.
