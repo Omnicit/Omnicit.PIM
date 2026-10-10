@@ -39,13 +39,15 @@ Omnicit.PIM now also signs in to the US Government clouds and the China cloud. `
 `Enable-OPIMMyRole` (`pim`) and `Disable-OPIMMyRole` (`unpim`) take `-Environment` with `Global`
 (the default, which is also the cloud of a Microsoft 365 GCC tenant), `USGov` (GCC High),
 `USGovDoD` (DoD) or `China` (21Vianet), and the sign-in and every Microsoft Graph and Azure
-Resource Manager request then go to that cloud. Without `-Environment` a command keeps the cloud
-of the session's tenant, and naming another cloud signs in again. `Install-` and
-`Set-OPIMConfiguration` take `-Environment` too and store it on the tenant alias when it is not
-`Global`, so `pim -TenantAlias` signs in to the alias's cloud; a stored cloud the module does not
-know is an error, and nothing is signed in. A 0.6 version of the module ignores the stored cloud
-and signs in to the global cloud, where the tenant does not exist, so its sign-in fails. The three
-sovereign clouds are covered by unit tests only and are untested live.
+Resource Manager request then go to that cloud. Without `-Environment`, a command for the session's
+tenant keeps the session's cloud, a command for any other tenant uses `Global`, and naming another
+cloud signs in again. `Install-` and `Set-OPIMConfiguration` take `-Environment` too and store it on
+the tenant alias when it is not `Global`, so `Connect-OPIM`, `pim` and `unpim` with `-TenantAlias`
+sign in to the alias's cloud (`Global` when it stores none); a stored cloud the module does not know
+is an error, and nothing is signed in. A 0.6.x module ignores the stored cloud and signs in to the
+global cloud, where the tenant does not exist, so its sign-in fails. Only `Global` is verified live:
+the three sovereign clouds are covered by unit tests only and are untested live, and a China
+sign-in may need an application of the tenant's own, which the module does not yet take.
 
 ## [0.6.0] - 2026-10-09
 

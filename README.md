@@ -45,12 +45,14 @@ Connect-OPIM                                          # home tenant at the first
 Connect-OPIM -TenantId 'contoso.onmicrosoft.com'     # specific tenant
 Connect-OPIM -TenantAlias corp                        # resolve alias from TenantMap.psd1
 Connect-OPIM -IncludeARM                              # also sign in to Azure, for the same tenant
+Connect-OPIM -TenantId 'contoso.onmicrosoft.us' -Environment USGov   # a US Government (GCC High) tenant
 ```
 
 A session stays on the tenant it signed in to. A command that names no tenant keeps that tenant,
 and every new token must be issued for it: a token for another tenant is refused with
 `TenantMismatch`, and nothing is sent. To work in another tenant, run `Connect-OPIM -TenantId`
-with it, or `Disconnect-OPIM` and sign in again.
+with it, or `Disconnect-OPIM` and sign in again. A session also stays in the cloud it signed in to
+-- the global cloud unless `-Environment` said otherwise; see [Sovereign clouds](#sovereign-clouds).
 
 The Microsoft Graph PowerShell SDK keeps one session per PowerShell process. If something else in
 the same process runs `Connect-MgGraph` after Omnicit.PIM signed in, the role, group and sign-in
@@ -138,6 +140,119 @@ anything is sent with it.
 rebuilt at the module's next Azure sign-in. Omnicit.PIM creates, reads and ends no Az context, so an
 Az PowerShell session you started yourself is left alone, and `Disconnect-OPIM` does not sign it
 out.
+
+---
+
+## Sovereign clouds
+
+Omnicit.PIM signs in to one of four clouds and sends every Microsoft Graph and Azure Resource
+Manager request to it. `Connect-OPIM`, `Enable-OPIMMyRole` (`pim`) and `Disable-OPIMMyRole`
+(`unpim`) take `-Environment` to choose the cloud, in any letter case, and `Install-` and
+`Set-OPIMConfiguration` take it to store the cloud of a tenant alias. Without it nothing changes:
+the cloud is `Global`, as it has always been.
+
+| `-Environment` | Cloud | Sign-in authority | Microsoft Graph | Azure Resource Manager |
+|---|---|---|---|---|
+| `Global` (default) | The worldwide cloud, including Microsoft 365 GCC | `login.microsoftonline.com` | `graph.microsoft.com` | `management.azure.com` |
+| `USGov` | US Government, GCC High | `login.microsoftonline.us` | `graph.microsoft.us` | `management.usgovcloudapi.net` |
+| `USGovDoD` | US Government, DoD | `login.microsoftonline.us` | `dod-graph.microsoft.us` | `management.usgovcloudapi.net` |
+| `China` | Operated by 21Vianet | `login.chinacloudapi.cn` | `microsoftgraph.chinacloudapi.cn` | `management.chinacloudapi.cn` |
+
+Microsoft 365 GCC is a commercial-cloud tenant and is `Global`; `USGov` is GCC High. The other
+environments the Microsoft Graph SDK names (`BleuCloud`, `DelosCloud` and `GovSGCloud`) are not
+supported, and an unknown cloud is an error, never a fallback to `Global`.
+
+```powershell
+Connect-OPIM -TenantId 'contoso.onmicrosoft.us' -Environment USGov
+Connect-OPIM -TenantId 'contoso.onmicrosoft.us' -Environment USGov -IncludeARM
+pim -TenantAlias gov                                  # an alias that stores its cloud needs no -Environment
+```
+
+### What follows the cloud
+
+The cloud decides three things, and the module reads each from one table:
+
+- **The sign-in authority.** The Microsoft Graph token comes from MSAL, whose application is built for
+  the authority of the cloud, and is handed to the Graph SDK connected to that cloud's environment.
+  The Azure token comes from AzAuth, asked for the Azure Resource Manager of the cloud.
+- **The Microsoft Graph host.** Every request, and every next page of a list, stays on it.
+- **The Azure Resource Manager host.** Every Azure request is sent to it, and only to it.
+
+The Microsoft Graph permissions that are requested are the same in every cloud.
+
+### The cloud follows the tenant
+
+A cloud is a property of the tenant, so a command without `-Environment` takes the cloud from the
+tenant it is for. A command for the tenant the session is signed in to, or one that names no tenant,
+keeps the session's cloud; a command for any other tenant uses `Global`. Naming another cloud signs
+in again, also for the same tenant, and the Azure token of the old cloud is never reused or carried
+into the new one. `-Environment Global` on a session that signed in without `-Environment` is the
+same session, so it starts no new sign-in.
+
+A tenant has a different ID in each cloud. A session pinned by a tenant ID -- which includes one
+whose first sign-in named no tenant, since it is then pinned to the ID of the token it got -- is held
+to that ID. So `Connect-OPIM -Environment USGov` alone on such a session asks the other cloud for a
+token for the same ID, and the switch fails: the other cloud may not know that ID at all, and a token
+it does issue, for the tenant in that cloud, is refused with `TenantMismatch`. Switch clouds by
+naming the tenant of the cloud you switch to, or an alias that stores it:
+
+```powershell
+Connect-OPIM -TenantId 'contoso.onmicrosoft.us' -Environment USGov
+Connect-OPIM -TenantAlias gov
+```
+
+### The cloud of a tenant alias
+
+A tenant alias remembers its cloud in an optional `Environment` key of its `TenantMap.psd1` entry,
+which is written only when the cloud is not `Global`. A file without the key means `Global`, so every
+existing map keeps working.
+
+```powershell
+Install-OPIMConfiguration -TenantAlias gov -TenantId '00000000-0000-0000-0000-000000000000' -Environment USGov
+Set-OPIMConfiguration -TenantAlias gov -Environment China   # change the cloud; -Environment Global removes it
+Get-OPIMConfiguration -TenantAlias gov                      # shows Environment, Global when none is stored
+```
+
+- `Connect-OPIM -TenantAlias`, `pim -TenantAlias` and `unpim -TenantAlias` sign in to the cloud the
+  alias stores -- `Global` for an alias that stores none, whatever cloud the session is in -- unless
+  you pass `-Environment`, which wins.
+- `Install-OPIMConfiguration` without `-Environment` gives the new alias the cloud of Omnicit.PIM's own
+  sign-in when, and only when, the alias also takes that sign-in's tenant: no `-TenantId`, or the tenant
+  ID that sign-in was issued for. The alias of any other tenant is `Global`, and `-Environment Global`
+  stores no cloud, also for the tenant of a sovereign sign-in.
+- `Set-OPIMConfiguration` without `-Environment` keeps the stored cloud as it is written.
+- A cloud in the file that the module does not know, a hand-typed `Environment = 'Germany'` say, is an
+  error, and nothing is signed in. The letter case of a known cloud does not matter.
+
+A 0.6.x module ignores the stored cloud and signs in to the global cloud, where a sovereign tenant
+does not exist, so its sign-in fails. It also writes the file without the key whenever it changes
+it (`Install-`, `Set-` or `Remove-OPIMConfiguration`), so a map shared with a 0.6.x module loses its
+clouds.
+
+### Azure and AZURE_AUTHORITY_HOST
+
+AzAuth's `Get-AzToken` has no authority parameter. The library under it, Azure.Identity, reads the
+`AZURE_AUTHORITY_HOST` environment variable when AzAuth builds its credential. For a sovereign cloud
+Omnicit.PIM sets the variable to the cloud's sign-in authority only around the Azure sign-in, and puts
+it back afterwards on every path, a failed sign-in included: a value you had set is restored exactly,
+and a variable that was not set is removed again. For `Global` the module writes nothing; if you have
+set the variable to another authority yourself, the Azure sign-in follows it and the module warns. The
+variable is process-wide, so an Azure sign-in that another thread of the same PowerShell process
+starts during a sovereign sign-in reads it too. AzAuth keeps one credential per process; on a switch of
+cloud, Omnicit.PIM makes it rebuild the credential (`-Force`).
+
+### Which clouds are tested live
+
+Only `Global` is verified live. `USGov`, `USGovDoD` and `China` are covered by unit tests only, which
+mock every sign-in and request and pin the hosts in the table above; they are untested live, so treat
+the first sign-in to one of them as a test of its own.
+
+`China` has a second, unverified risk. Microsoft Learn ("Authentication module cmdlets in Microsoft
+Graph PowerShell") says that globally registered apps do not replicate to Azure China, and that you
+must register your own application there and use it to connect to Microsoft Graph. Omnicit.PIM signs in
+to Microsoft Graph with the Microsoft Graph Command Line Tools public client, a globally registered
+app, so a `China` sign-in may fail until the module can take an application of the tenant's own. It
+cannot today, and this has not been tried.
 
 ---
 
@@ -308,7 +423,9 @@ refreshed silently. When Azure roles are part of the run, Azure needs its own si
 reused only when it was already made for the same tenant and account (`Connect-OPIM -IncludeARM`,
 or an earlier Azure role cmdlet). With `-DeviceCode`, a sign-in that needs a prompt shows a
 device code instead of opening the browser -- one for Microsoft Graph and, when Azure signs in, a
-second one for Azure.
+second one for Azure. `-Environment` (`Global`, `USGov`, `USGovDoD` or `China`) is handed to both
+sign-ins; without it, `-TenantAlias` signs in to the cloud the alias stores, and the `-All*` forms
+keep the session's cloud (see [Sovereign clouds](#sovereign-clouds)).
 
 Output is a unified table across all three role types:
 
@@ -337,6 +454,9 @@ pim -AllEligible -Confirm:$false
 
 # Activate only directory roles and Azure roles
 Enable-OPIMMyRole -AllEligibleDirectoryRoles -AllEligibleAzureRoles
+
+# A tenant alias signs in to the cloud it stores (see Sovereign clouds); -Environment overrides it
+pim -TenantAlias gov
 ```
 
 ### Deactivation — unpim
@@ -356,6 +476,9 @@ Disable-OPIMMyRole -AllActivatedDirectoryRoles -AllActivatedEntraIDGroups
 
 # Preview without making changes
 unpim -TenantAlias contoso -WhatIf
+
+# Deactivate in the cloud a tenant alias stores (see Sovereign clouds)
+unpim -TenantAlias gov
 ```
 
 Each stored item is matched against every active role or group. An item that matches more than
@@ -382,7 +505,7 @@ resolve tenant aliases:
 |---|---|---|
 | `Install-OPIMConfiguration` | — | **Create** — add a new alias. Error if alias already exists. |
 | `Get-OPIMConfiguration` | `Get-PIMConfig` | **Read** — return one typed object per alias. |
-| `Set-OPIMConfiguration` | `Set-PIMConfig` | **Update** — change TenantId or replace stored role lists. |
+| `Set-OPIMConfiguration` | `Set-PIMConfig` | **Update** — change TenantId or the cloud, or replace stored role lists. |
 | `Remove-OPIMConfiguration` | `Remove-PIMConfig` | **Delete** — remove an alias, preserve the rest. |
 
 ### Install-OPIMConfiguration — create a new alias
@@ -394,6 +517,9 @@ Install-OPIMConfiguration -TenantAlias contoso -TenantId '00000000-0000-0000-000
 # Register and store specific directory roles as the default activation set
 Get-OPIMDirectoryRole | Where-Object { $_.roleDefinition.displayName -like 'Compliance*' } |
     Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>'
+
+# Register an alias together with its cloud (stored only when it is not Global)
+Install-OPIMConfiguration -TenantAlias gov -TenantId '<guid>' -Environment USGov
 
 # Preview without writing
 Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>' -WhatIf
@@ -408,7 +534,7 @@ Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>' -WhatIf
 # List all tenant aliases
 Get-OPIMConfiguration
 
-# Inspect a specific alias
+# Inspect a specific alias (TenantAlias, TenantId, Environment and the stored lists)
 Get-OPIMConfiguration -TenantAlias contoso
 
 # Use a custom file path
@@ -420,6 +546,10 @@ Get-OPIMConfiguration -TenantMapPath 'D:\config\MyTenants.psd1'
 ```powershell
 # Update only the TenantId, preserve stored role lists
 Set-OPIMConfiguration -TenantAlias contoso -TenantId '<new-guid>'
+
+# Store the cloud of the alias, or remove it again with -Environment Global (role lists are preserved)
+Set-OPIMConfiguration -TenantAlias contoso -Environment USGov
+Set-OPIMConfiguration -TenantAlias contoso -Environment Global
 
 # Replace the stored DirectoryRoles list
 Get-OPIMDirectoryRole | Where-Object { $_.roleDefinition.displayName -like '*Admin*' } |
@@ -468,6 +598,9 @@ folder, where `$env:USERPROFILE` does not exist. Every cmdlet that reads the map
 ### File format
 
 Each entry is a nested hashtable under the alias key. The only required field is `TenantId`.
+`Environment` is optional too: the cloud of the tenant (`Global`, `USGov`, `USGovDoD` or `China`),
+written by `Install-` and `Set-OPIMConfiguration` only when it is not `Global`; without it the alias
+signs in to the global cloud (see [Sovereign clouds](#sovereign-clouds)).
 The role/group arrays are optional, and `pim` and `unpim` act only on what they list: a category
 whose array is missing is skipped, with a verbose message, so an entry with no arrays activates
 **nothing**. To activate everything eligible, use the `-AllEligible*` switches of `pim`
@@ -487,6 +620,11 @@ everything active, until `Set-OPIMConfiguration` rewrites it in the table form.
     # Alias 'partner' -- no role lists: pim and unpim skip every category (nothing is activated)
     'partner' = @{
         TenantId = 'yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy'
+    }
+    # Alias 'gov' -- a GCC High tenant: Connect-OPIM, pim and unpim sign in to the USGov cloud for it
+    'gov' = @{
+        TenantId    = 'zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz'
+        Environment = 'USGov'
     }
 }
 ```
@@ -674,14 +812,14 @@ are under [Short Aliases](#short-aliases).
 
 ### Sign-in and configuration (8)
 
-- `Connect-OPIM` (alias `Connect-PIM`) -- signs in to Microsoft Graph, and to Azure with `-IncludeARM`, in the system browser or with `-DeviceCode`; optional, since every cmdlet signs in on first use.
+- `Connect-OPIM` (alias `Connect-PIM`) -- signs in to Microsoft Graph, and to Azure with `-IncludeARM`, in the system browser or with `-DeviceCode`, and in a sovereign cloud with `-Environment`; optional, since every cmdlet signs in on first use.
 - `Disconnect-OPIM` (alias `Disconnect-PIM`) -- clears the module's tokens, the Azure Resource Manager token included, and disconnects the Microsoft Graph session; AzAuth keeps its own sign-in in the PowerShell process until the module's next Azure sign-in rebuilds it or the process ends.
-- `Install-OPIMConfiguration` -- creates a tenant alias in `TenantMap.psd1`.
+- `Install-OPIMConfiguration` -- creates a tenant alias in `TenantMap.psd1`, with its cloud when you pass `-Environment`.
 - `Get-OPIMConfiguration` -- reads the tenant aliases in `TenantMap.psd1`.
-- `Set-OPIMConfiguration` -- updates an existing tenant alias.
+- `Set-OPIMConfiguration` -- updates an existing tenant alias, its cloud (`-Environment`) included.
 - `Remove-OPIMConfiguration` -- removes a tenant alias.
-- `Enable-OPIMMyRole` (alias `pim`) -- connects with `Connect-OPIM`, then activates the roles and groups stored for a tenant alias in the tenant map, or every eligible one with an `-AllEligible` switch.
-- `Disable-OPIMMyRole` (alias `unpim`) -- connects with `Connect-OPIM`, then deactivates the roles and groups stored for a tenant alias in the tenant map, or every active one with an `-AllActivated` switch.
+- `Enable-OPIMMyRole` (alias `pim`) -- connects with `Connect-OPIM`, then activates the roles and groups stored for a tenant alias in the tenant map, or every eligible one with an `-AllEligible` switch; an alias signs in to the cloud it stores, and `-Environment` names another.
+- `Disable-OPIMMyRole` (alias `unpim`) -- connects with `Connect-OPIM`, then deactivates the roles and groups stored for a tenant alias in the tenant map, or every active one with an `-AllActivated` switch; an alias signs in to the cloud it stores, and `-Environment` names another.
 
 ---
 
