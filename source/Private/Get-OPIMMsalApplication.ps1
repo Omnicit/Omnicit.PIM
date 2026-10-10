@@ -1,23 +1,23 @@
 function Get-OPIMMsalApplication {
     <#
     .SYNOPSIS
-    Returns a cached MSAL PublicClientApplication built from the Microsoft.Identity.Client
-    assembly that is already loaded by the Microsoft.Graph.Authentication module.
+    Returns a cached MSAL PublicClientApplication built from a Microsoft.Identity.Client
+    assembly already loaded in the process.
 
     .DESCRIPTION
-    Constructs an IPublicClientApplication via reflection (the MSAL types live in a separate
-    Assembly Load Context owned by the Graph SDK and are not directly accessible from the default
-    ALC). The application is cached in $script:_OPIMMsalApp for the lifetime of the session and
+    Constructs an IPublicClientApplication via reflection: the MSAL types may live in another
+    AssemblyLoadContext than the default one, so the methods that take them are found by name and
+    shape. The application is cached in $script:_OPIMMsalApp for the lifetime of the session and
     is only rebuilt when the target tenant or the cloud changes. The cloud is part of the cache key
     since an application is built for one sign-in authority and holds the token cache of that
     authority: an application for one cloud is never handed out for another, even for the same
     tenant. The authority host of each cloud comes from Get-OPIMCloudEndpoint, which owns the cloud
     table; this function holds no host of its own.
 
-    No Add-Type or path-pinning is used: the assembly is located through
-    [System.Runtime.Loader.AssemblyLoadContext]::All after ensuring that
-    Microsoft.Graph.Authentication has been imported (which loads MSAL into the Graph SDK's
-    custom ALC). Any version 4.x or 5.x of Microsoft.Identity.Client is accepted.
+    No Add-Type or path-pinning is used: the assembly is the first Microsoft.Identity.Client 4.x
+    or 5.x found in any registered AssemblyLoadContext -- normally Microsoft.Graph.Authentication's,
+    though AzAuth's own copy can be found first once AzAuth has loaded it -- else
+    Microsoft.Graph.Authentication's DLL, loaded with LoadFile when no context holds one yet.
 
     .PARAMETER TenantId
     The Entra ID tenant ID (GUID or domain name) for which to build the authority URI. Defaults
@@ -64,21 +64,21 @@ function Get-OPIMMsalApplication {
 
     Write-Verbose "[Get-OPIMMsalApplication] Building new MSAL PublicClientApplication for tenant '$TenantId' in cloud '$($Endpoint.Environment)'."
 
-    # Force-load the Graph.Authentication module assemblies (no-op if already loaded).
-    # This is intentionally a throwaway call; Get-MgContext returns $null when not connected
-    # and that is fine -- we only need its side-effect of loading Microsoft.Identity.Client into
-    # the process (in the Graph SDK's custom ALC) before we scan all ALCs below.
+    # Force-load the Graph.Authentication module assemblies (no-op if already loaded). This call is
+    # made only for that side effect: Get-MgContext returns $null when not connected and that is
+    # fine -- all that is needed is that Microsoft.Graph.Authentication's assemblies are loaded
+    # before the registered load contexts are scanned below.
     $null = Get-MgContext -ErrorAction SilentlyContinue
 
-    # Locate MSAL assembly. The Graph SDK loads it into a private AssemblyLoadContext (ALC)
-    # that is NOT always enumerable -- the ALC is only registered after Connect-MgGraph has been
-    # called at least once in the session, bootstrapping token acquisition. On the very first
-    # call (before any auth), [AssemblyLoadContext]::All won't see it.
+    # Locate the MSAL assembly. Microsoft.Graph.Authentication loads its own copy into a load
+    # context of its own and AzAuth ships another (4.83.1 in AzAuth 2.9.0, beside 4.82.1 in
+    # Microsoft.Graph.Authentication 2.36.0), so the copy used is whichever is found first.
     #
     # Two-pass strategy:
-    #   Pass 1 -- scan all registered ALCs (fast; works once Graph SDK has loaded MSAL)
-    #   Pass 2 -- load from Microsoft.Graph.Authentication's bundled copy via LoadFile
-    #            into the default ALC (works on first call before any auth has occurred)
+    #   Pass 1 -- the first Microsoft.Identity.Client 4.x or 5.x in any registered
+    #            AssemblyLoadContext (Graph's, or AzAuth's once it is loaded)
+    #   Pass 2 -- when none is found yet (for example before the first sign-in), load
+    #            Microsoft.Graph.Authentication's own copy from its folder with LoadFile
     $MsalAssembly = try {
         [System.Runtime.Loader.AssemblyLoadContext]::All |
             ForEach-Object { try { $_.Assemblies } catch { $null = $PSItem } } |
@@ -133,10 +133,10 @@ function Get-OPIMMsalApplication {
             -Terminating
     }
 
-    # PublicClientApplicationBuilder.Create(string clientId) -- static factory.
-    # Use GetMethods() name-search instead of GetMethod(name,[Type[]]) to avoid cross-ALC type-
-    # identity failures where [string] from the default ALC may not satisfy an overload-resolution
-    # check on types loaded in a different AssemblyLoadContext.
+    # PublicClientApplicationBuilder.Create(string clientId) -- static factory, found by name and
+    # parameter count like the builder's other methods, which take MSAL types. A typed GetMethod
+    # would also work for its one [string] parameter, since System.String is the same type in every
+    # load context (Initialize-OPIMAuth does that), but this one is found like the other methods.
     $CreateMethod = $BuilderType.GetMethods(
         [System.Reflection.BindingFlags]::Public -bor [System.Reflection.BindingFlags]::Static) |
         Where-Object { $_.Name -eq 'Create' -and ($_.GetParameters()).Count -eq 1 } |

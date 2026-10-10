@@ -6,8 +6,8 @@ function Invoke-OPIMDeviceCodeAuth {
 
     .DESCRIPTION
     Calls AcquireTokenWithDeviceCode on the MSAL public client application that
-    Get-OPIMMsalApplication built. The MSAL types live in the Graph SDK's AssemblyLoadContext, so
-    the method is found by name and parameter shape, as Initialize-OPIMAuth finds the others.
+    Get-OPIMMsalApplication built. The MSAL types live in the load context the application was built
+    from (normally Microsoft.Graph.Authentication's), so the method is found by name and shape.
 
     MSAL hands the device code to a callback on a thread-pool thread, where a PowerShell script
     block has no runspace and fails. The callback is therefore compiled from an expression tree and
@@ -57,7 +57,7 @@ function Invoke-OPIMDeviceCodeAuth {
     )
 
     # AcquireTokenWithDeviceCode(IEnumerable<string>, Func<DeviceCodeResult, Task>), found by name
-    # and parameter shape: its parameter types come from the Graph SDK's AssemblyLoadContext.
+    # and shape: its types come from the application's load context (see Get-OPIMMsalApplication).
     $DeviceCodeMethod = $MsalApp.GetType().GetMethods() |
         Where-Object {
             $_.Name -eq 'AcquireTokenWithDeviceCode' -and
@@ -80,8 +80,8 @@ function Invoke-OPIMDeviceCodeAuth {
 
     # MSAL calls the callback on a thread-pool thread, where a script block has no runspace and
     # fails. A delegate compiled from an expression tree runs on any thread: it only queues the
-    # DeviceCodeResult, and this thread writes the message. The result type is read from the
-    # method itself, so it is the type of the Graph SDK's load context.
+    # DeviceCodeResult, and this thread writes the message. The result type is read from the method
+    # itself: the type of the MSAL copy the application came from, whichever load context holds it.
     $CallbackType = $DeviceCodeMethod.GetParameters()[1].ParameterType
     $ResultType   = $CallbackType.GetGenericArguments()[0]
     $Queue        = [System.Collections.Concurrent.ConcurrentQueue[object]]::new()

@@ -276,7 +276,7 @@ jobs:
           Register-PSResourceRepository -Name 'OPIMLocal' -Uri $RepositoryRoot -Trusted
 
           # -SkipDependenciesCheck is needed HERE and nowhere else: Publish-PSResource also checks
-          # that every declared dependency exists in the DESTINATION repository, and Az.Resources
+          # that every declared dependency exists in the DESTINATION repository, and AzAuth
           # and Microsoft.Graph.Authentication live on the Gallery, not in this empty folder.
           # Without the switch this fails with "Dependency 'Microsoft.Graph.Authentication' was not
           # found in repository 'OERLocal'" (measured in Omnicit.EntraRBAC, which uses that name).
@@ -382,7 +382,9 @@ jobs:
         # before anything stopped it:
         #
         #   1. A tag run where GitVersion computes something other than the tag. The version would
-        #      be published, and only the release step would then fail, against the ruleset.
+        #      be published, and only the tag step would then stop, after the publish:
+        #      ReleaseTag.ps1 refuses a tag run whose version has no tag, since this workflow
+        #      never creates a v<X.Y.Z> tag.
         #   2. A stable tag on a commit that is not on main -- created in a checkout sitting on a
         #      feature branch, say. That publishes unreviewed code as a full release.
         #   3. A main run that computes a stable version, after a GitVersion.yml change for example.
@@ -534,6 +536,10 @@ jobs:
               Start-Sleep -Seconds 20
           }
 
+          # A red run here leaves the tag step unrun. If the Gallery shows the version, this job
+          # published it, and a re-run cannot tag it: the re-run's publish step finds the version
+          # and skips, and ReleaseTag.ps1 then refuses to tag a version this job did not publish.
+          # Tag and release by hand -- see the tag step's comment and Publishing in CLAUDE.md.
           if ($Found.Count -eq 0) {
               throw "$ModuleName $Version did not appear on the PowerShell Gallery within 10 minutes. THE PUBLISH MAY WELL HAVE SUCCEEDED and simply not been confirmed -- check the Gallery before re-running, and do not assume this version is free. A published version cannot be deleted."
           }
