@@ -112,7 +112,10 @@ tests/
                               #   Testing Conventions -- OPIMTestToken.ps1
                               #   (New-OPIMTestAccessToken: token-shaped fixtures built at
                               #   runtime, NOT-A-REAL-TOKEN) and its suite,
-                              #   OPIMTestToken.Tests.ps1, and ArmResponse/ (ARM
+                              #   OPIMTestToken.Tests.ps1, OPIMScrubFixture.ps1
+                              #   (New-ScrubFixture: the failed-request fixture, a request
+                              #   with an Authorization header, NOT-A-REAL-TOKEN) and its
+                              #   suite, OPIMScrubFixture.Tests.ps1, and ArmResponse/ (ARM
                               #   api-version 2020-10-01 answers and error bodies, redacted)
   Workflow/                   # ReleaseTag.Tests.ps1 -- the tag decision and its YAML wiring
 docs/live-verification/       # README.md: the redaction and credential rules, the placeholder
@@ -1780,10 +1783,11 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   resolves the newest Pester (`RequiredModules.psd1` asks for `latest`), and CI resolves it afresh
   on every run, so no version is a standing fact here; 6.2.0 was resolved when measured on
   2026-10-06. One `*.Tests.ps1` per source file -- the six completer classes share
-  `Unit/Classes/ArgumentCompleters.Tests.ps1` -- plus the two test helpers' own suites: the
-  tripwire's known-answer suite, `Unit/TestHelpers/OPIMTransportTripwire.Tests.ps1`, and
+  `Unit/Classes/ArgumentCompleters.Tests.ps1` -- plus the three test helpers' own suites: the
+  tripwire's known-answer suite, `Unit/TestHelpers/OPIMTransportTripwire.Tests.ps1`,
   `Unit/TestHelpers/OPIMTestToken.Tests.ps1`, which pins the claims `New-OPIMTestAccessToken`
-  writes. The QA gate (`tests/QA/module.tests.ps1`) requires a unit test file for every function.
+  writes, and `Unit/TestHelpers/OPIMScrubFixture.Tests.ps1`, which pins what `New-ScrubFixture`
+  builds. The QA gate (`tests/QA/module.tests.ps1`) requires a unit test file for every function.
 - **Structure:** one `Describe` per file, named exactly after the function under test. Group
   scenarios (happy path, error cases, parameter sets) in `Context` blocks, with a `BeforeAll`
   inside each `Context` for shared arrangement; use `BeforeEach` only for state that must reset
@@ -2057,6 +2061,13 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   with placeholder claims and the signature segment `NOT-A-REAL-TOKEN`; `-ObjectId <guid>` sets the
   `oid` claim, and `-NoTenant` and `-NoObjectId` leave the `tid` or the `oid` claim out, for a token
   whose tenant or account cannot be read.
+- **Build a failed-request record with `New-ScrubFixture`, never a local copy.** Dot-source
+  `tests/Unit/TestHelpers/OPIMScrubFixture.ps1` in the root `BeforeAll`, after the tripwire.
+  `New-ScrubFixture` returns `Request` (an `HttpRequestMessage` carrying an `Authorization` header
+  built at runtime and ending in `NOT-A-REAL-TOKEN`), `Exception` (an `HttpResponseException`
+  whose response points back at that request) and `Record` (the `ErrorRecord` `HttpFail`, with the
+  request as its target); `-Status`, `-Content`, `-RetryAfter`, `-Uri` and `-TokenShape` (`Plain`,
+  or `Jwt` for a test that looks for `eyJ` in a rendered error) shape it.
 - **Test data:** typed `PSCustomObject` input carrying the module's type names
   (`Omnicit.PIM.DirectoryEligibilitySchedule`, `Omnicit.PIM.AzureEligibilitySchedule`,
   `Omnicit.PIM.GroupEligibilitySchedule`), PascalCase variables, `contoso`/`fabrikam` for any

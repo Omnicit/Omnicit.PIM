@@ -3,6 +3,7 @@ BeforeAll {
     Import-Module Omnicit.PIM -Force
     . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
     Install-OPIMTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OPIMScrubFixture.ps1"
 }
 
 AfterAll {
@@ -537,23 +538,6 @@ Describe 'Get-OPIMDirectoryRole' {
                 $PSCmdlet.ThrowTerminatingError($script:ScrubFixture.Record)
             }
 
-            # A failed Graph read as the SDK leaves it. The token is built at runtime in the shape a
-            # real one has, and says it is not one, so no token-shaped literal sits in this file.
-            function New-ScrubFixture {
-                param([int]$Status)
-                $Token = 'Bearer ' + 'eyJ' + ('A' * 20) + '.' + 'NOT-A-REAL-TOKEN'
-                $Request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://graph.microsoft.com/v1.0/roleManagement/directory/roleEligibilitySchedules')
-                $null = $Request.Headers.TryAddWithoutValidation('Authorization', $Token)
-                $Response = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]$Status)
-                $Response.RequestMessage = $Request
-                $Response.Content = [System.Net.Http.StringContent]::new('{"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges."}}')
-                $Exception = [Microsoft.PowerShell.Commands.HttpResponseException]::new('Response status code does not indicate success.', $Response)
-                [pscustomobject]@{
-                    Request = $Request
-                    Record  = [System.Management.Automation.ErrorRecord]::new($Exception, 'HttpFail', 'InvalidOperation', $Request)
-                }
-            }
-
             # Walks every record, exception, target and request reachable from the given roots and
             # returns what each renders as, plus every HttpRequestMessage it passed through.
             function Get-RenderedErrorText {
@@ -585,7 +569,8 @@ Describe 'Get-OPIMDirectoryRole' {
             # so only what this run added is read.
             function Invoke-ScrubbedListing {
                 param([int]$Status)
-                $script:ScrubFixture = New-ScrubFixture -Status $Status
+                # The token is built in the shape a real one has (Jwt), since the render test below looks for eyJ.
+                $script:ScrubFixture = New-ScrubFixture -Status $Status -Uri 'https://graph.microsoft.com/v1.0/roleManagement/directory/roleEligibilitySchedules' -TokenShape Jwt
                 $HadHeader = $script:ScrubFixture.Request.Headers.Contains('Authorization')
                 $Before = [System.Collections.Generic.HashSet[object]]::new([System.Collections.Generic.ReferenceEqualityComparer]::Instance)
                 foreach ($Entry in @($global:Error)) { $null = $Before.Add($Entry) }

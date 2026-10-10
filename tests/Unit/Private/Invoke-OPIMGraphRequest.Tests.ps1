@@ -4,32 +4,10 @@ BeforeAll {
     . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
     Install-OPIMTransportTripwire
     . "$PSScriptRoot/../TestHelpers/OPIMTestToken.ps1"
+    . "$PSScriptRoot/../TestHelpers/OPIMScrubFixture.ps1"
 
     # The tenant of the device code sessions below; a letter-repeat placeholder, not a version-4 id.
     $SessionTenant = 'aaaaaaaa-0000-0000-0000-00000000000a'
-
-    # A failed Graph call as the SDK leaves it: a request message carrying an Authorization header,
-    # the response pointing back at it, and an HttpResponseException holding the response. The
-    # token is built at runtime and says what it is, so no token-shaped literal sits in this file.
-    function New-ScrubFixture {
-        param(
-            [int]$Status = 403,
-            [string]$Content = '{"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges."}}',
-            [string]$RetryAfter
-        )
-        $Token = 'Bearer ' + ('x' * 40) + 'NOT-A-REAL-TOKEN'
-        $Request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://graph.microsoft.com/v1.0/me')
-        $null = $Request.Headers.TryAddWithoutValidation('Authorization', $Token)
-        $Response = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]$Status)
-        $Response.RequestMessage = $Request
-        $Response.Content = [System.Net.Http.StringContent]::new($Content)
-        if ($RetryAfter) { $null = $Response.Headers.TryAddWithoutValidation('Retry-After', $RetryAfter) }
-        $Exception = [Microsoft.PowerShell.Commands.HttpResponseException]::new('Response status code does not indicate success.', $Response)
-        [pscustomobject]@{
-            Request = $Request
-            Record  = [System.Management.Automation.ErrorRecord]::new($Exception, 'HttpFail', 'InvalidOperation', $Request)
-        }
-    }
 
     # Runs a script in Omnicit.PIM's scope in a nested pipeline of this runspace and returns what it
     # wrote. Pester runs every It inside a try, and while any try is up the call stack a throw always
