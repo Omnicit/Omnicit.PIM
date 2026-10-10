@@ -297,6 +297,192 @@ BeforeAll {
     $script:AzParsedFileCount = 0
     $script:AzCommandAstCount = 0
 
+    <#
+        =====================================================================================
+        CLOUD HOSTS (Pass 5, decision A11, modelled on Omnicit.EntraRBAC's "Pass 6").
+
+        THE PROPERTY. Every Graph, Azure Resource Manager and sign-in authority host of the four
+        clouds (Global, USGov, USGovDoD, China) is written in ONE place, the private table
+        source/Private/Get-OPIMCloudEndpoint.ps1, and every other file under source/ reads the
+        table. A second copy of a host is a copy that can drift from the table, and on a sovereign
+        tenant it sends a request or a credential across the wrong cloud boundary -- the failure
+        A11 exists to rule out, and one no unit test sees, since a test mocks the transport and
+        never reads a host.
+
+        THE HOST LIST IS DERIVED, not retyped. The hosts this pass refuses are read out of the
+        table's own AST (every string constant that starts with https://, its host by [uri]), so a
+        fifth cloud added to the table is scanned for from that moment. $script:CloudHostDocumented
+        is a written control, not the working list: the first It compares the two, so adding a
+        cloud is a deliberate edit that stays red until a person updates the control (and the
+        documentation of the hosts) in the same change. Only when the derivation yields nothing at
+        all does the scan fall back to the control, so a broken derivation can neither empty the
+        pattern (an empty alternation matches every string) nor turn the scan into a no-op; the
+        derivation It is the one that goes red.
+
+        WHY THE AST. A comment is a token and never an AST node, so help and comments that NAME a
+        host (the table's own .DESCRIPTION does) are never offered to this scan. Every
+        StringConstantExpressionAst of any kind (single or double quoted, here-string, bareword) and
+        every ExpandableStringExpressionAst is read: a host spelled as a bareword argument
+        (Write-Output management.chinacloudapi.cn) or inside an interpolated string
+        ("https://$Tenant.login.microsoftonline.us") is as much a second copy as a quoted literal.
+        The match is case-insensitive, so a host in capitals is caught as well; each finding names
+        the host in the lower case the table holds it in.
+
+        TWO EXEMPTIONS, and nothing else.
+          - source/Private/Get-OPIMCloudEndpoint.ps1, WHOLE FILE: it is the table, and every literal
+            in it is the table and not a copy of it.
+          - source/Private/Invoke-OPIMArmRequest.ps1, ONE literal, found by its SHAPE and never by
+            the file: the else branch of the assignment to $ArmBaseUrl,
+            $ArmBaseUrl = if (...) { ... } elseif (...) { ... } else { 'https://management.azure.com' },
+            the transport's one documented public-cloud fallback for a call with no auth state at
+            all (where the request is refused for its missing token anyway). The function
+            Test-SourceHygieneArmFallbackLiteral checks the node's parent chain -- the literal is
+            the sole statement of the ElseClause of an IfStatementAst (compared by reference, so
+            the body of an if or an elseif does not qualify), whose parent is an assignment to the
+            variable ArmBaseUrl -- and that the literal is exactly 'https://management.azure.com',
+            so a sovereign host written into the fallback slot is refused as well. A file-level key would
+            silently unguard every OTHER literal the transport might ever carry; the known-answer It
+            holds a probe in that file that must stay refused.
+
+        KNOWN LIMITS, stated rather than papered over. A host assembled at run time from parts
+        ('https://graph.' + 'microsoft.us', a -f format, a [uri] built from a scheme and a name) is
+        invisible to a parser: no node holds the whole host. A host in a .ps1xml file is not read
+        at all, since this pass walks .ps1, .psm1 and .psd1 only, while the Types and Format files
+        hold script blocks that run at property access and at formatting. A host that is only a
+        PART of a longer name is reported (the match is a substring match), which errs on the side
+        of refusing. Review has to catch the first two; this pass cannot.
+
+        The positive controls are the known-answer It, which runs the detector over in-memory texts
+        holding every refused shape and both exemptions, and the named control: the ARM fallback
+        of Invoke-OPIMArmRequest, and the ten distinct hosts of the table, which a detector that
+        stopped seeing the tree would no longer find.
+        =====================================================================================
+    #>
+    $script:CloudEndpointPath = 'source/Private/Get-OPIMCloudEndpoint.ps1'
+    $script:CloudArmFallbackPath = 'source/Private/Invoke-OPIMArmRequest.ps1'
+    $script:CloudArmFallbackVariable = 'ArmBaseUrl'
+    $script:CloudArmFallbackLiteral = 'https://management.azure.com'
+
+    # The written control: the ten distinct hosts of the four clouds (USGovDoD shares the ARM and
+    # authority hosts of USGov). Compared with the derived list by the first It of 'Cloud hosts'.
+    $script:CloudHostDocumented = @(
+        'graph.microsoft.com', 'management.azure.com', 'login.microsoftonline.com',
+        'graph.microsoft.us', 'dod-graph.microsoft.us', 'management.usgovcloudapi.net', 'login.microsoftonline.us',
+        'microsoftgraph.chinacloudapi.cn', 'management.chinacloudapi.cn', 'login.chinacloudapi.cn'
+    )
+
+    $script:CloudHostDerivationFailure = ''
+    $script:CloudHostDerived = @()
+
+    $CloudTableFile = @($script:HygieneFiles | Where-Object { $_.RelativePath -ceq $script:CloudEndpointPath }) | Select-Object -First 1
+    if (-not $CloudTableFile) {
+        $script:CloudHostDerivationFailure = "the endpoint table '$($script:CloudEndpointPath)' was not found among the scanned files, so no host could be derived from it"
+    } else {
+        $CloudTableErrors = $null
+        $CloudTableAst = [System.Management.Automation.Language.Parser]::ParseInput(
+            $CloudTableFile.Text, $CloudTableFile.Path, [ref]$null, [ref]$CloudTableErrors)
+        if ($CloudTableErrors.Count -gt 0) {
+            $script:CloudHostDerivationFailure = "the endpoint table '$($script:CloudEndpointPath)' does not parse ($($CloudTableErrors.Count) error(s)), so no host could be derived from it"
+        } else {
+            $CloudDerived = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+            foreach ($Node in $CloudTableAst.FindAll({ $args[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true)) {
+                if (-not $Node.Value.StartsWith('https://', [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+                # [uri] is the parser the transports use, so a malformed entry of the table is
+                # reported here instead of being half-matched.
+                $CloudUri = $null
+                if (-not [uri]::TryCreate($Node.Value, [System.UriKind]::Absolute, [ref]$CloudUri)) {
+                    $script:CloudHostDerivationFailure = "the endpoint table holds an https:// string that is not an absolute URI: '$($Node.Value)'"
+                    continue
+                }
+                if ($CloudUri.Host) { $null = $CloudDerived.Add($CloudUri.Host) }
+            }
+            $CloudDerivedSorted = [string[]]@($CloudDerived)
+            [System.Array]::Sort($CloudDerivedSorted, [System.StringComparer]::Ordinal)
+            $script:CloudHostDerived = $CloudDerivedSorted
+            if ($CloudDerivedSorted.Count -eq 0 -and -not $script:CloudHostDerivationFailure) {
+                $script:CloudHostDerivationFailure = "the endpoint table '$($script:CloudEndpointPath)' holds no https:// string constant, so no host could be derived from it"
+            }
+        }
+    }
+
+    # The derived list is the working one; the control stands in only when the derivation produced
+    # nothing, so the scan below keeps its meaning while the derivation It reports the cause. The
+    # longest host goes first in the alternation, so should one host ever be the prefix of another
+    # the longer one is the finding. (A host that merely ends the other, as graph.microsoft.us ends
+    # dod-graph.microsoft.us, needs no ordering: the match starts at the leftmost character.)
+    $script:CloudHostNames = if (@($script:CloudHostDerived).Count -gt 0) { $script:CloudHostDerived } else { $script:CloudHostDocumented }
+    $script:CloudHostRegex = [regex]::new(
+        (@($script:CloudHostNames | Sort-Object -Property Length -Descending | ForEach-Object { [regex]::Escape($_) }) -join '|'),
+        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+
+    function Test-SourceHygieneArmFallbackLiteral {
+        <#
+        .SYNOPSIS
+        Returns true when a string node is the transport's one documented fallback: the sole
+        statement of the else branch of an if that is assigned to the variable ArmBaseUrl.
+        #>
+        [OutputType([bool])]
+        param(
+            [Parameter(Mandatory)]
+            [System.Management.Automation.Language.Ast]$Node
+        )
+        if ($Node -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) { return $false }
+        if ($Node.Value -cne $script:CloudArmFallbackLiteral) { return $false }
+        $Expression = $Node.Parent
+        if ($Expression -isnot [System.Management.Automation.Language.CommandExpressionAst]) { return $false }
+        $Pipeline = $Expression.Parent
+        if ($Pipeline -isnot [System.Management.Automation.Language.PipelineAst]) { return $false }
+        $Block = $Pipeline.Parent
+        if ($Block -isnot [System.Management.Automation.Language.StatementBlockAst]) { return $false }
+        $IfStatement = $Block.Parent
+        if ($IfStatement -isnot [System.Management.Automation.Language.IfStatementAst]) { return $false }
+        # Reference equality: the body of an if or an elseif has the same parent and must not pass.
+        if (-not [object]::ReferenceEquals($IfStatement.ElseClause, $Block)) { return $false }
+        $Assignment = $IfStatement.Parent
+        if ($Assignment -isnot [System.Management.Automation.Language.AssignmentStatementAst]) { return $false }
+        if ($Assignment.Left -isnot [System.Management.Automation.Language.VariableExpressionAst]) { return $false }
+        return ($Assignment.Left.VariablePath.UserPath -eq $script:CloudArmFallbackVariable)
+    }
+
+    function Get-SourceHygieneCloudHostFinding {
+        <#
+        .SYNOPSIS
+        Returns one record per cloud host named by a string node of a parsed file: Path, Line, Host
+        (lower case), Text (the node's first line) and Exempt (true for the endpoint table and for
+        the ARM fallback literal).
+        #>
+        [OutputType([pscustomobject])]
+        param(
+            [Parameter(Mandatory)]
+            [System.Management.Automation.Language.Ast]$Ast,
+
+            [Parameter(Mandatory)]
+            [string]$RelativePath
+        )
+        $IsTable = $RelativePath -ceq $script:CloudEndpointPath
+        $IsFallbackFile = $RelativePath -ceq $script:CloudArmFallbackPath
+        foreach ($Node in $Ast.FindAll({
+                    $args[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+                    $args[0] -is [System.Management.Automation.Language.ExpandableStringExpressionAst]
+                }, $true)) {
+            $Seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+            foreach ($HostMatch in $script:CloudHostRegex.Matches([string]$Node.Value)) {
+                $HostName = $HostMatch.Value.ToLowerInvariant()
+                if (-not $Seen.Add($HostName)) { continue }
+                [pscustomobject]@{
+                    Path   = $RelativePath
+                    Line   = $Node.Extent.StartLineNumber
+                    Host   = $HostName
+                    Text   = ($Node.Extent.Text -split "`r?`n")[0].Trim()
+                    Exempt = [bool]($IsTable -or ($IsFallbackFile -and (Test-SourceHygieneArmFallbackLiteral -Node $Node)))
+                }
+            }
+        }
+    }
+
+    $script:CloudHostFindings = [System.Collections.Generic.List[object]]::new()
+    $script:CloudHostParsedFileCount = 0
+
     # --- Pass 1: parse every PowerShell-syntax source file exactly once. ---
     #
     # .ps1xml is excluded since it is XML, which the PowerShell parser would report as errors.
@@ -330,6 +516,12 @@ BeforeAll {
         foreach ($Finding in @(Get-SourceHygieneAzFinding -Ast $FileAst)) {
             $Finding | Add-Member -NotePropertyName Path -NotePropertyValue $File.RelativePath
             $script:AzFindings.Add($Finding)
+        }
+
+        # Pass 5 (the cloud hosts) reads the same AST as well; see its comment above Pass 1.
+        $script:CloudHostParsedFileCount++
+        foreach ($Finding in @(Get-SourceHygieneCloudHostFinding -Ast $FileAst -RelativePath $File.RelativePath)) {
+            $script:CloudHostFindings.Add($Finding)
         }
 
         <#
@@ -772,5 +964,154 @@ function Test-AzShape {
             'Omnicit.PIM signs in to Azure with AzAuth''s Get-AzToken and sends every request itself ' +
             '(Invoke-OPIMArmRequest); it calls, loads and declares no Az module (A7). Do not add the ' +
             'offending name to the allow list: a new Az dependency is a design decision, not an entry here')
+    }
+}
+
+Describe 'Cloud hosts' -Tags 'SourceHygiene' {
+
+    It 'derives the ten cloud hosts from the table and matches the documented list' {
+        # Asserted in this order on purpose: the comparison names what has to change together, and the
+        # count is the backstop it cannot be, since Compare-Object over two EMPTY lists returns
+        # nothing and would pass if the derivation and the control were emptied in one edit.
+        $script:CloudHostDerivationFailure | Should -BeNullOrEmpty -Because (
+            'the whole list this pass scans for is read out of the endpoint table; if that read failed, the scan is measuring the written control and not the table')
+
+        $Documented = [string[]]@($script:CloudHostDocumented)
+        [System.Array]::Sort($Documented, [System.StringComparer]::Ordinal)
+        $Difference = @(Compare-Object -ReferenceObject $Documented -DifferenceObject @($script:CloudHostDerived) -CaseSensitive |
+                ForEach-Object { '{0} {1}' -f $_.SideIndicator, $_.InputObject })
+        $Difference -join "`n" | Should -BeNullOrEmpty -Because @'
+the hosts derived from source/Private/Get-OPIMCloudEndpoint.ps1 no longer match the documented list
+in this gate ($script:CloudHostDocumented). A '=>' line is a host the table resolves and this gate
+does not name -- most likely a cloud was added to the table. Adding a cloud is a deliberate edit:
+update $script:CloudHostDocumented here, and every place that documents the cloud hosts, in the
+same change that adds the row. A '<=' line is the reverse -- a host this gate names that the table
+no longer resolves. Do not delete this assertion to get past it. The hosts that differ
+'@
+
+        @($script:CloudHostDerived).Count | Should -Be 10 -Because (
+            'the four clouds resolve ten distinct hosts (USGovDoD shares the ARM and authority hosts of USGov); zero means the derivation stopped firing, and any other count means the table gained or lost a cloud')
+    }
+
+    It 'recognises every refused shape and exempts only the table and the ARM fallback (known answer)' {
+        # The positive control of the gate: if a node kind, the match or an exemption stops working,
+        # these texts no longer yield their findings. Every text is parsed in memory with the
+        # detector's own entry point, under the path that decides its exemption.
+        $Run = {
+            param([string]$Text, [string]$Path)
+            $Errors = $null
+            $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$Errors)
+            if ($Errors.Count -gt 0) { throw "the known-answer text for '$Path' does not parse: $($Errors[0].Message)" }
+            @(Get-SourceHygieneCloudHostFinding -Ast $Ast -RelativePath $Path)
+        }
+        $ShowHost = { param($Findings) @($Findings | Sort-Object -Property Line, Host | ForEach-Object { '{0} {1}' -f $_.Line, $_.Host }) }
+        $ShowExempt = { param($Findings) @($Findings | Sort-Object -Property Line, Host | ForEach-Object { '{0} {1} {2}' -f $_.Line, $_.Host, $_.Exempt }) }
+
+        # (a) Refused shapes, in a file that is neither the table nor the transport: line 1 a quoted
+        # literal, line 2 an expandable string (it holds a variable), line 3 a bareword argument, line
+        # 4 a quoted literal in capitals (the match ignores case); line 5 is a comment, which is no AST
+        # node, and yields nothing.
+        $Refused = @'
+$Graph = 'https://graph.microsoft.us/v1.0'
+$Authority = "https://$Tenant.login.microsoftonline.us"
+Write-Output management.chinacloudapi.cn
+$Shout = 'GRAPH.MICROSOFT.COM'
+# login.microsoftonline.com
+'@
+        $Elsewhere = & $Run $Refused 'source/Private/Fake.ps1'
+        & $ShowHost $Elsewhere | Should -Be @(
+            '1 graph.microsoft.us'
+            '2 login.microsoftonline.us'
+            '3 management.chinacloudapi.cn'
+            '4 graph.microsoft.com'
+        )
+        @($Elsewhere | Where-Object Exempt).Count | Should -Be 0 -Because 'a file that is neither the table nor the transport has no exemption'
+
+        # (b) The same text IS the table when it sits under the table's path: all four are exempt.
+        $InTable = & $Run $Refused 'source/Private/Get-OPIMCloudEndpoint.ps1'
+        @($InTable).Count | Should -Be 4
+        @($InTable | Where-Object { -not $_.Exempt }).Count | Should -Be 0 -Because 'the table is exempt whole, since every literal in it is the table'
+
+        # (c) The transport's one exemption is a SHAPE, not a file. Line 1 is the fallback itself (an
+        # elseif before the else is part of the real shape); line 2 is an unrelated literal in the same
+        # file; line 3 is the same else literal assigned to another variable; lines 4 and 5 are the
+        # literal in the body of an elseif and of the if (same parent as the else, a different clause);
+        # line 6 is a sovereign host in the fallback slot; line 7 is no if at all; line 8 is the
+        # literal as the argument of a command, and line 9 is an expandable string, both inside the
+        # else.
+        $Transport = @'
+$ArmBaseUrl = if ($A) { 'x' } elseif ($B) { 'y' } else { 'https://management.azure.com' }
+$Probe = 'https://management.chinacloudapi.cn'
+$Other = if ($A) { 'x' } else { 'https://management.azure.com' }
+$ArmBaseUrl = if ($A) { 'x' } elseif ($B) { 'https://management.azure.com' } else { 'y' }
+$ArmBaseUrl = if ($A) { 'https://management.azure.com' } else { 'y' }
+$ArmBaseUrl = if ($A) { 'x' } else { 'https://management.chinacloudapi.cn' }
+$ArmBaseUrl = 'https://management.azure.com'
+$ArmBaseUrl = if ($A) { 'x' } else { Write-Output 'https://management.azure.com' }
+$ArmBaseUrl = if ($A) { 'x' } else { "https://$Suffix.management.azure.com" }
+'@
+        & $ShowExempt (& $Run $Transport 'source/Private/Invoke-OPIMArmRequest.ps1') | Should -Be @(
+            '1 management.azure.com True'
+            '2 management.chinacloudapi.cn False'
+            '3 management.azure.com False'
+            '4 management.azure.com False'
+            '5 management.azure.com False'
+            '6 management.chinacloudapi.cn False'
+            '7 management.azure.com False'
+            '8 management.azure.com False'
+            '9 management.azure.com False'
+        )
+        # The fallback is exempt in the transport and nowhere else.
+        @(& $Run $Transport 'source/Private/Fake.ps1' | Where-Object Exempt).Count | Should -Be 0 -Because 'the fallback exemption belongs to the transport file alone'
+
+        # (d) A here-string is one node and reports its start line; each host it holds is one finding;
+        # a host that ends another (graph.microsoft.us inside dod-graph.microsoft.us) is not reported
+        # on top of it; a string with no cloud host, a module name and a documentation address yield
+        # nothing.
+        $Shapes = @(
+            '$Cloud = @'''
+            'GraphRoot: https://dod-graph.microsoft.us/v1.0'
+            'Authority: https://login.chinacloudapi.cn/'
+            '''@'
+            '$Learn = ''https://learn.microsoft.com/graph'''
+            '$Module = ''Microsoft.Graph.Authentication'''
+            '$Message = "no cloud host here"'
+        ) -join "`n"
+        & $ShowHost (& $Run $Shapes 'source/Private/Fake.ps1') | Should -Be @(
+            '1 dod-graph.microsoft.us'
+            '1 login.chinacloudapi.cn'
+        )
+    }
+
+    It 'parses every source file' {
+        # A missing floor would compare with $null, which every count passes. The floor is the Az
+        # boundary's: both passes read the same parsed files, so the counts must agree as well.
+        $script:AzParsedFileFloor | Should -BeGreaterThan 0
+        $script:ParseFailures | Should -BeNullOrEmpty
+        $script:CloudHostParsedFileCount | Should -BeGreaterOrEqual $script:AzParsedFileFloor
+        $script:CloudHostParsedFileCount | Should -Be $script:AzParsedFileCount -Because 'both passes read the files Pass 1 parsed, so a file one of them lost is a file the loop skipped'
+    }
+
+    It 'sees the ARM fallback of Invoke-OPIMArmRequest, the named control' {
+        # The real-tree half of the positive control: a detector that stopped seeing the tree would
+        # find no host at all, which is indistinguishable from a clean tree without this.
+        $Transport = @($script:CloudHostFindings | Where-Object { $_.Path -ceq 'source/Private/Invoke-OPIMArmRequest.ps1' -and $_.Exempt })
+        $Transport.Count | Should -Be 1 -Because 'the transport keeps exactly one documented public-cloud fallback literal'
+        $Transport[0].Host | Should -BeExactly 'management.azure.com'
+
+        $Table = @($script:CloudHostFindings | Where-Object { $_.Path -ceq 'source/Private/Get-OPIMCloudEndpoint.ps1' })
+        @($Table | Where-Object { -not $_.Exempt }).Count | Should -Be 0 -Because 'every finding in the table is exempt'
+        @($Table | Select-Object -ExpandProperty Host -Unique).Count | Should -Be 10 -Because (
+            'the table names the ten distinct hosts of the four clouds; a detector that stopped seeing its string constants would find fewer')
+    }
+
+    It 'names no cloud host outside the table anywhere under source/' {
+        $Violations = @($script:CloudHostFindings | Where-Object { -not $_.Exempt } | ForEach-Object {
+                '{0}:{1} -- {2}' -f $_.Path, $_.Line, $_.Host
+            })
+        ($Violations -join '; ') | Should -BeNullOrEmpty -Because (
+            'source/Private/Get-OPIMCloudEndpoint.ps1 is the single owner of every Graph, ARM and authority host of the four clouds (A11); ' +
+            'a second copy can drift from the table and sends a request or a credential across the wrong cloud boundary on a sovereign tenant. ' +
+            'Read the host from Get-OPIMCloudEndpoint instead. The only other exemption is the transport''s documented fallback literal, found by its shape')
     }
 }
