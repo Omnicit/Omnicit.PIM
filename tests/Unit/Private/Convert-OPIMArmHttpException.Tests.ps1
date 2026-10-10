@@ -54,15 +54,24 @@ Describe 'Convert-OPIMArmHttpException' {
 
         It 'reads the code and the message out of a body that is not pure JSON, and scrubs the parse failure' {
             InModuleScope Omnicit.PIM {
-                $Before = $global:Error.Count
-                $Response = [PSCustomObject]@{
-                    StatusCode = 429
-                    Content    = 'Some wrapper text {"code":"TooManyRequests","message":"Rate limited."} trailing'
+                # $global:Error holds 256 records at most and drops the OLDEST when it is full, which
+                # earlier test files can leave it: a count taken before and after the call could then
+                # never differ. So the list is emptied for the call, and the saved list is put back.
+                $SavedErrors = @($global:Error)
+                try {
+                    $global:Error.Clear()
+                    $Response = [PSCustomObject]@{
+                        StatusCode = 429
+                        Content    = 'Some wrapper text {"code":"TooManyRequests","message":"Rate limited."} trailing'
+                    }
+                    $Record = Convert-OPIMArmHttpException -Response $Response
+                    $Record.FullyQualifiedErrorId | Should -BeExactly 'TooManyRequests'
+                    $Record.Exception.Message | Should -BeExactly 'TooManyRequests: Rate limited.'
+                    $global:Error.Count | Should -Be 0
+                } finally {
+                    $global:Error.Clear()
+                    $global:Error.AddRange($SavedErrors)
                 }
-                $Record = Convert-OPIMArmHttpException -Response $Response
-                $Record.FullyQualifiedErrorId | Should -BeExactly 'TooManyRequests'
-                $Record.Exception.Message | Should -BeExactly 'TooManyRequests: Rate limited.'
-                $global:Error.Count | Should -Be $Before
             }
         }
 

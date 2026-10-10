@@ -1069,6 +1069,150 @@ Describe 'Invoke-OPIMGraphRequest' {
             $Text | Should -Not -Match '(?i)bearer|authorization'
             $Text | Should -Not -Match 'v1\.0/me'
         }
+
+        Context 'When the caller may not wait out the throttle (scope 5b)' {
+            # A tab completion never waits (the module flag the completers set), and a -Wait poll never
+            # waits past its deadline (-WaitDeadline). Time is the mocked clock: every Get-Date read
+            # moves it by Step seconds, and every wait moves it by the seconds waited. The clock starts
+            # at T0, so the first read is T0 + 1.
+            BeforeAll {
+                InModuleScope Omnicit.PIM {
+                    $script:_TestClock = @{ Now = [datetime]::new(2026, 10, 10, 12, 0, 0, [DateTimeKind]::Utc); Step = 1 }
+                    Mock Get-Date { $script:_TestClock.Now = $script:_TestClock.Now.AddSeconds($script:_TestClock.Step); $script:_TestClock.Now }
+                    Mock Start-Sleep { $script:_TestClock.Now = $script:_TestClock.Now.AddSeconds($Seconds) }
+                }
+            }
+            BeforeEach {
+                InModuleScope Omnicit.PIM {
+                    $script:_TestClock.Now = [datetime]::new(2026, 10, 10, 12, 0, 0, [DateTimeKind]::Utc)
+                    $script:_TestClock.Step = 1
+                    $script:_OPIMCompletionInProgress = $null
+                }
+            }
+            AfterAll {
+                InModuleScope Omnicit.PIM {
+                    $script:_TestClock = $null
+                    $script:_OPIMCompletionInProgress = $null
+                }
+            }
+
+            It 'does not wait out a 429 during tab completion and throws the converted error at once' {
+                # One throttle, then an answer: a wrapper that waited would return the answer.
+                $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '5' } -Message $script:TooManyMessage
+                InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
+                    param($Queue)
+                    $script:_ThrottleQueue = $Queue
+                    $script:_OPIMCompletionInProgress = $true
+                    $Records = [System.Collections.Generic.List[object]]::new()
+                    $Caught = $null
+                    try { Invoke-OPIMGraphRequest -Uri 'v1.0/me' -Verbose 4>&1 | ForEach-Object { $Records.Add($PSItem) } } catch { $Caught = $PSItem }
+                    $Caught.FullyQualifiedErrorId | Should -BeExactly 'TooManyRequests'
+                    @($Records | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] }).Count | Should -Be 0
+                    Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                    Should -Invoke Start-Sleep -Times 0 -Scope It
+                    $Text = (@($Records | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] }).Message) -join "`n"
+                    $Text | Should -Match 'Throttled during tab completion; tab completion does not wait\. Giving up\.'
+                }
+            }
+
+            It 'waits out a 429 again once the completion flag is cleared' {
+                $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '5' } -Message $script:TooManyMessage
+                InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
+                    param($Queue)
+                    $script:_ThrottleQueue = $Queue
+                    $script:_OPIMCompletionInProgress = $false
+                    (Invoke-OPIMGraphRequest -Uri 'v1.0/me').value[0].id | Should -Be 'after-wait'
+                    Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                    Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 5 }
+                }
+            }
+
+            It 'clamps the wait to a -WaitDeadline 3 s ahead, sends once more, and then gives up without another wait' {
+                # The first read is T0 + 1, so a deadline of T0 + 4 leaves 3 s: the 30 s Retry-After is
+                # clamped to 3. The wait moves the clock to T0 + 4; the next read is T0 + 5, past it.
+                $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '30' } -Message $script:TooManyMessage
+                InModuleScope Omnicit.PIM -Parameters @{ Throttle = $Throttle } {
+                    param($Throttle)
+                    $script:_ThrottleForever = $Throttle
+                    $Deadline = [datetime]::new(2026, 10, 10, 12, 0, 4, [DateTimeKind]::Utc)
+                    $Records = [System.Collections.Generic.List[object]]::new()
+                    $Caught = $null
+                    try { Invoke-OPIMGraphRequest -Uri 'v1.0/me' -WaitDeadline $Deadline -Verbose 4>&1 | ForEach-Object { $Records.Add($PSItem) } } catch { $Caught = $PSItem }
+                    $Caught.FullyQualifiedErrorId | Should -BeExactly 'TooManyRequests'
+                    Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It
+                    Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 3 }
+                    Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                    $Text = (@($Records | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] }).Message) -join "`n"
+                    $Text | Should -Match 'Waiting 3 s \(server-directed, clamped to the -Wait deadline\) before retry 1;'
+                    $Text | Should -Match 'Throttled\. The -Wait deadline leaves no time for the next wait of 30 s \(server-directed\)\. Giving up\.'
+                }
+            }
+
+            It 'waits the full Retry-After when the -WaitDeadline leaves room for it' {
+                $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '30' } -Message $script:TooManyMessage
+                InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
+                    param($Queue)
+                    $script:_ThrottleQueue = $Queue
+                    $Deadline = [datetime]::new(2026, 10, 10, 12, 5, 0, [DateTimeKind]::Utc)
+                    (Invoke-OPIMGraphRequest -Uri 'v1.0/me' -WaitDeadline $Deadline).value[0].id | Should -Be 'after-wait'
+                    Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It
+                    Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 30 }
+                }
+            }
+
+            It 'does not wait out a 429 when the -WaitDeadline has already passed, and throws the converted error' {
+                # One throttle, then an answer: a wrapper that waited would return the answer.
+                $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '5' } -Message $script:TooManyMessage
+                InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
+                    param($Queue)
+                    $script:_ThrottleQueue = $Queue
+                    $Deadline = [datetime]::new(2026, 10, 10, 11, 59, 50, [DateTimeKind]::Utc)
+                    { Invoke-OPIMGraphRequest -Uri 'v1.0/me' -WaitDeadline $Deadline } | Should -Throw -ErrorId 'TooManyRequests'
+                    Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                    Should -Invoke Start-Sleep -Times 0 -Scope It
+                }
+            }
+
+            It 'sends the request once when the -WaitDeadline has already passed' {
+                # Review Focus 5: the deadline is read only at a decision to wait, so a poll past it
+                # still reads once.
+                InModuleScope Omnicit.PIM {
+                    $Deadline = [datetime]::new(2026, 10, 10, 11, 59, 50, [DateTimeKind]::Utc)
+                    (Invoke-OPIMGraphRequest -Uri 'v1.0/me' -WaitDeadline $Deadline).value[0].id | Should -Be 'after-wait'
+                    Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                    Should -Invoke Start-Sleep -Times 0 -Scope It
+                }
+            }
+
+            It 'applies the -WaitDeadline to a later page of a -All read as well' {
+                # Page 1 answers with a next link; page 2 is throttled with the deadline already
+                # passed. The read fails whole, with no wait and no shorter list.
+                $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = '5' } -Message $script:TooManyMessage
+                InModuleScope Omnicit.PIM -Parameters @{ Throttle = $Throttle } {
+                    param($Throttle)
+                    $script:_PagedThrottle = $Throttle
+                    $script:_PagedCalls = 0
+                    Mock Invoke-MgGraphRequest {
+                        $script:_PagedCalls++
+                        if ($script:_PagedCalls -gt 40) { throw 'hang guard: the throttle loop did not end' }
+                        if ($script:_PagedCalls -eq 1) { return @{ value = @(@{ id = 'a' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/me?$skiptoken=2' } }
+                        if ($script:_PagedCalls -eq 2) { throw $script:_PagedThrottle }
+                        @{ value = @(@{ id = 'b' }) }
+                    }
+                    $Deadline = [datetime]::new(2026, 10, 10, 11, 59, 50, [DateTimeKind]::Utc)
+                    $Result = $null
+                    $Caught = $null
+                    try { $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/me' -All -WaitDeadline $Deadline } catch { $Caught = $PSItem }
+                    $Caught.FullyQualifiedErrorId | Should -BeLike 'TooManyRequests*'
+                    $Caught.Exception.PageNumber | Should -Be 2
+                    $Result | Should -BeNullOrEmpty
+                    Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                    Should -Invoke Start-Sleep -Times 0 -Scope It
+                    $script:_PagedThrottle = $null
+                    $script:_PagedCalls = $null
+                }
+            }
+        }
     }
 
     Context 'When Microsoft Graph throttles the pages of -All (OPIM-28)' {

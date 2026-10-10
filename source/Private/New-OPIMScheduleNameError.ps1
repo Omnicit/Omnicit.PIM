@@ -21,8 +21,9 @@ function New-OPIMScheduleNameError {
     EligibleRoleNotFound and ActiveRoleNotFound (category ObjectNotFound) say that no eligible (or
     active) post matches the name, and add what the caller found out: the access type the name
     matches instead, the scopes it matches at instead, that the post is active under another name
-    and which, or that the post is eligible but not active (already deactivated, or its activation
-    has not finished yet).
+    and which, that the post is eligible but not active (already deactivated, or its activation
+    has not finished yet), or -- with -JustDeactivated -- that the service refused a deactivation
+    because the assignment was deactivated moments ago and the list still showed it.
 
     .PARAMETER ErrorId
     AmbiguousName, EligibleRoleNotFound or ActiveRoleNotFound.
@@ -63,6 +64,14 @@ function New-OPIMScheduleNameError {
     use one of them (to deactivate it, or to list it with -Activated). It takes the place of
     -AlreadyInactive: a post that is active is never also called deactivated.
 
+    .PARAMETER JustDeactivated
+    For ActiveRoleNotFound (OPIM-50): the list of active assignments still showed the post, but the
+    service refused the deactivation because the assignment does not exist. The message says that
+    Microsoft Graph (Azure Resource Manager for an Azure role) reports that it does not exist, that
+    it was deactivated moments ago, and that the list of active assignments can still show it for a
+    short while. It takes the place of -AlreadyInactive and -ActiveForm, and of the advice to give
+    the display name as the listing shows it.
+
     .PARAMETER Configuration
     For AmbiguousName: the value is a configured entry of a tenant alias (TenantMap.psd1), not a name
     typed by the user. The message says "configured entry" instead of "name", and the hint reads
@@ -91,7 +100,8 @@ function New-OPIMScheduleNameError {
         [AllowEmptyCollection()][object[]]$OtherScope = @(),
         [switch]$AlreadyInactive,
         [AllowEmptyCollection()][object[]]$ActiveForm = @(),
-        [switch]$Configuration
+        [switch]$Configuration,
+        [switch]$JustDeactivated
     )
     $Noun = @{ Directory = 'directory role'; Group = 'group assignment'; Azure = 'Azure role' }[$Pillar]
     $Listing = @{ Directory = 'Get-OPIMDirectoryRole'; Group = 'Get-OPIMEntraIDGroup'; Azure = 'Get-OPIMAzureRole' }[$Pillar]
@@ -146,7 +156,12 @@ function New-OPIMScheduleNameError {
         if ($OtherScope.Count -gt 0) {
             $Parts.Add("It matches at another scope: $((@($OtherScope | ForEach-Object { & $Describe $PSItem })) -join '; ').")
         }
-        if ($ActiveForm.Count -gt 0) {
+        if ($JustDeactivated) {
+            # OPIM-50: the list still showed the post, but the service refused the request because the
+            # assignment is gone -- deactivated moments ago, which the list shows only later.
+            $Service = if ($Pillar -eq 'Azure') { 'Azure Resource Manager' } else { 'Microsoft Graph' }
+            $Parts.Add("$Service reports that it does not exist: it was deactivated moments ago, and the list of active assignments can still show it for a short while.")
+        } elseif ($ActiveForm.Count -gt 0) {
             # The post is active under another key: it is never also called deactivated.
             $Forms = @($ActiveForm | ForEach-Object { Get-OPIMScheduleName -Pillar $Pillar -InputObject $PSItem })
             $Quoted = (@($Forms | ForEach-Object { "'$($PSItem.OldForm)'" })) -join ', '

@@ -851,6 +851,79 @@ Describe 'The six completer classes' {
         @($Output | Where-Object { $_ -is [System.Management.Automation.CompletionResult] }).Count | Should -Be 0 -Because 'a failed listing offers no completion'
         $F.Request.Headers.Contains('Authorization') | Should -BeFalse -Because 'the catch must clear the bearer token off the request the record points at before it prints the message'
     }
+
+    # Scope 5b: the transports never wait out throttling while a completion lists, so a throttled
+    # listing fails at once instead of holding the prompt. Each class sets the module flag before its
+    # listing and clears it in a finally block. The listing stand-ins read the flag as the transports
+    # would, from the module's own scope; the flag starts unset, so a clear is told apart from a set
+    # that never happened.
+    Context 'When <Class> lists for a completion' -ForEach @(
+        @{ Class = 'AzureActivatedRoleCompleter'; Command = 'Disable-OPIMAzureRole' }
+        @{ Class = 'AzureEligibleRoleCompleter'; Command = 'Enable-OPIMAzureRole' }
+        @{ Class = 'DirectoryActivatedRoleCompleter'; Command = 'Disable-OPIMDirectoryRole' }
+        @{ Class = 'DirectoryEligibleRoleCompleter'; Command = 'Enable-OPIMDirectoryRole' }
+        @{ Class = 'GroupActivatedCompleter'; Command = 'Disable-OPIMEntraIDGroup' }
+        @{ Class = 'GroupEligibleCompleter'; Command = 'Enable-OPIMEntraIDGroup' }
+    ) {
+        BeforeAll {
+            $FlagSeen = [System.Collections.Generic.List[object]]::new()
+            # Runs the completer of this context inside the module, as the engine would, and returns
+            # what it wrote, the host lines included.
+            $InvokeCompleter = {
+                param($Class, $Command)
+                @(InModuleScope Omnicit.PIM -Parameters @{ Class = $Class; Command = $Command } {
+                        param($Class, $Command)
+                        $Completer = switch ($Class) {
+                            'AzureActivatedRoleCompleter'     { [AzureActivatedRoleCompleter]::new() }
+                            'AzureEligibleRoleCompleter'      { [AzureEligibleRoleCompleter]::new() }
+                            'DirectoryActivatedRoleCompleter' { [DirectoryActivatedRoleCompleter]::new() }
+                            'DirectoryEligibleRoleCompleter'  { [DirectoryEligibleRoleCompleter]::new() }
+                            'GroupActivatedCompleter'         { [GroupActivatedCompleter]::new() }
+                            'GroupEligibleCompleter'          { [GroupEligibleCompleter]::new() }
+                        }
+                        $Completer.CompleteArgument($Command, 'Name', '', $null, @{})
+                    } 6>&1)
+            }
+        }
+        BeforeEach {
+            $FlagSeen.Clear()
+            & (Get-Module Omnicit.PIM) { $script:_OPIMCompletionInProgress = $null }
+        }
+        AfterAll {
+            & (Get-Module Omnicit.PIM) { $script:_OPIMCompletionInProgress = $null }
+        }
+
+        It 'sets the completion flag while it lists, and clears it afterwards' {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $FlagSeen.Add((& (Get-Module Omnicit.PIM) { $script:_OPIMCompletionInProgress })); [PSCustomObject]@{ Listed = $true } }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { $FlagSeen.Add((& (Get-Module Omnicit.PIM) { $script:_OPIMCompletionInProgress })); [PSCustomObject]@{ Listed = $true } }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $FlagSeen.Add((& (Get-Module Omnicit.PIM) { $script:_OPIMCompletionInProgress })); [PSCustomObject]@{ Listed = $true } }
+            Mock -ModuleName Omnicit.PIM Get-OPIMCompletionText { "'listed'" }
+            $Output = & $InvokeCompleter $Class $Command
+            @($Output | Where-Object { $_ -is [System.Management.Automation.CompletionResult] }).Count | Should -Be 1 -Because 'the listing must have run and been completed, or the flag it saw proves nothing'
+            $FlagSeen.Count | Should -Be 1
+            $FlagSeen[0] | Should -BeTrue -Because 'the transports must see the flag while the completion lists'
+            $After = & (Get-Module Omnicit.PIM) { $script:_OPIMCompletionInProgress }
+            $After -is [bool] | Should -BeTrue -Because 'the finally block clears the flag to $false, not merely leaves it unset'
+            $After | Should -BeFalse
+        }
+
+        It 'clears the completion flag when the listing throws' {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $FlagSeen.Add((& (Get-Module Omnicit.PIM) { $script:_OPIMCompletionInProgress })); throw 'API unavailable' }
+            Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { $FlagSeen.Add((& (Get-Module Omnicit.PIM) { $script:_OPIMCompletionInProgress })); throw 'API unavailable' }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $FlagSeen.Add((& (Get-Module Omnicit.PIM) { $script:_OPIMCompletionInProgress })); throw 'API unavailable' }
+            $Output = & $InvokeCompleter $Class $Command
+            @($Output | Where-Object {
+                    $_ -is [System.Management.Automation.InformationRecord] -and "$($_.MessageData)" -match 'Completer Error:'
+                }).Count | Should -Be 1 -Because 'the listing must have failed into the catch of the completer'
+            $FlagSeen.Count | Should -Be 1
+            $FlagSeen[0] | Should -BeTrue
+            $After = & (Get-Module Omnicit.PIM) { $script:_OPIMCompletionInProgress }
+            $After -is [bool] | Should -BeTrue -Because 'a later ordinary command must still wait out throttling'
+            $After | Should -BeFalse
+        }
+    }
 }
 
 # The acceptance criterion names TabExpansion2, so these run the real engine: the mocks are scoped

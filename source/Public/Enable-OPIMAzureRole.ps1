@@ -16,10 +16,17 @@ function Enable-OPIMAzureRole {
     still being provisioned is returned with a warning.
     A role that is already active at that scope (listed by Get-OPIMAzureRole -Activated) is not
     requested again: a warning is written and nothing is sent for it, and when that list cannot be
-    read, its error is written and nothing more is sent. The list is read once per command, and a
-    role named or piped twice is requested once, with a warning for the second. A role object that
-    names no Azure scope (no ScopeId starting with '/') is written as an error and nothing is sent
-    for it; the next role still runs.
+    read, its error is written and nothing more is sent. The list is read once per command (apart from
+    the re-read after a RoleAssignmentExists refusal, below), and a role named or piped twice is
+    requested once, with a warning for the second. A role object that names no Azure scope (no ScopeId
+    starting with '/') is written as an error and nothing is sent for it; the next role still runs.
+    When Azure refuses the request with RoleAssignmentExists right after the role was deactivated (or
+    activated) -- Azure Resource Manager can still see the earlier assignment for some seconds -- the
+    active list is read again: an active role gets the 'already active' warning, and otherwise a new
+    request is sent every 10 seconds for up to a minute, after which RoleAssignmentExists is written
+    with a message that says so. A role assigned to you permanently is refused the same way and is
+    never in the active list, so it ends in that message too, which names that case. No other refusal
+    starts that retry.
     .NOTES
     The default activation period is 1 hour. Override with -Hours. Make it persistent in your profile:
 
@@ -93,7 +100,8 @@ function Enable-OPIMAzureRole {
     With -Wait, the most seconds to wait for the request to finish, counted from the start of the
     wait. Defaults to 300. A request that waits for approval ends the wait at once, with a warning;
     one still in progress at the limit is written as an ActivationWaitTimedOut error and stays
-    submitted.
+    submitted. A read that Azure Resource Manager throttles is not waited out past the limit either;
+    it then fails and is written as its own error.
     #>
     [Alias('Enable-PIMResourceRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
@@ -120,8 +128,9 @@ function Enable-OPIMAzureRole {
         [ValidateRange(1, 86400)][int]$TimeoutSeconds = 300
     )
     begin {
-        # OPIM-39: the active list is read at most once per command, at the first role that needs it,
-        # and every post this command has requested is kept, so no post is requested twice.
+        # OPIM-39: the active list is read at most once per command, at the first role that needs it
+        # (the re-read after a RoleAssignmentExists refusal, OPIM-53, is the one exception), and every
+        # post this command has requested is kept, so no post is requested twice.
         $ActivePosts = $null
         $ActiveReadFailed = $false
         $RequestedPosts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -171,7 +180,7 @@ function Enable-OPIMAzureRole {
             @($Role)
         }
 
-        foreach ($Role in $ResolvedRoles) {
+        :RoleLoop foreach ($Role in $ResolvedRoles) {
             # Skip already-active instances piped from Get-OPIMAzureRole -All
             if ($Role.PSObject.TypeNames -contains 'Omnicit.PIM.AzureAssignmentScheduleInstance') {
                 Write-Verbose "Skipping already-active Azure role: $($Role.RoleDefinitionDisplayName) on $($Role.ScopeDisplayName)"
@@ -257,18 +266,69 @@ function Enable-OPIMAzureRole {
                 )) {
                 # Counted before it is sent, so a request that fails still is not sent again.
                 $null = $RequestedPosts.Add($PostKey)
-                try {
-                    # The transport gates the request itself (SignInRefused, TenantMismatch,
-                    # AccountMismatch) and throws a refusal or an ARM error as a record, which this
-                    # catch writes as itself.
-                    $Response = ConvertFrom-OPIMArmSchedule -Kind AssignmentScheduleRequest -InputObject (
-                        Invoke-OPIMArmRequest -Method PUT -Path $RequestPath -Body @{ properties = $RequestProperties })
-                } catch {
-                    Remove-OPIMErrorRecord -Record $PSItem
-                    if (-not (ConvertTo-PolicyValidationError -CaughtError $PSItem -ResourceType 'role' -Cmdlet $PSCmdlet)) {
-                        $PSCmdlet.WriteError($PSItem)
+                $ExistsWindowEnd = $null
+                $Response = $null
+                while ($true) {
+                    try {
+                        # The transport gates the request itself (SignInRefused, TenantMismatch,
+                        # AccountMismatch) and throws a refusal or an ARM error as a record, which this
+                        # catch writes as itself.
+                        $Response = ConvertFrom-OPIMArmSchedule -Kind AssignmentScheduleRequest -InputObject (
+                            Invoke-OPIMArmRequest -Method PUT -Path $RequestPath -Body @{ properties = $RequestProperties })
+                        break
+                    } catch {
+                        Remove-OPIMErrorRecord -Record $PSItem
+                        # Only ARM's RoleAssignmentExists starts a retry: it is a 400 refusal, so nothing was
+                        # created. Every other error -- ArmTransportError (a 2xx answer with no body, or no
+                        # answer at all, which may have been accepted), a policy refusal, a 5xx -- is written
+                        # as itself and this loop never sends the request again.
+                        if ($PSItem.FullyQualifiedErrorId.Split(',')[0] -ne 'RoleAssignmentExists') {
+                            if (-not (ConvertTo-PolicyValidationError -CaughtError $PSItem -ResourceType 'role' -Cmdlet $PSCmdlet)) {
+                                $PSCmdlet.WriteError($PSItem)
+                            }
+                            continue RoleLoop
+                        }
+                        # The window of 60 seconds opens at the first RoleAssignmentExists, before the
+                        # re-read below, so the re-reads count against it.
+                        if ($null -eq $ExistsWindowEnd) { $ExistsWindowEnd = (Get-Date -AsUTC).AddSeconds(60) }
                     }
-                    continue
+                    # OPIM-53: ARM refused the request because it still sees an assignment of the role at
+                    # this scope -- one that ended or began moments ago. Nothing was created, so a new
+                    # request is safe. Read the active list again first: a role that is active now needs
+                    # no request, and a list that cannot be read is no proof that nothing is active (OPIM-39).
+                    try {
+                        $StillActive = @(Get-OPIMAzureRole -Activated -ErrorAction Stop | Where-Object {
+                                [string]::Equals($_.RoleDefinitionId, $Role.RoleDefinitionId, [System.StringComparison]::OrdinalIgnoreCase) -and
+                                [string]::Equals($_.ScopeId, $Role.ScopeId, [System.StringComparison]::OrdinalIgnoreCase)
+                            })
+                    } catch {
+                        Remove-OPIMErrorRecord -Record $PSItem
+                        $PSCmdlet.WriteError($PSItem)
+                        $ActiveReadFailed = $true
+                        continue RoleLoop
+                    }
+                    if ($StillActive.Count -gt 0) {
+                        $PSCmdlet.WriteWarning("$Label is already active, so no new request was sent and the active assignment is left as it is.")
+                        continue RoleLoop
+                    }
+                    # A retry is made only while its 10 second wait ends strictly before the end of the
+                    # window. Round n is read no earlier than 10 * (n - 1) seconds after the window opened
+                    # (each round sleeps 10 seconds before it sends), so no more than six requests go out,
+                    # however long a round takes.
+                    $Now = Get-Date -AsUTC
+                    if ($Now.AddSeconds(10) -ge $ExistsWindowEnd) {
+                        # The two causes cannot be told apart: a role assigned to you permanently is never in
+                        # the active list and is refused the same way, and ARM still lists an assignment that
+                        # was just revoked for minutes.
+                        Write-CmdletError -Message ([System.Exception]::new("$Label`: Azure Resource Manager still sees an earlier assignment of this role at this scope after 60 seconds, though the list of active roles does not show it: the role was deactivated or activated moments ago, or it is assigned to you permanently. Nothing was activated; unless the assignment is permanent, try again in a minute.")) `
+                            -ErrorId 'RoleAssignmentExists' -Category ResourceExists -TargetObject $Label -Cmdlet $PSCmdlet
+                        continue RoleLoop
+                    }
+                    Write-Verbose "$Label`: Azure Resource Manager still sees an earlier assignment; sending a new request in 10 seconds."
+                    Start-Sleep -Seconds 10
+                    # A new request: the refused name was never created, and a new name is what succeeds.
+                    $RequestName = [string](New-Guid)
+                    $RequestPath = '{0}/providers/Microsoft.Authorization/roleAssignmentScheduleRequests/{1}?api-version=2020-10-01' -f $RequestScope, $RequestName
                 }
 
                 # The request reported is the last one read: the response, or the polled request that
@@ -291,10 +351,12 @@ function Enable-OPIMAzureRole {
                             # at the scope. asRequestor() would fail exactly while the poll is needed:
                             # ARM refuses it to a user who holds no active role there yet
                             # (InsufficientPermissions, measured live 2026-10-08). The list is read
-                            # across every page (-All), and the root scope has no prefix.
+                            # across every page (-All), and the root scope has no prefix. Scope 5b: the
+                            # transport never waits out a throttle past the deadline; a poll throttled
+                            # there fails and is written as itself below.
                             $PollScope = if ($Response.Scope -eq '/') { '' } else { $Response.Scope }
                             $PollPath = '{0}/providers/Microsoft.Authorization/roleAssignmentScheduleRequests?$filter=asTarget()&api-version=2020-10-01' -f $PollScope
-                            $Polled = @((Invoke-OPIMArmRequest -Path $PollPath -All).value |
+                            $Polled = @((Invoke-OPIMArmRequest -Path $PollPath -All -WaitDeadline $Deadline).value |
                                     Where-Object { $_.name -eq $Response.Name } |
                                     ConvertFrom-OPIMArmSchedule -Kind AssignmentScheduleRequest)
                         } catch {

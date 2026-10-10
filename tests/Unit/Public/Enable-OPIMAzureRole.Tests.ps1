@@ -980,6 +980,21 @@ Describe 'Enable-OPIMAzureRole' {
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 2 -Exactly -Scope It -ParameterFilter { $All.IsPresent }
         }
 
+        It 'passes the deadline of the wait to the poll as -WaitDeadline, and none to the request' {
+            # Scope 5b: a throttled poll never waits past the deadline of the wait. The first read,
+            # 12:00:01, starts the wait: with -TimeoutSeconds 60 the deadline is 12:01:01.
+            $null = Enable-OPIMAzureRole -RoleName 'Reader' -Wait -TimeoutSeconds 60 `
+                -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Errs).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $All.IsPresent -and
+                $WaitDeadline -eq [datetime]::new(2026, 10, 8, 12, 1, 1, [DateTimeKind]::Utc)
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'PUT' -and $null -eq $WaitDeadline
+            }
+        }
+
         It 'sleeps 5 seconds before each poll' {
             $Plan.Poll['azure-001'] = @('PendingProvisioning', 'Accepted', 'Provisioned')
             $Result = Enable-OPIMAzureRole -RoleName 'Reader' -Wait -ErrorAction SilentlyContinue
@@ -1919,6 +1934,421 @@ Describe 'Enable-OPIMAzureRole' {
             $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'BadRequest,Enable-OPIMAzureRole'
             @($Warns).Count | Should -Be 1
             "$($Warns[0])" | Should -BeExactly $Twice
+        }
+    }
+
+    Context 'When ARM answers RoleAssignmentExists right after a change (OPIM-53)' {
+        # OPIM-53: ARM refuses a request with RoleAssignmentExists (a 400: nothing was created) while it still
+        # sees an assignment that ended or began moments ago. The cmdlet then reads the active list again:
+        # an active role gets the OPIM-39 warning, and otherwise a NEW request (a new name) is sent after
+        # 10 seconds, until 60 seconds after the first refusal. ONLY that ARM code starts a retry: a
+        # request that may have been accepted (ArmTransportError), a policy refusal and every other error
+        # is written as itself and never sent again. Time is the mocked clock: Get-Date moves it by Step
+        # (at least one second, so a loop that never ends still reaches its bound) and the Start-Sleep
+        # mock moves it by the seconds it is asked to sleep. The PUT mock answers per eligibility from
+        # $Plan.Put (the last answer repeats), the -Activated listing from $Plan.Active (read 1 is the
+        # OPIM-39 read, read 2 the first re-read; a re-read moves the clock by $Plan.ReadSeconds), and a
+        # runaway guard ends a loop that never stops.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $FixtureDirectory = "$PSScriptRoot/../TestHelpers/ArmResponse"
+            $PostA = New-AzurePost -Name 'azure-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one'
+            $PostB = New-AzurePost -Name 'azure-003' -DefinitionId 'role-def-contributor' -RoleName 'Contributor' -ScopeId '/subscriptions/sub-001' -ScopeName 'sub-001'
+            $PostRoot = New-AzurePost -Name 'azure-004' -DefinitionId 'role-def-owner' -RoleName 'Owner' -ScopeId '/' -ScopeName 'Tenant Root'
+            $Posts = @{ 'azure-001' = $PostA; 'azure-004' = $PostRoot }
+            $ActiveReader = New-AzurePost -Name 'azure-inst-001' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one' -Active
+            # What a re-read can answer, by the name $Plan.Active uses for it ('None' answers nothing).
+            $ActiveInstances = @{
+                Active           = $ActiveReader
+                ActiveOtherRole  = New-AzurePost -Name 'azure-inst-004' -DefinitionId 'role-def-contributor' -RoleName 'Contributor' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-one' -ScopeName 'rg-one' -Active
+                ActiveOtherScope = New-AzurePost -Name 'azure-inst-002' -DefinitionId 'role-def-reader' -RoleName 'Reader' -ScopeId '/subscriptions/sub-001/resourceGroups/rg-two' -ScopeName 'rg-two' -Active
+                ActiveUpperCase  = New-AzurePost -Name 'azure-inst-001' -DefinitionId 'ROLE-DEF-READER' -RoleName 'Reader' -ScopeId '/SUBSCRIPTIONS/sub-001/resourcegroups/RG-ONE' -ScopeName 'rg-one' -Active
+            }
+
+            $ActiveMessage = 'Reader -> rg-one is already active, so no new request was sent and the active assignment is left as it is.'
+            $GiveUpMessage = 'Reader -> rg-one: Azure Resource Manager still sees an earlier assignment of this role at this scope after 60 seconds, though the list of active roles does not show it: the role was deactivated or activated moments ago, or it is assigned to you permanently. Nothing was activated; unless the assignment is permanent, try again in a minute.'
+            $NoBodyMessage = 'Azure Resource Manager returned no body for the request, so its answer could not be read; the request may have been accepted.'
+
+            # What ARM answers with, as Invoke-OPIMArmRequest throws it: the real converter builds the
+            # record from a status and a body, the recorded bodies where there is one. A mock body runs
+            # in the test scope, so the records are built here, inside the module, and the mock throws
+            # a copy of one for every request.
+            function New-ArmRefusal {
+                param([int]$Status, [string]$Content)
+                InModuleScope Omnicit.PIM -Parameters @{ Status = $Status; Content = $Content } {
+                    param($Status, $Content)
+                    Convert-OPIMArmHttpException -Response ([pscustomobject]@{ StatusCode = $Status; Content = $Content }) -Path '/providers/Microsoft.Authorization/roleAssignmentScheduleRequests/x?api-version=2020-10-01'
+                }
+            }
+            $Refusals = @{
+                Exists       = New-ArmRefusal -Status 400 -Content (Get-Content -Raw -LiteralPath "$FixtureDirectory/recorded-error-RoleAssignmentExists.json")
+                Policy       = New-ArmRefusal -Status 400 -Content (Get-Content -Raw -LiteralPath "$FixtureDirectory/recorded-error-PolicyValidationFailed.json")
+                DoesNotExist = New-ArmRefusal -Status 400 -Content (Get-Content -Raw -LiteralPath "$FixtureDirectory/recorded-error-RoleAssignmentDoesNotExist.json")
+                BadRequest   = New-ArmRefusal -Status 400 -Content '{"error":{"code":"BadRequest","message":"The request is not valid."}}'
+                Lookalike    = New-ArmRefusal -Status 400 -Content '{"error":{"code":"RoleAssignmentExistsElsewhere","message":"Another assignment exists."}}'
+                ServerError  = New-ArmRefusal -Status 500 -Content '{"error":{"code":"InternalServerError","message":"An internal error occurred."}}'
+                Gateway      = New-ArmRefusal -Status 502 -Content '<html><body>Bad Gateway</body></html>'
+                NoBody       = 'NoBody'
+            }
+
+            # -ErrorVariable also collects every record a PUT mock threw and the cmdlet caught, so the
+            # errors the cmdlet WROTE are the entries that carry its own name as the id's suffix.
+            function Get-WrittenError {
+                param($Errors)
+                @($Errors | Where-Object { $_.FullyQualifiedErrorId -like '*,Enable-OPIMAzureRole' })
+            }
+
+            $Plan = @{ Put = @{}; PutCount = @{}; Active = @('None'); Reads = 0; ReadSeconds = 0 }
+            $Clock = @{ Now = [datetime]::new(2026, 10, 10, 12, 0, 0, [DateTimeKind]::Utc); Step = 1 }
+            $GuidState = @{ N = 0 }
+            $Sleeps = [System.Collections.Generic.List[int]]::new()
+
+            Mock -ModuleName Omnicit.PIM Get-Date { $Clock.Now = $Clock.Now.AddSeconds($Clock.Step); $Clock.Now }
+            Mock -ModuleName Omnicit.PIM Start-Sleep { $Sleeps.Add([int]$Seconds); $Clock.Now = $Clock.Now.AddSeconds($Seconds) }
+            # Every request gets a name of its own: 00000001-..., 00000002-..., in the order they are made.
+            Mock -ModuleName Omnicit.PIM New-Guid {
+                $GuidState.N++
+                [guid]('{0:x8}-0000-0000-0000-000000000000' -f $GuidState.N)
+            }
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole {
+                $Plan.Reads++
+                # A re-read (not the OPIM-39 read, which comes first) takes ReadSeconds of the clock.
+                if ($Plan.Reads -gt 1) { $Clock.Now = $Clock.Now.AddSeconds($Plan.ReadSeconds) }
+                $Next = $Plan.Active[[math]::Min($Plan.Reads - 1, $Plan.Active.Count - 1)]
+                if ($Next -eq 'Forbidden') {
+                    $ErrorActionPreference = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('Forbidden: denied'), 'Forbidden',
+                            [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+                    return
+                }
+                if ($ActiveInstances.ContainsKey($Next)) { $ActiveInstances[$Next] }
+            } -ParameterFilter { $Activated }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest {
+                $Sent.Puts.Add([pscustomobject]@{ Path = $Path; Body = $Body })
+                $Eligibility = $Body.properties.linkedRoleEligibilityScheduleId
+                $Index = [int]$Plan.PutCount[$Eligibility]
+                $Plan.PutCount[$Eligibility] = $Index + 1
+                $List = @($Plan.Put[$Eligibility])
+                $Next = $List[[math]::Min($Index, $List.Count - 1)]
+                # Runaway guard: a loop that would send for ever is stopped by an error no retry follows.
+                if ($Sent.Puts.Count -gt 20) { $Next = 'RunawayStop' }
+                if ($Next -is [System.Management.Automation.ErrorRecord]) {
+                    $Copy = [System.Management.Automation.ErrorRecord]::new($Next.Exception, $Next.FullyQualifiedErrorId, $Next.CategoryInfo.Category, $Next.TargetObject)
+                    $Copy.ErrorDetails = $Next.ErrorDetails
+                    $PSCmdlet.ThrowTerminatingError($Copy)
+                }
+                if ($Next -eq 'NoBody') {
+                    $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new($NoBodyMessage), 'ArmTransportError',
+                            [System.Management.Automation.ErrorCategory]::InvalidResult, $Path))
+                }
+                if ($Next -eq 'RunawayStop') {
+                    $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('The loop did not stop.'), 'RunawayStop',
+                            [System.Management.Automation.ErrorCategory]::InvalidOperation, $null))
+                }
+                $Where = & $script:ParseRequestPath $Path
+                & $script:NewArmRequest $Where.Name $Where.Scope $Next $Eligibility $null
+            } -ParameterFilter { $Method -eq 'PUT' }
+            # ARM lists only a request it created: the last one sent, which is the one it accepted.
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMArmRequest {
+                $Sent.Polls.Add([pscustomobject]@{ Path = $Path; All = $All.IsPresent })
+                $PollScope = ($Path -split '/providers/', 2)[0]
+                if (-not $PollScope) { $PollScope = '/' }
+                $Accepted = & $script:ParseRequestPath $Sent.Puts[$Sent.Puts.Count - 1].Path
+                [pscustomobject]@{ value = @(& $script:NewArmRequest $Accepted.Name $PollScope 'Provisioned' 'azure-001' 'polled') }
+            } -ParameterFilter { $Path -like '*/roleAssignmentScheduleRequests?$filter=asTarget()*' }
+        }
+        BeforeEach {
+            $Clock.Now = [datetime]::new(2026, 10, 10, 12, 0, 0, [DateTimeKind]::Utc)
+            $Clock.Step = 1
+            $GuidState.N = 0
+            $Sleeps.Clear()
+            $Plan.Put.Clear()
+            $Plan.PutCount.Clear()
+            $Plan.Active = @('None')
+            $Plan.Reads = 0
+            $Plan.ReadSeconds = 0
+        }
+
+        It 'warns "already active" and sends no second request when the role is active on the re-read' {
+            $Plan.Put['azure-001'] = @($Refusals.Exists)
+            $Plan.Active = @('None', 'Active')
+            $Result = Enable-OPIMAzureRole -Role $PostA `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Sent.Puts.Count | Should -Be 1
+            # The OPIM-39 read, then the re-read after the refusal, both of the root list with no -Scope.
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 2 -Exactly -Scope It -ParameterFilter {
+                $Activated -and -not $PesterBoundParameters.ContainsKey('Scope')
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Start-Sleep -Times 0 -Scope It
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $ActiveMessage
+            (Get-WrittenError $Errs).Count | Should -Be 0
+            @($Result).Count | Should -Be 0
+        }
+
+        It 'sends a new request under a new name after 10 seconds when the role is not active, and reports the accepted one, at <Where>' -ForEach @(
+            @{ Where = 'a resource group'; Key = 'azure-001'; Prefix = '/subscriptions/sub-001/resourceGroups/rg-one' }
+            @{ Where = 'the root scope'; Key = 'azure-004'; Prefix = '' }
+        ) {
+            $Plan.Put[$Key] = @($Refusals.Exists, 'Provisioned')
+            $Result = Enable-OPIMAzureRole -Role $Posts[$Key] `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Sent.Puts.Count | Should -Be 2
+            $Sent.Puts[0].Path | Should -BeExactly ($Prefix + '/providers/Microsoft.Authorization/roleAssignmentScheduleRequests/00000001-0000-0000-0000-000000000000?api-version=2020-10-01')
+            $Sent.Puts[1].Path | Should -BeExactly ($Prefix + '/providers/Microsoft.Authorization/roleAssignmentScheduleRequests/00000002-0000-0000-0000-000000000000?api-version=2020-10-01')
+            # The retry asks for exactly what the first request did.
+            ($Sent.Puts[1].Body | ConvertTo-Json -Depth 10) | Should -BeExactly ($Sent.Puts[0].Body | ConvertTo-Json -Depth 10)
+            Should -Invoke -ModuleName Omnicit.PIM Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 10 }
+            Should -Invoke -ModuleName Omnicit.PIM Start-Sleep -Times 1 -Exactly -Scope It
+            # The OPIM-39 read, and one re-read.
+            $Plan.Reads | Should -Be 2
+            @($Result).Count | Should -Be 1
+            $Result.Name | Should -BeExactly '00000002-0000-0000-0000-000000000000'
+            $Result.Status | Should -BeExactly 'Provisioned'
+            $Result.LinkedRoleEligibilityScheduleId | Should -BeExactly $Key
+            (Get-WrittenError $Errs).Count | Should -Be 0
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'reads the active list again before every retry and stops at the first read that shows the role' {
+            $Plan.Put['azure-001'] = @($Refusals.Exists)
+            $Plan.Active = @('None', 'None', 'Active')
+            $Result = Enable-OPIMAzureRole -Role $PostA `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            # Refused, re-read (not active), 10 s, refused again, re-read (active): stop.
+            $Sent.Puts.Count | Should -Be 2
+            $Plan.Reads | Should -Be 3
+            Should -Invoke -ModuleName Omnicit.PIM Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 10 }
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $ActiveMessage
+            (Get-WrittenError $Errs).Count | Should -Be 0
+            @($Result).Count | Should -Be 0
+        }
+
+        It 'sends a new request when the re-read shows <Case>' -ForEach @(
+            @{ Case = 'another role at the scope'; Instance = 'ActiveOtherRole' }
+            @{ Case = 'the same role at another scope'; Instance = 'ActiveOtherScope' }
+        ) {
+            $Plan.Put['azure-001'] = @($Refusals.Exists, 'Provisioned')
+            $Plan.Active = @('None', $Instance)
+            $Result = Enable-OPIMAzureRole -Role $PostA `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Sent.Puts.Count | Should -Be 2
+            @($Warns).Count | Should -Be 0
+            (Get-WrittenError $Errs).Count | Should -Be 0
+            @($Result).Count | Should -Be 1
+            $Result.Status | Should -BeExactly 'Provisioned'
+        }
+
+        It 'compares the active role without regard to letter case on the re-read' {
+            # The instance differs from the eligibility only in letter case, in both the role definition
+            # and the scope: it is the same role at the same scope, so it counts as active.
+            $Plan.Put['azure-001'] = @($Refusals.Exists)
+            $Plan.Active = @('None', 'ActiveUpperCase')
+            $null = Enable-OPIMAzureRole -Role $PostA -WarningVariable Warns -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            $Sent.Puts.Count | Should -Be 1
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $ActiveMessage
+        }
+
+        It 'gives up within 60 seconds with RoleAssignmentExists and the message about the earlier assignment' {
+            $Plan.Put['azure-001'] = @($Refusals.Exists)
+            $Result = Enable-OPIMAzureRole -Role $PostA `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            # The window opens at the first refusal's read of the clock (T+1) and a retry is made only
+            # while now + 10 s still fits in it: the PUTs go out at T+0, T+11, T+22, T+33, T+44 and T+55,
+            # and at T+56 the next one would end at T+66, past T+61. Six requests, five waits of 10 s.
+            $Sent.Puts.Count | Should -Be 6
+            (@($Sent.Puts | ForEach-Object { (& $script:ParseRequestPath $_.Path).Name } | Select-Object -Unique)).Count | Should -Be 6
+            $Sleeps.Count | Should -Be 5
+            @($Sleeps | Where-Object { $_ -ne 10 }).Count | Should -Be 0
+            ($Sleeps | Measure-Object -Sum).Sum | Should -BeLessOrEqual 60
+            # One error written, though six refusals were caught: the earlier ones are never reported.
+            $Written = Get-WrittenError $Errs
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeExactly 'RoleAssignmentExists,Enable-OPIMAzureRole'
+            $Written[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ResourceExists)
+            $Written[0].Exception.Message | Should -BeExactly $GiveUpMessage
+            $Written[0].TargetObject | Should -BeExactly 'Reader -> rg-one'
+            @($Warns).Count | Should -Be 0
+            @($Result).Count | Should -Be 0
+        }
+
+        It 'sends at most six requests when every round takes exactly 10 seconds' {
+            # The clock moves only by the 10 second waits (Step 0), so the window opens at T, a retry is
+            # read at T, T+10, ... and the sixth request goes out at T+50. A seventh would be sent at T+60,
+            # when the window closes: a retry is made only while its wait ends strictly before the end of
+            # the window. The runaway guard of the PUT mock would end a loop that did not stop.
+            $Clock.Step = 0
+            $Plan.Put['azure-001'] = @($Refusals.Exists)
+            $Result = Enable-OPIMAzureRole -Role $PostA `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Sent.Puts.Count | Should -Be 6
+            $Sleeps.Count | Should -Be 5
+            @($Sleeps | Where-Object { $_ -ne 10 }).Count | Should -Be 0
+            $Written = Get-WrittenError $Errs
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeExactly 'RoleAssignmentExists,Enable-OPIMAzureRole'
+            $Written[0].Exception.Message | Should -BeExactly $GiveUpMessage
+            @($Result).Count | Should -Be 0
+        }
+
+        It 'counts the re-reads against the 60 seconds, which open at the refusal and not after the first re-read' {
+            # Each re-read takes 25 seconds. The window opens at the first refusal (T): the first re-read
+            # ends at T+25, its wait ends at T+35, inside the window, so a second request goes out at T+35.
+            # Its re-read ends at T+60, and the window has closed. A window opened only after the first
+            # re-read (T+25, closing at T+85) would allow a third request.
+            $Clock.Step = 0
+            $Plan.ReadSeconds = 25
+            $Plan.Put['azure-001'] = @($Refusals.Exists)
+            $Result = Enable-OPIMAzureRole -Role $PostA `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Sent.Puts.Count | Should -Be 2
+            $Sleeps.Count | Should -Be 1
+            $Written = Get-WrittenError $Errs
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeExactly 'RoleAssignmentExists,Enable-OPIMAzureRole'
+            $Written[0].Exception.Message | Should -BeExactly $GiveUpMessage
+            @($Result).Count | Should -Be 0
+        }
+
+        It 'counts the 60 seconds from the first refusal, and again for the next role' {
+            # Reader is refused until it gives up; Contributor is refused once and then accepted. Its
+            # window opens at its own first refusal, long after Reader's has closed, so it is retried.
+            $Plan.Put['azure-001'] = @($Refusals.Exists)
+            $Plan.Put['azure-003'] = @($Refusals.Exists, 'Provisioned')
+            $Result = Enable-OPIMAzureRole -Role @($PostA, $PostB) `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Sent.Puts.Count | Should -Be 8
+            @($Sent.Puts | Where-Object { $_.Body.properties.linkedRoleEligibilityScheduleId -ceq 'azure-001' }).Count | Should -Be 6
+            @($Sent.Puts | Where-Object { $_.Body.properties.linkedRoleEligibilityScheduleId -ceq 'azure-003' }).Count | Should -Be 2
+            $Written = Get-WrittenError $Errs
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeExactly 'RoleAssignmentExists,Enable-OPIMAzureRole'
+            $Written[0].Exception.Message | Should -BeExactly $GiveUpMessage
+            @($Result).Count | Should -Be 1
+            $Result.LinkedRoleEligibilityScheduleId | Should -BeExactly 'azure-003'
+            $Result.Status | Should -BeExactly 'Provisioned'
+            @($Warns).Count | Should -Be 0
+        }
+
+        It 'requests the next role after one that is active on the re-read' {
+            $Plan.Put['azure-001'] = @($Refusals.Exists)
+            $Plan.Put['azure-003'] = @('Provisioned')
+            $Plan.Active = @('None', 'Active')
+            $Result = Enable-OPIMAzureRole -Role @($PostA, $PostB) `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Sent.Puts.Count | Should -Be 2
+            @($Sent.Puts | Where-Object { $_.Body.properties.linkedRoleEligibilityScheduleId -ceq 'azure-001' }).Count | Should -Be 1
+            @($Sent.Puts | Where-Object { $_.Body.properties.linkedRoleEligibilityScheduleId -ceq 'azure-003' }).Count | Should -Be 1
+            @($Warns).Count | Should -Be 1
+            "$($Warns[0])" | Should -BeExactly $ActiveMessage
+            @($Result).Count | Should -Be 1
+            $Result.LinkedRoleEligibilityScheduleId | Should -BeExactly 'azure-003'
+            (Get-WrittenError $Errs).Count | Should -Be 0
+        }
+
+        It 'writes a failed re-read as itself, sends nothing more for this role, and sends nothing for the next role' {
+            # The first read is the OPIM-39 one; the re-read after the refusal fails. OPIM-39: a list that
+            # cannot be read is no proof that nothing is active, so this command sends nothing more.
+            $Plan.Put['azure-001'] = @($Refusals.Exists)
+            $Plan.Put['azure-003'] = @('Provisioned')
+            $Plan.Active = @('None', 'Forbidden')
+            $Result = Enable-OPIMAzureRole -Role @($PostA, $PostB) `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Sent.Puts.Count | Should -Be 1
+            $Sent.Puts[0].Body.properties.linkedRoleEligibilityScheduleId | Should -BeExactly 'azure-001'
+            $Plan.Reads | Should -Be 2
+            Should -Invoke -ModuleName Omnicit.PIM Start-Sleep -Times 0 -Scope It
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Enable-OPIMAzureRole' }).Count | Should -Be 1
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'Forbidden,Enable-OPIMAzureRole'
+            @($Warns).Count | Should -Be 0
+            @($Result).Count | Should -Be 0
+        }
+
+        It 'writes the failed re-read once to its own error stream' {
+            $Plan.Put['azure-001'] = @($Refusals.Exists)
+            $Plan.Active = @('None', 'Forbidden')
+            $Out = Enable-OPIMAzureRole -Role $PostA -ErrorAction Continue 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -BeExactly 'Forbidden,Enable-OPIMAzureRole'
+        }
+
+        It 'sends the request once and writes <Case> as itself, with no re-read and no wait' -ForEach @(
+            @{ Case = 'ArmTransportError, a 2xx answer without a body'; Key = 'NoBody'; Id = 'ArmTransportError'; Like = '*the request may have been accepted.' }
+            @{ Case = 'ArmTransportError, a 502 gateway page'; Key = 'Gateway'; Id = 'ArmTransportError'; Like = 'HTTP 502: *' }
+            @{ Case = 'a 500 answer'; Key = 'ServerError'; Id = 'InternalServerError'; Like = 'InternalServerError: *' }
+            @{ Case = 'a policy refusal'; Key = 'Policy'; Id = 'RoleAssignmentRequestPolicyValidationFailed'; Like = '*-Justification*' }
+            @{ Case = 'RoleAssignmentDoesNotExist'; Key = 'DoesNotExist'; Id = 'RoleAssignmentDoesNotExist'; Like = 'RoleAssignmentDoesNotExist: *' }
+            @{ Case = 'a code that only begins like RoleAssignmentExists'; Key = 'Lookalike'; Id = 'RoleAssignmentExistsElsewhere'; Like = 'RoleAssignmentExistsElsewhere: *' }
+            @{ Case = 'BadRequest'; Key = 'BadRequest'; Id = 'BadRequest'; Like = 'BadRequest: *' }
+        ) {
+            # The write may have gone through, or the answer is no proof that it did not: never again.
+            $Plan.Put['azure-001'] = @($Refusals[$Key])
+            $Result = Enable-OPIMAzureRole -Role $PostA `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Sent.Puts.Count | Should -Be 1
+            # Only the OPIM-39 read: no re-read.
+            $Plan.Reads | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.PIM Start-Sleep -Times 0 -Scope It
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq "$Id,Enable-OPIMAzureRole" }).Count | Should -Be 1
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly "$Id,Enable-OPIMAzureRole"
+            $Errs[-1].Exception.Message | Should -BeLike $Like
+            @($Warns).Count | Should -Be 0
+            @($Result).Count | Should -Be 0
+        }
+
+        It 'sends nothing again after the retry is answered with <Case>' -ForEach @(
+            @{ Case = 'ArmTransportError, a 2xx answer without a body'; Key = 'NoBody'; Id = 'ArmTransportError' }
+            @{ Case = 'a policy refusal'; Key = 'Policy'; Id = 'RoleAssignmentRequestPolicyValidationFailed' }
+            @{ Case = 'a 500 answer'; Key = 'ServerError'; Id = 'InternalServerError' }
+        ) {
+            $Plan.Put['azure-001'] = @($Refusals.Exists, $Refusals[$Key])
+            $Result = Enable-OPIMAzureRole -Role $PostA `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Sent.Puts.Count | Should -Be 2
+            # Two reads (the OPIM-39 one and one re-read), one wait.
+            $Plan.Reads | Should -Be 2
+            Should -Invoke -ModuleName Omnicit.PIM Start-Sleep -Times 1 -Exactly -Scope It
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq "$Id,Enable-OPIMAzureRole" }).Count | Should -Be 1
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly "$Id,Enable-OPIMAzureRole"
+            @($Warns).Count | Should -Be 0
+            @($Result).Count | Should -Be 0
+        }
+
+        It 'polls the request that was finally accepted with -Wait' {
+            # The first request was refused and never created: ARM lists only the second one, so a poll
+            # for any other name would find nothing and run to its timeout.
+            $Plan.Put['azure-001'] = @($Refusals.Exists, 'PendingProvisioning')
+            $Result = Enable-OPIMAzureRole -Role $PostA -Wait -TimeoutSeconds 60 `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Sent.Puts.Count | Should -Be 2
+            $Sent.Polls.Count | Should -Be 1
+            $Sent.Polls[0].Path | Should -BeExactly '/subscriptions/sub-001/resourceGroups/rg-one/providers/Microsoft.Authorization/roleAssignmentScheduleRequests?$filter=asTarget()&api-version=2020-10-01'
+            $Sent.Polls[0].All | Should -BeTrue
+            # The retry's wait of 10 seconds, then the poll's pause of 5.
+            ($Sleeps -join ',') | Should -BeExactly '10,5'
+            (Get-WrittenError $Errs).Count | Should -Be 0
+            @($Warns).Count | Should -Be 0
+            @($Result).Count | Should -Be 1
+            $Result.Name | Should -BeExactly '00000002-0000-0000-0000-000000000000'
+            $Result.Status | Should -BeExactly 'Provisioned'
+        }
+
+        It 'sends nothing at all with -WhatIf, so there is nothing to retry' {
+            $Plan.Put['azure-001'] = @($Refusals.Exists)
+            $Result = Enable-OPIMAzureRole -Role $PostA -WhatIf `
+                -WarningVariable Warns -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Sent.Puts.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Start-Sleep -Times 0 -Scope It
+            @($Errs).Count | Should -Be 0
+            @($Warns).Count | Should -Be 0
+            @($Result).Count | Should -Be 0
         }
     }
 }

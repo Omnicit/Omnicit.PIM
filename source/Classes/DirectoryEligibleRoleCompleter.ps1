@@ -15,6 +15,10 @@ class DirectoryEligibleRoleCompleter : IArgumentCompleter {
     ) {
         $ErrorActionPreference = 'Stop'
         try {
+            # Scope 5b: the transports never wait out throttling while this flag is set, so a throttled
+            # listing fails at once instead of holding the prompt. Set and cleared through
+            # [scriptblock]::Create, as the listing is called, so both resolve in the same module.
+            & ([scriptblock]::Create('Set-OPIMCompletionState -InProgress $true'))
             Write-Progress -Id 51806 -Activity 'Get Eligible Directory Roles' -Status 'Fetching from Azure' -PercentComplete 1
             # -WarningAction SilentlyContinue: a scope that cannot be read is a warning of the listing,
             # which tab completion must not print into the prompt.
@@ -32,6 +36,10 @@ class DirectoryEligibleRoleCompleter : IArgumentCompleter {
             Write-Host ''
             Write-Host -Fore Red "Completer Error: $PSItem"
             return $null
+        } finally {
+            # Cleared on every path, a failed listing included, so a later ordinary command still
+            # waits out throttling.
+            & ([scriptblock]::Create('Set-OPIMCompletionState -InProgress $false'))
         }
     }
 }
