@@ -119,10 +119,12 @@ LONG DESCRIPTION
 
     The cloud follows the tenant. Without -Environment, a command for the tenant the session is
     signed in to, or one that names no tenant, keeps the session's cloud, and a command for any
-    other tenant uses Global. Naming another cloud signs in again, also for the same tenant. A
-    tenant has another ID in each cloud, so a session pinned by a tenant ID that switches cloud
-    without -TenantId fails (a token for the tenant of the other cloud is refused with
-    TenantMismatch): name the tenant of the cloud you switch to, or an alias that stores it.
+    other tenant uses Global. Naming another cloud signs in again, also for the same tenant. An
+    organisation has a separate tenant, with its own ID, in each cloud. A session pinned by a
+    tenant ID is held to that ID, so a switch of cloud without -TenantId asks the other cloud for
+    a token for the same ID and fails: the other cloud most likely refuses that ID before any
+    token exists, and TenantMismatch comes only if a token for another tenant does come back.
+    This is untested live. Name the tenant of the cloud you switch to, or an alias that stores it.
 
       Connect-OPIM -TenantId 'contoso.onmicrosoft.us' -Environment USGov
 
@@ -131,7 +133,10 @@ LONG DESCRIPTION
     the cloud the alias stores (Global when it stores none), unless -Environment names another.
     Set-OPIMConfiguration -Environment Global removes the stored cloud. A stored cloud the module
     does not know is an error, and nothing is signed in. A 0.6.x module ignores the key and signs
-    in to the global cloud, where a sovereign tenant does not exist.
+    in to the global cloud, where a sovereign tenant does not exist. It also writes the map back
+    without the key of every alias whenever it changes it (Install-, Set- or
+    Remove-OPIMConfiguration), as do the earlier 0.7.0 previews, and this version then signs in
+    to Global for those aliases.
 
     AzAuth has no authority parameter; Azure.Identity reads the AZURE_AUTHORITY_HOST environment
     variable. For a sovereign cloud the module sets it only around the Azure sign-in and puts it

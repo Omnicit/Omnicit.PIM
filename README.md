@@ -189,12 +189,13 @@ in again, also for the same tenant, and the Azure token of the old cloud is neve
 into the new one. `-Environment Global` on a session that signed in without `-Environment` is the
 same session, so it starts no new sign-in.
 
-A tenant has a different ID in each cloud. A session pinned by a tenant ID -- which includes one
-whose first sign-in named no tenant, since it is then pinned to the ID of the token it got -- is held
-to that ID. So `Connect-OPIM -Environment USGov` alone on such a session asks the other cloud for a
-token for the same ID, and the switch fails: the other cloud may not know that ID at all, and a token
-it does issue, for the tenant in that cloud, is refused with `TenantMismatch`. Switch clouds by
-naming the tenant of the cloud you switch to, or an alias that stores it:
+An organisation has a separate tenant, with its own ID, in each cloud. A session pinned by a tenant
+ID -- which includes one whose first sign-in named no tenant, since it is then pinned to the ID of the
+token it got -- is held to that ID. So `Connect-OPIM -Environment USGov` alone on such a session asks
+the other cloud for a token for the same ID, and the switch fails: the other cloud most likely
+refuses that ID before any token exists, and `TenantMismatch` comes only if a token for another
+tenant does come back (untested live). Switch clouds by naming the tenant of the cloud you switch
+to, or an alias that stores it:
 
 ```powershell
 Connect-OPIM -TenantId 'contoso.onmicrosoft.us' -Environment USGov

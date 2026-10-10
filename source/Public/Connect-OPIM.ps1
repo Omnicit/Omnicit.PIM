@@ -50,7 +50,8 @@ function Connect-OPIM {
     .EXAMPLE
     Connect-OPIM -TenantId 'contoso.onmicrosoft.us' -Environment USGov
     Sign in to the Contoso tenant in the US Government (GCC High) cloud, where the initial domain of
-    a tenant ends in .onmicrosoft.us. Later commands for that tenant keep the cloud.
+    a tenant ends in .onmicrosoft.us. Later commands for that tenant keep the cloud until
+    Disconnect-OPIM, a call for another tenant, or a call that names another cloud.
 
     .PARAMETER TenantAlias
     Short alias for the target tenant, resolved from the TenantMap.psd1 managed by
@@ -89,7 +90,7 @@ function Connect-OPIM {
     'Global'. The cloud follows the tenant: without -Environment, a call for the tenant the session
     is signed in to keeps the session's cloud, and any other tenant is 'Global'. Naming a cloud other
     than the session's signs in again, also for the same tenant. The session keeps its cloud for
-    that tenant until Disconnect-OPIM or a call that names another cloud.
+    that tenant until Disconnect-OPIM, a call for another tenant, or a call that names another cloud.
 
     A tenant alias (-TenantAlias) signs in to the cloud it stores in the tenant map (see
     Install-OPIMConfiguration -Environment and Set-OPIMConfiguration -Environment), and to 'Global'

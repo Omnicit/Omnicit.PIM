@@ -59,7 +59,8 @@ function Enable-OPIMMyRole {
     Sign in with a device code instead of the system browser, then activate the configured roles.
     .EXAMPLE
     Enable-OPIMMyRole -AllEligibleDirectoryRoles -Environment USGov -Confirm:$false
-    Sign in to the US Government (GCC High) cloud and activate all eligible directory roles there.
+    In a new session, or one already signed in to that cloud, sign in to the US Government (GCC High)
+    cloud and activate all eligible directory roles there.
     .PARAMETER TenantAlias
     Short alias for the target tenant matched against TenantMap.psd1. Run Install-OPIMConfiguration
     to create or update tenant aliases. Only categories explicitly listed in the configuration are

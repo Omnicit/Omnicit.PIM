@@ -262,17 +262,20 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   comment or help text is no node, so prose may name a host. TWO exemptions, and nothing else: the
   table file, whole-file; and ONE literal in `Invoke-OPIMArmRequest.ps1`, found by its SHAPE and
   exact value and never by the file -- the sole statement of the `else` branch of the `if` assigned
-  to `$ArmBaseUrl`, exactly `'https://management.azure.com'` -- which is the public-cloud fallback
+  (plain `=`, not `+=`) to `$ArmBaseUrl`, the only element of its pipeline, exactly
+  `'https://management.azure.com'` -- which is the public-cloud fallback
   for a call with no auth state at all (the request is then refused for its missing token). A
   file-level key would unguard every other literal the transport might carry. Its positive controls
   are a known-answer `It` over in-memory texts holding every refused shape and both exemptions
   (probes in the transport file that must stay refused: another variable, the body of an `if` or an
-  `elseif`, a sovereign host in the fallback slot, an expandable string), and two named controls on
-  the real tree: the one exempt fallback literal and the ten distinct hosts of the table; the files
-  parsed are held equal to the Az pass's count. Its comment states its KNOWN LIMITS, which review
+  `elseif`, a sovereign host in the fallback slot, an expandable string, the literal as the second
+  statement of the `else` block or the first element of a longer pipeline, an appending `+=`), and
+  two named controls on the real tree: the one exempt fallback literal and the ten distinct hosts of
+  the table; the files parsed are held equal to the Az pass's count. Its comment states its KNOWN LIMITS, which review
   has to catch: a host assembled at run time (`'https://graph.' + 'microsoft.us'`, a `-f` format, a
-  `[uri]` built from parts), and the `.ps1xml` files under `source/`, which the pass does not read.
-  A host that is only part of a longer name is reported, which errs on the side of refusing.
+  `[uri]` built from parts), a host escaped for a regular expression (`'graph\.microsoft\.us'` in a
+  pattern), and the `.ps1xml` files under `source/`, which the pass does not read. A host that is
+  only part of a longer name is reported, which errs on the side of refusing.
 - **`dochygiene.tests.ps1`** -- over every tracked file under `docs/`, `specs/`, `source/` and
   `tests/`, plus `README.md` and `CHANGELOG.md`: object ids (only placeholders under `docs/` and
   `specs/`; elsewhere no version-4 id outside a pinned register of four public constants), email
@@ -679,7 +682,8 @@ key: the MSAL application (`$script:_OPIMMsalApp`, with `$script:_OPIMMsalAppTen
 `$script:_OPIMMsalAppEnvironment`) is rebuilt when the tenant or the cloud changes, and a switch of
 cloud never asks the old cloud's application or token cache for a token. A session pinned by a tenant
 GUID (which a first sign-in under `organizations` also ends up as) that switches cloud without
-`-TenantId` is held to that GUID, and a tenant has another GUID in another cloud, so the switch fails:
+`-TenantId` is held to that GUID, and an organisation has a separate tenant, with its own GUID, in
+each cloud, so the switch fails:
 a token for the tenant of the other cloud is refused with `TenantMismatch` (the other cloud may
 refuse the GUID itself first; untested live). A switch of cloud names the tenant (or an alias) of the
 target cloud.
@@ -719,12 +723,16 @@ all -- the literal `https://management.azure.com` (`Invoke-OPIMArmRequest.ps1:12
 literal the cloud-host pass exempts.
 
 **The cloud of a tenant alias (A12).** A `TenantMap.psd1` entry may carry `Environment`.
-`Get-OPIMTenantMapEnvironment` is its single reader: `Global` for the old string form, `$null`, a
-table without the key or a blank value; otherwise the cloud under its canonical name, matched
-without regard to letter case through `Get-OPIMCloudEndpoint`; any other value is a terminating
-record (`ThrowTerminatingError`) in the category `InvalidArgument`, the alias as its target and NO
-error id (the shape of the module's other validation errors that name none), whose message names the
-alias, the file, the value and the four clouds and says that nothing was signed in. `Connect-OPIM`,
+`Get-OPIMTenantMapEnvironment` is the single interpreter of the stored cloud for a sign-in (the
+`*-OPIMConfiguration` cmdlets read the raw key by design; see below): `Global` for the old string
+form, `$null`, a table without the key or a blank value; otherwise the cloud under its canonical
+name, matched without regard to letter case through `Get-OPIMCloudEndpoint`; any other value is a
+terminating record (`ThrowTerminatingError`) in the category `InvalidArgument`, the alias as its
+target and NO error id (the shape of the module's other validation errors that name none), whose
+message names the alias, the file, the value and the four clouds, suggests a `Set-OPIMConfiguration`
+command with the alias as a single-quoted string (quotes doubled through
+`CodeGeneration.EscapeSingleQuotedStringContent`) and says that nothing was signed in.
+`Connect-OPIM`,
 `Enable-OPIMMyRole` and `Disable-OPIMMyRole` call it for a `-TenantAlias` only when `-Environment`
 was not given (so an explicit `-Environment` also gets past a bad stored value), in a `try` whose
 catch scrubs first and writes the record non-terminating, before anything is signed in or listed.
@@ -849,7 +857,9 @@ SecureString. Static tests hold both rules: 'binds no plaintext token to a comma
 `Get-OPIMTokenTenantId.Tests.ps1` and `Get-OPIMTokenObjectId.Tests.ps1`, and 'binds the plaintext
 token to no command' in `Initialize-OPIMAuth.Tests.ps1`, which covers both tokens and restricts
 EVERY read of `.AccessToken` and `.Token` in the function -- in a splatted hashtable, behind a
-variable or in a method call as much as in a command's own arguments -- to the `NetworkCredential`
+variable or in a method call as much as in a command's own arguments, and quoted
+(`$Result.'AccessToken'`) as much as bare, since it reads the member's string value and not its
+source text, though not a member named by an expression -- to the `NetworkCredential`
 constructor (once for each) and a truthiness test in an `if` (once for each), and the constructor's
 result to `.SecurePassword`, never `.Password`.
 `Initialize-OPIMAuth` compares the Graph token's `tid` with the tenant asked for: the GUID
@@ -1448,9 +1458,11 @@ parentheses, in a different format per pillar:
 
 The completers call the `Get-OPIM*` cmdlets through `& ([scriptblock]::Create('Get-OPIM...'))`, so a
 completion authenticates and calls Graph or ARM on the prompt path. Keep that call form -- see
-**Testing Conventions**. The two directory completers pass `-WarningAction SilentlyContinue` in
-that string, since `Get-OPIMDirectoryRole` warns about an administrative unit it cannot read, and
-a completion must not print a warning into the prompt.
+**Testing Conventions**. The two directory completers and the two Azure completers pass
+`-WarningAction SilentlyContinue` in that string, since `Get-OPIMDirectoryRole` warns about an
+administrative unit it cannot read and the Azure sign-in behind `Get-OPIMAzureRole` can warn about
+an `AZURE_AUTHORITY_HOST` that names another authority, and a completion must not print a warning
+into the prompt. Each completer's warning context in `ArgumentCompleters.Tests.ps1` holds it.
 
 **Configuration CRUD.** The four `*-OPIMConfiguration` cmdlets manage `TenantMap.psd1`, which
 `Connect-OPIM -TenantAlias` and `pim`/`unpim` read:
@@ -1469,9 +1481,10 @@ called by `Install`, `Set` and `Remove`; never inline it.
 **The stored cloud (A12).** An entry may carry `Environment`, written by `Export-OPIMTenantMap`
 straight after `TenantId` with the same single-quote doubling and only when the entry has one;
 `Install` and `Set` never write `Global`, so a file with no key means the global cloud and every
-existing map keeps working. `Get-OPIMTenantMapEnvironment` is the single reader, and the sign-in
-commands call it (see **Clouds** under **Authentication Architecture**). `Install-OPIMConfiguration`
-resolves the cloud from `-Environment` (canonical name through `Get-OPIMCloudEndpoint`); without it
+existing map keeps working. `Get-OPIMTenantMapEnvironment` is the single interpreter of the stored
+cloud for a sign-in (`Get-` and `Set-OPIMConfiguration` read the raw key by design, as just below),
+and the sign-in commands call it (see **Clouds** under **Authentication Architecture**).
+`Install-OPIMConfiguration` resolves the cloud from `-Environment` (canonical name through `Get-OPIMCloudEndpoint`); without it
 the alias takes the cloud of the module's own sign-in (`Get-OPIMCurrentTenantInfo`) only when it
 also takes that sign-in's tenant -- no `-TenantId`, or one equal to the sign-in's tenant ID,
 compared `OrdinalIgnoreCase` -- and is `Global` for any other tenant, and `-Environment Global`
@@ -1480,7 +1493,8 @@ from `-Environment`; without it the stored value stays EXACTLY as written, an un
 included, since Set changes only what it is asked to (the sign-in commands refuse the value), and
 `-Environment Global` removes the key. `Get-OPIMConfiguration` shows the stored value as written and
 `Global` for an alias that stores none. A 0.6.x module ignores the key and writes the file back
-without it.
+without it (so do the 0.7.0 previews before this one), and this version then signs in to `Global`
+for those aliases.
 
 **The stored keys (OPIM-10, A13, OPIM-22).** `DirectoryRoles` holds
 `roleDefinitionId|directoryScopeId`, `EntraIDGroups` holds `groupId_accessId`, and `AzureRoles` the
