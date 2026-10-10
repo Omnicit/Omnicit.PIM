@@ -280,6 +280,21 @@ Describe 'Initialize-OPIMAuth' {
                 $script:_OPIMAuthState = $null
                 $script:_OPIMSignInLatch = $null
             }
+            # AZURE_AUTHORITY_HOST is process-wide state that the Azure sign-in reads, sets around
+            # Get-AzToken for a sovereign cloud and warns about in the Global cloud (OPIM-29). Every It
+            # here starts with it absent and puts the operator's own value back afterwards, so no test
+            # leaks it, none depends on the environment the suite runs in (a runner that sets it would add
+            # a Global warning to the tests that count warnings) and the restore does not rely on the code
+            # under test. [NullString]::Value, not $null: $null would leave an empty variable behind.
+            $script:SavedAuthorityHost = [System.Environment]::GetEnvironmentVariable('AZURE_AUTHORITY_HOST')
+            [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', [NullString]::Value)
+        }
+        AfterEach {
+            if ($null -eq $script:SavedAuthorityHost) {
+                [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', [NullString]::Value)
+            } else {
+                [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', $script:SavedAuthorityHost)
+            }
         }
         AfterAll {
             InModuleScope Omnicit.PIM {
@@ -484,10 +499,9 @@ Describe 'Initialize-OPIMAuth' {
             # A11. AzAuth is asked for the ARM resource of the session's cloud, and the authority
             # Azure.Identity signs in at moves with it through AZURE_AUTHORITY_HOST. That variable is
             # process-wide state the module borrows: it is set only off Global, only around Get-AzToken,
-            # and put back on every path. Every It starts with the variable absent and puts the
-            # operator's own value back afterwards, so no test leaks it and none depends on the
-            # environment the suite runs in. The Get-AzToken mock above records what it saw in
-            # $script:SeenAuthorityHost ($null for an absent variable).
+            # and put back on every path. The enclosing -IncludeARM context starts every It with the
+            # variable absent and puts the operator's own value back afterwards. The Get-AzToken mock
+            # above records what it saw in $script:SeenAuthorityHost ($null for an absent variable).
             BeforeAll {
                 # Signs in with -IncludeARM on a state and returns the error it raised (if any), the state
                 # afterwards and the warnings it wrote.
@@ -505,17 +519,6 @@ Describe 'Initialize-OPIMAuth' {
                         }
                         @{ Caught = $Caught; State = $script:_OPIMAuthState; Warnings = @($Warned) }
                     }
-                }
-            }
-            BeforeEach {
-                $script:SavedAuthorityHost = [System.Environment]::GetEnvironmentVariable('AZURE_AUTHORITY_HOST')
-                [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', [NullString]::Value)
-            }
-            AfterEach {
-                if ($null -eq $script:SavedAuthorityHost) {
-                    [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', [NullString]::Value)
-                } else {
-                    [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', $script:SavedAuthorityHost)
                 }
             }
 
@@ -2335,8 +2338,11 @@ namespace OPIMTestMsal {
             # records every value bound to a command parameter. Static check on the function as the
             # module loaded it: no argument of any command call reaches an .AccessToken member of the
             # Graph result or a .Token member of the ARM result, so the plaintext only ever reaches
-            # .NET (the SecureString is what commands receive). The only reads of .Token are the
-            # NetworkCredential constructor and a truthiness test in an if.
+            # .NET (the SecureString is what commands receive). The only reads of .AccessToken and
+            # .Token anywhere in the function -- in a hashtable that is splatted, behind a variable or
+            # in a method call as much as in a command's own arguments -- are the NetworkCredential
+            # constructor (once for each) and a truthiness test in an if (once for each), and the
+            # constructor's result is read only through .SecurePassword, never .Password.
             $Ast = InModuleScope Omnicit.PIM { (Get-Command Initialize-OPIMAuth).ScriptBlock.Ast }
             $Commands = @($Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true))
             @($Commands | Where-Object { $_.GetCommandName() -eq 'Connect-MgGraph' }).Count |
@@ -2355,11 +2361,14 @@ namespace OPIMTestMsal {
             }
             $Hits | Should -BeNullOrEmpty
 
+            # Every read of either plaintext member, wherever it sits (an argument, a splatted hashtable's
+            # value, an assignment to a local variable, a method call's argument): it is allowed in the
+            # NetworkCredential constructor and in an if condition, and nowhere else.
             $TokenMembers = @($Ast.FindAll({
                         param($Node)
                         $Node -is [System.Management.Automation.Language.MemberExpressionAst] -and
                         $Node -isnot [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
-                        $Node.Member.Extent.Text -eq 'Token'
+                        $Node.Member.Extent.Text -in 'AccessToken', 'Token'
                     }, $true))
             $Uses = foreach ($Member in $TokenMembers) {
                 $Parent = $Member.Parent
@@ -2368,7 +2377,7 @@ namespace OPIMTestMsal {
                     $Parent.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and
                     $Parent.Expression.TypeName.FullName -eq 'System.Net.NetworkCredential' -and
                     @($Parent.Arguments | Where-Object { [object]::ReferenceEquals($_, $Member) }).Count -eq 1) {
-                    'NetworkCredential'
+                    'NetworkCredential:{0}' -f $Member.Member.Extent.Text
                     continue
                 }
                 # A truthiness test: from the member up to an if condition through -not, -or, -and,
@@ -2391,99 +2400,38 @@ namespace OPIMTestMsal {
                     }
                     break
                 }
-                if ($InIfCondition) { 'IfTest' } else { 'line {0}: {1}' -f $Member.Extent.StartLineNumber, $Member.Parent.Extent.Text }
+                if ($InIfCondition) { 'IfTest:{0}' -f $Member.Member.Extent.Text } else { 'line {0}: {1}' -f $Member.Extent.StartLineNumber, $Member.Parent.Extent.Text }
             }
-            @($Uses | Where-Object { $_ -eq 'NetworkCredential' }).Count | Should -Be 1 -Because 'the ARM token reaches .NET through the NetworkCredential constructor exactly once'
-            @($Uses | Where-Object { $_ -eq 'IfTest' }).Count | Should -BeGreaterOrEqual 1 -Because 'the walk must find the test that the ARM result carries a token'
-            @($Uses | Where-Object { $_ -notin 'NetworkCredential', 'IfTest' }) | Should -BeNullOrEmpty
-        }
-
-        It 'binds the plaintext token to no hashtable that reaches a command' {
-            # The walk above reads each command's own elements, so it cannot see a token handed on in a
-            # splat: `Connect-MgGraph @ConnectParams` and the Get-AzToken calls carry no argument of
-            # their own, and the values sit in the hashtable assigned to the variable that is splatted,
-            # or passed by name, into a command. This walk reads every assignment to such a variable --
-            # the literal itself, any `$Name.Key = ...` or `$Name['Key'] = ...` after it, and a plain
-            # `$Name = ...` -- and refuses a plaintext token member (.AccessToken, .Token) in one. The
-            # one reading it allows is the NetworkCredential constructor, the way the plaintext reaches
-            # .NET and becomes the SecureString every command receives.
-            $ReadHandOnByHashtable = {
-                param($RootAst)
-                $Carried = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                $Commands = @($RootAst.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true))
-                foreach ($Command in $Commands) {
-                    foreach ($Element in @($Command.CommandElements | Select-Object -Skip 1)) {
-                        $Value = if ($Element -is [System.Management.Automation.Language.CommandParameterAst]) { $Element.Argument } else { $Element }
-                        if ($Value -is [System.Management.Automation.Language.VariableExpressionAst]) {
-                            $null = $Carried.Add($Value.VariablePath.UserPath)
-                        }
-                    }
-                }
-                $Literals = [System.Collections.Generic.List[string]]::new()
-                $Leaks = [System.Collections.Generic.List[string]]::new()
-                $Assignments = @($RootAst.FindAll({ $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true))
-                foreach ($Assignment in $Assignments) {
-                    $Target = $Assignment.Left
-                    $Variable = if ($Target -is [System.Management.Automation.Language.VariableExpressionAst]) {
-                        $Target
-                    } elseif ($Target -is [System.Management.Automation.Language.MemberExpressionAst]) {
-                        $Target.Expression
-                    } elseif ($Target -is [System.Management.Automation.Language.IndexExpressionAst]) {
-                        $Target.Target
-                    }
-                    if (($Variable -isnot [System.Management.Automation.Language.VariableExpressionAst]) -or
-                        -not $Carried.Contains($Variable.VariablePath.UserPath)) {
-                        continue
-                    }
-                    $Name = $Variable.VariablePath.UserPath
-                    $IsLiteral = $Target -is [System.Management.Automation.Language.VariableExpressionAst] -and
-                        $null -ne $Assignment.Right.Find({ $args[0] -is [System.Management.Automation.Language.HashtableAst] }, $true)
-                    if ($IsLiteral) { $Literals.Add($Name) }
-                    $Leak = $Assignment.Right.Find({
-                            param($Node)
-                            $Node -is [System.Management.Automation.Language.MemberExpressionAst] -and
-                            $Node.Member.Extent.Text -in 'AccessToken', 'Token' -and
-                            -not ($Node.Parent -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
-                                $Node.Parent.Member.Extent.Text -eq 'new' -and
-                                $Node.Parent.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and
-                                $Node.Parent.Expression.TypeName.FullName -eq 'System.Net.NetworkCredential')
-                        }, $true)
-                    if ($Leak) { $Leaks.Add(('line {0}: ${1}' -f $Assignment.Extent.StartLineNumber, $Name)) }
-                }
-                @{ Carried = @($Carried); Literals = @($Literals); Leaks = @($Leaks) }
+            foreach ($Name in 'AccessToken', 'Token') {
+                @($Uses | Where-Object { $_ -ceq "NetworkCredential:$Name" }).Count | Should -Be 1 -Because "the $Name member reaches .NET through the NetworkCredential constructor exactly once"
+                @($Uses | Where-Object { $_ -ceq "IfTest:$Name" }).Count | Should -Be 1 -Because "the walk must find the one test that the result carries a $Name"
             }
+            @($Uses | Where-Object { $_ -cnotmatch '^(NetworkCredential|IfTest):(AccessToken|Token)$' }) | Should -BeNullOrEmpty
 
-            # Known answers: the walk flags a token in the literal and in a later assignment, and flags
-            # nothing for a hashtable that holds the SecureString.
-            $ParseTokens = $null
-            $ParseErrors = $null
-            $Leaky = [System.Management.Automation.Language.Parser]::ParseInput(
-                '$P = @{ AccessToken = $R.AccessToken; NoWelcome = $true }; $P.Extra = $R.Token; $P[''Other''] = $R.Token; Connect-MgGraph @P',
-                [ref]$ParseTokens, [ref]$ParseErrors)
-            $Found = & $ReadHandOnByHashtable $Leaky
-            @($Found.Leaks).Count | Should -Be 3 -Because 'the literal, the member assignment and the index assignment each hold a token'
-            @($Found.Literals) | Should -Contain 'P'
-            $Plain = [System.Management.Automation.Language.Parser]::ParseInput(
-                '$X = $R.AccessToken; Connect-MgGraph -AccessToken $X',
-                [ref]$ParseTokens, [ref]$ParseErrors)
-            $Found = & $ReadHandOnByHashtable $Plain
-            @($Found.Leaks).Count | Should -Be 1 -Because 'a plain variable that carries the plaintext into a command is a leak too'
-            $Clean = [System.Management.Automation.Language.Parser]::ParseInput(
-                '$S = [System.Net.NetworkCredential]::new('''', $R.AccessToken).SecurePassword; $P = @{ AccessToken = $S; NoWelcome = $true }; $P.Extra = $S; Connect-MgGraph @P',
-                [ref]$ParseTokens, [ref]$ParseErrors)
-            $Found = & $ReadHandOnByHashtable $Clean
-            @($Found.Leaks).Count | Should -Be 0
-            @($Found.Literals) | Should -Contain 'P'
-
-            # The function as the module loaded it. The floors prove the walk reached both hand-offs: the
-            # Connect-MgGraph splat and the hashtable the Azure sign-in passes to its nested wrapper.
-            $Ast = InModuleScope Omnicit.PIM { (Get-Command Initialize-OPIMAuth).ScriptBlock.Ast }
-            $Real = & $ReadHandOnByHashtable $Ast
-            $Real.Carried | Should -Contain 'ConnectParams'
-            $Real.Carried | Should -Contain 'ArmTokenParams'
-            $Real.Literals | Should -Contain 'ConnectParams'
-            $Real.Literals | Should -Contain 'ArmTokenParams'
-            $Real.Leaks | Should -BeNullOrEmpty
+            # The constructor's result is read only through .SecurePassword: the plaintext property
+            # (.Password) or the user name would hand the token on as a string. Every constructor in the
+            # function is held to it, not only the two that take a token member.
+            $Constructors = @($Ast.FindAll({
+                        param($Node)
+                        $Node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                        $Node.Member.Extent.Text -eq 'new' -and
+                        $Node.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and
+                        $Node.Expression.TypeName.FullName -eq 'System.Net.NetworkCredential'
+                    }, $true))
+            $Constructors.Count | Should -Be 2 -Because 'the Graph token and the ARM token each become a SecureString through one constructor'
+            $Reads = foreach ($Constructor in $Constructors) {
+                $Up = $Constructor.Parent
+                if ($Up -is [System.Management.Automation.Language.MemberExpressionAst] -and
+                    $Up -isnot [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                    [object]::ReferenceEquals($Up.Expression, $Constructor) -and
+                    $Up.Member.Extent.Text -ceq 'SecurePassword') {
+                    'SecurePassword'
+                } else {
+                    'line {0}: {1}' -f $Constructor.Extent.StartLineNumber, $Up.Extent.Text
+                }
+            }
+            @($Reads | Where-Object { $_ -ceq 'SecurePassword' }).Count | Should -Be 2
+            @($Reads | Where-Object { $_ -cne 'SecurePassword' }) | Should -BeNullOrEmpty
         }
 
         It 'reads AzAuth through no command parameter in device code mode' {

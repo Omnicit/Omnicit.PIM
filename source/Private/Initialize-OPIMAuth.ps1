@@ -129,9 +129,9 @@ function Initialize-OPIMAuth {
     .PARAMETER IncludeARM
     When set, ensures an Azure Resource Manager token for the tenant of the Graph session's token and
     its account. A cached ARM token is reused without a call only when its tenant and its account (the
-    tid and oid claims) are the session's, it was minted for the Azure Resource Manager resource of the
-    session's cloud, and it has more than 5 minutes left. Otherwise AzAuth's
-    Get-AzToken acquires a new one for that tenant and cloud, interactively or with a device code by the
+    tid and oid claims) are the session's, it was minted for the Azure Resource Manager resource of
+    the session's cloud, and it has more than 5 minutes left. Otherwise AzAuth's Get-AzToken
+    acquires a new one for that tenant and cloud, interactively or with a device code by the
     session's mode, and the token is kept only after its tid and oid matched the Graph session's, as
     a SecureString in memory. A failed sign-in ends this function with AzureConnectFailed.
 
@@ -645,8 +645,10 @@ function Initialize-OPIMAuth {
             [bool]$AuthorityHostOverridden = $false
             try {
                 if ($EffectiveEnvironment -ne 'Global') {
-                    [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', $Endpoint.AuthorityHost)
+                    # The flag first: a pipeline stop between the two statements can then never leave the
+                    # variable set, and restoring a value that was not changed is harmless.
                     $AuthorityHostOverridden = $true
+                    [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', $Endpoint.AuthorityHost)
                 } elseif ($PreviousAuthorityHost -and
                     $PreviousAuthorityHost.TrimEnd('/') -ne $Endpoint.AuthorityHost.TrimEnd('/')) {
                     # Global writes nothing; an operator's own value is followed by Azure.Identity, so say so.
