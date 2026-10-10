@@ -685,12 +685,16 @@ Describe 'Enable-OPIMMyRole' {
             # With Stop the pillar itself stops at the refusal, as a real pillar does when it inherits
             # Stop; written non-terminating, pim's own write of the record ends the command. Either way
             # the activation before the refusal was emitted, and the one after it never reaches the
-            # pipeline.
+            # pipeline -- nor the pillar cmdlet, which is what the three invocation counts below hold:
+            # a pillar that was handed the third role would have activated it.
             $script:PillarPreference = $PillarPreference
             $Collected = [System.Collections.Generic.List[object]]::new()
             { Enable-OPIMMyRole -AllEligibleDirectoryRoles -Confirm:$false -ErrorAction Stop | ForEach-Object { $Collected.Add($_) } } | Should -Throw
             $Collected.Count | Should -Be 1
             $Collected[0].DisplayName | Should -BeExactly 'Role A'
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter { $Role.id -eq 'elig-a' }
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter { $Role.id -eq 'elig-b' }
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 0 -Scope It -ParameterFilter { $Role.id -eq 'elig-c' }
         }
 
         It 'runs the pillar with -ErrorAction Continue when the caller asks for <Preference>' -ForEach @(
