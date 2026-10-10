@@ -21,30 +21,32 @@ sign-in in the PowerShell process.
 365 GCC tenant), `USGov` (GCC High), `USGovDoD` or `China` (21Vianet), and every sign-in and request
 then goes to that cloud. A command for the session's tenant keeps the session's cloud, and naming
 another cloud signs in again. `Install-` and `Set-OPIMConfiguration -Environment` store a cloud
-other than `Global` on a tenant alias, which `-TenantAlias` then signs in to; a stored cloud the
-module does not know is refused before any sign-in. A 0.6.x module, like 0.7.0-preview0001 to 0003,
-ignores the stored cloud: its sign-in goes to the global cloud, where the tenant does not exist, and
-when it changes the map it writes it back without the cloud of every alias, which this version then
-reads as `Global`. Only `Global` is verified live; the sovereign clouds are covered by unit tests
-only, and a China sign-in may need an application of the tenant's own, which the module does not
-yet take.
+other than `Global` on a tenant alias, which `-TenantAlias` then signs in to (`Global` when it
+stores none); a stored cloud the module does not know is refused before any sign-in. A 0.6.x module,
+like 0.7.0-preview0001 to 0003, ignores the stored cloud: it signs in to the global cloud, where the
+tenant does not exist, so the sign-in fails, and when it changes the map it writes it back without
+the cloud of every alias, which this version then reads as `Global`. Only `Global` is verified live;
+the sovereign clouds are covered by unit tests only, and a China sign-in may need an application of
+the tenant's own, which the module does not yet take.
 
 `pim` and `unpim` now pass on every refusal of the activations and deactivations they make, such as
 an activation the policy refuses for a missing justification: it is written as their own error and
 reaches `-ErrorVariable`, also under `-ErrorAction SilentlyContinue`. The seconds right after a
 change are handled too. An Azure activation refused with `RoleAssignmentExists` because an earlier
 assignment has just ended is sent again, as a new request, for up to a minute (or reported as
-already active), and no other refusal is ever sent again. A group deactivation that Graph refuses
-with `RoleAssignmentDoesNotExist`, as it does moments after another, is `ActiveRoleNotFound`. And
-`Get-OPIMAzureRole -Activated -Scope` reads at the root, so a new activation shows at once.
+already active); no other refusal starts that retry, and a role assigned to you permanently,
+refused the same way, is reported only when the minute is up. A group deactivation that Graph
+refuses with `RoleAssignmentDoesNotExist`, as it does when the group was deactivated moments
+before, is `ActiveRoleNotFound`. And `Get-OPIMAzureRole -Activated -Scope` reads at the root and
+keeps only that scope, so a new activation shows at once.
 
-Microsoft Graph requests now wait out throttling as Azure requests do: a 429, or a read's 503 with
-`Retry-After`, is sent again after the wait the service names (or a short, growing one), at most two
-minutes each and five minutes per request, with at most ten retries; a change is sent again only
-after a 429, which comes before the service acts. Tab completion never waits out throttling, the
-reads of `-Wait` never wait past `-TimeoutSeconds`, and completing role and group names is fast for
-hundreds of them. Each GitHub release and its version tag now always point at the commit whose
-build was published.
+Microsoft Graph requests now wait out throttling that outlasts the Graph SDK's own retries, within
+the bounds Azure requests use: a 429, or a read's 503 with `Retry-After`, is sent again after the
+wait the service names (or a short, growing one), at most two minutes each and five minutes per
+request, with at most ten retries; a change is sent again only after a 429, which comes before the
+service acts. Beyond those SDK retries, tab completion never waits out throttling and a `-Wait` poll
+never waits past `-TimeoutSeconds`; completing role and group names is fast for hundreds of them.
+Each GitHub release and its version tag now always point at the commit whose build was published.
 
 ## [0.6.0] - 2026-10-09
 
