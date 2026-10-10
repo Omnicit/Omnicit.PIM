@@ -503,6 +503,178 @@ Describe 'Set-OPIMConfiguration' {
         }
     }
 
+    Context 'When the cloud of an alias is set (A12)' {
+        # Set changes only what it is asked to: -Environment sets the cloud, -Environment Global removes
+        # it, and without -Environment whatever is stored stays, an unknown cloud included. Connect-OPIM,
+        # pim and unpim are the commands that refuse a cloud the module does not know. Set writes the
+        # whole map, so each It reads the written text back as data and looks at its own alias.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    plain    = @{ TenantId = '00000000-0000-0000-0000-000000000001' }
+                    gov      = @{
+                        TenantId       = '00000000-0000-0000-0000-000000000002'
+                        Environment    = 'USGov'
+                        DirectoryRoles = @('kept-role-def-001|/')
+                        EntraIDGroups  = @('kept-group-001_member')
+                        AzureRoles     = @('kept-azure-001')
+                    }
+                    lower    = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = 'usgovdod' }
+                    unknown  = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = 'Germany' }
+                    globalc  = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = 'Global' }
+                    blank    = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = '  ' }
+                    oldstyle = '00000000-0000-0000-0000-000000000001'
+                }
+            }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+
+            # The map Set wrote, read back as data (the module's Import-PowerShellDataFile mock is scoped
+            # to the module, so this call is the real one).
+            function Get-WrittenMap {
+                $Path = Join-Path $TestDrive 'written-map.psd1'
+                [System.IO.File]::WriteAllText($Path, [string]$script:writtenContent)
+                Import-PowerShellDataFile -LiteralPath $Path
+            }
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'stores the cloud given' {
+            Set-OPIMConfiguration -TenantAlias 'plain' -Environment USGov -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
+            $Map = Get-WrittenMap
+            $Map.plain.Environment | Should -BeExactly 'USGov'
+            $Map.plain.TenantId | Should -BeExactly '00000000-0000-0000-0000-000000000001'
+            # The cloud is written straight after the tenant.
+            $script:writtenContent | Should -Match "'plain' = @\{\r?\n\s+TenantId\s+=\s+'00000000-0000-0000-0000-000000000001'\r?\n\s+Environment\s+=\s+'USGov'"
+        }
+
+        It 'stores the canonical name of the cloud for -Environment <Typed>' -ForEach @(
+            @{ Typed = 'usgovdod'; Canonical = 'USGovDoD' }
+            @{ Typed = 'CHINA'; Canonical = 'China' }
+        ) {
+            Set-OPIMConfiguration -TenantAlias 'plain' -Environment $Typed -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            (Get-WrittenMap).plain.Environment | Should -BeExactly $Canonical
+        }
+
+        It 'changes the stored cloud' {
+            Set-OPIMConfiguration -TenantAlias 'gov' -Environment China -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            (Get-WrittenMap).gov.Environment | Should -BeExactly 'China'
+        }
+
+        It 'removes the stored cloud for -Environment Global' {
+            Set-OPIMConfiguration -TenantAlias 'gov' -Environment Global -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
+            $Map = Get-WrittenMap
+            $Map.gov.ContainsKey('Environment') | Should -BeFalse
+            $Map.gov.TenantId | Should -BeExactly '00000000-0000-0000-0000-000000000002'
+            $Map.gov.AzureRoles | Should -BeExactly 'kept-azure-001'
+        }
+
+        It 'keeps the stored cloud without -Environment' {
+            Set-OPIMConfiguration -TenantAlias 'gov' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $Map = Get-WrittenMap
+            $Map.gov.Environment | Should -BeExactly 'USGov'
+            $Map.gov.TenantId | Should -BeExactly '00000000-0000-0000-0000-000000000002'
+        }
+
+        It 'keeps the stored cloud when only the tenant is changed' {
+            Set-OPIMConfiguration -TenantAlias 'gov' -TenantId '00000000-0000-0000-0000-000000000099' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $Map = Get-WrittenMap
+            $Map.gov.TenantId | Should -BeExactly '00000000-0000-0000-0000-000000000099'
+            $Map.gov.Environment | Should -BeExactly 'USGov'
+        }
+
+        It 'keeps the stored cloud when roles are piped' {
+            $Role = [PSCustomObject]@{ id = 'elig-001'; roleDefinitionId = 'new-role-def-001'; directoryScopeId = '/' }
+            $Role.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
+            $Role | Set-OPIMConfiguration -TenantAlias 'gov' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $Map = Get-WrittenMap
+            $Map.gov.Environment | Should -BeExactly 'USGov'
+            $Map.gov.DirectoryRoles | Should -BeExactly 'new-role-def-001|/'
+        }
+
+        It 'keeps the stored tenant and lists when only -Environment is given' {
+            Set-OPIMConfiguration -TenantAlias 'gov' -Environment China -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $Map = Get-WrittenMap
+            $Map.gov.TenantId | Should -BeExactly '00000000-0000-0000-0000-000000000002'
+            $Map.gov.DirectoryRoles | Should -BeExactly 'kept-role-def-001|/'
+            $Map.gov.EntraIDGroups | Should -BeExactly 'kept-group-001_member'
+            $Map.gov.AzureRoles | Should -BeExactly 'kept-azure-001'
+        }
+
+        It 'keeps a stored unknown cloud without -Environment' {
+            Set-OPIMConfiguration -TenantAlias 'unknown' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            (Get-WrittenMap).unknown.Environment | Should -BeExactly 'Germany'
+        }
+
+        It 'replaces a stored unknown cloud with -Environment' {
+            Set-OPIMConfiguration -TenantAlias 'unknown' -Environment USGov -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            (Get-WrittenMap).unknown.Environment | Should -BeExactly 'USGov'
+        }
+
+        It 'keeps a stored cloud in another letter case as it is written' {
+            Set-OPIMConfiguration -TenantAlias 'lower' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            (Get-WrittenMap).lower.Environment | Should -BeExactly 'usgovdod'
+        }
+
+        It 'writes no Environment for a stored Global or a stored white space' {
+            Set-OPIMConfiguration -TenantAlias 'globalc' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            (Get-WrittenMap).globalc.ContainsKey('Environment') | Should -BeFalse
+            $script:writtenContent = $null
+            Set-OPIMConfiguration -TenantAlias 'blank' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            (Get-WrittenMap).blank.ContainsKey('Environment') | Should -BeFalse
+        }
+
+        It 'writes no Environment without -Environment for an alias that stores none' {
+            Set-OPIMConfiguration -TenantAlias 'plain' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            (Get-WrittenMap).plain.ContainsKey('Environment') | Should -BeFalse
+        }
+
+        It 'leaves the other aliases as they are' {
+            Set-OPIMConfiguration -TenantAlias 'plain' -Environment China -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $Map = Get-WrittenMap
+            $Map.gov.Environment | Should -BeExactly 'USGov'
+            $Map.lower.Environment | Should -BeExactly 'usgovdod'
+            $Map.unknown.Environment | Should -BeExactly 'Germany'
+        }
+
+        It 'writes the string form in the table form with the cloud given' {
+            Set-OPIMConfiguration -TenantAlias 'oldstyle' -Environment USGov -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $Map = Get-WrittenMap
+            $Map.oldstyle.TenantId | Should -BeExactly '00000000-0000-0000-0000-000000000001'
+            $Map.oldstyle.Environment | Should -BeExactly 'USGov'
+        }
+
+        It 'writes nothing under -WhatIf' {
+            Set-OPIMConfiguration -TenantAlias 'plain' -Environment USGov -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
+        }
+
+        It 'refuses an unknown -Environment at binding' {
+            $Caught = $null
+            try {
+                Set-OPIMConfiguration -TenantAlias 'plain' -Environment Germany -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            } catch {
+                $Caught = $PSItem
+            }
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -BeExactly 'ParameterArgumentValidationError,Set-OPIMConfiguration'
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
+        }
+
+        It 'keeps -Environment the last parameter, after -InputObject, so no position moves' {
+            $Names = @((Get-Command Set-OPIMConfiguration).ScriptBlock.Ast.Body.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+            $Names[-1] | Should -BeExactly 'Environment'
+            $Names[-2] | Should -BeExactly 'InputObject'
+        }
+    }
+
     Context 'When the module holds no sign-in (OPIM-45)' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

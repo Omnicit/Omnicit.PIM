@@ -82,6 +82,97 @@ Describe 'Export-OPIMTenantMap' {
         }
     }
 
+    Context 'When an entry names a cloud (A12)' {
+        It 'writes Environment after TenantId when the entry has one, and reads back' {
+            $OutPath = 'TestDrive:\TenantMap_cloud.psd1'
+            InModuleScope Omnicit.PIM -Parameters @{ OutPath = $OutPath } {
+                $MapData = @{
+                    contoso = [ordered]@{
+                        TenantId       = '00000000-0000-0000-0000-000000000001'
+                        Environment    = 'USGov'
+                        DirectoryRoles = @('role-def-001|/')
+                    }
+                }
+                Export-OPIMTenantMap -MapData $MapData -Path $OutPath
+            }
+            $Read = Import-PowerShellDataFile -Path $OutPath
+            $Read.contoso.TenantId | Should -BeExactly '00000000-0000-0000-0000-000000000001'
+            $Read.contoso.Environment | Should -BeExactly 'USGov'
+            $Read.contoso.DirectoryRoles | Should -BeExactly 'role-def-001|/'
+        }
+
+        It 'writes the Environment line straight after the TenantId line, with its equals sign lined up' {
+            $OutPath = 'TestDrive:\TenantMap_cloud_line.psd1'
+            InModuleScope Omnicit.PIM -Parameters @{ OutPath = $OutPath } {
+                $MapData = @{
+                    contoso = [ordered]@{
+                        TenantId       = '00000000-0000-0000-0000-000000000001'
+                        Environment    = 'China'
+                        DirectoryRoles = @('role-def-001|/')
+                    }
+                }
+                Export-OPIMTenantMap -MapData $MapData -Path $OutPath
+            }
+            $Lines = @(Get-Content -Path $OutPath)
+            $TenantLine = [array]::IndexOf($Lines, "        TenantId       = '00000000-0000-0000-0000-000000000001'")
+            $TenantLine | Should -BeGreaterThan -1
+            $Lines[$TenantLine + 1] | Should -BeExactly "        Environment    = 'China'"
+            $Lines[$TenantLine + 2] | Should -BeLike '        DirectoryRoles = @(*'
+        }
+
+        It 'writes no Environment line for an entry without one' {
+            $OutPath = 'TestDrive:\TenantMap_cloud_none.psd1'
+            InModuleScope Omnicit.PIM -Parameters @{ OutPath = $OutPath } {
+                $MapData = @{
+                    contoso  = @{ TenantId = '00000000-0000-0000-0000-000000000001' }
+                    fabrikam = '00000000-0000-0000-0000-000000000002'
+                }
+                Export-OPIMTenantMap -MapData $MapData -Path $OutPath
+            }
+            (Get-Content -Raw -Path $OutPath) | Should -Not -Match 'Environment'
+            $Read = Import-PowerShellDataFile -Path $OutPath
+            $Read.contoso.ContainsKey('Environment') | Should -BeFalse
+            $Read.fabrikam.ContainsKey('Environment') | Should -BeFalse
+        }
+
+        It 'writes no Environment line for an empty Environment' {
+            $OutPath = 'TestDrive:\TenantMap_cloud_empty.psd1'
+            InModuleScope Omnicit.PIM -Parameters @{ OutPath = $OutPath } {
+                $MapData = @{ contoso = @{ TenantId = '00000000-0000-0000-0000-000000000001'; Environment = '' } }
+                Export-OPIMTenantMap -MapData $MapData -Path $OutPath
+            }
+            (Get-Content -Raw -Path $OutPath) | Should -Not -Match 'Environment'
+        }
+
+        It 'escapes a quote in Environment' {
+            $OutPath = 'TestDrive:\TenantMap_cloud_quote.psd1'
+            InModuleScope Omnicit.PIM -Parameters @{ OutPath = $OutPath } {
+                $MapData = @{ contoso = @{ TenantId = '00000000-0000-0000-0000-000000000001'; Environment = "US'Gov" } }
+                Export-OPIMTenantMap -MapData $MapData -Path $OutPath
+            }
+            $Read = Import-PowerShellDataFile -Path $OutPath
+            $Read.contoso.Environment | Should -BeExactly "US'Gov"
+            $Read.contoso.TenantId | Should -BeExactly '00000000-0000-0000-0000-000000000001'
+        }
+
+        It 'escapes the quote <Name> in Environment' -ForEach @(
+            @{ Name = 'U+2018'; Code = 0x2018 }
+            @{ Name = 'U+2019'; Code = 0x2019 }
+            @{ Name = 'U+201A'; Code = 0x201A }
+            @{ Name = 'U+201B'; Code = 0x201B }
+        ) {
+            # The quote is built with [char] so that this file stays ASCII.
+            $Value = 'US' + [string][char]$Code + 'Gov'
+            $OutPath = 'TestDrive:\TenantMap_cloud_quote_{0:X4}.psd1' -f $Code
+            InModuleScope Omnicit.PIM -Parameters @{ OutPath = $OutPath; Value = $Value } {
+                $MapData = @{ contoso = @{ TenantId = '00000000-0000-0000-0000-000000000001'; Environment = $Value } }
+                Export-OPIMTenantMap -MapData $MapData -Path $OutPath
+            }
+            $Read = Import-PowerShellDataFile -Path $OutPath
+            $Read.contoso.Environment | Should -BeExactly $Value
+        }
+    }
+
     Context 'When a value holds a single quote (OPIM-26)' {
         It 'writes a file that reads back an apostrophe in the alias and in a value' {
             $OutPath = 'TestDrive:\TenantMap_quote.psd1'

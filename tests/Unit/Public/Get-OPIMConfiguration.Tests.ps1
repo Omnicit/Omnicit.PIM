@@ -111,6 +111,103 @@ Describe 'Get-OPIMConfiguration' {
         }
     }
 
+    Context 'When the tenant map stores clouds (A12)' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }
+            Mock -ModuleName Omnicit.PIM Import-PowerShellDataFile {
+                return @{
+                    usgov    = @{ TenantId = '00000000-0000-0000-0000-000000000001'; Environment = 'USGov'; DirectoryRoles = @('role-def-001|/') }
+                    lower    = @{ TenantId = '00000000-0000-0000-0000-000000000002'; Environment = 'usgovdod' }
+                    unknown  = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = 'Germany' }
+                    nocloud  = @{ TenantId = '00000000-0000-0000-0000-000000000004' }
+                    empty    = @{ TenantId = '00000000-0000-0000-0000-000000000005'; Environment = '' }
+                    blank    = @{ TenantId = '00000000-0000-0000-0000-000000000099'; Environment = '  ' }
+                    oldstyle = '00000000-0000-0000-0000-000000000001'
+                }
+            }
+        }
+
+        It 'returns the stored cloud as Environment' {
+            $Result = Get-OPIMConfiguration -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            ($Result | Where-Object TenantAlias -EQ 'usgov').Environment | Should -BeExactly 'USGov'
+        }
+
+        It 'returns the stored cloud as it is written, also in another letter case and when unknown' {
+            # The listing shows what the file holds; it is the sign-in commands that read and refuse a cloud.
+            $Result = Get-OPIMConfiguration -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            ($Result | Where-Object TenantAlias -EQ 'lower').Environment | Should -BeExactly 'usgovdod'
+            ($Result | Where-Object TenantAlias -EQ 'unknown').Environment | Should -BeExactly 'Germany'
+        }
+
+        It 'returns Global for an alias without a cloud and for the old string form' {
+            $Result = Get-OPIMConfiguration -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            ($Result | Where-Object TenantAlias -EQ 'nocloud').Environment | Should -BeExactly 'Global'
+            ($Result | Where-Object TenantAlias -EQ 'oldstyle').Environment | Should -BeExactly 'Global'
+        }
+
+        It 'returns Global for an alias whose cloud is empty or white space' {
+            $Result = Get-OPIMConfiguration -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            ($Result | Where-Object TenantAlias -EQ 'empty').Environment | Should -BeExactly 'Global'
+            ($Result | Where-Object TenantAlias -EQ 'blank').Environment | Should -BeExactly 'Global'
+        }
+
+        It 'puts Environment right after TenantId in the object' {
+            $Result = Get-OPIMConfiguration -TenantMapPath 'TestDrive:\TenantMap.psd1' | Select-Object -First 1
+            # The count properties after them are the ScriptProperty members of the Types file.
+            (@($Result.PSObject.Properties.Name | Select-Object -First 6) -join ',') | Should -BeExactly 'TenantAlias,TenantId,Environment,DirectoryRoles,EntraIDGroups,AzureRoles'
+        }
+
+        It 'still tags the object with Omnicit.PIM.TenantConfiguration' {
+            $Result = Get-OPIMConfiguration -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            foreach ($Item in $Result) {
+                $Item.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.PIM.TenantConfiguration'
+            }
+        }
+
+        It 'returns the stored cloud for -TenantAlias <Alias>' -ForEach @(
+            @{ Alias = 'usgov'; Expected = 'USGov' }
+            @{ Alias = 'lower'; Expected = 'usgovdod' }
+            @{ Alias = 'unknown'; Expected = 'Germany' }
+            @{ Alias = 'nocloud'; Expected = 'Global' }
+            @{ Alias = 'empty'; Expected = 'Global' }
+            @{ Alias = 'oldstyle'; Expected = 'Global' }
+        ) {
+            $Result = Get-OPIMConfiguration -TenantAlias $Alias -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            @($Result).Count | Should -Be 1
+            $Result.Environment | Should -BeExactly $Expected
+            # The count properties after them are the ScriptProperty members of the Types file.
+            (@($Result.PSObject.Properties.Name | Select-Object -First 6) -join ',') | Should -BeExactly 'TenantAlias,TenantId,Environment,DirectoryRoles,EntraIDGroups,AzureRoles'
+        }
+
+        It 'shows the cloud in the table view of Omnicit.PIM.TenantConfiguration' {
+            $Text = Get-OPIMConfiguration -TenantMapPath 'TestDrive:\TenantMap.psd1' | Where-Object TenantAlias -In 'usgov', 'nocloud' | Out-String -Width 200
+            $Header = ($Text -split '\r?\n' | Where-Object { $_ -match 'TenantAlias' } | Select-Object -First 1)
+            $Header | Should -Match 'TenantAlias\s+TenantId\s+Environment\s+'
+            $Text | Should -Match 'usgov\s+00000000-0000-0000-0000-000000000001\s+USGov\s+'
+            $Text | Should -Match 'nocloud\s+00000000-0000-0000-0000-000000000004\s+Global\s+'
+        }
+    }
+
+    Context 'When the Format file defines the TenantConfiguration view (A12)' {
+        BeforeAll {
+            $script:FormatXml = [xml](Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '../../../source/Formats/Omnicit.PIM.Format.ps1xml'))
+            $script:View = $script:FormatXml.Configuration.ViewDefinitions.View | Where-Object { $_.Name -eq 'Omnicit.PIM.TenantConfiguration' }
+        }
+
+        It 'has a column header for each of its column items' {
+            $script:View | Should -Not -BeNullOrEmpty
+            $Headers = @($script:View.TableControl.TableHeaders.TableColumnHeader)
+            $Items = @($script:View.TableControl.TableRowEntries.TableRowEntry.TableColumnItems.TableColumnItem)
+            $Headers.Count | Should -Be $Items.Count
+        }
+
+        It 'lists the columns in order, with Environment after TenantId' {
+            $Items = @($script:View.TableControl.TableRowEntries.TableRowEntry.TableColumnItems.TableColumnItem)
+            (($Items | ForEach-Object { $_.PropertyName }) -join ',') | Should -BeExactly 'TenantAlias,TenantId,Environment,DirectoryRoleCount,EntraIDGroupCount,AzureRoleCount'
+        }
+    }
+
     Context 'When -TenantAlias does not exist in the file' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

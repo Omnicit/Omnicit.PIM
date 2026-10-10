@@ -381,12 +381,14 @@
           <TableColumnHeader />
           <TableColumnHeader />
           <TableColumnHeader />
+          <TableColumnHeader />
         </TableHeaders>
         <TableRowEntries>
           <TableRowEntry>
             <TableColumnItems>
               <TableColumnItem><PropertyName>TenantAlias</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>TenantId</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Environment</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>DirectoryRoleCount</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>EntraIDGroupCount</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>AzureRoleCount</PropertyName></TableColumnItem>

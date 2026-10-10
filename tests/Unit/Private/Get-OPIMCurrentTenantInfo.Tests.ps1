@@ -67,6 +67,36 @@ Describe 'Get-OPIMCurrentTenantInfo' {
             Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 0 -Scope It
         }
 
+        It 'returns the cloud of the module''s sign-in' {
+            # A12: Install-OPIMConfiguration gives a new alias the cloud of the sign-in for its own tenant.
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState['Environment'] = 'USGov' }
+            $Result = InModuleScope Omnicit.PIM { Get-OPIMCurrentTenantInfo }
+            $Result.Environment | Should -BeExactly 'USGov'
+            $Result.TenantId | Should -BeExactly '00000000-0000-0000-0000-000000000001'
+            $Result.DisplayName | Should -BeExactly 'Contoso Ltd'
+        }
+
+        It 'returns the cloud of the module''s sign-in whatever the session state says' {
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionState { 'Changed' }
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState['Environment'] = 'China' }
+            $Result = InModuleScope Omnicit.PIM { Get-OPIMCurrentTenantInfo }
+            $Result.Environment | Should -BeExactly 'China'
+            $Result.DisplayName | Should -BeExactly ''
+        }
+
+        It 'returns Global for a state that records no cloud' {
+            # Ruling D1: a state from before the cloud was recorded is the global cloud, the only one then.
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState.ContainsKey('Environment') } | Should -BeFalse
+            $Result = InModuleScope Omnicit.PIM { Get-OPIMCurrentTenantInfo }
+            $Result.Environment | Should -BeExactly 'Global'
+        }
+
+        It 'returns Global for a state whose cloud is empty' {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState['Environment'] = '' }
+            $Result = InModuleScope Omnicit.PIM { Get-OPIMCurrentTenantInfo }
+            $Result.Environment | Should -BeExactly 'Global'
+        }
+
         It 'reads the display name under the module own session' {
             $Result = InModuleScope Omnicit.PIM { Get-OPIMCurrentTenantInfo }
             $Result.TenantId | Should -BeExactly '00000000-0000-0000-0000-000000000001'
@@ -120,6 +150,18 @@ Describe 'Get-OPIMCurrentTenantInfo' {
     }
 
     Context 'When the module holds no sign-in' {
+        It 'returns no cloud without a sign-in' {
+            # A12: no sign-in has no cloud to give; Global would be a claim the module cannot make. The
+            # property is there, and empty.
+            foreach ($State in @($null, 'Environment', @{ DeviceCode = $true }, @{ Environment = 'USGov' })) {
+                InModuleScope Omnicit.PIM -Parameters @{ State = $State } { param($State) $script:_OPIMAuthState = $State }
+                $Result = InModuleScope Omnicit.PIM { Get-OPIMCurrentTenantInfo }
+                $Result.PSObject.Properties.Name | Should -Contain 'Environment'
+                $Result.Environment | Should -BeNullOrEmpty
+                $Result.TenantId | Should -BeNullOrEmpty
+            }
+        }
+
         It 'returns no tenant when the module holds no sign-in' {
             InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
             $Result = InModuleScope Omnicit.PIM { Get-OPIMCurrentTenantInfo }

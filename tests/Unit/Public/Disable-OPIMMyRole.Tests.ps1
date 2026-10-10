@@ -1310,6 +1310,123 @@ Describe 'Disable-OPIMMyRole' {
         }
     }
 
+    Context 'When a tenant alias stores a cloud (A12)' {
+        # A real tenant map in TestDrive:. The cloud is a property of the alias: unpim signs in to it, for
+        # Graph and for Azure alike, unless -Environment names another.
+        BeforeAll {
+            $script:MapPath = Join-Path $TestDrive 'TenantMap-cloud.psd1'
+            $MapLines = @(
+                '@{'
+                "    gov = @{ TenantId = '00000000-0000-0000-0000-000000000001'; Environment = 'USGov'; DirectoryRoles = @('role-def-001|/'); AzureRoles = @('elig-az-001') }"
+                "    govgraph = @{ TenantId = '00000000-0000-0000-0000-000000000001'; Environment = 'usgovdod'; DirectoryRoles = @('role-def-001|/') }"
+                "    plain = @{ TenantId = '00000000-0000-0000-0000-000000000002'; DirectoryRoles = @('role-def-001|/'); AzureRoles = @('elig-az-001') }"
+                "    oldstyle = '00000000-0000-0000-0000-000000000003'"
+                "    odd = @{ TenantId = '00000000-0000-0000-0000-000000000004'; Environment = 'Germany'; DirectoryRoles = @('role-def-001|/'); AzureRoles = @('elig-az-001') }"
+                '}'
+            )
+            [System.IO.File]::WriteAllText($script:MapPath, ($MapLines -join "`n"))
+            Mock -ModuleName Omnicit.PIM Connect-OPIM {}
+            Mock -ModuleName Omnicit.PIM Write-Progress {}
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{ TenantId = '00000000-0000-0000-0000-000000000099'; TokenTenantId = '00000000-0000-0000-0000-000000000099'; Environment = 'China' }
+            }
+        }
+        AfterEach {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+
+        It 'connects both Graph and Azure in the cloud the alias stores' {
+            Disable-OPIMMyRole -TenantAlias gov -TenantMapPath $script:MapPath -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 2 -Exactly -Scope It -ParameterFilter {
+                $Environment -ceq 'USGov' -and $TenantId -eq '00000000-0000-0000-0000-000000000001'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Environment -ceq 'USGov' -and $IncludeARM
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Environment -ceq 'USGov' -and -not $IncludeARM
+            }
+        }
+
+        It 'connects Graph only, in the canonical cloud the alias stores, when it lists no Azure role' {
+            Disable-OPIMMyRole -TenantAlias govgraph -TenantMapPath $script:MapPath -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Environment -ceq 'USGovDoD' -and -not $IncludeARM
+            }
+        }
+
+        It 'connects in Global for an alias that stores no cloud, whatever the session''s cloud' -ForEach @(
+            @{ Alias = 'plain' }
+            @{ Alias = 'oldstyle' }
+        ) {
+            Disable-OPIMMyRole -TenantAlias $Alias -TenantMapPath $script:MapPath -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 2 -Exactly -Scope It -ParameterFilter {
+                $PesterBoundParameters.ContainsKey('Environment') -and $Environment -ceq 'Global'
+            }
+        }
+
+        It 'hands the device code mode on with the alias''s cloud' {
+            Disable-OPIMMyRole -TenantAlias gov -TenantMapPath $script:MapPath -DeviceCode -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 2 -Exactly -Scope It -ParameterFilter {
+                $Environment -ceq 'USGov' -and $DeviceCode
+            }
+        }
+
+        It 'refuses an alias with an unknown cloud before any sign-in, and lists nothing' {
+            Disable-OPIMMyRole -TenantAlias odd -TenantMapPath $script:MapPath -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -BeGreaterThan 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'Disable-OPIMMyRole'
+            $Errs[-1].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidArgument)
+            $Errs[-1].TargetObject | Should -BeExactly 'odd'
+            $Errs[-1].Exception.Message | Should -Match "Tenant alias 'odd'.*the cloud 'Germany'.*nothing was signed in"
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Write-Progress -Times 0 -Scope It
+        }
+
+        It 'writes the refusal once to the error stream' {
+            $Out = Disable-OPIMMyRole -TenantAlias odd -TenantMapPath $script:MapPath -ErrorAction Continue 2>&1
+            @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 1
+        }
+
+        It 'scrubs the record first and ends with the Stop error preference too' {
+            Mock -ModuleName Omnicit.PIM Remove-OPIMErrorRecord { }
+            { Disable-OPIMMyRole -TenantAlias odd -TenantMapPath $script:MapPath -ErrorAction Stop } | Should -Throw
+            Should -Invoke -ModuleName Omnicit.PIM Remove-OPIMErrorRecord -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 0 -Scope It
+        }
+
+        It 'lets -Environment override the alias''s cloud' -ForEach @(
+            @{ Alias = 'gov'; Named = 'China'; Expected = 'China'; Calls = 2 }
+            @{ Alias = 'gov'; Named = 'Global'; Expected = 'Global'; Calls = 2 }
+            @{ Alias = 'plain'; Named = 'USGov'; Expected = 'USGov'; Calls = 2 }
+            @{ Alias = 'odd'; Named = 'USGov'; Expected = 'USGov'; Calls = 2 }
+        ) {
+            Disable-OPIMMyRole -TenantAlias $Alias -TenantMapPath $script:MapPath -Environment $Named -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times $Calls -Exactly -Scope It -ParameterFilter {
+                $Environment -ceq $Expected
+            }
+        }
+
+        It 'passes no cloud for the -AllActivated form without -Environment' {
+            Disable-OPIMMyRole -AllActivatedDirectoryRoles -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 0 -Scope It -ParameterFilter {
+                $PesterBoundParameters.ContainsKey('Environment')
+            }
+        }
+    }
+
     Context 'The default -TenantMapPath (OPIM-21)' {
         BeforeAll {
             $Param = (Get-Command Disable-OPIMMyRole).ScriptBlock.Ast.Body.ParamBlock.Parameters |

@@ -120,6 +120,124 @@ Describe 'Connect-OPIM' {
         }
     }
 
+    Context 'When the tenant alias stores a cloud (A12)' {
+        # A real tenant map in TestDrive: the alias's cloud is read from the file by the module.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $script:MapPath = Join-Path $TestDrive 'TenantMap-cloud.psd1'
+            $MapLines = @(
+                '@{'
+                "    usgov = @{ TenantId = '00000000-0000-0000-0000-000000000001'; Environment = 'USGov' }"
+                "    lower = @{ TenantId = '00000000-0000-0000-0000-000000000002'; Environment = 'usgovdod' }"
+                "    plain = @{ TenantId = '00000000-0000-0000-0000-000000000003' }"
+                "    empty = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = '' }"
+                "    global = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = 'Global' }"
+                "    odd = @{ TenantId = '00000000-0000-0000-0000-000000000004'; Environment = 'Germany' }"
+                "    oldstyle = '00000000-0000-0000-0000-000000000005'"
+                '}'
+            )
+            [System.IO.File]::WriteAllText($script:MapPath, ($MapLines -join "`n"))
+        }
+        BeforeEach {
+            # A session in another cloud, to show that an alias's cloud does not come from the session.
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{ TenantId = '00000000-0000-0000-0000-000000000099'; TokenTenantId = '00000000-0000-0000-0000-000000000099'; Environment = 'China' }
+            }
+        }
+        AfterEach {
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
+        }
+
+        It 'signs in to the cloud the alias stores' {
+            Connect-OPIM -TenantAlias 'usgov' -TenantMapPath $script:MapPath
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Environment -ceq 'USGov' -and $TenantId -eq '00000000-0000-0000-0000-000000000001'
+            }
+        }
+
+        It 'signs in to the canonical name of a cloud stored in another letter case' {
+            Connect-OPIM -TenantAlias 'lower' -TenantMapPath $script:MapPath
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Environment -ceq 'USGovDoD'
+            }
+        }
+
+        It 'keeps the other switches with the cloud of the alias' {
+            Connect-OPIM -TenantAlias 'usgov' -TenantMapPath $script:MapPath -IncludeARM -DeviceCode
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Environment -ceq 'USGov' -and $IncludeARM -and $DeviceCode
+            }
+        }
+
+        It 'signs in to Global for an alias that stores no cloud, whatever the session''s cloud' -ForEach @(
+            @{ Alias = 'plain' }
+            @{ Alias = 'empty' }
+            @{ Alias = 'global' }
+            @{ Alias = 'oldstyle' }
+        ) {
+            Connect-OPIM -TenantAlias $Alias -TenantMapPath $script:MapPath
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                $PesterBoundParameters.ContainsKey('Environment') -and $Environment -ceq 'Global'
+            }
+        }
+
+        It 'lets -Environment override the alias''s cloud' -ForEach @(
+            @{ Alias = 'usgov'; Named = 'China'; Expected = 'China' }
+            @{ Alias = 'usgov'; Named = 'Global'; Expected = 'Global' }
+            @{ Alias = 'plain'; Named = 'USGov'; Expected = 'USGov' }
+            @{ Alias = 'odd'; Named = 'USGov'; Expected = 'USGov' }
+        ) {
+            Connect-OPIM -TenantAlias $Alias -TenantMapPath $script:MapPath -Environment $Named -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Environment -ceq $Expected
+            }
+        }
+
+        It 'passes the cloud it is given as typed when -Environment overrides the alias' {
+            Connect-OPIM -TenantAlias 'usgov' -TenantMapPath $script:MapPath -Environment china
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Environment -ceq 'china'
+            }
+        }
+
+        It 'refuses an alias with an unknown cloud and signs in nothing' {
+            Connect-OPIM -TenantAlias 'odd' -TenantMapPath $script:MapPath -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -BeGreaterThan 0
+            $Errs[-1].FullyQualifiedErrorId | Should -BeExactly 'Connect-OPIM'
+            $Errs[-1].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidArgument)
+            $Errs[-1].TargetObject | Should -BeExactly 'odd'
+            $Errs[-1].Exception.Message | Should -Match "Tenant alias 'odd'"
+            $Errs[-1].Exception.Message | Should -Match "the cloud 'Germany'"
+            $Errs[-1].Exception.Message | Should -Match 'Use Global, USGov, USGovDoD or China'
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
+        }
+
+        It 'names the tenant map in the message of the refusal' {
+            Connect-OPIM -TenantAlias 'odd' -TenantMapPath $script:MapPath -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[-1].Exception.Message | Should -BeLike "*in '$($script:MapPath)' names the cloud*"
+        }
+
+        It 'writes the refusal once to the error stream' {
+            $Out = Connect-OPIM -TenantAlias 'odd' -TenantMapPath $script:MapPath -ErrorAction Continue 2>&1
+            @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 1
+        }
+
+        It 'scrubs the record first and ends with the Stop error preference too' {
+            Mock -ModuleName Omnicit.PIM Remove-OPIMErrorRecord { }
+            { Connect-OPIM -TenantAlias 'odd' -TenantMapPath $script:MapPath -ErrorAction Stop } | Should -Throw
+            Should -Invoke -ModuleName Omnicit.PIM Remove-OPIMErrorRecord -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 0 -Scope It
+        }
+
+        It 'does not read the stored cloud of an alias when no alias is named' {
+            Connect-OPIM -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath $script:MapPath
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                -not $PesterBoundParameters.ContainsKey('Environment')
+            }
+        }
+    }
+
     Context 'When called with -TenantAlias (simple string config)' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}

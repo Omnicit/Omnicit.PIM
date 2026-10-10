@@ -34,6 +34,10 @@ function Connect-OPIM {
     Resolve the 'corp' alias from TenantMap.psd1 and authenticate.
 
     .EXAMPLE
+    Connect-OPIM -TenantAlias corp -Environment China
+    Sign in to the tenant of the 'corp' alias in the China cloud, whatever cloud the alias stores.
+
+    .EXAMPLE
     Connect-OPIM -TenantAlias corp -IncludeARM
     Authenticate and also sign in to Azure Resource Manager, for the Azure role cmdlets.
 
@@ -44,9 +48,9 @@ function Connect-OPIM {
     code. With -IncludeARM, Azure shows a second code.
 
     .EXAMPLE
-    Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -Environment USGov
-    Sign in to the Contoso tenant in the US Government (GCC High) cloud. Later commands for that
-    tenant keep the cloud.
+    Connect-OPIM -TenantId 'contoso.onmicrosoft.us' -Environment USGov
+    Sign in to the Contoso tenant in the US Government (GCC High) cloud, where the initial domain of
+    a tenant ends in .onmicrosoft.us. Later commands for that tenant keep the cloud.
 
     .PARAMETER TenantAlias
     Short alias for the target tenant, resolved from the TenantMap.psd1 managed by
@@ -84,8 +88,14 @@ function Connect-OPIM {
     DoD) or 'China', in any letter case. Microsoft 365 GCC is a commercial-cloud tenant and is
     'Global'. The cloud follows the tenant: without -Environment, a call for the tenant the session
     is signed in to keeps the session's cloud, and any other tenant is 'Global'. Naming a cloud other
-    than the session's signs in again, also for the same tenant. The session's cloud is kept until
-    Disconnect-OPIM.
+    than the session's signs in again, also for the same tenant. The session keeps its cloud for
+    that tenant until Disconnect-OPIM or a call that names another cloud.
+
+    A tenant alias (-TenantAlias) signs in to the cloud it stores in the tenant map (see
+    Install-OPIMConfiguration -Environment and Set-OPIMConfiguration -Environment), and to 'Global'
+    when it stores none, whatever cloud the session is in. -Environment overrides the cloud of the
+    alias. A cloud stored in the file that Omnicit.PIM does not know is refused with an error
+    before anything is signed in, unless -Environment names the cloud.
     #>
     [Alias('Connect-PIM')]
     [CmdletBinding(DefaultParameterSetName = 'ByTenantId')]
@@ -108,6 +118,7 @@ function Connect-OPIM {
     )
 
     # -- Resolve TenantAlias -> TenantId ----------------------------------------
+    $AliasEnvironment = $null
     if ($TenantAlias) {
         if (-not (Test-Path $TenantMapPath)) {
             Write-CmdletError `
@@ -134,11 +145,29 @@ function Connect-OPIM {
             return
         }
         $TenantId = if ($Config -is [hashtable]) { $Config.TenantId } else { [string]$Config }
+
+        # A12: a tenant alias signs in to the cloud it stores, unless -Environment names one. An unknown
+        # stored cloud is refused before anything is signed in.
+        if (-not $Environment) {
+            try {
+                $AliasEnvironment = Get-OPIMTenantMapEnvironment -Entry $Config -TenantAlias $TenantAlias -TenantMapPath $TenantMapPath -ErrorAction Stop
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+                return
+            }
+        }
     }
 
     $AuthParams = @{ TenantId = $TenantId; IncludeARM = $IncludeARM; DeviceCode = $DeviceCode }
-    # Only a cloud the caller named is passed on: without one, Initialize-OPIMAuth keeps the session's
-    # cloud for the session's tenant (OPIM-29).
-    if ($Environment) { $AuthParams.Environment = $Environment }
+    # The cloud the caller named, else the cloud of the alias, else none: without one,
+    # Initialize-OPIMAuth keeps the session's cloud for the session's tenant (OPIM-29). An alias always
+    # names one (Global when it stores none), so it never inherits the cloud of a session in another
+    # tenant. $Environment itself is not assigned: it carries the ValidateSet.
+    if ($Environment) {
+        $AuthParams.Environment = $Environment
+    } elseif ($AliasEnvironment) {
+        $AuthParams.Environment = $AliasEnvironment
+    }
     Initialize-OPIMAuth @AuthParams
 }

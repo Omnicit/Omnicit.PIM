@@ -14,6 +14,9 @@ function Install-OPIMConfiguration {
     Pipe eligible role and group objects from Get-OPIMDirectoryRole, Get-OPIMEntraIDGroup, or
     Get-OPIMAzureRole to store them as the default activation set for the tenant alias.
 
+    An alias also remembers the cloud of its tenant (-Environment), so that Connect-OPIM, pim and
+    unpim sign in to it without being told. The cloud is stored only when it is not Global.
+
     All file operations support -WhatIf and -Confirm.
     .EXAMPLE
     Install-OPIMConfiguration -TenantAlias contoso -TenantId '00000000-0000-0000-0000-000000000000'
@@ -34,6 +37,10 @@ function Install-OPIMConfiguration {
     .EXAMPLE
     Get-OPIMAzureRole | Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>'
     Store all eligible Azure roles as the activation set for the new 'contoso' tenant alias.
+    .EXAMPLE
+    Install-OPIMConfiguration -TenantAlias contoso -TenantId '<guid>' -Environment USGov
+    Store the alias together with its cloud, the US Government (GCC High) cloud. Connect-OPIM,
+    pim and unpim then sign in to that cloud for 'contoso' without being told.
     .PARAMETER TenantAlias
     Short alias for the tenant (e.g. 'contoso'). Used with Enable-OPIMMyRoles -TenantAlias to select the tenant.
     Must not already exist in the TenantMap file. Use Set-OPIMConfiguration to update an existing alias.
@@ -61,6 +68,15 @@ function Install-OPIMConfiguration {
     objects still are stored. Each key is stored once, without regard to letter case, in the order
     first piped; an eligible role and its activation at its own scope are one key. Objects not
     matching a known Omnicit.PIM type are silently ignored.
+    .PARAMETER Environment
+    The cloud the alias signs in to: 'Global', 'USGov' (US Government, GCC High), 'USGovDoD'
+    (US Government, DoD) or 'China', in any letter case. Microsoft 365 GCC is a commercial-cloud
+    tenant and is 'Global'. The cloud is a property of the tenant, and it is written to the file
+    only when it is not 'Global', so an alias with no stored cloud signs in to the global cloud.
+    Without -Environment the alias takes the cloud of the module's own sign-in when, and only when,
+    it also takes that sign-in's tenant (no -TenantId, or the same tenant as the sign-in); the alias
+    of any other tenant is 'Global'. Naming -Environment Global stores no cloud, also for the tenant
+    of a sovereign sign-in.
     #>
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     [OutputType([void])]
@@ -75,7 +91,10 @@ function Install-OPIMConfiguration {
         [string]$TenantMapPath = (Join-Path $HOME '.config/Omnicit.PIM/TenantMap.psd1'),
 
         [Parameter(ValueFromPipeline)]
-        $InputObject
+        $InputObject,
+
+        [ValidateSet('Global', 'USGov', 'USGovDoD', 'China')]
+        [string]$Environment
     )
 
     begin {
@@ -161,6 +180,16 @@ function Install-OPIMConfiguration {
             'N/A'
         }
 
+        # A12: the cloud is a property of the tenant. Without -Environment the alias takes the cloud of
+        # the module's sign-in only when it also takes that sign-in's tenant; any other tenant is Global.
+        [string]$ResolvedEnvironment = if ($Environment) {
+            (Get-OPIMCloudEndpoint -Environment $Environment).Environment
+        } elseif ($SessionTenantId -and [string]::Equals($TenantId, $SessionTenantId, [System.StringComparison]::OrdinalIgnoreCase) -and $TenantInfo.Environment) {
+            [string]$TenantInfo.Environment
+        } else {
+            'Global'
+        }
+
         # -- Ensure TenantMap directory and file exist -------------------------
         $TenantMapDir = Split-Path $TenantMapPath -Parent
         if (-not (Test-Path $TenantMapDir)) {
@@ -189,12 +218,15 @@ function Install-OPIMConfiguration {
 
         # -- Build the new entry -----------------------------------------------
         $Entry = [ordered]@{ TenantId = $TenantId }
+        # The global cloud is the default and is not written, so only a sovereign alias carries the key.
+        if ($ResolvedEnvironment -ne 'Global') { $Entry.Environment = $ResolvedEnvironment }
 
         if ($StoredKeys.Directory.Count) { $Entry.DirectoryRoles = @($StoredKeys.Directory) }
         if ($StoredKeys.Group.Count)     { $Entry.EntraIDGroups  = @($StoredKeys.Group)     }
         if ($StoredKeys.Azure.Count)     { $Entry.AzureRoles     = @($StoredKeys.Azure)     }
 
         Write-Verbose "Adding new tenant alias '$TenantAlias' (TenantId: $TenantId)"
+        Write-Verbose "Cloud for tenant alias '$TenantAlias': $ResolvedEnvironment$(if ($ResolvedEnvironment -eq 'Global') { ' (not stored)' } else { ' (stored)' })"
         foreach ($RoleKey in 'DirectoryRoles', 'EntraIDGroups', 'AzureRoles') {
             if ($Entry[$RoleKey]) {
                 Write-Information "  $TenantAlias/$RoleKey : Adding $($Entry[$RoleKey].Count) item(s) - $($Entry[$RoleKey] -join ', ')"

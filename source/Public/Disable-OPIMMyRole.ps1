@@ -68,7 +68,9 @@ function Disable-OPIMMyRole {
     that are not currently active are written to the verbose stream and skipped. A directory role
     is deactivated only at its configured scope, and an entry without a scope means the role at
     '/' only. A configured item that matches more than one active role or group is written as the
-    error AmbiguousName and none of the matches is deactivated.
+    error AmbiguousName and none of the matches is deactivated. The alias also names the cloud to
+    sign in to (Install-OPIMConfiguration -Environment): the sovereign cloud it stores, else the
+    global cloud.
     .PARAMETER AllActivated
     Deactivate all currently active directory roles, Entra ID group assignments, and Azure RBAC
     roles. Requires confirmation per category. Use -Confirm:$false to suppress prompts.
@@ -90,8 +92,11 @@ function Disable-OPIMMyRole {
     remembers the mode for the session; see Get-Help Connect-OPIM -Parameter DeviceCode.
     .PARAMETER Environment
     The cloud to sign in to: 'Global', 'USGov', 'USGovDoD' or 'China'. Passed to both sign-ins,
-    Graph and Azure; see Get-Help Connect-OPIM -Parameter Environment. Without it, the session's
-    cloud is kept for the tenant it is signed in to, and any other tenant is 'Global'.
+    Graph and Azure; see Get-Help Connect-OPIM -Parameter Environment. Without it, a -TenantAlias
+    signs in to the cloud the alias stores in the tenant map ('Global' when it stores none), and a
+    stored cloud Omnicit.PIM does not know is refused before any sign-in. Without it and without an
+    alias, the session's cloud is kept for the tenant it is signed in to, and any other tenant is
+    'Global'.
     #>
     [Alias('unpim', 'Disable-OPIMMyRoles')]
     [CmdletBinding(SupportsShouldProcess)]
@@ -123,6 +128,7 @@ function Disable-OPIMMyRole {
 
     # -- Resolve tenant config and connect -------------------------------------
     $Config = $null
+    $AliasEnvironment = $null
     [string]$ResolvedTenantId = $null
     if ($TenantAlias) {
         if (-not (Test-Path $TenantMapPath)) {
@@ -149,6 +155,18 @@ function Disable-OPIMMyRole {
             return
         }
         $ResolvedTenantId = if ($Config -is [hashtable]) { $Config.TenantId } else { [string]$Config }
+
+        # A12: a tenant alias signs in to the cloud it stores, unless -Environment names one. An unknown
+        # stored cloud is refused here, before any sign-in and before anything is listed.
+        if (-not $Environment) {
+            try {
+                $AliasEnvironment = Get-OPIMTenantMapEnvironment -Entry $Config -TenantAlias $TenantAlias -TenantMapPath $TenantMapPath -ErrorAction Stop
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+                return
+            }
+        }
     }
 
     # The Azure pillar runs for -AllActivated, -AllActivatedAzureRoles, a hashtable alias that lists
@@ -167,9 +185,14 @@ function Disable-OPIMMyRole {
 
     # OPIM-08: Graph first. A failed Graph sign-in stops the command: nothing is listed or
     # deactivated, not even in the tenant an earlier sign-in pinned.
-    # OPIM-29: only a cloud the caller named is passed on, so a session keeps its own cloud otherwise.
+    # OPIM-29: only a cloud the caller named, or the cloud an alias stores, is passed on, so the -All*
+    # form keeps the session's own cloud. An alias always names one (Global when it stores none).
     $ConnectParams = @{ TenantId = $ResolvedTenantId; DeviceCode = $DeviceCode; ErrorAction = 'Stop' }
-    if ($Environment) { $ConnectParams.Environment = $Environment }
+    if ($Environment) {
+        $ConnectParams.Environment = $Environment
+    } elseif ($AliasEnvironment) {
+        $ConnectParams.Environment = $AliasEnvironment
+    }
     try {
         Connect-OPIM @ConnectParams
     } catch {
