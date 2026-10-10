@@ -281,7 +281,8 @@ if (-not (Test-Path -LiteralPath $Map)) {
 }
 foreach ($Alias in 's25-all', 's25-az') {
     $Config = Get-OPIMConfiguration -TenantAlias $Alias -TenantMapPath $Map -ErrorAction Stop
-    "$($Alias): directory $(@($Config.DirectoryRoles).Count), group $(@($Config.EntraIDGroups).Count), Azure $(@($Config.AzureRoles).Count); Environment: $($Config.Environment)"
+    # A list the alias does not hold reads as $null, and @($null).Count is 1, so only real entries are counted.
+    "$($Alias): directory $(@($Config.DirectoryRoles | Where-Object { $_ }).Count), group $(@($Config.EntraIDGroups | Where-Object { $_ }).Count), Azure $(@($Config.AzureRoles | Where-Object { $_ }).Count); Environment: $($Config.Environment)"
 }
 ```
 
