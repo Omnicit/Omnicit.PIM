@@ -962,9 +962,13 @@ failed to `Wait-OPIMDirectoryRole`, which reads each one at least once, waits fo
 assignment to appear once a request is provisioned, and counts from the time Graph created the
 request. A request that waits for approval ends the wait at once, with a warning. One still in
 progress at the limit is an `ActivationWaitTimedOut` error and returns nothing; the request stays
-submitted. A read that Graph or Azure throttles is waited out only up to `-TimeoutSeconds`, never
-past it; a read still throttled there is written as that throttling error. Each role or group is
-reported on its own, so one that fails or times out never stops the next.
+submitted. The limit also bounds throttling during the wait: each read of a request's status, and
+of a directory role's assignment, waits out Graph or Azure throttling only up to that request's
+limit, and a read still throttled there is written as that throttling error. The listing of the
+activated directory roles returned after the wait (by `Wait-OPIMDirectoryRole -PassThru`, and so by
+`Enable-OPIMDirectoryRole -Wait` and `pim -Wait`) is an ordinary listing and waits out throttling as
+any listing does. Each role or group is reported on its own, so one that fails or times out never
+stops the next.
 
 A group deactivation sent right after another one can still find the group in the list of active
 assignments, which lags by about 30 seconds, and Graph then answers that the assignment does not

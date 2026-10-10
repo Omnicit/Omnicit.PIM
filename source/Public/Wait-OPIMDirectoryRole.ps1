@@ -41,9 +41,12 @@ function Wait-OPIMDirectoryRole {
     The most seconds to wait for each request, counted from the time Graph created it, or from the
     start of the wait when the request carries no readable creation time. Default is 300 seconds (5
     minutes), from 1 to 86400. A request still in progress at the limit is written as an
-    ActivationWaitTimedOut error, and the wait for the other requests goes on. A read that Microsoft
-    Graph throttles is not waited out past the limit either; it then fails and is written as its own
-    error. The old name -Timeout still works.
+    ActivationWaitTimedOut error, and the wait for the other requests goes on. The limit also bounds
+    throttling during the wait: each read of a request's status, and of its role assignment, waits
+    out Microsoft Graph throttling only up to that request's limit, and a read still throttled there
+    fails and is written as its own error. The -PassThru listing of the activated roles after the
+    wait is an ordinary listing and waits out throttling as any listing does. The old name -Timeout
+    still works.
     .PARAMETER ThrottleLimit
     Accepted for compatibility and has no effect: the requests are polled in sequence. Default is 5.
     .PARAMETER PassThru

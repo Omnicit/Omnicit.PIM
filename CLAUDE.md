@@ -1344,7 +1344,13 @@ expand `group,principal`.
   next role or group still runs. Every poll read hands its deadline (the request's own in
   `Wait-OPIMDirectoryRole`) to the transport as the private `-WaitDeadline` (scope 5b), so a
   throttled read is never waited out past it: it then fails with the transport's converted error,
-  written as itself like any failed poll and never as `ActivationWaitTimedOut`.
+  written as itself like any failed poll and never as `ActivationWaitTimedOut`. The bound covers
+  the reads DURING the wait only (each status read, and each read of a directory role's
+  assignment). The `-PassThru` listing of the activated instances after the wait
+  (`Get-OPIMDirectoryRole -Activated` in `Wait-OPIMDirectoryRole`, so `Enable-OPIMDirectoryRole -Wait`
+  and `pim -Wait` too) passes no deadline, by decision: it is an ordinary listing and waits out
+  throttling as any listing does, since a bounded listing would end in an error with no object for
+  an activation that succeeded.
 - `-WhatIf` / `-Confirm` through `[CmdletBinding(SupportsShouldProcess)]`.
 - An already-active object piped in (from `Get-OPIM* -All`) is skipped with a verbose message.
 - A post that is already active (by `Get-OPIM* -Activated`) is not requested again (OPIM-39): a
@@ -1532,6 +1538,10 @@ A completion never waits out throttling (scope 5b): each completer sets the modu
 `$script:_OPIMCompletionInProgress` with `& ([scriptblock]::Create('Set-OPIMCompletionState -InProgress $true'))`
 before its listing and clears it the same way in a `finally` block, so a failed listing clears it
 too, and while it is set both transports end a throttled request at once with the converted error.
+For a directory completion that holds by design for each scope lookup of `Get-OPIMDirectoryRole`
+as well: a throttled lookup fails at once, its OPIM-19 warning is silenced by the completer's
+`-WarningAction SilentlyContinue`, and the role is offered with its scope id (the old form names
+the scope by its id) instead of the administrative unit's display name.
 
 **Configuration CRUD.** The four `*-OPIMConfiguration` cmdlets manage `TenantMap.psd1`, which
 `Connect-OPIM -TenantAlias` and `pim`/`unpim` read:

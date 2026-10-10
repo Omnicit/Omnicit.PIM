@@ -1173,7 +1173,7 @@ Describe 'Invoke-OPIMGraphRequest' {
                 }
             }
 
-            It 'still sends the request once when the -WaitDeadline has already passed' {
+            It 'sends the request once when the -WaitDeadline has already passed' {
                 # Review Focus 5: the deadline is read only at a decision to wait, so a poll past it
                 # still reads once.
                 InModuleScope Omnicit.PIM {
