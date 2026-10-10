@@ -67,12 +67,14 @@ function Invoke-OPIMGraphRequest {
     7. Throttling (OPIM-28): a request Microsoft Graph throttles is sent again after a bounded wait,
        with the rules of the ARM transport (A5). A 429 is always waited out; a 503 only when it
        carries a Retry-After and the request is a GET: a write (any other method) is sent again only
-       after a 429, which Graph returns before it acts on a request, since a 503 can come after a
-       write was carried out. The wait is the Retry-After value, as delta-seconds or an HTTP-date,
-       else an exponential fallback for a 429, each wait held to 1..120 seconds, within a 300-second
-       wait budget per request (per page under -All), a 900-second deadline per call that counts the
-       time spent in the requests too, and at most 10 throttle retries per request. The status and
-       the header are read from either form the Graph SDK raises a failure in. Every retry passes
+       when every response recorded for the failure was a 429, which Graph returns before it acts on
+       a request, since a 503 can come after a write was carried out. The wait is the Retry-After
+       value, as delta-seconds or an HTTP-date, else an exponential fallback for a 429, each wait held
+       to 1..120 seconds, within a 300-second wait budget per request (per page under -All), a
+       900-second deadline per call that counts the time spent in the requests too, and at most 10
+       throttle retries per request. The newest response decides: the status and the Retry-After are
+       those of the newest attempt the SDK's retry handler recorded, read from either form the Graph
+       SDK raises a failure in, and the header is that response's own. Every retry passes
        the session and latch gates again, and writes one verbose line with the status, the wait, its
        source and the budgets left -- never a header or the uri. When a bound is reached the request
        ends with the error it would have ended with before, Convert-GraphHttpException's record;
@@ -185,10 +187,22 @@ function Invoke-OPIMGraphRequest {
     # The members are read BY NAME through the property bag, never by a cast to a Graph SDK type, so
     # the module takes no dependency on one, and a missing member reads as $null.
     #
-    # Returns @{ Status = <int or $null>; RetryAfter = <the raw Retry-After value or $null> }. The two
-    # facts are read in one walk and the walk ends early only when it holds BOTH, so a status found
-    # on an outer exception does not hide a Retry-After one level further in. The raw header value is
-    # parsed by ConvertFrom-GraphRetryAfterHeader, its only reader; no other header is ever read.
+    # Returns @{ Status = <int or $null>; RetryAfter = <raw Retry-After value or $null>; Statuses =
+    # <[int[]], the status of every exception that carries one, in walk order> }.
+    #
+    # THE NEWEST RESPONSE DECIDES. Kiota's RetryHandler records ONE ApiException per attempt in the
+    # AggregateException, oldest first (up to four with its default of three retries), and throws only
+    # when every response was a 429, 503 or 504. So the walk takes an AggregateException's
+    # InnerExceptions NEWEST FIRST, and the first exception it reaches that carries a status
+    # (ResponseStatusCode above 0, else its own Response.StatusCode above 0) supplies Status AND
+    # RetryAfter: the header is read from THAT exception only (its ResponseHeaders, else its own
+    # Response.Headers), never borrowed from another one. A stale header from an earlier attempt would
+    # make the wrapper wait for a throttle Graph has since replaced. The raw header value is parsed by
+    # ConvertFrom-GraphRetryAfterHeader, its only reader; no other header is ever read.
+    #
+    # Statuses holds the status of EVERY status-carrying exception the walk visits, so that
+    # Get-GraphThrottleDelay can refuse to send a write again when ANY recorded response was not a 429.
+    # The walk therefore never stops early; the visit ceiling below stays as its bound.
     #
     # Breadth-first over InnerException and, for an AggregateException, InnerExceptions. THE elseif
     # BELOW IS LOAD-BEARING: AggregateException.InnerException IS InnerExceptions[0], so following both
@@ -199,7 +213,8 @@ function Invoke-OPIMGraphRequest {
     # error the caller needs. A status is read with -as [int], never a cast, and 0 means unknown:
     # Kiota leaves ResponseStatusCode at 0 when it saw no response.
     function Get-GraphResponseFact ([System.Exception]$Exception) {
-        $Fact = @{ Status = $null; RetryAfter = $null }
+        $Fact = @{ Status = $null; RetryAfter = $null; Statuses = [int[]]@() }
+        $Recorded = [System.Collections.Generic.List[int]]::new()
         $Pending = [System.Collections.Generic.Queue[System.Exception]]::new()
         if ($null -ne $Exception) { $Pending.Enqueue($Exception) }
         [int]$Visited = 0
@@ -208,42 +223,46 @@ function Invoke-OPIMGraphRequest {
             $Visited++
             if ($null -eq $Current) { continue }
             try {
-                if ($null -eq $Fact.Status) {
-                    # The Kiota form: the ApiException's own status.
-                    $StatusMember = $Current.PSObject.Properties['ResponseStatusCode']
-                    $Status = if ($StatusMember) { $StatusMember.Value -as [int] } else { $null }
-                    if ($Status -gt 0) { $Fact.Status = $Status }
-                }
-                if ($null -eq $Fact.RetryAfter) {
-                    # The Kiota form: the ApiException's own headers.
-                    $HeadersMember = $Current.PSObject.Properties['ResponseHeaders']
-                    if ($HeadersMember -and $null -ne $HeadersMember.Value) {
-                        $Fact.RetryAfter = Get-GraphRetryAfterHeaderValue $HeadersMember.Value
-                    }
-                }
+                # The Kiota form: the ApiException's own status; else the .Response form: the status of
+                # the response the exception holds.
+                $OwnStatus = $null
+                $StatusMember = $Current.PSObject.Properties['ResponseStatusCode']
+                $KiotaStatus = if ($StatusMember) { $StatusMember.Value -as [int] } else { $null }
+                if ($KiotaStatus -gt 0) { $OwnStatus = $KiotaStatus }
                 $ResponseMember = $Current.PSObject.Properties['Response']
-                if ($ResponseMember -and $null -ne $ResponseMember.Value) {
-                    # The .Response form: the status and the headers of the response the exception holds.
+                $HasResponse = $ResponseMember -and $null -ne $ResponseMember.Value
+                if ($null -eq $OwnStatus -and $HasResponse) {
+                    $ResponseStatus = $ResponseMember.Value.StatusCode -as [int]
+                    if ($ResponseStatus -gt 0) { $OwnStatus = $ResponseStatus }
+                }
+                if ($null -ne $OwnStatus) {
+                    $Recorded.Add($OwnStatus)
                     if ($null -eq $Fact.Status) {
-                        $Status = $ResponseMember.Value.StatusCode -as [int]
-                        if ($Status -gt 0) { $Fact.Status = $Status }
-                    }
-                    if ($null -eq $Fact.RetryAfter) {
-                        $Fact.RetryAfter = Get-GraphRetryAfterHeaderValue $ResponseMember.Value.Headers
+                        # The first (newest) status-carrying exception: its status, and ITS header only.
+                        $Fact.Status = $OwnStatus
+                        $HeadersMember = $Current.PSObject.Properties['ResponseHeaders']
+                        if ($HeadersMember -and $null -ne $HeadersMember.Value) {
+                            $Fact.RetryAfter = Get-GraphRetryAfterHeaderValue $HeadersMember.Value
+                        }
+                        if ($null -eq $Fact.RetryAfter -and $HasResponse) {
+                            $Fact.RetryAfter = Get-GraphRetryAfterHeaderValue $ResponseMember.Value.Headers
+                        }
                     }
                 }
             } catch {
                 Remove-OPIMErrorRecord -Record $PSItem
             }
-            if ($null -ne $Fact.Status -and $null -ne $Fact.RetryAfter) { break }
             if ($Current -is [System.AggregateException]) {
-                foreach ($Nested in $Current.InnerExceptions) {
-                    if ($null -ne $Nested) { $Pending.Enqueue($Nested) }
+                # NEWEST FIRST: the last attempt is the last inner exception.
+                $Attempts = $Current.InnerExceptions
+                for ($Index = $Attempts.Count - 1; $Index -ge 0; $Index--) {
+                    if ($null -ne $Attempts[$Index]) { $Pending.Enqueue($Attempts[$Index]) }
                 }
             } elseif ($null -ne $Current.InnerException) {
                 $Pending.Enqueue($Current.InnerException)
             }
         }
+        $Fact.Statuses = $Recorded.ToArray()
         return $Fact
     }
 
@@ -265,7 +284,13 @@ function Invoke-OPIMGraphRequest {
         $Styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor
                   [System.Globalization.DateTimeStyles]::AdjustToUniversal
         if ([System.DateTimeOffset]::TryParse($Trimmed, [System.Globalization.CultureInfo]::InvariantCulture, $Styles, [ref]$HttpDate)) {
-            return [int][Math]::Ceiling(($HttpDate.UtcDateTime - [DateTime]::UtcNow).TotalSeconds)
+            # Held to a day either way BEFORE the [int] cast: a date about 68 years off (9999, 1900)
+            # overflows Int32, and the cast would throw out of the failure path and replace the Graph
+            # error. The caller holds a wait to 1..120 s, so a day is all it has to tell apart. The
+            # bounds are [double] literals: with int ones PowerShell picks Min(int, int) and casts the
+            # seconds to Int32 first, which is the very overflow this prevents.
+            [double]$HttpSeconds = ($HttpDate.UtcDateTime - [DateTime]::UtcNow).TotalSeconds
+            return [int][Math]::Ceiling([Math]::Max(-86400.0, [Math]::Min(86400.0, $HttpSeconds)))
         }
         return $null
     }
@@ -316,14 +341,18 @@ function Invoke-OPIMGraphRequest {
     # @{ Seconds = <int>; Source = 'server-directed' | 'exponential fallback'; Status = <int> }.
     # The Source is what the verbose line reports, so an operator can tell Graph's own instruction
     # from this module's fallback. The rules are the ARM transport's (A5), on the status
-    # Get-GraphResponseFact reads from either form -- never on an error code or a message:
+    # Get-GraphResponseFact reads from either form -- never on an error code or a message. THE NEWEST
+    # RESPONSE DECIDES: Status and RetryAfter are those of the newest attempt Kiota recorded, and the
+    # header is that same response's own, never an older attempt's.
     #   * A 429 is always a throttle: the Retry-After value when it can be read, else 2^Attempt
     #     seconds (Microsoft Learn, Microsoft Graph throttling guidance).
-    #   * A 503 is waited out only when it carries a Retry-After, and only for a GET. A 503 without
-    #     one is the service saying it is unwell, not asking for a pause, and sending it again blind
-    #     turns an outage into a hammering. A write -- any method but GET -- is sent again only after
-    #     a 429, which Graph returns BEFORE it acts on a request: a 503 can come after Graph carried a
-    #     write out, and sending an activation again could make a second one.
+    #   * A 503 is waited out only when it carries a Retry-After (its own), and only for a GET. A 503
+    #     without one is the service saying it is unwell, not asking for a pause, and sending it again
+    #     blind turns an outage into a hammering.
+    #   * A write -- any method but GET -- is sent again only when EVERY recorded response was a 429,
+    #     which Graph returns BEFORE it acts on a request. A 503 or 504 anywhere in the chain, the
+    #     newest or an earlier one, can have come after Graph carried the write out, and sending an
+    #     activation again could make a second one.
     #   * Anything else is not a throttle.
     # Each wait is clamped to 1..120 s: at least one second, so a "Retry-After: 0" still spends the
     # budget the loop is bounded by; at most 120, so an absurd header cannot hold one wait for an hour.
@@ -331,7 +360,11 @@ function Invoke-OPIMGraphRequest {
         $Fact = Get-GraphResponseFact $ErrorRecord.Exception
         $Status = $Fact.Status
         if ($Status -ne 429 -and $Status -ne 503) { return $null }
-        if ($Status -eq 503 -and $RequestMethod -ne 'GET') { return $null }
+        if ($RequestMethod -ne 'GET') {
+            foreach ($Recorded in $Fact.Statuses) {
+                if ($Recorded -ne 429) { return $null }
+            }
+        }
 
         $HeaderSeconds = ConvertFrom-GraphRetryAfterHeader $Fact.RetryAfter
         [string]$Source = 'server-directed'

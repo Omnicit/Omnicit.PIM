@@ -95,6 +95,21 @@ BeforeAll {
         }
         $Wrapped
     }
+
+    # Builds the failure as Kiota's RetryHandler leaves it after several attempts: ONE ApiException per
+    # attempt in the AggregateException, OLDEST first. Each -Attempt entry is
+    # @{ StatusCode = <int>; Message = <string>; Header = <hashtable, optional> }.
+    function New-KiotaAttempts {
+        param([Parameter(Mandatory)][hashtable[]]$Attempt)
+        $Recorded = foreach ($One in $Attempt) {
+            $Params = @{ Message = $One.Message; StatusCode = $One.StatusCode; NestingDepth = 0 }
+            if ($One.Header) { $Params.Header = $One.Header }
+            New-KiotaFailure @Params
+        }
+        [System.AggregateException]::new(
+            'Too many retries performed. More than 3 retries encountered while sending the request.',
+            [System.Exception[]]@($Recorded))
+    }
 }
 
 AfterAll {
@@ -673,9 +688,10 @@ Describe 'Invoke-OPIMGraphRequest' {
             }
         }
 
-        It 'reads a Retry-After that sits further in the chain than the status' {
-            # The walk ends early only when it holds BOTH facts: the status on the outer exception must
-            # not hide the header on the inner one.
+        It 'takes the Retry-After from the same exception as the status, never from another one' {
+            # The status and its header are one response's facts: an inner exception that carries only
+            # a Retry-After is no response, and its header is not borrowed for the outer 429. The
+            # exponential fallback (1 s) applies, not the 17 s.
             $Inner = [System.Exception]::new($script:TooManyMessage)
             Add-Member -InputObject $Inner -NotePropertyName ResponseHeaders -NotePropertyValue @{ 'Retry-After' = '17' }
             $Outer = [System.Exception]::new($script:TooManyMessage, $Inner)
@@ -684,7 +700,109 @@ Describe 'Invoke-OPIMGraphRequest' {
                 param($Queue)
                 $script:_ThrottleQueue = $Queue
                 $null = Invoke-OPIMGraphRequest -Uri 'v1.0/me'
-                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 17 }
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 1 }
+            }
+        }
+
+        It 'waits 120 s, and does not throw, for an HTTP-date Retry-After in the year 9999' {
+            # The seconds to such a date overflow Int32; a cast would throw out of the failure path.
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = 'Fri, 31 Dec 9999 23:59:59 GMT' } -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                (Invoke-OPIMGraphRequest -Uri 'v1.0/me').value[0].id | Should -Be 'after-wait'
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 120 }
+            }
+        }
+
+        It 'waits one second, and does not throw, for an HTTP-date Retry-After in the year 1900' {
+            $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = 'Mon, 01 Jan 1900 00:00:00 GMT' } -Message $script:TooManyMessage
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                (Invoke-OPIMGraphRequest -Uri 'v1.0/me').value[0].id | Should -Be 'after-wait'
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 1 }
+            }
+        }
+
+        # Kiota's RetryHandler records one exception per attempt, oldest first, and the SDK throws only
+        # when every response was a 429, 503 or 504. The newest response decides; its Retry-After is its
+        # own; a write is sent again only when every recorded response was a 429.
+        It 'does not send a POST again when the newest recorded attempt was a 503' {
+            $Failure = New-KiotaAttempts -Attempt @(
+                @{ StatusCode = 429; Header = @{ 'Retry-After' = '3' }; Message = $script:TooManyMessage }
+                @{ StatusCode = 503; Header = @{ 'Retry-After' = '5' }; Message = $script:UnavailableMessage }
+            )
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Failure) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                { Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{ action = 'selfActivate' } } | Should -Throw
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 0 -Scope It
+            }
+        }
+
+        It 'does not send a POST again when an earlier recorded attempt was a 503' {
+            # The newest answer is a 429, but the 503 before it may have come after Graph acted.
+            $Failure = New-KiotaAttempts -Attempt @(
+                @{ StatusCode = 503; Header = @{ 'Retry-After' = '5' }; Message = $script:UnavailableMessage }
+                @{ StatusCode = 429; Header = @{ 'Retry-After' = '3' }; Message = $script:TooManyMessage }
+            )
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Failure) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                { Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{ action = 'selfActivate' } } | Should -Throw
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 0 -Scope It
+            }
+        }
+
+        It 'waits the Retry-After of the newest recorded attempt, not the oldest' {
+            $Failure = New-KiotaAttempts -Attempt @(
+                @{ StatusCode = 429; Header = @{ 'Retry-After' = '60' }; Message = $script:TooManyMessage }
+                @{ StatusCode = 429; Header = @{ 'Retry-After' = '3' }; Message = $script:TooManyMessage }
+            )
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Failure) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                (Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{ action = 'selfActivate' }).value[0].id | Should -Be 'after-wait'
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 3 }
+            }
+        }
+
+        It 'sends a GET again after a newest 429 that follows a 503 without Retry-After' {
+            $Failure = New-KiotaAttempts -Attempt @(
+                @{ StatusCode = 503; Message = $script:UnavailableMessage }
+                @{ StatusCode = 429; Header = @{ 'Retry-After' = '4' }; Message = $script:TooManyMessage }
+            )
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Failure) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                (Invoke-OPIMGraphRequest -Uri 'v1.0/me').value[0].id | Should -Be 'after-wait'
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 1 -Exactly -Scope It -ParameterFilter { $Seconds -eq 4 }
+            }
+        }
+
+        It 'does not borrow an older attempt''s Retry-After for a newest 503 that carries none' {
+            $Failure = New-KiotaAttempts -Attempt @(
+                @{ StatusCode = 429; Header = @{ 'Retry-After' = '60' }; Message = $script:TooManyMessage }
+                @{ StatusCode = 503; Message = $script:UnavailableMessage }
+            )
+            InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Failure) } {
+                param($Queue)
+                $script:_ThrottleQueue = $Queue
+                { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } | Should -Throw
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                Should -Invoke Start-Sleep -Times 0 -Scope It
             }
         }
 
