@@ -134,9 +134,9 @@ function Get-OPIMMsalApplication {
     }
 
     # PublicClientApplicationBuilder.Create(string clientId) -- static factory, found by name and
-    # parameter count like the builder's other methods, which take MSAL types. A typed GetMethod
-    # would also work for its one [string] parameter, since System.String is the same type in every
-    # load context (Initialize-OPIMAuth does that), but this one is found like the other methods.
+    # parameter count like WithAuthority and WithRedirectUri below (only the WithAuthority overloads
+    # involve MSAL types). A typed GetMethod would also work for its one [string] parameter, since
+    # System.String is the same type in every load context; Initialize-OPIMAuth does that.
     $CreateMethod = $BuilderType.GetMethods(
         [System.Reflection.BindingFlags]::Public -bor [System.Reflection.BindingFlags]::Static) |
         Where-Object { $_.Name -eq 'Create' -and ($_.GetParameters()).Count -eq 1 } |

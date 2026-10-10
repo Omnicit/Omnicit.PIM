@@ -384,8 +384,8 @@ Describe 'Get-OPIMCompletionText' {
 
     # The matcher ignores a filter that does not apply to the pillar and compares an access type
     # without regard to case, so the results cannot show what the helper hands on. A stand-in matcher
-    # that answers nothing records it: the first call of the helper is its check of a post's own
-    # old form, which carries the typed filters.
+    # that answers nothing records it: the helper makes one batch call of the matcher per completion
+    # (-NameList, every post's old form and display name), which carries the typed filters.
     Context 'When the typed filters are handed to the matcher' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Find-OPIMScheduleMatch {}

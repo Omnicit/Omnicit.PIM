@@ -544,8 +544,8 @@ Describe 'Enable-OPIMMyRole' {
             }
             $FakeDirectoryRole = [PSCustomObject]@{ id = 'elig-lf-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/' }
             $FakeDirectoryRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
-            # memberType is set as Graph sets it: the type's MemberType ScriptProperty reads
-            # $this.memberType, which resolves to itself on an object without the property.
+            # The group fake carries accessId and memberType, as Graph returns them for
+            # Omnicit.PIM.GroupEligibilitySchedule.
             $FakeGroup = [PSCustomObject]@{ id = 'grp-lf-001'; groupId = 'group-id-001'; accessId = 'member'; memberType = 'Direct' }
             $FakeGroup.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupEligibilitySchedule')
             $FakeAzureRole = [PSCustomObject]@{ Name = 'az-lf-001'; Scope = '/subscriptions/sub-001' }

@@ -326,9 +326,8 @@ Describe 'Disable-OPIMMyRole' {
                 'ConfiguredAlias' { @{ TenantAlias = 'fabrikam'; TenantMapPath = 'TestDrive:\TenantMap.psd1' } }
                 default { @{ AllActivated = $true; Confirm = $false } }
             }
-            # memberType, endDateTime and assignmentType are set as Graph sets them: the types'
-            # ScriptProperties of those names read $this.<name>, which resolves to itself on an
-            # object without the property.
+            # The active directory and group fakes carry the notes Graph returns for an instance, set
+            # as Graph sets them: memberType and endDateTime, and assignmentType too for a group.
             $FakeActiveDirectoryRole = [PSCustomObject]@{
                 id = 'active-lf-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'
                 memberType = 'Direct'; endDateTime = '2026-10-07T18:00:00Z'
@@ -747,8 +746,8 @@ Describe 'Disable-OPIMMyRole' {
                 }
             }
 
-            # memberType, assignmentType and endDateTime are set as Graph sets them: the types'
-            # ScriptProperties of those names read $this.<name>.
+            # The active directory and group fakes carry the notes Graph returns for an instance
+            # (memberType, assignmentType and endDateTime), set as Graph sets them.
             # Two overlapping activations of role-def-001 at '/': the entry 'role-def-001|/' names the
             # role at that scope, and both posts carry its key (OPIM-10, A13).
             $DirectoryRoot = [PSCustomObject]@{
@@ -951,8 +950,8 @@ Describe 'Disable-OPIMMyRole' {
                 }
             }
 
-            # memberType and endDateTime are set as Graph sets them: the type's ScriptProperties of
-            # those names read $this.<name>.
+            # The active fakes carry the notes Graph returns for a directory instance (memberType,
+            # assignmentType and endDateTime), set as Graph sets them.
             $ActiveRoot = [PSCustomObject]@{
                 id = 'active-a13-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'
                 memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T12:00:00Z'
@@ -1042,8 +1041,8 @@ Describe 'Disable-OPIMMyRole' {
                 }
             }
 
-            # memberType, assignmentType and endDateTime are set as Graph sets them: the types'
-            # ScriptProperties of those names read $this.<name>.
+            # The active directory and group fakes carry the notes Graph returns for an instance
+            # (memberType, assignmentType and endDateTime), set as Graph sets them.
             $ActiveDir = [PSCustomObject]@{
                 id = 'active-blank-dir-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'
                 memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T12:00:00Z'
