@@ -302,7 +302,8 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   function or alias, and names at least one cmdlet in each of the four cohorts.
 - **`docsync.tests.ps1`** -- README's `## Available Cmdlets` and the about topic's
   `COMMAND COHORTS` roster the same cmdlets, every exported one, and README's `### <Cohort> (N)`
-  counts match what each cohort lists.
+  counts match what each cohort lists; and every comparison of roster names in the file is
+  case-sensitive (`-cin`, `-cnotin`), held statically.
 
 The QA files sit outside the tripwire on purpose: they call help, the analyzer and pure maps only,
 and `testhygiene`, `sourcehygiene`, `dochygiene` and `docsync` read files statically.
