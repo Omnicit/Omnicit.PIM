@@ -328,7 +328,7 @@ loaded modules; it calls no command of the module.
 
 # Full test suite -- the authoritative gate, and the command every CI leg runs.
 # QA tests + unit tests + per-function PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-10: 3,362 passed, 0 failed, 0 skipped; coverage 96.32% over 3,803 analysed
+# (measured 2026-10-10: 3,477 passed, 0 failed, 0 skipped; coverage 96.37% over 3,855 analysed
 #  commands; Pester 6.2.0)
 ./build.ps1 -Tasks test
 
@@ -345,11 +345,11 @@ The Sampler test task measures coverage against the **built** module output, not
 `build.yaml`'s `test` workflow does not include `build` (`build.yaml:63-70`; only the default
 workflow, `./build.ps1` with no `-Tasks`, runs both). Always run `-Tasks build` before `-Tasks test`
 after changing source files -- and never build while the tests are running. The coverage threshold
-is 80 % (`build.yaml:152`): measured on 2026-10-10, 3,663 of 3,803 commands are covered, 620 more
-than the 3,043 that 80 % requires. The margin was once only four commands: the MSAL reflection
+is 80 % (`build.yaml:152`): measured on 2026-10-10, 3,715 of 3,855 commands are covered, 631 more
+than the 3,084 that 80 % requires. The margin was once only four commands: the MSAL reflection
 lines in `Get-OPIMMsalApplication` stopped being run by any unit test, since reaching them builds a
 real MSAL client (see **Testing Conventions**), and that took coverage from 83.7 % to 80.28 % --
-four commands above the line. It is 620 today, but a change that adds untested commands can still
+four commands above the line. It is 631 today, but a change that adds untested commands can still
 bring it close.
 
 **The build stamps the version GitVersion computes, and a local build needs GitVersion to do it.**
