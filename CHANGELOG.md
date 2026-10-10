@@ -47,7 +47,7 @@ sign in to the alias's cloud (`Global` when it stores none); a stored cloud the 
 is an error, and nothing is signed in. A 0.6.x module ignores the stored cloud and signs in to the
 global cloud, where the tenant does not exist, so its sign-in fails; it also writes the map back
 without the cloud of every alias whenever it changes it (`Install-`, `Set-` or `Remove-OPIMConfiguration`),
-as do the earlier 0.7.0 previews, and this version then signs in to `Global` for those aliases. Only `Global` is verified live:
+as do 0.7.0-preview0001 to 0003, and this version then signs in to `Global` for those aliases. Only `Global` is verified live:
 the three sovereign clouds are covered by unit tests only and are untested live, and a China
 sign-in may need an application of the tenant's own, which the module does not yet take.
 
