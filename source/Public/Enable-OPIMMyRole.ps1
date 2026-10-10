@@ -57,13 +57,18 @@ function Enable-OPIMMyRole {
     .EXAMPLE
     pim -TenantAlias contoso -DeviceCode
     Sign in with a device code instead of the system browser, then activate the configured roles.
+    .EXAMPLE
+    Enable-OPIMMyRole -AllEligibleDirectoryRoles -Environment USGov -Confirm:$false
+    In a new session, or one already signed in to that cloud, sign in to the US Government (GCC High)
+    cloud and activate all eligible directory roles there.
     .PARAMETER TenantAlias
     Short alias for the target tenant matched against TenantMap.psd1. Run Install-OPIMConfiguration
     to create or update tenant aliases. Only categories explicitly listed in the configuration are
     activated; categories without configuration are skipped with a verbose message. An alias in the
     old string form ('alias' = 'tenant id') is the exception and activates everything eligible. A
     directory role is activated only at its configured scope, and an entry without a scope means
-    the role at '/' only.
+    the role at '/' only. The alias also names the cloud to sign in to (Install-OPIMConfiguration
+    -Environment): the sovereign cloud it stores, else the global cloud.
     .PARAMETER AllEligible
     Activate all eligible directory roles, Entra ID group assignments, and Azure RBAC roles.
     Requires confirmation per category. Use -Confirm:$false to suppress prompts.
@@ -96,6 +101,13 @@ function Enable-OPIMMyRole {
     .PARAMETER DeviceCode
     Sign in with a device code instead of the system browser. Passed to Connect-OPIM, which
     remembers the mode for the session; see Get-Help Connect-OPIM -Parameter DeviceCode.
+    .PARAMETER Environment
+    The cloud to sign in to: 'Global', 'USGov', 'USGovDoD' or 'China'. Passed to both sign-ins,
+    Graph and Azure; see Get-Help Connect-OPIM -Parameter Environment. Without it, a -TenantAlias
+    signs in to the cloud the alias stores in the tenant map ('Global' when it stores none), and a
+    stored cloud Omnicit.PIM does not know is refused before any sign-in. Without it and without an
+    alias, the session's cloud is kept for the tenant it is signed in to, and any other tenant is
+    'Global'.
     #>
     [Alias('pim', 'Enable-OPIMMyRoles')]
     [CmdletBinding(SupportsShouldProcess)]
@@ -113,7 +125,9 @@ function Enable-OPIMMyRole {
         [string]$TenantMapPath = (Join-Path $HOME '.config/Omnicit.PIM/TenantMap.psd1'),
         [Switch]$Wait,
         [ValidateRange(1, 86400)][int]$TimeoutSeconds = 300,
-        [Switch]$DeviceCode
+        [Switch]$DeviceCode,
+        [ValidateSet('Global', 'USGov', 'USGovDoD', 'China')]
+        [string]$Environment
     )
 
     # -- Guard: require explicit activation target ------------------------------
@@ -131,6 +145,7 @@ function Enable-OPIMMyRole {
 
     # -- Resolve tenant config and connect -------------------------------------
     $Config = $null
+    $AliasEnvironment = $null
     [string]$ResolvedTenantId = $null
     if ($TenantAlias) {
         if (-not (Test-Path $TenantMapPath)) {
@@ -157,6 +172,18 @@ function Enable-OPIMMyRole {
             return
         }
         $ResolvedTenantId = if ($Config -is [hashtable]) { $Config.TenantId } else { [string]$Config }
+
+        # A12: a tenant alias signs in to the cloud it stores, unless -Environment names one. An unknown
+        # stored cloud is refused here, before any sign-in and before anything is listed.
+        if (-not $Environment) {
+            try {
+                $AliasEnvironment = Get-OPIMTenantMapEnvironment -Entry $Config -TenantAlias $TenantAlias -TenantMapPath $TenantMapPath -ErrorAction Stop
+            } catch {
+                Remove-OPIMErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+                return
+            }
+        }
     }
 
     # The Azure pillar runs for -AllEligible, -AllEligibleAzureRoles, a hashtable alias that lists
@@ -175,8 +202,16 @@ function Enable-OPIMMyRole {
 
     # OPIM-08: Graph first. A failed Graph sign-in stops the command: nothing is listed or activated,
     # not even in the tenant an earlier sign-in pinned.
+    # OPIM-29: only a cloud the caller named, or the cloud an alias stores, is passed on, so the -All*
+    # form keeps the session's own cloud. An alias always names one (Global when it stores none).
+    $ConnectParams = @{ TenantId = $ResolvedTenantId; DeviceCode = $DeviceCode; ErrorAction = 'Stop' }
+    if ($Environment) {
+        $ConnectParams.Environment = $Environment
+    } elseif ($AliasEnvironment) {
+        $ConnectParams.Environment = $AliasEnvironment
+    }
     try {
-        Connect-OPIM -TenantId $ResolvedTenantId -DeviceCode:$DeviceCode -ErrorAction Stop
+        Connect-OPIM @ConnectParams
     } catch {
         Remove-OPIMErrorRecord -Record $PSItem
         $PSCmdlet.WriteError($PSItem)
@@ -188,7 +223,7 @@ function Enable-OPIMMyRole {
     [bool]$ArmConnected = $false
     if ($NeedsArm) {
         try {
-            Connect-OPIM -TenantId $ResolvedTenantId -IncludeARM -DeviceCode:$DeviceCode -ErrorAction Stop
+            Connect-OPIM @ConnectParams -IncludeARM
             $ArmConnected = $true
         } catch {
             Remove-OPIMErrorRecord -Record $PSItem

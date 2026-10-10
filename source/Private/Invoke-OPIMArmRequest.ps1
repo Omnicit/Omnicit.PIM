@@ -11,7 +11,8 @@ function Invoke-OPIMArmRequest {
     Initialize-OPIMAuth -IncludeARM holds in $script:_OPIMAuthState.ArmToken: a SecureString that is
     handed to Invoke-WebRequest -Authentication Bearer -Token as it is, so the module never makes it
     plaintext; -Authentication Bearer refuses a uri that is not https, and the header is not replayed
-    on a redirect. The host is the state's ArmResourceUrl, else https://management.azure.com. No Az
+    on a redirect. The host is the state's ArmResourceUrl, else the ARM host of the state's cloud
+    (Get-OPIMCloudEndpoint), else https://management.azure.com when there is no state. No Az
     module takes part: neither Az.Accounts nor its REST cmdlet.
 
     Before every request -- the first attempt, each throttled retry, the retry after a 401 refresh
@@ -112,12 +113,17 @@ function Invoke-OPIMArmRequest {
     # Suppress the Invoke-WebRequest progress bar for the lifetime of this call.
     $ProgressPreference = 'SilentlyContinue'
 
-    # ARM host: the session's own resource url when it has one. Every state Initialize-OPIMAuth builds
-    # with an ARM token records it.
+    # ARM host: the session's own resource url when it has one (every state Initialize-OPIMAuth builds
+    # with an ARM token records it); for a state without one, the ARM host of the state's cloud from the
+    # table (Global when it names none); and the public-cloud fallback only when there is no state at
+    # all, where the request is refused for its missing token below. The else literal is the cloud-host
+    # gate's one exemption, by its shape (tests/QA/sourcehygiene.tests.ps1).
     $ArmBaseUrl = if ($script:_OPIMAuthState -is [System.Collections.IDictionary] -and $script:_OPIMAuthState['ArmResourceUrl']) {
         ([string]$script:_OPIMAuthState['ArmResourceUrl']).TrimEnd('/')
+    } elseif ($script:_OPIMAuthState -is [System.Collections.IDictionary]) {
+        $SessionCloud = if ($script:_OPIMAuthState['Environment']) { [string]$script:_OPIMAuthState['Environment'] } else { 'Global' }
+        ([string](Get-OPIMCloudEndpoint -Environment $SessionCloud).ArmHost).TrimEnd('/')
     } else {
-        # The ARM fallback: a request with no state is refused for its missing token below.
         'https://management.azure.com'
     }
     $ArmBaseHost = ([uri]$ArmBaseUrl).Host

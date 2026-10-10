@@ -5,13 +5,16 @@ function Set-OPIMConfiguration {
     Update an existing tenant alias entry in the TenantMap configuration file.
     .DESCRIPTION
     Updates an existing entry in the TenantMap.psd1 file managed by Install-OPIMConfiguration.
-    Use this cmdlet to change the TenantId for an alias or to replace the stored role/group
-    activation lists by piping new objects from Get-OPIMDirectoryRole, Get-OPIMEntraIDGroup,
-    or Get-OPIMAzureRole.
+    Use this cmdlet to change the TenantId or the cloud (-Environment) for an alias or to replace
+    the stored role/group activation lists by piping new objects from Get-OPIMDirectoryRole,
+    Get-OPIMEntraIDGroup, or Get-OPIMAzureRole.
 
-    Categories not supplied via pipeline retain their existing stored values. To remove a stored
-    list for a category, use Remove-OPIMConfiguration followed by Install-OPIMConfiguration, or
-    edit the TenantMap.psd1 file directly.
+    Categories not supplied via pipeline retain their existing stored values, and so does the
+    stored cloud when -Environment is omitted, a cloud Omnicit.PIM does not know included: Set
+    changes only what it is asked to. -Environment Global removes the stored cloud, since the
+    global cloud is the default and is not written. To remove a stored list for a category, use
+    Remove-OPIMConfiguration followed by Install-OPIMConfiguration, or edit the TenantMap.psd1
+    file directly.
 
     An alias in the old string form ('alias' = 'tenant id') is rewritten in the table form, with
     its tenant kept. From then on pim and unpim act only on the categories it lists, no longer on
@@ -35,6 +38,10 @@ function Set-OPIMConfiguration {
     .EXAMPLE
     Get-OPIMAzureRole | Set-OPIMConfiguration -TenantAlias contoso -WhatIf
     Preview what the AzureRoles update would write without making changes.
+    .EXAMPLE
+    Set-OPIMConfiguration -TenantAlias contoso -Environment USGov
+    Store the US Government (GCC High) cloud for the 'contoso' alias, keeping its tenant and its
+    role and group lists. Connect-OPIM, pim and unpim then sign in to that cloud for 'contoso'.
     .PARAMETER TenantAlias
     Short alias for the tenant to update. Must already exist in the TenantMap file.
     .PARAMETER TenantId
@@ -57,6 +64,12 @@ function Set-OPIMConfiguration {
     Each key is stored once, without regard to letter case, in the order first piped; an eligible role and
     its activation at its own scope are one key. Objects not matching a known Omnicit.PIM type are
     silently ignored.
+    .PARAMETER Environment
+    The cloud the alias signs in to: 'Global', 'USGov' (US Government, GCC High), 'USGovDoD'
+    (US Government, DoD) or 'China', in any letter case. Microsoft 365 GCC is a commercial-cloud
+    tenant and is 'Global'. The cloud is written to the file only when it is not 'Global', so
+    -Environment Global removes the stored cloud. When omitted, the stored cloud is kept as it is
+    written.
     #>
     [Alias('Set-PIMConfig')]
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
@@ -72,7 +85,10 @@ function Set-OPIMConfiguration {
         [string]$TenantMapPath = (Join-Path $HOME '.config/Omnicit.PIM/TenantMap.psd1'),
 
         [Parameter(ValueFromPipeline)]
-        $InputObject
+        $InputObject,
+
+        [ValidateSet('Global', 'USGov', 'USGovDoD', 'China')]
+        [string]$Environment
     )
 
     begin {
@@ -159,7 +175,19 @@ function Set-OPIMConfiguration {
         $ResolvedGroups    = if ($StoredKeys.Group.Count)     { @($StoredKeys.Group)     } elseif ($ExistingEntry.EntraIDGroups)  { @($ExistingEntry.EntraIDGroups)  }
         $ResolvedAzureRole = if ($StoredKeys.Azure.Count)     { @($StoredKeys.Azure)     } elseif ($ExistingEntry.AzureRoles)     { @($ExistingEntry.AzureRoles)     }
 
+        # A12: -Environment sets the cloud, -Environment Global removes it (Global is the default and is
+        # never written), and without -Environment the stored one stays as it is written -- an unknown
+        # cloud too: Set changes only what it is asked to, and the sign-in commands refuse the value.
+        $ResolvedEnvironment = if ($Environment) {
+            (Get-OPIMCloudEndpoint -Environment $Environment).Environment
+        } elseif (-not [string]::IsNullOrWhiteSpace([string]$ExistingEntry.Environment)) {
+            [string]$ExistingEntry.Environment
+        } else {
+            $null
+        }
+
         $Entry = [ordered]@{ TenantId = $ResolvedTenantId }
+        if ($ResolvedEnvironment -and $ResolvedEnvironment -ne 'Global') { $Entry.Environment = $ResolvedEnvironment }
         if ($ResolvedDirRoles)  { $Entry.DirectoryRoles = $ResolvedDirRoles  }
         if ($ResolvedGroups)    { $Entry.EntraIDGroups  = $ResolvedGroups    }
         if ($ResolvedAzureRole) { $Entry.AzureRoles     = $ResolvedAzureRole }

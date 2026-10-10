@@ -16,7 +16,9 @@ class AzureEligibleRoleCompleter : IArgumentCompleter {
         $ErrorActionPreference = 'Stop'
         try {
             Write-Progress -Id 51806 -Activity 'Get Eligible Azure Roles' -Status 'Fetching from Azure' -PercentComplete 1
-            $Listed = @(& ([scriptblock]::Create('Get-OPIMAzureRole')))
+            # -WarningAction SilentlyContinue: the Azure sign-in can warn (an AZURE_AUTHORITY_HOST that
+            # names another authority), which tab completion must not print into the prompt.
+            $Listed = @(& ([scriptblock]::Create('Get-OPIMAzureRole -WarningAction SilentlyContinue')))
             [List[CompletionResult]]$Result = @(
                 Get-OPIMCompletionText -Pillar Azure -InputObject $Listed -WordToComplete $WordToComplete `
                     -FakeBoundParameters $FakeBoundParameters -CommandName $CommandName

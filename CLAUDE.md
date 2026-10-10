@@ -178,8 +178,8 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   `CHANGELOG.md`, the git diff against `origin/main` and the BUILT manifest (see **CHANGELOG and
   Version**); module import and removal; for every function the module defines -- public and
   private alike, since the cases are enumerated from inside the module with
-  `Get-Command -CommandType Function` (55 on 2026-10-09, counted from the files: the 18 under
-  `source/Public` and 37 functions in the 38 files under `source/Private`, where the filter
+  `Get-Command -CommandType Function` (57 on 2026-10-10, counted from the files: the 18 under
+  `source/Public` and 39 functions in the 40 files under `source/Private`, where the filter
   `Restore-GraphProperty` is the one that does not count) -- a unit test file under `tests/`, a
   clean `Invoke-ScriptAnalyzer` run on its source file, and help quality: `.SYNOPSIS`, a
   `.DESCRIPTION` over 40 characters, at least one `.EXAMPLE`, every parameter described; an
@@ -245,7 +245,37 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   at run time, an Az command named by a bareword argument (`Get-Command Connect-AzAccount`), an
   Az alias without `-Az` in its name, called bare, and the `.ps1xml` files under `source/`, which
   the scan does not read although the Types and Format files hold script blocks that run at
-  property access and at formatting.
+  property access and at formatting. And the cloud hosts (decision A11; Describe `Cloud hosts`, the
+  pass after the Az boundary): every Graph, Azure Resource Manager and sign-in authority host of
+  the four clouds is written in ONE place, `source/Private/Get-OPIMCloudEndpoint.ps1`, and the pass
+  refuses a second copy anywhere else under `source/`, since a copy can drift from the table and
+  send a request or a credential across the wrong cloud boundary on a sovereign tenant -- a failure
+  no unit test sees, as a test mocks the transport and never reads a host. The host list is DERIVED
+  from the table's own AST (every string constant that starts with `https://`, its host by
+  `[uri]`), not retyped, so a fifth cloud is scanned for at once; the first `It` compares it with
+  the written control `$script:CloudHostDocumented` (ten hosts, since `USGovDoD` shares the ARM and
+  authority hosts of `USGov`) and stays red until a person updates the control, and the places that
+  document the hosts, in the same change. The scan falls back to the control only when the
+  derivation yields nothing, so it is never an empty alternation. It reads every
+  `StringConstantExpressionAst` and `ExpandableStringExpressionAst` of every `.ps1`, `.psm1` and
+  `.psd1` under `source/` -- quoted, here-string, bareword and interpolated -- ignoring case; a
+  comment or help text is no node, so prose may name a host. TWO exemptions, and nothing else: the
+  table file, whole-file; and ONE literal in `Invoke-OPIMArmRequest.ps1`, found by its SHAPE and
+  exact value and never by the file -- the sole statement of the `else` branch of the `if` assigned
+  (plain `=`, not `+=`) to `$ArmBaseUrl`, the only element of its pipeline, exactly
+  `'https://management.azure.com'` -- which is the public-cloud fallback
+  for a call with no auth state at all (the request is then refused for its missing token). A
+  file-level key would unguard every other literal the transport might carry. Its positive controls
+  are a known-answer `It` over in-memory texts holding every refused shape and both exemptions
+  (probes in the transport file that must stay refused: another variable, the body of an `if` or an
+  `elseif`, a sovereign host in the fallback slot, an expandable string, the literal as the second
+  statement of the `else` block or the first element of a longer pipeline, an appending `+=`), and
+  two named controls on the real tree: the one exempt fallback literal and the ten distinct hosts of
+  the table; the files parsed are held equal to the Az pass's count. Its comment states its KNOWN LIMITS, which review
+  has to catch: a host assembled at run time (`'https://graph.' + 'microsoft.us'`, a `-f` format, a
+  `[uri]` built from parts), a host escaped for a regular expression (`'graph\.microsoft\.us'` in a
+  pattern), and the `.ps1xml` files under `source/`, which the pass does not read. A host that is
+  only part of a longer name is reported, which errs on the side of refusing.
 - **`dochygiene.tests.ps1`** -- over every tracked file under `docs/`, `specs/`, `source/` and
   `tests/`, plus `README.md` and `CHANGELOG.md`: object ids (only placeholders under `docs/` and
   `specs/`; elsewhere no version-4 id outside a pinned register of four public constants), email
@@ -285,7 +315,7 @@ loaded modules; it calls no command of the module.
 
 # Full test suite -- the authoritative gate, and the command every CI leg runs.
 # QA tests + unit tests + per-function PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-10: 3,050 passed, 0 failed, 0 skipped; coverage 95.87% over 3,630 analysed
+# (measured 2026-10-10: 3,362 passed, 0 failed, 0 skipped; coverage 96.32% over 3,803 analysed
 #  commands; Pester 6.2.0)
 ./build.ps1 -Tasks test
 
@@ -302,11 +332,11 @@ The Sampler test task measures coverage against the **built** module output, not
 `build.yaml`'s `test` workflow does not include `build` (`build.yaml:63-70`; only the default
 workflow, `./build.ps1` with no `-Tasks`, runs both). Always run `-Tasks build` before `-Tasks test`
 after changing source files -- and never build while the tests are running. The coverage threshold
-is 80 % (`build.yaml:152`): measured on 2026-10-10, 3,480 of 3,630 commands are covered, 576 more
-than the 2,904 that 80 % requires. The margin was once only four commands: the MSAL reflection
+is 80 % (`build.yaml:152`): measured on 2026-10-10, 3,663 of 3,803 commands are covered, 620 more
+than the 3,043 that 80 % requires. The margin was once only four commands: the MSAL reflection
 lines in `Get-OPIMMsalApplication` stopped being run by any unit test, since reaching them builds a
 real MSAL client (see **Testing Conventions**), and that took coverage from 83.7 % to 80.28 % --
-four commands above the line. It is 576 today, but a change that adds untested commands can still
+four commands above the line. It is 620 today, but a change that adds untested commands can still
 bring it close.
 
 **The build stamps the version GitVersion computes, and a local build needs GitVersion to do it.**
@@ -577,7 +607,9 @@ transport), `Invoke-OPIMArmRequest` (the Azure Resource Manager transport),
 `Get-OPIMTokenTenantId` and `Get-OPIMTokenObjectId` (the tenant and account checks),
 `Get-OPIMGraphSessionFingerprint` and `Get-OPIMGraphSessionState` (the session gate),
 `Lock-OPIMSignIn`, `Unlock-OPIMSignIn` and `Get-OPIMSignInRefusal` (the sign-in latch),
-`Get-OPIMArmRefusal` (the ARM gate) and `Remove-OPIMErrorRecord` (the bearer scrub).
+`Get-OPIMArmRefusal` (the ARM gate), `Remove-OPIMErrorRecord` (the bearer scrub),
+`Get-OPIMCloudEndpoint` (the cloud table) and `Get-OPIMTenantMapEnvironment` (the cloud a tenant
+map entry stores).
 `New-OPIMTenantMismatchError`, `New-OPIMAccountMismatchError`, `New-OPIMGraphSessionChangedError`
 and `New-OPIMSignInRefusedError` are the single owners of the `TenantMismatch`, `AccountMismatch`,
 `GraphSessionChanged` and `SignInRefused` ids and messages; build those records nowhere else.
@@ -587,15 +619,18 @@ and `Disable-` for `DirectoryRole`, `AzureRole` and `EntraIDGroup` -- and `Wait-
 call it as the first statement of their `process` block (of their `begin` block in
 `Enable-OPIMDirectoryRole` and `Wait-OPIMDirectoryRole`), and the three `*-OPIMAzureRole` cmdlets
 pass `-IncludeARM`. `Connect-OPIM` resolves `-TenantAlias` from `TenantMap.psd1` and passes its
-`-TenantId`, `-IncludeARM` and `-DeviceCode` on (`Connect-OPIM.ps1:94-123`); it is an optional
-pre-authentication shortcut, since every pillar cmdlet authenticates on first use. The
+`-TenantId`, `-IncludeARM`, `-DeviceCode` and the cloud on (`-Environment`, or the cloud the alias
+stores; see **Clouds** below; `Connect-OPIM.ps1:120-172`); it is an optional
+pre-authentication shortcut, since every pillar cmdlet authenticates on first use. The pillar
+cmdlets take no `-Environment` and pass none, so they keep the session's cloud. The
 `*-OPIMConfiguration` cmdlets do not authenticate.
 
-**`Enable-OPIMMyRole` and `Disable-OPIMMyRole` sign in twice**, handing on their own `-DeviceCode`:
+**`Enable-OPIMMyRole` and `Disable-OPIMMyRole` sign in twice**, handing on their own `-DeviceCode`
+and cloud (the `-Environment` they were given, else the one their `-TenantAlias` stores, else none):
 first `Connect-OPIM` for Microsoft Graph, then -- only when an Azure pillar runs (an `-All*` Azure
 switch, a hashtable alias that lists `AzureRoles`, or the plain string form of an alias) --
-`Connect-OPIM -IncludeARM` for the same tenant, and only then the pillar cmdlets
-(`Enable-OPIMMyRole.ps1:176-197`, `Disable-OPIMMyRole.ps1:159-180`). Each sign-in runs with
+`Connect-OPIM -IncludeARM` for the same tenant and cloud, and only then the pillar cmdlets
+(`Enable-OPIMMyRole.ps1:202-231`, `Disable-OPIMMyRole.ps1:186-215`). Each sign-in runs with
 `-ErrorAction Stop` in a `try` whose catch scrubs first and writes the record. A failed Graph
 sign-in stops the command before anything is listed or changed. A failed Azure sign-in is written
 as a non-terminating error and skips the Azure pillar only -- except under the `Stop` error
@@ -607,27 +642,114 @@ deactivated.
 or a prompt when the request matches the module's own session, the Graph SDK session in the process
 is still the one the module connected (or the state records no fingerprint), the cached Graph token
 has more than 5 minutes left, and neither `-ClaimsChallenge` nor `-ForceRefresh` was passed
-(`Initialize-OPIMAuth.ps1:225-266`); with `-IncludeARM` it goes on to the Azure check, cached or
-not. A call that names no tenant keeps the session's tenant (`:195-201`): `organizations` is the
+(`Initialize-OPIMAuth.ps1:248-331`); with `-IncludeARM` it goes on to the Azure check, cached or
+not. A call that names no tenant keeps the session's tenant (`:235-241`): `organizations` is the
 authority only for a first sign-in that names none, and the session is then pinned to the `tid` of
 that sign-in's token. A request matches the session when it names the session's tenant label, or a
 GUID equal to the `tid` of the session's Graph token, so a GUID for a session signed in by domain
-needs no new sign-in. A tenant named by domain is not resolved: the first token's `tid` is recorded,
+needs no new sign-in, AND it is for the session's cloud (see **Clouds** below). A tenant named by
+domain is not resolved: the first token's `tid` is recorded,
 and every later token of the session is compared with it. A refresh builds the MSAL application for
-the authority the session was built with (`AuthorityTenant`, `:273-277`), so a session first signed
+the authority the session was built with (`AuthorityTenant`, `:338-342`), so a session first signed
 in under `organizations` refreshes from the same application and token cache. Only the module's own
 session counts: a Graph context made outside the module is never adopted.
+
+**Clouds (OPIM-29, A11, A12).** `Get-OPIMCloudEndpoint` is the single owner of every cloud host: a
+pure table, ported from Omnicit.EntraRBAC, for `Global`, `USGov`, `USGovDoD` and `China` (Microsoft
+365 GCC is a commercial-cloud tenant and is `Global`). For a cloud it returns the canonical
+`Environment` name and `GraphResource`, `GraphEnvironment`, `GraphServiceRoot`, `ArmResource`,
+`ArmHost` and `AuthorityHost`. It matches the name without regard to letter case and throws for any
+other value, an empty string included -- never a fallback to `Global`, since that would send the
+credential and the request of a sovereign tenant across the wrong cloud boundary (A11). It carries no
+`ValidateSet` on purpose, so that throw is reachable and provable; the closed set is enforced at the
+public boundary, where `Connect-OPIM`, `Enable-OPIMMyRole`, `Disable-OPIMMyRole`,
+`Install-OPIMConfiguration`, `Set-OPIMConfiguration` and `Initialize-OPIMAuth` each carry
+`[ValidateSet('Global', 'USGov', 'USGovDoD', 'China')]` on `-Environment`, and its unit test holds
+every one of them to the table. Write a cloud host nowhere else (see the cloud-host pass of
+`sourcehygiene.tests.ps1` under **Module Layout** and **Common Pitfalls**). Only `Global` is verified
+live; the three sovereign clouds are covered by unit tests only (P-12), so do not describe one as
+verified until a live run has covered it.
+
+`Initialize-OPIMAuth` resolves ONE effective cloud per call (`:245-275`): the explicit
+`-Environment`; else the session's cloud when the request names the session's tenant
+(`$SessionTenantMatches`, by label or by the `tid` GUID, so a call that names no tenant counts);
+else `Global`. The cloud follows the tenant. A state written before the cloud was recorded is
+`Global`. `$SessionMatches` is the same tenant AND the same cloud, so naming another cloud is a new
+Graph sign-in, also for the same tenant, and `-Environment Global` against a session signed in
+without `-Environment` is the same session: no new sign-in, no `Get-OPIMMsalApplication`, no
+`Connect-MgGraph`. The cloud is recorded as `Environment` in the auth state and joins every cache
+key: the MSAL application (`$script:_OPIMMsalApp`, with `$script:_OPIMMsalAppTenantId` and
+`$script:_OPIMMsalAppEnvironment`) is rebuilt when the tenant or the cloud changes, and a switch of
+cloud never asks the old cloud's application or token cache for a token. A session pinned by a tenant
+GUID (which a first sign-in under `organizations` also ends up as) that switches cloud without
+`-TenantId` is held to that GUID, and an organisation has a separate tenant, with its own GUID, in
+each cloud, so the switch fails:
+a token for the tenant of the other cloud is refused with `TenantMismatch` (the other cloud may
+refuse the GUID itself first; untested live). A switch of cloud names the tenant (or an alias) of the
+target cloud.
+
+What the cloud selects, all from the table: the MSAL authority is `AuthorityHost` followed by the
+tenant (`Get-OPIMMsalApplication.ps1:122`, `https://login.microsoftonline.com/<tenant>` for `Global`,
+as it always was), after `Get-OPIMCloudEndpoint` has validated the cloud, before the cache is read; a
+cache that records no cloud counts as `Global`. `Connect-MgGraph -AccessToken` gets `-Environment`
+(the table's `GraphEnvironment`) only off `Global`, so the `Global` call keeps no `-Environment` key
+at all (`Initialize-OPIMAuth.ps1:539-542`). The resource passed to AzAuth, `Get-AzToken -Resource`, is
+the table's `ArmHost` (`https://management.azure.com` for `Global`, unchanged; `:272`), and the
+state's `ArmResourceUrl` is that same host (`:742`). The ARM token of one cloud is never reused or carried
+into another, even for the same tenant and account: a new Graph token keeps the ARM token only for
+the same cloud (`:565-571`), a cached ARM token is reused only when its `ArmResourceUrl` is the
+cloud's `ArmHost` (`:616-621`), and a first ARM sign-in, a `-ForceRefresh` or a state whose
+`ArmResourceUrl` differs passes `-Force` (`:635-638`), since AzAuth's one process-wide credential
+bakes the authority in when it is built and would otherwise answer for the old cloud.
+
+AzAuth's `Get-AzToken` has no authority parameter: Azure.Identity reads the environment variable
+`AZURE_AUTHORITY_HOST` when the credential is built. Off `Global`, `Initialize-OPIMAuth` sets it to
+the table's `AuthorityHost` only around the `Get-AzToken` call and restores it in a `finally` on
+every path, the terminating `AzureConnectFailed` included (`:644-694`). The
+previous value is read with `GetEnvironmentVariable` into an UNTYPED variable (an absent variable is
+`$null`, and `[string]` would turn it into `''`), the override flag is set BEFORE the write so a
+pipeline stop between the two statements never leaves the variable set, and the `finally` writes the
+previous value back exactly, or deletes the variable with `[NullString]::Value` when it was absent
+(`''` would leave it in existence, measured on Windows with PowerShell 7.6). `Global` never writes
+the variable; when the operator's own value names another authority than the global one, a WARNING
+says that the Azure sign-in follows it. KNOWN LIMIT: the variable is process-wide, so an Azure
+sign-in another runspace of the same process makes during a sovereign `Get-AzToken` call would read
+it too. The transports read the cloud from the state: `Invoke-OPIMGraphRequest` takes the host a
+next link must stay on from `-Uri` when that is an absolute https URI, else from the table's
+`GraphServiceRoot` for the state's `Environment` (`Global` for a state that records none;
+`Invoke-OPIMGraphRequest.ps1:619-637`), and `Invoke-OPIMArmRequest` takes `$ArmBaseUrl` from the
+state's `ArmResourceUrl`, else the table's `ArmHost` for the state's cloud, else -- with no state at
+all -- the literal `https://management.azure.com` (`Invoke-OPIMArmRequest.ps1:121-128`), the one
+literal the cloud-host pass exempts.
+
+**The cloud of a tenant alias (A12).** A `TenantMap.psd1` entry may carry `Environment`.
+`Get-OPIMTenantMapEnvironment` is the single interpreter of the stored cloud for a sign-in (the
+`*-OPIMConfiguration` cmdlets read the raw key by design; see below): `Global` for the old string
+form, `$null`, a table without the key or a blank value; otherwise the cloud under its canonical
+name, matched without regard to letter case through `Get-OPIMCloudEndpoint`; any other value is a
+terminating record (`ThrowTerminatingError`) in the category `InvalidArgument`, the alias as its
+target and NO error id (the shape of the module's other validation errors that name none), whose
+message names the alias, the file, the value and the four clouds, suggests a `Set-OPIMConfiguration`
+command with the alias as a single-quoted string (quotes doubled through
+`CodeGeneration.EscapeSingleQuotedStringContent`) and says that nothing was signed in.
+`Connect-OPIM`,
+`Enable-OPIMMyRole` and `Disable-OPIMMyRole` call it for a `-TenantAlias` only when `-Environment`
+was not given (so an explicit `-Environment` also gets past a bad stored value), in a `try` whose
+catch scrubs first and writes the record non-terminating, before anything is signed in or listed.
+An alias ALWAYS passes a cloud down (`Global` when it stores none), so it never inherits the cloud of
+a session in another tenant; without an alias and without `-Environment` nothing is passed, and
+`Initialize-OPIMAuth` keeps the session's cloud for the session's tenant.
 
 **A Graph SDK session the module did not connect is refused, never taken back (OPIM-09).** The Graph
 SDK keeps one session per process, and every Graph call goes out under it. Straight after its own
 `Connect-MgGraph`, `Initialize-OPIMAuth` records `Get-OPIMGraphSessionFingerprint` in the auth state
-(`:479`). On this path the fingerprint is the only read of the session's values;
+(`:550`). On this path the fingerprint is the only read of the session's values;
 `Get-OPIMMsalApplication` also calls `Get-MgContext`, but only to load the MSAL assembly, and
 discards the result. `Get-OPIMGraphSessionState` compares the process's session with the
 fingerprint -- `Untracked` (no fingerprint recorded), `Own`, `Absent` or `Changed` -- at every entry
-of `Initialize-OPIMAuth` (`:234`) and, in `Invoke-OPIMGraphRequest`, before every request and
+of `Initialize-OPIMAuth` (`:299`) and, in `Invoke-OPIMGraphRequest`, before every request and
 retry. `Changed` is the terminating `GraphSessionChanged`, raised before any cached return, token or
-`Connect-MgGraph` (`:254-257`). Nothing takes the session back -- connecting again would move the
+`Connect-MgGraph` (`:319-322`). Nothing takes the session back -- connecting again would move the
 other session's calls to this module's tenant -- so the user runs `Disconnect-OPIM`, which
 disconnects that session too, and signs in again. `Absent` (no session at all, for example after
 `Disconnect-MgGraph`) means the cached token does not count: the function signs in and connects
@@ -636,6 +758,8 @@ tenant only from the module's own sign-in, never from a Graph context another `C
 started (OPIM-45). `Get-OPIMCurrentTenantInfo` returns the auth state's `TokenTenantId` whatever
 `Get-OPIMGraphSessionState` says -- `$null` while the module holds no sign-in: no state, a state
 that is not a dictionary, or the device-code-only state -- and calls no `Get-MgContext` itself. It
+also returns the state's `Environment`, the cloud of that sign-in (`Global` for a state that records
+none, `$null` without a sign-in), again whatever the session state says. It
 reads the tenant's display name (a raw `Invoke-MgGraphRequest` for `v1.0/organization`) only when
 the session state is `Own` and the organization's `id` is that tenant, else returns `''`.
 `Install-OPIMConfiguration` without `-TenantId` takes that tenant, and without one writes
@@ -647,10 +771,10 @@ write, and `N/A` for any other.
 cmdlet carries on past a terminating error `Initialize-OPIMAuth` raises, and would then send under
 the session or the ARM token an earlier sign-in left. So `Initialize-OPIMAuth` first refuses a
 sign-in when a latched command stands on the call stack OUTSIDE the one that called it
-(`Get-OPIMSignInRefusal -OutsideCaller`, BL-74, `:176-180`): the terminating `SignInRefused`,
+(`Get-OPIMSignInRefusal -OutsideCaller`, BL-74, `:216-220`): the terminating `SignInRefused`,
 before any prompt, latching nothing. Otherwise it latches the calling command (`Lock-OPIMSignIn`,
-`:191`) and releases it only on a success (`Unlock-OPIMSignIn`): at the cached return (`:264`) and
-as its last statement (`:637`). Every refusal and terminating error, and a failed Azure sign-in,
+`:231`) and releases it only on a success (`Unlock-OPIMSignIn`): at the cached return (`:329`) and
+as its last statement (`:753`). Every refusal and terminating error, and a failed Azure sign-in,
 leave it latched, and both transports then refuse that command's requests with `SignInRefused`:
 `Invoke-OPIMGraphRequest` reads the latch before each request, straight after the session gate (a
 changed session is still `GraphSessionChanged`) and outside the `try` that sends, and
@@ -665,12 +789,12 @@ claims step-up and the token-rejected retry latch `Invoke-OPIMGraphSingle`, the 
 `Invoke-OPIMGraphRequest` that makes every Graph request, whose retry gates then find it, and the
 ARM transport's one refresh after a 401 latches `Invoke-OPIMArmWithRefresh`, the function nested in
 `Invoke-OPIMArmRequest` that calls `Initialize-OPIMAuth -IncludeARM -ForceRefresh`
-(`Invoke-OPIMArmRequest.ps1:348-360`), whose retry's ARM gate then finds it. Static tests in
+(`Invoke-OPIMArmRequest.ps1:354-366`), whose retry's ARM gate then finds it. Static tests in
 `tests/Unit/Private/Lock-OPIMSignIn.Tests.ps1` hold both halves.
 
 **The ARM gate.** `Invoke-OPIMArmRequest` calls `Get-OPIMArmRefusal` before every request it sends
 -- the first attempt, each throttled retry, the retry after a 401 refresh and every page
-(`Invoke-OPIMArmRequest.ps1:133-141`) -- and throws what it returns instead of sending. It returns
+(`Invoke-OPIMArmRequest.ps1:139-147`) -- and throws what it returns instead of sending. It returns
 `SignInRefused` for a latched command -- reading the latch only once the latch table exists -- and
 then reads the claims of the ARM token itself, not a record of them (OPIM-08, A3): `TenantMismatch`
 (`New-OPIMTenantMismatchError -Source Azure`) when its `tid` is not the tenant of the session's
@@ -680,7 +804,7 @@ or either cannot be read (`Get-OPIMArmRefusal.ps1:49-86`). No Az context is read
 holds no sign-in (no state, a state that is not a dictionary, or a state with only `DeviceCode`, as
 in unit tests that mock `Initialize-OPIMAuth`), or the state holds no ARM token, it reads nothing
 and returns nothing; the transport then refuses the request itself, for its missing token, with
-`ArmTokenAcquisitionFailed` (`Invoke-OPIMArmRequest.ps1:143-159`). The three `*-OPIMAzureRole`
+`ArmTokenAcquisitionFailed` (`Invoke-OPIMArmRequest.ps1:149-165`). The three `*-OPIMAzureRole`
 cmdlets call no gate of their own: the refusal reaches them as a record thrown by the transport,
 which the catch around the request scrubs and writes as itself. In the `Enable-OPIMAzureRole -Wait`
 poll that catch ends the wait for that role only: nothing is returned for it -- the activation
@@ -691,31 +815,33 @@ first `Microsoft.Identity.Client` assembly (4.x or 5.x) in any registered `Assem
 normally the copy `Microsoft.Graph.Authentication` loads into its own; AzAuth ships its own (4.83.1
 in AzAuth 2.9.0, beside 4.82.1 in Microsoft.Graph.Authentication 2.36.0), which can be found first
 once it is loaded -- falling back to loading the DLL from Microsoft.Graph.Authentication's folder
-(`Get-OPIMMsalApplication.ps1:57-76`). It builds a public client application for the Microsoft
-Graph Command Line Tools public client id -- no app registration -- with the authority
-`https://login.microsoftonline.com/<tenant>` and the redirect URI `http://localhost` (`:93-140`).
-The application is cached in `$script:_OPIMMsalApp`, its tenant in `$script:_OPIMMsalAppTenantId`,
-and it is rebuilt only when the tenant changes (`:35-38`, `:154-155`). The reflection is of two
-kinds. `Create`, `WithAuthority`, `WithRedirectUri` (`Get-OPIMMsalApplication.ps1:113-140`),
-`AcquireTokenSilent` and `AcquireTokenInteractive` (`Initialize-OPIMAuth.ps1:320-327`, `:376-381`)
+(`Get-OPIMMsalApplication.ps1:82-101`). It builds a public client application for the Microsoft
+Graph Command Line Tools public client id -- no app registration -- with the authority built from
+the cloud table (`AuthorityHost` followed by the tenant: `https://login.microsoftonline.com/<tenant>`
+for `Global`, the cloud's authority host for the others) and the redirect URI `http://localhost`
+(`:118-167`). The application is cached in `$script:_OPIMMsalApp`, its tenant in
+`$script:_OPIMMsalAppTenantId` and its cloud in `$script:_OPIMMsalAppEnvironment`, and it is rebuilt
+only when the tenant or the cloud changes (`:54-63`, `:181-183`). The reflection is of two
+kinds. `Create`, `WithAuthority`, `WithRedirectUri` (`Get-OPIMMsalApplication.ps1:140-167`),
+`AcquireTokenSilent` and `AcquireTokenInteractive` (`Initialize-OPIMAuth.ps1:387-394`, `:443-448`)
 and `AcquireTokenWithDeviceCode` (`Invoke-OPIMDeviceCodeAuth.ps1:61-68`) are found by name through
 `GetMethods()` and filtered on parameter count -- and, for `WithAuthority`, `AcquireTokenSilent`,
 `AcquireTokenInteractive` and `AcquireTokenWithDeviceCode`, also on parameter type NAME -- because
 types from the Graph SDK's load context are not identical to the same types in the default one (the
-source's own comments: `Initialize-OPIMAuth.ps1:303-306`, `Get-OPIMMsalApplication.ps1:109-112`).
+source's own comments: `Initialize-OPIMAuth.ps1:370-373`, `Get-OPIMMsalApplication.ps1:136-139`).
 A typed `GetMethod(name, [Type[]])` is used only with `[bool]` or `[string]` parameters --
 `WithForceRefresh`, `WithUseEmbeddedWebView`, `WithLoginHint`, `WithClaims`
-(`Initialize-OPIMAuth.ps1:341`, `:388`, `:395`, `:403`, and `WithClaims` again at
+(`Initialize-OPIMAuth.ps1:408`, `:455`, `:462`, `:470`, and `WithClaims` again at
 `Invoke-OPIMDeviceCodeAuth.ps1:116`) -- or with none: `GetMethod('Build')`
-(`Get-OPIMMsalApplication.ps1:143`).
+(`Get-OPIMMsalApplication.ps1:170`).
 
 **Acquisition order, outside device code mode** (in device code mode the interactive step is
 replaced; see the next paragraph): `AcquireTokenSilent` when an account is cached and no claims
 challenge was given, chained with `.WithForceRefresh($true)` under `-ForceRefresh`
-(`Initialize-OPIMAuth.ps1:317-357`); otherwise, or when that fails, `AcquireTokenInteractive` in
+(`Initialize-OPIMAuth.ps1:384-424`); otherwise, or when that fails, `AcquireTokenInteractive` in
 the SYSTEM BROWSER -- `.WithUseEmbeddedWebView($false)`, no WAM, no embedded view -- with a login
-hint for a cached account and `.WithClaims()` for an ACRS step-up (`:372-433`). An interactive
-failure is the terminating `InteractiveAuthFailed` (`:418-432`; a headless system cannot open the
+hint for a cached account and `.WithClaims()` for an ACRS step-up (`:439-500`). An interactive
+failure is the terminating `InteractiveAuthFailed` (`:485-499`; a headless system cannot open the
 browser).
 
 **Every token's tenant is checked, in either mode.** `Get-OPIMTokenTenantId` reads the `tid` claim
@@ -724,51 +850,58 @@ token as a SecureString and handles the plaintext and the payload through .NET c
 (`System.Text.Json`, never `ConvertFrom-Json`), since PowerShell module logging records every value
 bound to a command parameter. `Get-OPIMTokenObjectId` reads the `oid` claim the same way. In
 `Initialize-OPIMAuth` the plaintext `$AuthResult.AccessToken` is read only by the `NoAccessToken`
-check (`:435`) and by the `NetworkCredential` constructor that turns it into the SecureString
-(`:449`), and the plaintext ARM token, `$ArmResult.Token`, only by its own empty check (`:579`) and
-constructor (`:590`); neither is bound to a command parameter, and every command receives the
+check (`:502`) and by the `NetworkCredential` constructor that turns it into the SecureString
+(`:516`), and the plaintext ARM token, `$ArmResult.Token`, only by its own empty check (`:695`) and
+constructor (`:706`); neither is bound to a command parameter, and every command receives the
 SecureString. Static tests hold both rules: 'binds no plaintext token to a command' in
 `Get-OPIMTokenTenantId.Tests.ps1` and `Get-OPIMTokenObjectId.Tests.ps1`, and 'binds the plaintext
-token to no command' in `Initialize-OPIMAuth.Tests.ps1`, which covers both tokens.
+token to no command' in `Initialize-OPIMAuth.Tests.ps1`, which covers both tokens and restricts
+EVERY read of `.AccessToken` and `.Token` in the function -- in a splatted hashtable, behind a
+variable or in a method call as much as in a command's own arguments, and quoted
+(`$Result.'AccessToken'`) as much as bare, since it reads the member's string value and not its
+source text, though not a member named by an expression -- to the `NetworkCredential`
+constructor (once for each) and a truthiness test in an `if` (once for each), and the constructor's
+result to `.SecurePassword`, never `.Password`.
 `Initialize-OPIMAuth` compares the Graph token's `tid` with the tenant asked for: the GUID
-requested, else the session's recorded `TokenTenantId` (`:276-282`, `:449-457`). A token for another
+requested, else the session's recorded `TokenTenantId` (`:346-352`, `:518-529`). A token for another
 tenant, or one whose `tid` cannot be read, ends the function with the terminating `TenantMismatch`,
 whose message names only the requested tenant, before the token reaches `Connect-MgGraph` or the
 auth state. A first sign-in under `organizations` or a new domain has nothing to compare with yet;
 its token's `tid` is recorded instead. The same SecureString is then handed to
 `Connect-MgGraph -AccessToken` inside a `try` whose `catch` scrubs the record first and rethrows it
-as terminating (`:465-470`), so a failed hand-off still writes no auth state. The Graph token's
-`oid` is recorded as `ObjectId` (`:485`), the account every ARM token is then held to.
+as terminating (`:541-546`), so a failed hand-off still writes no auth state. The Graph token's
+`oid` is recorded as `ObjectId` (`:578`), the account every ARM token is then held to.
 
 **Device code (`-DeviceCode`).** A machine without a browser signs in with a device code instead of
-the system browser. `Connect-OPIM`, `Enable-OPIMMyRole` and `Disable-OPIMMyRole` take the switch as
-their last parameter and hand it down to `Initialize-OPIMAuth`; without it nothing changes.
+the system browser. `Connect-OPIM`, `Enable-OPIMMyRole` and `Disable-OPIMMyRole` take the switch
+(the one parameter after it is `-Environment`, which is last) and hand it down to
+`Initialize-OPIMAuth`; without it nothing changes.
 
 - **The mode is remembered.** `Initialize-OPIMAuth` stores it as `DeviceCode` in
-  `$script:_OPIMAuthState` (`Initialize-OPIMAuth.ps1:500-515`), and every later sign-in reads it
+  `$script:_OPIMAuthState` (`Initialize-OPIMAuth.ps1:572-588`), and every later sign-in reads it
   from there: the silent refresh, the token-rejected retry and the ACRS step-up in
   `Invoke-OPIMGraphRequest`, and the ARM transport's refresh after a 401, pass no `-DeviceCode` and
   still sign in with a code. `-DeviceCode` on a session whose token is still valid starts no Graph
-  sign-in; it only sets the mode for the next one (`:213-219`), while with `-IncludeARM` Azure can
+  sign-in; it only sets the mode for the next one (`:285-291`), while with `-IncludeARM` Azure can
   still sign in, and then with a device code. `Disconnect-OPIM` clears the state, and the mode with
   it.
-- **Before the first sign-in the state holds only `DeviceCode`** (`:217`). The cache checks at
-  `:225-247` need `TenantId` and `GraphTokenExpiry`, so such a state never counts as a cached token,
-  and a failed first sign-in -- a declined or expired code, Ctrl+C -- keeps the mode: the next call
-  asks for a code again instead of opening the system browser, until `Disconnect-OPIM`. The
-  token-rejected retry in `Invoke-OPIMGraphRequest` checks only that a state exists
-  (`Invoke-OPIMGraphRequest.ps1:563`), but a pillar cmdlet never reaches it on such a state: the
+- **Before the first sign-in the state holds only `DeviceCode`** (`:289`). The cache checks at
+  `:248-275` and `:301-312` need `TenantId` and `GraphTokenExpiry`, so such a state never counts as a
+  cached token, and a failed first sign-in -- a declined or expired code, Ctrl+C -- keeps the mode:
+  the next call asks for a code again instead of opening the system browser, until
+  `Disconnect-OPIM`. The token-rejected retry in `Invoke-OPIMGraphRequest` checks only that a state
+  exists (`Invoke-OPIMGraphRequest.ps1:565`), but a pillar cmdlet never reaches it on such a state: the
   failed sign-in left the cmdlet latched, so the wrapper refuses its requests with `SignInRefused`
   before sending.
 - **The mode lives in the module instance of the runspace that signed in.** A
   `Connect-OPIM -DeviceCode` inside a job does not carry over to the window's runspace, where the
   next cmdlet would sign in with the system browser.
 - **Graph.** After the silent attempt, `Invoke-OPIMDeviceCodeAuth` runs in place of the interactive
-  branch (`Initialize-OPIMAuth.ps1:359-370`), and that branch is gated on `-not $UseDeviceCode`
-  (`:374`): a session in device code mode NEVER falls back to the system browser, which a machine
+  branch (`Initialize-OPIMAuth.ps1:426-437`), and that branch is gated on `-not $UseDeviceCode`
+  (`:441`): a session in device code mode NEVER falls back to the system browser, which a machine
   without one could not open. A `$null` result from the helper is the terminating `NoAccessToken`.
   The call sits in a `try` whose `catch` scrubs first and rethrows through
-  `$PSCmdlet.ThrowTerminatingError` (`:362-369`): the helper's `DeviceCodeAuthFailed` is only
+  `$PSCmdlet.ThrowTerminatingError` (`:429-436`): the helper's `DeviceCodeAuthFailed` is only
   statement-terminating for its caller, so without the rethrow `Initialize-OPIMAuth` ran on and
   added a misleading `NoAccessToken` after it.
 - **The callback is compiled, not a script block.** `Invoke-OPIMDeviceCodeAuth` calls MSAL's
@@ -790,9 +923,9 @@ their last parameter and hand it down to `Initialize-OPIMAuth`; without it nothi
   exception; so is an application without the method (`:70-79`). Stopping the command cancels the
   flow (`:160-166`).
 - **Azure.** With `-IncludeARM` the session's mode passes `-DeviceCode` to AzAuth's `Get-AzToken`
-  in place of `-Interactive` (`Initialize-OPIMAuth.ps1:550`), still with `-Tenant` set to the tenant
+  in place of `-Interactive` (`Initialize-OPIMAuth.ps1:627`), still with `-Tenant` set to the tenant
   of the session's Graph token. AzAuth writes its sign-in instruction, with the code, as a WARNING.
-  `Invoke-OPIMAzTokenCall`, the function nested in `Initialize-OPIMAuth` (`:156-169`), calls
+  `Invoke-OPIMAzTokenCall`, the function nested in `Initialize-OPIMAuth` (`:196-209`), calls
   `Get-AzToken` with `-WarningAction Continue 3>&1` and writes each warning's message with
   `Write-Information -Tags 'OPIMDeviceCode' -InformationAction Continue` while `Get-AzToken` still
   waits, so the Azure code reaches the same stream, with the same tag, as the Graph code, and shows
@@ -804,7 +937,8 @@ their last parameter and hand it down to `Initialize-OPIMAuth`; without it nothi
   yet.
 
 **The Graph scope list is fixed -- do not change it.** One prompt covers every PIM surface
-(`Initialize-OPIMAuth.ps1:294-301`):
+(`Initialize-OPIMAuth.ps1:361-368`), in every cloud (Microsoft Learn lists the short names such as
+`User.Read` as valid in a national cloud):
 
 ```text
 RoleEligibilitySchedule.ReadWrite.Directory
@@ -817,21 +951,24 @@ User.Read
 
 **Azure is signed in separately, through AzAuth.** The Microsoft Graph Command Line Tools app is
 not authorised for Azure Resource Manager, so `-IncludeARM` acquires an ARM token with AzAuth's
-`Get-AzToken -Resource 'https://management.azure.com' -Tenant <TokenTenantId>`: with `-Interactive`
-(a browser; AzAuth's WAM broker, `-Broker`, is never asked for), or with `-DeviceCode` in device
-code mode (`Initialize-OPIMAuth.ps1:518-631`). It runs after Graph, cached or not, since it needs
-the session's tenant: the `tid` of the Graph token (`TokenTenantId`), always a GUID, also for a
-session pinned by domain or first signed in under `organizations`. A state without one is refused
-with `TenantMismatch` rather than signed in to Azure without a tenant (`:524-529`). A state that
-records no `ObjectId` is refused with `AccountMismatch -Unreadable` before `Get-AzToken` is called
-(`:534-537`): no ARM token could be kept for it, so AzAuth shows no sign-in. The session's ARM token
-is reused without a call only when it was issued for that tenant and for the account of the Graph
-token (`ArmTokenTenantId`, `ArmTokenObjectId`) and has more than 5 minutes left (`:540-544`).
-`Get-AzToken` waits up to 900 seconds for the sign-in (`TimeoutSeconds`, `:549`), as long as a
+`Get-AzToken -Resource <ArmHost of the session's cloud> -Tenant <TokenTenantId>` -- the resource is
+`https://management.azure.com` for `Global`, the table's host for the other clouds (see **Clouds**):
+with `-Interactive` (a browser; AzAuth's WAM broker, `-Broker`, is never asked for), or with
+`-DeviceCode` in device code mode (`Initialize-OPIMAuth.ps1:591-747`). It runs after Graph, cached
+or not, since it needs the session's tenant: the `tid` of the Graph token (`TokenTenantId`), always
+a GUID, also for a session pinned by domain or first signed in under `organizations`. A state
+without one is refused with `TenantMismatch` rather than signed in to Azure without a tenant
+(`:597-602`). A state that records no `ObjectId` is refused with `AccountMismatch -Unreadable`
+before `Get-AzToken` is called (`:607-610`): no ARM token could be kept for it, so AzAuth shows no
+sign-in. The session's ARM token is reused without a call only when it was issued for that tenant
+and for the account of the Graph token (`ArmTokenTenantId`, `ArmTokenObjectId`), for the resource of
+the session's cloud (`ArmResourceUrl`), and has more than 5 minutes left (`:616-621`).
+`Get-AzToken` waits up to 900 seconds for the sign-in (`TimeoutSeconds`, `:626`), as long as a
 device code lives; AzAuth's own default is 120. AzAuth keeps one credential per process, so the
-first ARM sign-in of a session -- after `Disconnect-OPIM`, or once a new Graph token or a refused
-ARM token dropped the old ARM token -- and every `-ForceRefresh` pass `-Force`, which rebuilds it
-(`:551-555`). Every new ARM token is checked before it is kept (A3, OPIM-47; `:594-620`): its `tid`
+first ARM sign-in of a session -- after `Disconnect-OPIM`, or once a new Graph token, a switch of
+cloud or a refused ARM token dropped the old ARM token -- every `-ForceRefresh`, and every sign-in
+whose resource differs from the one the state holds pass `-Force`, which rebuilds it
+(`:628-638`). Every new ARM token is checked before it is kept (A3, OPIM-47; `:710-736`): its `tid`
 must be the session's tenant -- `TenantMismatch` (`New-OPIMTenantMismatchError -Source Azure`)
 otherwise, with `-Unreadable` when it cannot be read -- and its `oid` the Graph token's `ObjectId`
 -- `AccountMismatch` (`New-OPIMAccountMismatchError`) otherwise, with `-Unreadable` when it cannot
@@ -839,10 +976,10 @@ be read. Each refusal is terminating, names only the session tenant and stores n
 and it also sets the state's five ARM keys to `$null`: AzAuth's credential has just answered for
 another tenant or account, so the next `-IncludeARM` sign-in rebuilds it with `-Force` instead of
 reusing it. Only then is the token kept, as a SecureString in the auth state and never on disk,
-with its expiry, tenant, account and resource (`:622-626`). A new Graph token keeps the ARM token
-only when it is for the same `tid` and `oid`; otherwise the ARM token is dropped, never carried,
-and the next `-IncludeARM` signs in again (`:491-515`). A failed `Get-AzToken`, or one that returns
-no token, is the terminating `AzureConnectFailed` (`:556-588`), which keeps AzAuth's message but
+with its expiry, tenant, account and resource (`:738-742`). A new Graph token keeps the ARM token
+only when it is for the same `tid`, `oid` and cloud; otherwise the ARM token is dropped, never
+carried, and the next `-IncludeARM` signs in again (`:562-588`). A failed `Get-AzToken`, or one that
+returns no token, is the terminating `AzureConnectFailed` (`:660-704`), which keeps AzAuth's message but
 neither its exception nor its record (its target object is the session tenant); when `Get-AzToken`
 cannot be found at all (a `CommandNotFoundException`), its message says instead that AzAuth is not
 installed or could not be loaded and that AzAuth 2.9.0 needs PowerShell 7.4 or later. It ends
@@ -851,14 +988,16 @@ its ARM requests are refused with `SignInRefused`. No Az context, no Az
 configuration (WAM, the login experience) and no subscription prompt take part: every ARM request
 names its scope in its path, and the module sends it itself (see the ARM transport below).
 
-**State.** `$script:_OPIMAuthState` holds `TenantId`, `TokenTenantId`, `AuthorityTenant`,
-`Account`, `ObjectId`, `GraphTokenExpiry`, `ClaimsSatisfied`, `DeviceCode`,
+**State.** `$script:_OPIMAuthState` holds `TenantId`, `TokenTenantId`, `Environment`,
+`AuthorityTenant`, `Account`, `ObjectId`, `GraphTokenExpiry`, `ClaimsSatisfied`, `DeviceCode`,
 `GraphSessionFingerprint`, and for Azure `ArmToken`, `ArmTokenExpiry`, `ArmTokenTenantId`,
-`ArmTokenObjectId` and `ArmResourceUrl` (`Initialize-OPIMAuth.ps1:500-515`, filled at `:622-626`)
+`ArmTokenObjectId` and `ArmResourceUrl` (`Initialize-OPIMAuth.ps1:572-588`, filled at `:738-742`)
 -- no Graph token, and the ARM token only as a SecureString (A6) -- except that before the first
-Graph sign-in it holds `DeviceCode` alone, when `-DeviceCode` was given (`:213-219`). `TenantId` is
+Graph sign-in it holds `DeviceCode` alone, when `-DeviceCode` was given (`:285-291`). `TenantId` is
 the label the session is pinned to: as requested, or the token's `tid` after a first sign-in under
-`organizations`. `TokenTenantId` is the `tid` of the current Graph token, `ObjectId` its `oid`, and
+`organizations`. `TokenTenantId` is the `tid` of the current Graph token, `ObjectId` its `oid`,
+`Environment` the canonical name of the cloud the session signed in to (`Global`, `USGov`,
+`USGovDoD` or `China`; a state without the key is `Global`), and
 `AuthorityTenant` the tenant the MSAL application was built for. `GraphSessionFingerprint` is the
 Graph SDK session the module connected: eight properties of its context as compact JSON, written
 even when it is `$null`; a state without the key is `Untracked` and is never compared. `ArmToken` is
@@ -876,24 +1015,25 @@ application's in-memory cache (`$script:_OPIMMsalApp`) and in the Graph SDK's co
 **`Disconnect-OPIM`** clears the module's tokens, the Azure Resource Manager token included, and
 disconnects the Microsoft Graph session; AzAuth keeps its own sign-in in the PowerShell process until
 the module's next Azure sign-in rebuilds it or the process ends. It sets `$script:_OPIMAuthState`,
-`$script:_OPIMMsalApp` and `$script:_OPIMMsalAppTenantId` to `$null` -- which forgets the ARM token
-and a device code mode with the rest of the state -- then calls `Disconnect-MgGraph` with
+`$script:_OPIMMsalApp`, `$script:_OPIMMsalAppTenantId` and `$script:_OPIMMsalAppEnvironment` to
+`$null` -- which forgets the ARM token, the cloud and a device code mode with the rest of the state
+-- then calls `Disconnect-MgGraph` with
 `-ErrorAction SilentlyContinue` inside a `try` whose `catch` discards the error
-(`Disconnect-OPIM.ps1:39-43`). `Disconnect-MgGraph` ends whatever Graph session the process holds,
+(`Disconnect-OPIM.ps1:40-46`). `Disconnect-MgGraph` ends whatever Graph session the process holds,
 which is why it is the way out of `GraphSessionChanged`. The module calls no Az command, so it ends
 no Az context, and its ARM token lived only in the state. AzAuth's own credential is process-wide
 and `Disconnect-OPIM` cannot clear it: the next ARM sign-in rebuilds it (`Get-AzToken -Force`), and
 otherwise it ends with the process.
 
 **`Invoke-OPIMGraphRequest` owns the Graph transport.** Every request goes through its nested
-`Invoke-OPIMGraphSingle` (`Invoke-OPIMGraphRequest.ps1:404-594`), which calls
-`Invoke-MgGraphRequest` with `-Verbose:$false -ErrorAction Stop` (`:406-411`). Before the first
+`Invoke-OPIMGraphSingle` (`Invoke-OPIMGraphRequest.ps1:406-596`), which calls
+`Invoke-MgGraphRequest` with `-Verbose:$false -ErrorAction Stop` (`:408-413`). Before the first
 attempt, each throttled retry and each other retry it runs the session gate and then the latch gate,
 outside the `try` that sends, and throws `GraphSessionChanged` or `SignInRefused` without sending
-(`:450-465`, `:530-541`, `:569-579`); the `return` after each throw keeps a caller under
+(`:452-467`, `:532-543`, `:571-581`); the `return` after each throw keeps a caller under
 `-ErrorAction SilentlyContinue` from sending anyway. For the same reason each retry's catch sets a
 flag (`$ClaimsRetryFailed`, `$RefreshRetryFailed`) before its throw, read straight after the `try`
-(`:550`, `:589`): under `SilentlyContinue` with no `try` up the call stack a throw inside a catch
+(`:552`, `:591`): under `SilentlyContinue` with no `try` up the call stack a throw inside a catch
 resumes after the whole `try` statement, and a failed claims retry would otherwise fall on into the
 token-rejected retry -- a refresh and a third send. On a failure:
 
@@ -918,20 +1058,20 @@ token-rejected retry -- a refresh and a third send. On a failure:
 2. **ACRS claims-challenge retry.** It looks for `claims=` in the `WWW-Authenticate` header, the
    response body and the exception message, and decodes the value as URL-encoded JSON (the PIM 400
    `RoleAssignmentRequestAcrsValidationFailed` body form), base64url JSON (the 401 step-up header
-   form) or raw JSON (`:138-175`). It then calls `Initialize-OPIMAuth -ClaimsChallenge` for one
+   form) or raw JSON (`:139-176`). It then calls `Initialize-OPIMAuth -ClaimsChallenge` for one
    step-up -- interactive, or with a device code in device code mode, which it does not pass but
    the auth state remembers -- and retries exactly once; a second failure is converted and thrown,
-   and ends the request (`:517-551`).
+   and ends the request (`:521-552`).
 3. **Token-rejected retry.** A 401 that is not a claims challenge -- its status read from either
    form the Graph SDK raises a failure in, an `HttpResponseException`'s `Response` or the
    `ResponseStatusCode` of the Kiota `ApiException` inside the `AggregateException` the SDK's retry
    handler throws (OPIM-28) -- or a message matching `InvalidAuthenticationToken`, `CompactToken`,
    `token is expired` or `Lifetime validation failed`, calls `Initialize-OPIMAuth -ForceRefresh` and
-   retries once (`:559-590`).
+   retries once (`:561-591`).
 4. **Error conversion.** Anything else is thrown as `Convert-GraphHttpException`'s record, whose
    `FullyQualifiedErrorId` is the Graph `error.code` -- or, when the body carries none, the input
    record's own `FullyQualifiedErrorId` string (its exception's type name when that is empty), with
-   the HTTP status in the message, `HTTP 403: ...` (`:593`). No error id is invented. It is always a
+   the HTTP status in the message, `HTTP 403: ...` (`:595`). No error id is invented. It is always a
    NEW record that never chains the raw exception. A caller receives a response or a thrown
    `ErrorRecord` -- there is no side-channel protocol.
 
@@ -947,30 +1087,35 @@ never a shorter list, with `PartialValue`, `NextLink` and `PageNumber` as note p
 no body is a failed read too, raised with the same three facts and no error id (category
 `InvalidResult`); a first page with no body is an empty list. A next link is followed only when it
 is an absolute https URI on the first request's host (OPIM-46) -- the host of `-Uri` when that is an
-absolute https URI, else `graph.microsoft.com`, since the module's tokens are for the global
-Microsoft Graph only; any other link would carry the session's bearer token elsewhere, so it is an
+absolute https URI, else the Graph host of the session's cloud (OPIM-29), the host of the cloud
+table's `GraphServiceRoot` for the auth state's `Environment`: `graph.microsoft.com` in the global
+cloud, and also for a state that records no cloud (`:619-637`), since the module's tokens are for
+the Microsoft Graph of the cloud the session signed in to only; a cloud the table does not know is
+an error before anything is sent, never the global host. Any other link would carry the session's
+bearer token elsewhere, so it is an
 error with no error id (category `SecurityError`), with the same three facts (`PageNumber` is the
 page that would have been read), and is never sent. Its message names neither the link nor its
-host. A sovereign cloud (OPIM-29) needs the endpoint owner to supply its host. There is no page
+host. There is no page
 cap, since a cap would cut a list short silently, and verbose output never prints a next link.
 
 **`Invoke-OPIMArmRequest` owns the Azure Resource Manager transport.** It is the module's only ARM
 call site. The caller passes a path that carries its pinned `api-version` and no host, and the
 transport sends it with `Invoke-WebRequest`, `-Authentication Bearer`, `-Token` (the state's
-`ArmToken`) and `-SkipHttpErrorCheck` (`Invoke-OPIMArmRequest.ps1:182-199`): the SecureString goes
+`ArmToken`) and `-SkipHttpErrorCheck` (`Invoke-OPIMArmRequest.ps1:188-205`): the SecureString goes
 to `Invoke-WebRequest` as it is, so the module never makes the token plaintext,
 `-Authentication Bearer` refuses a uri that is not https, and the header is not replayed on a
 redirect. Every send is made by the nested `Invoke-OPIMArmSingle`, which before each one -- the
 first attempt, each throttled retry, the retry after a 401 and every page -- runs three checks
-outside the `try` that sends (`:133-179`): the ARM gate (above); a token check,
+outside the `try` that sends (`:139-185`): the ARM gate (above); a token check,
 `ArmTokenAcquisitionFailed` when the state holds no `TokenTenantId` or no non-empty `ArmToken`; and
 a host check, which refuses a uri built from the host and the path that is not an absolute https
-uri on the session's ARM host (`ArmResourceUrl`, else `https://management.azure.com`) and on that
+uri on the session's ARM host (`ArmResourceUrl`, else the table's `ArmHost` for the state's cloud,
+else `https://management.azure.com` when there is no state at all; `:121-128`) and on that
 url's port (443), with a terminating error with no error id (category `SecurityError`) whose message
 names neither the path nor a host. A body is sent as JSON with the content type
 `application/json; charset=utf-8`, so text outside ASCII reaches ARM as written. Every `throw` is
 followed by a `return`, and the catch around the send sets a flag read straight after the `try`
-(`:197-218`), since under `-ErrorAction SilentlyContinue` with no `try` up the call stack a function
+(`:203-224`), since under `-ErrorAction SilentlyContinue` with no `try` up the call stack a function
 carries on past its own throw. Every one of its catches calls
 `Remove-OPIMErrorRecord -Record $PSItem` first. On a response:
 
@@ -978,14 +1123,14 @@ carries on past its own throw. Every one of its catches calls
    `Retry-After` value (delta-seconds or an HTTP-date) or, for a 429 without one, an exponential
    fallback, each wait held to 1-120 seconds, within a 300-second wait budget per request (per page
    under `-All`), a 900-second deadline per call and at most 10 throttle retries per request
-   (`:298-326`, `:396-445`). `Retry-After` is the only header ever read, by one helper
-   (`:272-285`). A spent budget ends in the converted error, never a shorter list.
+   (`:304-332`, `:402-451`). `Retry-After` is the only header ever read, by one helper
+   (`:278-291`). A spent budget ends in the converted error, never a shorter list.
 2. **One refresh per call.** A 401 calls `Initialize-OPIMAuth -IncludeARM -ForceRefresh` in the
    nested `Invoke-OPIMArmWithRefresh` and retries once; that budget of one is shared by every page
-   of the call (`:344-360`). The throttle loop wraps the refresh, so a throttled response never
+   of the call (`:350-366`). The throttle loop wraps the refresh, so a throttled response never
    spends it.
 3. **Error conversion.** Any other non-2xx answer is thrown as `Convert-OPIMArmHttpException`'s
-   record (`:469-473`; see **Error Handling**). A request that gets no response at all is
+   record (`:475-479`; see **Error Handling**). A request that gets no response at all is
    `ArmTransportError` (category `ConnectionError`), and a 2xx body that does not parse is
    `ArmTransportError` (category `InvalidResult`). So is a 2xx answer with no body to a `PUT`,
    `POST` or `PATCH`, whose message says the request may have been accepted; an empty answer to a
@@ -993,7 +1138,7 @@ carries on past its own throw. Every one of its catches calls
    `ErrorRecord`.
 
 **An ARM list is read to its last page (A5).** With `-All` the transport follows `nextLink` (or
-`@nextLink`) and returns `[PSCustomObject]@{ value = <every page's items> }` (`:524-613`). A next
+`@nextLink`) and returns `[PSCustomObject]@{ value = <every page's items> }` (`:530-619`). A next
 link is followed only when it is an absolute https URI on the session's ARM host, and then by its
 path and query on that host; any other link would carry the ARM token elsewhere, so it is a
 terminating error with no error id (category `SecurityError`) whose message names neither the link
@@ -1008,16 +1153,16 @@ end. The verbose stream names each request by its method and its path without th
 where a next link's skip token would sit.
 
 **The places that call a transport command directly today**, from a `Select-String` over
-`source/` on 2026-10-09, listed as they are:
+`source/` on 2026-10-10, listed as they are:
 
 | File:line (under `source/`) | Call |
 |---|---|
-| `Private/Invoke-OPIMGraphRequest.ps1:467, 543, 581` | `Invoke-MgGraphRequest` -- the Graph wrapper itself |
-| `Private/Get-OPIMCurrentTenantInfo.ps1:60` | `Invoke-MgGraphRequest` for `v1.0/organization` (tenant display name) |
-| `Private/Initialize-OPIMAuth.ps1:471` | `Connect-MgGraph -AccessToken` |
-| `Private/Initialize-OPIMAuth.ps1:158, 160` | AzAuth's `Get-AzToken` (the ARM sign-in; `:160` in device code mode) |
-| `Private/Invoke-OPIMArmRequest.ps1:199` | `Invoke-WebRequest` -- the ARM transport itself |
-| `Public/Disconnect-OPIM.ps1:43` | `Disconnect-MgGraph` |
+| `Private/Invoke-OPIMGraphRequest.ps1:469, 545, 583` | `Invoke-MgGraphRequest` -- the Graph wrapper itself |
+| `Private/Get-OPIMCurrentTenantInfo.ps1:72` | `Invoke-MgGraphRequest` for `v1.0/organization` (tenant display name) |
+| `Private/Initialize-OPIMAuth.ps1:542` | `Connect-MgGraph -AccessToken` (with `-Environment` off `Global`) |
+| `Private/Initialize-OPIMAuth.ps1:198, 200` | AzAuth's `Get-AzToken` (the ARM sign-in; `:200` in device code mode) |
+| `Private/Invoke-OPIMArmRequest.ps1:205` | `Invoke-WebRequest` -- the ARM transport itself |
+| `Public/Disconnect-OPIM.ps1:46` | `Disconnect-MgGraph` |
 
 `Get-OPIMCurrentTenantInfo` makes its call best-effort, and only under the module's own Graph
 session. `Wait-OPIMDirectoryRole` is not in the table: it polls in sequence through
@@ -1029,7 +1174,7 @@ no Az module is required by a `#requires` line or declared in the manifest, and 
 can see in the source text under `source/` (see its known limits in the QA gate list under
 **Module Layout**).
 
-Beside these, the module reads `Get-MgContext` (`Get-OPIMMsalApplication.ps1:46`,
+Beside these, the module reads `Get-MgContext` (`Get-OPIMMsalApplication.ps1:71`,
 `Get-OPIMGraphSessionFingerprint.ps1:47`), and it reads no Az context.
 
 ---
@@ -1238,6 +1383,23 @@ expand `group,principal`.
 - `-AccessType` on `Get-OPIMEntraIDGroup` -- `member` or `owner`; with `-GroupName`, a display name
   means the membership unless `owner` is given.
 
+**`-Environment`** (OPIM-29) is the one public parameter that names a cloud, and it exists on
+`Connect-OPIM`, `Enable-OPIMMyRole`, `Disable-OPIMMyRole`, `Install-OPIMConfiguration` and
+`Set-OPIMConfiguration` only (`Initialize-OPIMAuth` carries it too):
+
+- `[ValidateSet('Global', 'USGov', 'USGovDoD', 'China')] [string]` with NO default, and the LAST
+  parameter of its command -- after `-DeviceCode` on `Connect-OPIM`, `Enable-OPIMMyRole` and
+  `Disable-OPIMMyRole`, after `-InputObject` on the two configuration writers. "Was it named" is
+  `if ($Environment)`, and the variable is never assigned inside the function: it carries the
+  `ValidateSet`. The pillar cmdlets take none and pass none, so they keep the session's cloud.
+- On the sign-in commands it names the cloud to sign in to (Microsoft 365 GCC is `Global`). Without
+  it, `Connect-OPIM` passes none and `Initialize-OPIMAuth` keeps the session's cloud for the
+  session's tenant (and `Global` for any other); a `-TenantAlias` passes the cloud the alias stores
+  (`Global` when it stores none), and `-Environment` wins over it. `Enable-OPIMMyRole` and
+  `Disable-OPIMMyRole` hand the same cloud to both of their sign-ins.
+- On `Install-OPIMConfiguration` and `Set-OPIMConfiguration` it names the cloud the alias stores; see
+  **Configuration CRUD**. No new error id and no new output type came with it.
+
 **Name resolution.** `Resolve-OPIMSchedule` (private) is the single resolver behind `-RoleName` /
 `-GroupName` on all nine pillar cmdlets; they call it with `-ErrorAction Stop` inside a `try` whose
 catch scrubs first and writes the record. It lists the pillar's posts through the `Get-OPIM*`
@@ -1296,23 +1458,43 @@ parentheses, in a different format per pillar:
 
 The completers call the `Get-OPIM*` cmdlets through `& ([scriptblock]::Create('Get-OPIM...'))`, so a
 completion authenticates and calls Graph or ARM on the prompt path. Keep that call form -- see
-**Testing Conventions**. The two directory completers pass `-WarningAction SilentlyContinue` in
-that string, since `Get-OPIMDirectoryRole` warns about an administrative unit it cannot read, and
-a completion must not print a warning into the prompt.
+**Testing Conventions**. The two directory completers and the two Azure completers pass
+`-WarningAction SilentlyContinue` in that string, since `Get-OPIMDirectoryRole` warns about an
+administrative unit it cannot read and the Azure sign-in behind `Get-OPIMAzureRole` can warn about
+an `AZURE_AUTHORITY_HOST` that names another authority, and a completion must not print a warning
+into the prompt. Each completer's warning context in `ArgumentCompleters.Tests.ps1` holds it.
 
 **Configuration CRUD.** The four `*-OPIMConfiguration` cmdlets manage `TenantMap.psd1`, which
 `Connect-OPIM -TenantAlias` and `pim`/`unpim` read:
 
 | Cmdlet | Operation | Notes |
 |---|---|---|
-| `Install-OPIMConfiguration` | Create | Mandatory `-TenantAlias`; `-TenantId` (the tenant of the module's own sign-in when omitted, never a Graph context started outside the module; `TenantIdNotResolvable` without a sign-in); accepts pipeline input from `Get-OPIM*`. Error if the alias exists. `ConfirmImpact = 'High'`. |
-| `Get-OPIMConfiguration` | Read | Optional `-TenantAlias` filter. Returns `Omnicit.PIM.TenantConfiguration` objects. |
-| `Set-OPIMConfiguration` | Update | Mandatory `-TenantAlias`; optional `-TenantId`; accepts pipeline input from `Get-OPIM*`. Error if the alias is missing. `ConfirmImpact = 'High'`. |
+| `Install-OPIMConfiguration` | Create | Mandatory `-TenantAlias`; `-TenantId` (the tenant of the module's own sign-in when omitted, never a Graph context started outside the module; `TenantIdNotResolvable` without a sign-in); optional `-Environment`; accepts pipeline input from `Get-OPIM*`. Error if the alias exists. `ConfirmImpact = 'High'`. |
+| `Get-OPIMConfiguration` | Read | Optional `-TenantAlias` filter. Returns `Omnicit.PIM.TenantConfiguration` objects, with an `Environment` property (and column) beside `TenantId`. |
+| `Set-OPIMConfiguration` | Update | Mandatory `-TenantAlias`; optional `-TenantId` and `-Environment`; accepts pipeline input from `Get-OPIM*`. Error if the alias is missing. `ConfirmImpact = 'High'`. |
 | `Remove-OPIMConfiguration` | Delete | Mandatory `-TenantAlias`. Error if the alias or the file is missing. `ConfirmImpact = 'High'`. |
 
 `Install-OPIMConfiguration` is create-only and has no `-Force`; an existing alias is changed with
 `Set-OPIMConfiguration`. The private `Export-OPIMTenantMap` owns the PSD1 serialization and is
 called by `Install`, `Set` and `Remove`; never inline it.
+
+**The stored cloud (A12).** An entry may carry `Environment`, written by `Export-OPIMTenantMap`
+straight after `TenantId` with the same single-quote doubling and only when the entry has one;
+`Install` and `Set` never write `Global`, so a file with no key means the global cloud and every
+existing map keeps working. `Get-OPIMTenantMapEnvironment` is the single interpreter of the stored
+cloud for a sign-in (`Get-` and `Set-OPIMConfiguration` read the raw key by design, as just below),
+and the sign-in commands call it (see **Clouds** under **Authentication Architecture**).
+`Install-OPIMConfiguration` resolves the cloud from `-Environment` (canonical name through `Get-OPIMCloudEndpoint`); without it
+the alias takes the cloud of the module's own sign-in (`Get-OPIMCurrentTenantInfo`) only when it
+also takes that sign-in's tenant -- no `-TenantId`, or one equal to the sign-in's tenant ID,
+compared `OrdinalIgnoreCase` -- and is `Global` for any other tenant, and `-Environment Global`
+stores no cloud, also for the tenant of a sovereign sign-in. `Set-OPIMConfiguration` resolves it
+from `-Environment`; without it the stored value stays EXACTLY as written, an unknown cloud
+included, since Set changes only what it is asked to (the sign-in commands refuse the value), and
+`-Environment Global` removes the key. `Get-OPIMConfiguration` shows the stored value as written and
+`Global` for an alias that stores none. A 0.6.x module ignores the key and writes the file back
+without it (so do the 0.7.0 previews before this one), and this version then signs in to `Global`
+for those aliases.
 
 **The stored keys (OPIM-10, A13, OPIM-22).** `DirectoryRoles` holds
 `roleDefinitionId|directoryScopeId`, `EntraIDGroups` holds `groupId_accessId`, and `AzureRoles` the
@@ -1349,7 +1531,8 @@ eligibility's scope.
   `$FakeRole`, `$ScheduleId`. Exceptions: automatic variables (`$PSCmdlet`, `$PSItem`, `$_`),
   preference variables (`$ErrorActionPreference`), boolean/null literals (`$null`, `$true`,
   `$false`), and the module-scope caches (`$script:_OPIMAuthState`, `$script:_OPIMMsalApp`,
-  `$script:_OPIMMsalAppTenantId`, `$script:_OPIMSignInLatch`). Older code --
+  `$script:_OPIMMsalAppTenantId`, `$script:_OPIMMsalAppEnvironment`, `$script:_OPIMSignInLatch`).
+  Older code --
   `Wait-OPIMDirectoryRole` in particular -- still has camelCase locals; new and edited lines follow
   the rule.
 - **One function per file; filename must equal function name.**
@@ -1731,7 +1914,7 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   request') throw `SignInRefused`, `TenantMismatch` and `AccountMismatch` and assert that the cmdlet
   writes each as itself, sends nothing more and calls no gate of its own.
 - **`Get-OPIMMsalApplication` is stopped at its `Get-MgContext` call in every test.** Past that
-  call (`Get-OPIMMsalApplication.ps1:46`) it builds a real MSAL `PublicClientApplication` by
+  call (`Get-OPIMMsalApplication.ps1:71`) it builds a real MSAL `PublicClientApplication` by
   reflection, which no mock intercepts. Its two build-path tests therefore mock `Get-MgContext` to
   throw a sentinel and assert that the sentinel stopped the call with the cache unchanged, and
   testhygiene allows a run of `Get-OPIMMsalApplication` -- a call, or a string that can run it (a
@@ -2040,6 +2223,21 @@ version drift.
   run from a string -- and every Az module named there, in a `#requires` line or the manifest; its
   known limits are listed under **Module Layout**, and review has to catch those shapes. Do not
   answer it with an entry in its allow list, since a new Az dependency is a design decision.
+- **Never write a cloud host outside `Get-OPIMCloudEndpoint`.** Every Graph, Azure Resource Manager
+  and sign-in authority host of the four clouds lives in that one table (A11); read it
+  (`GraphServiceRoot`, `ArmHost`, `AuthorityHost`, ...) instead of typing `graph.microsoft.us` or
+  `login.chinacloudapi.cn` anywhere else under `source/`. The cloud-host pass of
+  `tests/QA/sourcehygiene.tests.ps1` refuses a second copy in a string of any kind and exempts only
+  the table and the one ARM fallback literal in `Invoke-OPIMArmRequest.ps1`, by its shape; do not
+  answer it with a third exemption. A new cloud is a row in the table, an entry in every
+  `-Environment` `ValidateSet`, and an update of the pass's written control and of every place that
+  documents the hosts, in one change. An unknown cloud is an error, never a fallback to `Global`, and
+  Microsoft 365 GCC is `Global`, not a cloud of its own.
+- **`AZURE_AUTHORITY_HOST` is written in one place**: around `Get-AzToken` in `Initialize-OPIMAuth`,
+  only off `Global`, with the previous value read into an untyped variable, the override flag set
+  before the write, and the value put back (or the variable deleted with `[NullString]::Value`) in
+  a `finally` (see **Clouds** under **Authentication Architecture**). Never leave the process pinned
+  to a sovereign authority, and never write it for `Global`.
 - **`ErrorRecord.ErrorDetails` requires `[ErrorDetails]::new()`** -- see **Error Handling**.
 - **Never use bare `throw` in public functions** -- see **Error Handling**.
 - **A local `$Filter` shadows the `-Filter` parameter** -- name it `$OdataFilter`.

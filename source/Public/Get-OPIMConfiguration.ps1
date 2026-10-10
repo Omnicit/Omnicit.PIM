@@ -4,8 +4,13 @@ function Get-OPIMConfiguration {
     Retrieve the TenantMap configuration file and its contents.
     .DESCRIPTION
     Reads the TenantMap.psd1 file managed by Install-OPIMConfiguration and returns one
-    typed PSCustomObject per tenant alias. Each object exposes the TenantAlias, TenantId,
-    and any stored role/group filter lists (DirectoryRoles, EntraIDGroups, AzureRoles).
+    typed PSCustomObject per tenant alias. Each object exposes the TenantAlias, TenantId, the
+    Environment (the cloud the alias signs in to), and any stored role/group filter lists
+    (DirectoryRoles, EntraIDGroups, AzureRoles).
+
+    Environment is the cloud as the file holds it, such as USGov, and Global for an alias that
+    stores none, which signs in to the global cloud. A cloud written in the file that Omnicit.PIM
+    does not know is shown as written; Connect-OPIM, pim and unpim refuse it.
 
     Use -TenantAlias to retrieve a single entry. Without it all aliases are returned.
     .EXAMPLE
@@ -60,9 +65,12 @@ function Get-OPIMConfiguration {
             return
         }
 
+        # A12: the cloud as stored; the entry can also be the old string form, which stores none.
+        $V = $MapData[$TenantAlias]
         $Out = [PSCustomObject]@{
             TenantAlias    = $TenantAlias
             TenantId       = $MapData[$TenantAlias].TenantId
+            Environment    = if ($V -is [System.Collections.IDictionary] -and -not [string]::IsNullOrWhiteSpace([string]$V['Environment'])) { [string]$V['Environment'] } else { 'Global' }
             DirectoryRoles = $MapData[$TenantAlias].DirectoryRoles
             EntraIDGroups  = $MapData[$TenantAlias].EntraIDGroups
             AzureRoles     = $MapData[$TenantAlias].AzureRoles
@@ -77,6 +85,7 @@ function Get-OPIMConfiguration {
         $Out = [PSCustomObject]@{
             TenantAlias    = $Kv.Key
             TenantId       = if ($V -is [System.Collections.IDictionary]) { $V.TenantId } else { [string]$V }
+            Environment    = if ($V -is [System.Collections.IDictionary] -and -not [string]::IsNullOrWhiteSpace([string]$V['Environment'])) { [string]$V['Environment'] } else { 'Global' }
             DirectoryRoles = if ($V -is [System.Collections.IDictionary]) { $V.DirectoryRoles } else { $null }
             EntraIDGroups  = if ($V -is [System.Collections.IDictionary]) { $V.EntraIDGroups } else { $null }
             AzureRoles     = if ($V -is [System.Collections.IDictionary]) { $V.AzureRoles } else { $null }

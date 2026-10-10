@@ -6,14 +6,16 @@ function Export-OPIMTenantMap {
     .DESCRIPTION
     Shared internal helper used by Install-OPIMConfiguration, Set-OPIMConfiguration, and
     Remove-OPIMConfiguration to serialize the in-memory TenantMap to a PowerShell data file.
-    All entries are sorted alphabetically by alias key. The alias, the TenantId and every role or
-    group value are written between single quotes with each single-quote character doubled
-    (the straight apostrophe and U+2018, U+2019, U+201A and U+201B), so the file reads back
-    whatever they hold.
+    All entries are sorted alphabetically by alias key. The alias, the TenantId, the Environment
+    and every role or group value are written between single quotes with each single-quote
+    character doubled (the straight apostrophe and U+2018, U+2019, U+201A and U+201B), so the file
+    reads back whatever they hold.
 
     .PARAMETER MapData
     The full TenantMap hashtable to serialize. Each value must be a hashtable with at minimum
-    a TenantId key. Optional keys: DirectoryRoles, EntraIDGroups, AzureRoles (each an array).
+    a TenantId key. Optional keys: Environment (the cloud of the alias, written straight after the
+    TenantId and only when it is not empty), DirectoryRoles, EntraIDGroups, AzureRoles (each an
+    array).
 
     .PARAMETER Path
     Absolute path to the target .psd1 file.
@@ -46,6 +48,12 @@ function Export-OPIMTenantMap {
         $TenantIdVal = if ($ConfigValue -is [System.Collections.IDictionary]) { $ConfigValue.TenantId } else { $ConfigValue }
         $TenantIdText = [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$TenantIdVal)
         [void]$StringBuilder.AppendLine("        TenantId       = '$TenantIdText'")
+        # A12: the cloud of the alias, written only when the entry has one. Install- and
+        # Set-OPIMConfiguration leave it out for Global, so a file with no key means the global cloud.
+        if ($ConfigValue -is [System.Collections.IDictionary] -and $ConfigValue['Environment']) {
+            $EnvironmentText = [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$ConfigValue['Environment'])
+            [void]$StringBuilder.AppendLine("        Environment    = '$EnvironmentText'")
+        }
         if ($ConfigValue -is [System.Collections.IDictionary]) {
             foreach ($RoleKey in 'DirectoryRoles', 'EntraIDGroups', 'AzureRoles') {
                 if ($ConfigValue[$RoleKey]) {

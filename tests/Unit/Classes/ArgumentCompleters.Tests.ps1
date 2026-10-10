@@ -99,6 +99,31 @@ Describe 'AzureActivatedRoleCompleter' {
         }
     }
 
+    Context 'When Get-OPIMAzureRole writes a warning' {
+        It 'calls Get-OPIMAzureRole with -WarningAction SilentlyContinue, so the completion prints no warning' {
+            # The Azure sign-in behind Get-OPIMAzureRole can warn (AZURE_AUTHORITY_HOST names another
+            # authority). The mock body runs in the test scope, so it takes the preference the completer
+            # passed from $PesterBoundParameters. The cmdlet is named with its module, since the build's
+            # own Write-Warning would count it.
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole {
+                $WarningPreference = if ($PesterBoundParameters.ContainsKey('WarningAction')) {
+                    $PesterBoundParameters['WarningAction']
+                } else { 'Continue' }
+                Microsoft.PowerShell.Utility\Write-Warning 'AZURE_AUTHORITY_HOST names another authority.'
+                [PSCustomObject]@{ RoleDefinitionDisplayName = 'Contributor'; ScopeDisplayName = 'My Subscription'; Name = 'inst-001' }
+            }
+            $Output = InModuleScope Omnicit.PIM {
+                $Completer = [AzureActivatedRoleCompleter]::new()
+                $Completer.CompleteArgument('Disable-OPIMAzureRole', 'RoleName', '', $null, @{})
+            } 3>&1
+            @($Output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }).Count | Should -Be 0
+            (@($Output | Where-Object { $_ -is [System.Management.Automation.CompletionResult] }).Count) | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Activated -and $PesterBoundParameters['WarningAction'] -eq 'SilentlyContinue'
+            }
+        }
+    }
+
     Context 'When Get-OPIMAzureRole throws' {
         It 'returns null without propagating the exception' {
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { throw 'API unavailable' }
@@ -213,6 +238,31 @@ Describe 'AzureEligibleRoleCompleter' {
                 $Completer = [AzureEligibleRoleCompleter]::new()
                 $Result = $Completer.CompleteArgument('Enable-OPIMAzureRole', 'RoleName', 'Reader [', $null, @{})
                 (@($Result.CompletionText) -join '|') | Should -Be "'Reader [Preview]'"
+            }
+        }
+    }
+
+    Context 'When Get-OPIMAzureRole writes a warning' {
+        It 'calls Get-OPIMAzureRole with -WarningAction SilentlyContinue, so the completion prints no warning' {
+            # The Azure sign-in behind Get-OPIMAzureRole can warn (AZURE_AUTHORITY_HOST names another
+            # authority). The mock body runs in the test scope, so it takes the preference the completer
+            # passed from $PesterBoundParameters. The cmdlet is named with its module, since the build's
+            # own Write-Warning would count it.
+            Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole {
+                $WarningPreference = if ($PesterBoundParameters.ContainsKey('WarningAction')) {
+                    $PesterBoundParameters['WarningAction']
+                } else { 'Continue' }
+                Microsoft.PowerShell.Utility\Write-Warning 'AZURE_AUTHORITY_HOST names another authority.'
+                [PSCustomObject]@{ RoleDefinitionDisplayName = 'Contributor'; ScopeDisplayName = 'My Subscription'; Name = 'elig-001' }
+            }
+            $Output = InModuleScope Omnicit.PIM {
+                $Completer = [AzureEligibleRoleCompleter]::new()
+                $Completer.CompleteArgument('Enable-OPIMAzureRole', 'RoleName', '', $null, @{})
+            } 3>&1
+            @($Output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }).Count | Should -Be 0
+            (@($Output | Where-Object { $_ -is [System.Management.Automation.CompletionResult] }).Count) | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter {
+                -not $Activated -and $PesterBoundParameters['WarningAction'] -eq 'SilentlyContinue'
             }
         }
     }

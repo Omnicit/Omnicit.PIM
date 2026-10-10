@@ -19,14 +19,22 @@ function Get-OPIMCurrentTenantInfo {
     and so it is when the call fails, for example without the scope to read the organization. A
     failed call is scrubbed with Remove-OPIMErrorRecord and not reported.
 
+    Environment is the cloud of that sign-in, as the auth state records it ('Global', 'USGov',
+    'USGovDoD' or 'China'): 'Global' for a state that records none, since the global cloud was the
+    only one before the cloud was recorded, and $null without a sign-in, when there is no cloud to
+    give.
+
     Install-OPIMConfiguration calls this to take the tenant of a new alias when -TenantId is
-    omitted, and Install-OPIMConfiguration and Set-OPIMConfiguration call it for the display name in
-    their confirmation prompt, which they show only for the tenant they write.
+    omitted, to give the alias the cloud of the sign-in when it takes the sign-in's tenant, and,
+    with Set-OPIMConfiguration, for the display name in their confirmation prompt, which they show
+    only for the tenant they write.
 
     .OUTPUTS
     PSCustomObject with:
       TenantId    [string] -- the tenant GUID of the module's sign-in, or $null without one.
       DisplayName [string] -- the display name of that tenant, or an empty string.
+      Environment [string] -- the cloud of the sign-in, 'Global' when the state records none, or
+                              $null without a sign-in.
 
     .EXAMPLE
     $Info = Get-OPIMCurrentTenantInfo
@@ -46,11 +54,15 @@ function Get-OPIMCurrentTenantInfo {
         return [PSCustomObject]@{
             TenantId    = $null
             DisplayName = ''
+            Environment = $null
         }
     }
 
     [string]$TenantId    = $State['TokenTenantId']
     [string]$DisplayName = ''
+    # A12: the cloud of the module's sign-in. A state that records none is the global cloud, the only
+    # one before the cloud was recorded (ruling D1).
+    [string]$Environment = if ($State['Environment']) { [string]$State['Environment'] } else { 'Global' }
 
     # The display name only under the module's own Graph session, and only of that tenant: under
     # another session the call would answer for that session's tenant.
@@ -73,5 +85,6 @@ function Get-OPIMCurrentTenantInfo {
     return [PSCustomObject]@{
         TenantId    = $TenantId
         DisplayName = $DisplayName
+        Environment = $Environment
     }
 }

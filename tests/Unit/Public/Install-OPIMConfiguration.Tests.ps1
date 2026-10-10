@@ -476,6 +476,175 @@ Describe 'Install-OPIMConfiguration' {
         }
     }
 
+    Context 'When -Environment is given (A12)' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'stores Environment for -Environment USGov' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Environment USGov -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000001'\r?\n\s+Environment\s+=\s+'USGov'"
+        }
+
+        It 'stores the canonical name of the cloud for -Environment <Typed>' -ForEach @(
+            @{ Typed = 'usgovdod'; Canonical = 'USGovDoD' }
+            @{ Typed = 'CHINA'; Canonical = 'China' }
+            @{ Typed = 'USGov'; Canonical = 'USGov' }
+        ) {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Environment $Typed -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            # Case-sensitive: the file holds the canonical name, whatever case was typed.
+            $script:writtenContent | Should -MatchExactly ("Environment\s+=\s+'" + $Canonical + "'")
+        }
+
+        It 'stores no Environment for -Environment Global' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Environment Global -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
+            $script:writtenContent | Should -Not -BeNullOrEmpty
+            $script:writtenContent | Should -Not -Match 'Environment'
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000001'"
+        }
+
+        It 'stores no Environment without -Environment and without a sign-in cloud' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:writtenContent | Should -Not -BeNullOrEmpty
+            $script:writtenContent | Should -Not -Match 'Environment'
+        }
+
+        It 'stores the cloud with the roles that are piped' {
+            $Role = [PSCustomObject]@{ id = 'elig-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/' }
+            $Role.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
+            $Role | Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Environment China
+            $script:writtenContent | Should -Match "Environment\s+=\s+'China'\r?\n\s+DirectoryRoles\s+=\s+@\('role-def-001\|/'\)"
+        }
+
+        It 'names the cloud in a verbose line' {
+            $Verbose = Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Environment USGov -Verbose 4>&1 |
+                Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message }
+            @($Verbose | Where-Object { $_ -like "*cloud*USGov*" }).Count | Should -Be 1
+        }
+
+        It 'names Global in the verbose line when no cloud is stored' {
+            $Verbose = Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Verbose 4>&1 |
+                Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message }
+            @($Verbose | Where-Object { $_ -like "*cloud*Global*" }).Count | Should -Be 1
+        }
+
+        It 'refuses an unknown -Environment at binding' {
+            $Caught = $null
+            try {
+                Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Environment Germany
+            } catch {
+                $Caught = $PSItem
+            }
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -BeExactly 'ParameterArgumentValidationError,Install-OPIMConfiguration'
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
+            Should -Invoke Get-OPIMCurrentTenantInfo -ModuleName Omnicit.PIM -Times 0 -Scope It
+        }
+
+        It 'keeps -Environment the last parameter, after -InputObject, so no position moves' {
+            $Names = @((Get-Command Install-OPIMConfiguration).ScriptBlock.Ast.Body.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+            $Names[-1] | Should -BeExactly 'Environment'
+            $Names[-2] | Should -BeExactly 'InputObject'
+        }
+    }
+
+    Context 'When the module is signed in to a sovereign cloud (A12, review focus 5)' {
+        # The cloud is a property of the tenant: without -Environment, a new alias takes the cloud of the
+        # module's sign-in only when it also takes that sign-in's tenant. Any other tenant is Global.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            Mock -ModuleName Omnicit.PIM Test-Path { return $true }  -ParameterFilter { $Path -notlike '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Test-Path { return $false } -ParameterFilter { $Path -like '*.psd1' }
+            Mock -ModuleName Omnicit.PIM Set-Content { $script:writtenContent = $Value }
+            Mock -ModuleName Omnicit.PIM Get-OPIMCurrentTenantInfo {
+                return [PSCustomObject]@{ TenantId = '00000000-0000-0000-0000-000000000001'; DisplayName = 'Mock Tenant'; Environment = 'USGov' }
+            }
+        }
+        BeforeEach {
+            $script:writtenContent = $null
+        }
+
+        It 'takes the cloud of the module''s sign-in with its tenant' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000001'\r?\n\s+Environment\s+=\s+'USGov'"
+        }
+
+        It 'takes the cloud of the sign-in for a -TenantId equal to the sign-in''s tenant' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -WarningVariable Warns -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $Warns.Count | Should -Be 0
+            $script:writtenContent | Should -Match "Environment\s+=\s+'USGov'"
+        }
+
+        It 'takes the cloud of the sign-in for a -TenantId equal to the sign-in''s tenant in another letter case' {
+            Mock -ModuleName Omnicit.PIM Get-OPIMCurrentTenantInfo {
+                return [PSCustomObject]@{ TenantId = 'aaaaaaaa-0000-0000-0000-00000000000a'; DisplayName = 'Mock Tenant'; Environment = 'China' }
+            }
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId 'AAAAAAAA-0000-0000-0000-00000000000A' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:writtenContent | Should -Match "Environment\s+=\s+'China'"
+        }
+
+        It 'stores no cloud for another tenant than the sign-in''s' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000099' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            $Errs.Count | Should -Be 0
+            $script:writtenContent | Should -Match "TenantId\s+=\s+'00000000-0000-0000-0000-000000000099'"
+            $script:writtenContent | Should -Not -Match 'Environment'
+        }
+
+        It 'stores the cloud that -Environment names, whatever the sign-in''s cloud, also for another tenant' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000099' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Environment China -WarningAction SilentlyContinue
+            $script:writtenContent | Should -Match "Environment\s+=\s+'China'"
+            $script:writtenContent | Should -Not -Match "Environment\s+=\s+'USGov'"
+        }
+
+        It 'stores no cloud for -Environment Global, whatever the sign-in''s cloud, for its own tenant' {
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Environment Global
+            $script:writtenContent | Should -Not -BeNullOrEmpty
+            $script:writtenContent | Should -Not -Match 'Environment'
+        }
+
+        It 'stores no cloud when the sign-in is in the Global cloud' {
+            Mock -ModuleName Omnicit.PIM Get-OPIMCurrentTenantInfo {
+                return [PSCustomObject]@{ TenantId = '00000000-0000-0000-0000-000000000001'; DisplayName = 'Mock Tenant'; Environment = 'Global' }
+            }
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Not -BeNullOrEmpty
+            $script:writtenContent | Should -Not -Match 'Environment'
+        }
+
+        It 'stores no cloud when the sign-in records none' {
+            Mock -ModuleName Omnicit.PIM Get-OPIMCurrentTenantInfo {
+                return [PSCustomObject]@{ TenantId = '00000000-0000-0000-0000-000000000001'; DisplayName = 'Mock Tenant' }
+            }
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Not -BeNullOrEmpty
+            $script:writtenContent | Should -Not -Match 'Environment'
+        }
+
+        It 'stores no cloud when the module holds no sign-in and a -TenantId is given' {
+            Mock -ModuleName Omnicit.PIM Get-OPIMCurrentTenantInfo {
+                return [PSCustomObject]@{ TenantId = $null; DisplayName = ''; Environment = $null }
+            }
+            Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1'
+            $script:writtenContent | Should -Not -BeNullOrEmpty
+            $script:writtenContent | Should -Not -Match 'Environment'
+        }
+    }
+
     Context 'The default -TenantMapPath (OPIM-21)' {
         BeforeAll {
             $Param = (Get-Command Install-OPIMConfiguration).ScriptBlock.Ast.Body.ParamBlock.Parameters |

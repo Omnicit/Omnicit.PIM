@@ -101,6 +101,54 @@ LONG DESCRIPTION
     Manager token, acquired automatically on first use or when -IncludeARM is passed to
     Connect-OPIM. Disconnect-OPIM clears it with the rest of the session.
 
+    SOVEREIGN CLOUDS
+
+    Connect-OPIM, Enable-OPIMMyRole (pim) and Disable-OPIMMyRole (unpim) take -Environment to sign
+    in to a cloud other than the global one, and Install-OPIMConfiguration and
+    Set-OPIMConfiguration take it to store the cloud of a tenant alias. The values, in any letter
+    case:
+
+      Global      the worldwide cloud, the default; Microsoft 365 GCC is a Global tenant
+      USGov       US Government, GCC High
+      USGovDoD    US Government, DoD
+      China       operated by 21Vianet
+
+    The cloud decides the sign-in authority (Microsoft Graph through MSAL, Azure through AzAuth),
+    the Microsoft Graph host and the Azure Resource Manager host; the Microsoft Graph permissions
+    requested are the same in every cloud. An unknown cloud is an error, never a fallback to Global.
+
+    The cloud follows the tenant. Without -Environment, a command for the tenant the session is
+    signed in to, or one that names no tenant, keeps the session's cloud, and a command for any
+    other tenant uses Global. Naming another cloud signs in again, also for the same tenant. An
+    organisation has a separate tenant, with its own ID, in each cloud. A session pinned by a
+    tenant ID is held to that ID, so a switch of cloud without -TenantId asks the other cloud for
+    a token for the same ID and fails: the other cloud most likely refuses that ID before any
+    token exists, and TenantMismatch comes only if a token for another tenant does come back.
+    This is untested live. Name the tenant of the cloud you switch to, or an alias that stores it.
+
+      Connect-OPIM -TenantId 'contoso.onmicrosoft.us' -Environment USGov
+
+    A tenant alias stores its cloud in the optional Environment key of its TenantMap.psd1 entry,
+    written only when it is not Global. Connect-OPIM, pim and unpim with -TenantAlias sign in to
+    the cloud the alias stores (Global when it stores none), unless -Environment names another.
+    Set-OPIMConfiguration -Environment Global removes the stored cloud. A stored cloud the module
+    does not know is an error, and nothing is signed in. A 0.6.x module ignores the key and signs
+    in to the global cloud, where a sovereign tenant does not exist. It also writes the map back
+    without the key of every alias whenever it changes it (Install-, Set- or
+    Remove-OPIMConfiguration), as do the earlier 0.7.0 previews, and this version then signs in
+    to Global for those aliases.
+
+    AzAuth has no authority parameter; Azure.Identity reads the AZURE_AUTHORITY_HOST environment
+    variable. For a sovereign cloud the module sets it only around the Azure sign-in and puts it
+    back afterwards, a failed sign-in included; for Global it writes nothing. The variable is
+    process-wide, so another thread's Azure sign-in during that call would read it too.
+
+    Only Global is verified live. USGov, USGovDoD and China are covered by unit tests only and are
+    untested live. For China, Microsoft Learn says that globally registered apps do not replicate
+    to Azure China and that you must register your own application there; the module signs in to
+    Microsoft Graph with the Microsoft Graph Command Line Tools public client, so a China sign-in
+    may fail until the module can take an application of the tenant's own. This is unverified.
+
     CONFIGURATION (TENANTMAP)
 
     The *-OPIMConfiguration cmdlets manage a TenantMap.psd1 file that maps
@@ -108,6 +156,7 @@ LONG DESCRIPTION
     A directory role is stored with its scope (roleDefinitionId|directoryScopeId), and
     Enable-OPIMMyRole and Disable-OPIMMyRole activate and deactivate it only at that scope; an
     entry written by 0.5.x holds the roleDefinitionId alone and means the role at '/' only.
+    An entry may also store the cloud of its tenant as Environment (see SOVEREIGN CLOUDS).
 
       Install-OPIMConfiguration  Create a new alias
       Get-OPIMConfiguration      Read current configuration
