@@ -31,14 +31,14 @@ Describe 'Get-OPIMDirectoryRole' {
 
         It 'calls Invoke-OPIMGraphRequest targeting roleEligibilitySchedules' {
             Get-OPIMDirectoryRole
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like '*roleEligibilitySchedules*'
             }
         }
 
         It 'calls Invoke-OPIMGraphRequest with filterByCurrentUser' {
             Get-OPIMDirectoryRole
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like "*filterByCurrentUser*"
             }
         }
@@ -56,7 +56,7 @@ Describe 'Get-OPIMDirectoryRole' {
         It 'sets the directoryScope property to the root scope shortcut without a second API call' {
             $Result = Get-OPIMDirectoryRole
             $Result.directoryScope.id | Should -Be '/'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It
         }
     }
 
@@ -84,7 +84,7 @@ Describe 'Get-OPIMDirectoryRole' {
 
         It 'calls Invoke-OPIMGraphRequest a second time to rehydrate the directoryScope' {
             Get-OPIMDirectoryRole
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like '*directory/administrativeUnits*'
             }
         }
@@ -255,7 +255,7 @@ Describe 'Get-OPIMDirectoryRole' {
 
         It 'calls Invoke-OPIMGraphRequest targeting roleAssignmentScheduleInstances' {
             Get-OPIMDirectoryRole -Activated
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like '*roleAssignmentScheduleInstances*'
             }
         }
@@ -406,14 +406,14 @@ Describe 'Get-OPIMDirectoryRole' {
 
         It 'calls Invoke-OPIMGraphRequest for roleEligibilitySchedules with filterByCurrentUser' {
             Get-OPIMDirectoryRole -All
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like '*roleEligibilitySchedules*' -and $Uri -like '*filterByCurrentUser*'
             }
         }
 
         It 'calls Invoke-OPIMGraphRequest for roleAssignmentScheduleInstances with filterByCurrentUser' {
             Get-OPIMDirectoryRole -All
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like '*roleAssignmentScheduleInstances*' -and $Uri -like '*filterByCurrentUser*'
             }
         }
@@ -449,7 +449,7 @@ Describe 'Get-OPIMDirectoryRole' {
 
         It 'queries both eligible and active endpoints with the id filter (dual-search)' {
             Get-OPIMDirectoryRole -Identity 'elig-001'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter {
                 $Uri -like "*id eq 'elig-001'*"
             }
         }
@@ -479,7 +479,7 @@ Describe 'Get-OPIMDirectoryRole' {
 
         It 'queries both eligible and active endpoints with the OData filter (dual-search)' {
             Get-OPIMDirectoryRole -Filter "roleDefinitionId eq 'role-def-001'"
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter {
                 $Uri -like "*roleDefinitionId eq 'role-def-001'*"
             }
         }

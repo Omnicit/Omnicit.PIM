@@ -90,7 +90,7 @@ Describe 'Set-OPIMConfiguration' {
 
         It 'calls Set-Content once' {
             Set-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000099' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Scope It
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
         }
 
         It 'writes the new TenantId into the PSD1 content' {

@@ -31,14 +31,14 @@ Describe 'Get-OPIMEntraIDGroup' {
 
         It 'calls Invoke-OPIMGraphRequest targeting eligibilitySchedules' {
             Get-OPIMEntraIDGroup
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like '*eligibilitySchedules*'
             }
         }
 
         It 'calls Invoke-OPIMGraphRequest with filterByCurrentUser' {
             Get-OPIMEntraIDGroup
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like "*filterByCurrentUser*"
             }
         }
@@ -78,7 +78,7 @@ Describe 'Get-OPIMEntraIDGroup' {
 
         It 'calls Invoke-OPIMGraphRequest targeting assignmentScheduleInstances' {
             Get-OPIMEntraIDGroup -Activated
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like '*assignmentScheduleInstances*'
             }
         }
@@ -110,14 +110,14 @@ Describe 'Get-OPIMEntraIDGroup' {
 
         It 'calls Invoke-OPIMGraphRequest for eligibilitySchedules with filterByCurrentUser' {
             Get-OPIMEntraIDGroup -All
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like '*eligibilitySchedules*' -and $Uri -like '*filterByCurrentUser*'
             }
         }
 
         It 'calls Invoke-OPIMGraphRequest for assignmentScheduleInstances with filterByCurrentUser' {
             Get-OPIMEntraIDGroup -All
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like '*assignmentScheduleInstances*' -and $Uri -like '*filterByCurrentUser*'
             }
         }
@@ -237,7 +237,7 @@ Describe 'Get-OPIMEntraIDGroup' {
 
         It 'queries both eligible and active endpoints with the id filter (dual-search)' {
             Get-OPIMEntraIDGroup -Identity 'elig-001'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter {
                 $Uri -like "*id eq 'elig-001'*"
             }
         }
@@ -257,7 +257,7 @@ Describe 'Get-OPIMEntraIDGroup' {
 
         It 'queries both eligible and active endpoints with the OData filter (dual-search)' {
             Get-OPIMEntraIDGroup -Filter "groupId eq 'group-001'"
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter {
                 $Uri -like "*groupId eq 'group-001'*"
             }
         }
@@ -273,14 +273,14 @@ Describe 'Get-OPIMEntraIDGroup' {
 
         It 'appends an accessId eq filter for member' {
             Get-OPIMEntraIDGroup -AccessType member
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like "*accessId eq 'member'*"
             }
         }
 
         It 'appends an accessId eq filter for owner' {
             Get-OPIMEntraIDGroup -AccessType owner
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like "*accessId eq 'owner'*"
             }
         }
@@ -300,7 +300,7 @@ Describe 'Get-OPIMEntraIDGroup' {
 
         It 'combines all filter parts and queries both endpoints (dual-search)' {
             Get-OPIMEntraIDGroup -Identity 'elig-001' -AccessType member -Filter "principalId eq 'principal-001'"
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter {
                 $Uri -like "*id eq 'elig-001'*" -and
                 $Uri -like "*accessId eq 'member'*" -and
                 $Uri -like "*principalId eq 'principal-001'*"
@@ -415,7 +415,7 @@ Describe 'Get-OPIMEntraIDGroup' {
 
         It 'includes accessId eq owner filter in both endpoint calls' {
             Get-OPIMEntraIDGroup -All -AccessType owner
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter {
                 $Uri -like "*accessId eq 'owner'*"
             }
         }

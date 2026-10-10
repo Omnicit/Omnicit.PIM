@@ -18,7 +18,7 @@ Describe 'Export-OPIMTenantMap' {
                     contoso = @{ TenantId = '00000000-0000-0000-0000-000000000001' }
                 }
                 Export-OPIMTenantMap -MapData $MapData -Path 'TestDrive:\TenantMap.psd1'
-                Should -Invoke Set-Content -Times 1 -Scope It
+                Should -Invoke Set-Content -Times 1 -Exactly -Scope It
             }
         }
 

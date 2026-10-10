@@ -46,7 +46,7 @@ Describe 'Install-OPIMConfiguration' {
 
         It 'calls Set-Content once to write the PSD1' {
             Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Scope It
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
         }
 
         It 'does not call New-Item when the directory already exists' {
@@ -312,7 +312,7 @@ Describe 'Install-OPIMConfiguration' {
 
         It 'silently ignores the unknown object and still calls Set-Content' {
             [PSCustomObject]@{ SomeProperty = 'value' } | Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Scope It
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
         }
     }
 
@@ -355,7 +355,7 @@ Describe 'Install-OPIMConfiguration' {
 
         It 'calls New-Item to create the directory' {
             Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\NewDir\TenantMap.psd1'
-            Should -Invoke New-Item -ModuleName Omnicit.PIM -Times 1 -Scope It -ParameterFilter { $ItemType -eq 'Directory' }
+            Should -Invoke New-Item -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It -ParameterFilter { $ItemType -eq 'Directory' }
         }
     }
 

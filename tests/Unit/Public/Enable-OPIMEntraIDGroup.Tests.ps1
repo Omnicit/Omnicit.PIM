@@ -72,7 +72,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
 
         It 'calls Invoke-OPIMGraphRequest with POST to the group assignmentScheduleRequests endpoint' {
             Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Uri -like '*privilegedAccess/group/assignmentScheduleRequests*'
             }
         }
@@ -84,28 +84,28 @@ Describe 'Enable-OPIMEntraIDGroup' {
 
         It 'sends selfActivate as the action in the request body' {
             Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.action -eq 'selfActivate'
             }
         }
 
         It 'sends the accessId from the resolved group in the request body' {
             Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.accessId -eq 'member'
             }
         }
 
         It 'uses AfterDuration expiration type by default' {
             Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.scheduleInfo.expiration.type -eq 'AfterDuration'
             }
         }
 
         It 'passes a PT1H ISO 8601 duration when -Hours defaults to 1' {
             Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.scheduleInfo.expiration.duration -eq 'PT1H'
             }
         }
@@ -143,7 +143,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
 
         It 'calls Invoke-OPIMGraphRequest once per group name supplied' {
             Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)', 'DevOps Team (elig-002)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Scope It -ParameterFilter { $Method -eq 'POST' }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
         }
     }
 
@@ -173,7 +173,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
 
         It 'calls Invoke-OPIMGraphRequest with the groupId and principalId from the piped group' {
             $fakeGroup | Enable-OPIMEntraIDGroup
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and
                 $Body.groupId -eq 'group-002' -and
                 $Body.principalId -eq 'principal-002'
@@ -182,7 +182,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
 
         It 'calls Invoke-OPIMGraphRequest with the accessId from the piped group' {
             $fakeGroup | Enable-OPIMEntraIDGroup
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.accessId -eq 'owner'
             }
         }
@@ -217,14 +217,14 @@ Describe 'Enable-OPIMEntraIDGroup' {
 
         It 'uses AfterDateTime expiration type when -Until is provided' {
             Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -Until $script:UntilDateTime
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.scheduleInfo.expiration.type -eq 'AfterDateTime'
             }
         }
 
         It 'does not include a duration in the request body when -Until is specified' {
             Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -Until $script:UntilDateTime
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and -not $Body.scheduleInfo.expiration.duration
             }
         }
@@ -350,14 +350,14 @@ Describe 'Enable-OPIMEntraIDGroup' {
 
         It 'passes PT4H ISO 8601 duration when -Hours 4 is specified' {
             Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -Hours 4
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.scheduleInfo.expiration.duration -eq 'PT4H'
             }
         }
 
         It 'passes PT8H ISO 8601 duration when -Hours 8 is specified' {
             Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -Hours 8
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.scheduleInfo.expiration.duration -eq 'PT8H'
             }
         }
@@ -435,7 +435,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
 
         It 'passes TicketNumber and TicketSystem in the ticketInfo request body' {
             Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -TicketNumber 'INC-456' -TicketSystem 'Jira'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and
                 $Body.ticketInfo.ticketNumber -eq 'INC-456' -and
                 $Body.ticketInfo.ticketSystem -eq 'Jira'
@@ -466,7 +466,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
 
         It 'passes the justification text in the request body' {
             Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -Justification 'Year-end reporting'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.justification -eq 'Year-end reporting'
             }
         }
@@ -848,7 +848,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
 
         It 'calls Invoke-OPIMGraphRequest once only (ACRS retry is handled inside Invoke-OPIMGraphRequest)' {
             Enable-OPIMEntraIDGroup -GroupName 'Finance Team (elig-001)' -ErrorAction SilentlyContinue
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It
         }
     }
 
@@ -883,7 +883,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
 
         It 'submits the selfActivate request' {
             Enable-OPIMEntraIDGroup -Identity 'elig-010'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It
         }
 
         It 'returns a PSCustomObject tagged with Omnicit.PIM.GroupAssignmentScheduleRequest' {
@@ -1007,7 +1007,7 @@ Describe 'Enable-OPIMEntraIDGroup' {
 
         It 'accepts GroupName as position 0, Justification as position 1, Hours as position 2' {
             Enable-OPIMEntraIDGroup 'Finance Team (elig-pos-001)' 'Project work' 2
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Body.justification -eq 'Project work' -and
                 $Body.scheduleInfo.expiration.duration -eq 'PT2H'
             }

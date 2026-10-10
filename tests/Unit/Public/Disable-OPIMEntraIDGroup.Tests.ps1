@@ -68,21 +68,21 @@ Describe 'Disable-OPIMEntraIDGroup' {
 
         It 'calls Invoke-OPIMGraphRequest with POST to the group assignmentScheduleRequests endpoint' {
             Disable-OPIMEntraIDGroup -GroupName 'Finance Team (instance-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Uri -like '*privilegedAccess/group/assignmentScheduleRequests*'
             }
         }
 
         It 'sends selfDeactivate as the action in the request body' {
             Disable-OPIMEntraIDGroup -GroupName 'Finance Team (instance-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.action -eq 'selfDeactivate'
             }
         }
 
         It 'sends the accessId from the resolved group in the request body' {
             Disable-OPIMEntraIDGroup -GroupName 'Finance Team (instance-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.accessId -eq 'member'
             }
         }
@@ -119,7 +119,7 @@ Describe 'Disable-OPIMEntraIDGroup' {
 
         It 'calls Invoke-OPIMGraphRequest with the groupId and principalId from the piped group' {
             $FakeGroup | Disable-OPIMEntraIDGroup
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and
                 $Body.groupId -eq 'group-002' -and
                 $Body.principalId -eq 'principal-002'
@@ -128,7 +128,7 @@ Describe 'Disable-OPIMEntraIDGroup' {
 
         It 'calls Invoke-OPIMGraphRequest with the accessId from the piped group' {
             $FakeGroup | Disable-OPIMEntraIDGroup
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.accessId -eq 'owner'
             }
         }
@@ -281,12 +281,12 @@ Describe 'Disable-OPIMEntraIDGroup' {
 
         It 'looks up the group via Get-OPIMEntraIDGroup -Activated -Identity' {
             Disable-OPIMEntraIDGroup -Identity 'instance-005'
-            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Exactly -Scope It
         }
 
         It 'submits the selfDeactivate request' {
             Disable-OPIMEntraIDGroup -Identity 'instance-005'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST'
             }
         }

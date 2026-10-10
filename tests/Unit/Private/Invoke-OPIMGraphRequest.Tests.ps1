@@ -115,7 +115,7 @@ Describe 'Invoke-OPIMGraphRequest' {
         It 'passes the URI to Invoke-MgGraphRequest' {
             InModuleScope Omnicit.PIM {
                 Invoke-OPIMGraphRequest -Uri 'v1.0/some/resource'
-                Should -Invoke Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                     $Uri -eq 'v1.0/some/resource'
                 }
             }
@@ -135,7 +135,7 @@ Describe 'Invoke-OPIMGraphRequest' {
             InModuleScope Omnicit.PIM {
                 $Result = Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{ action = 'selfActivate' }
                 $Result.id | Should -Be 'req-001'
-                Should -Invoke Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                     $Method -eq 'POST' -and $Uri -eq 'v1.0/some/requests'
                 }
             }
@@ -172,7 +172,7 @@ Describe 'Invoke-OPIMGraphRequest' {
         It 'does not retry on non-ACRS errors' {
             InModuleScope Omnicit.PIM {
                 try { Invoke-OPIMGraphRequest -Uri 'v1.0/some/resource' } catch {}
-                Should -Invoke Invoke-MgGraphRequest -Times 1 -Scope It
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
             }
         }
     }
@@ -355,7 +355,7 @@ Describe 'Invoke-OPIMGraphRequest' {
         It 'calls Initialize-OPIMAuth with the claims challenge on retry' {
             InModuleScope Omnicit.PIM {
                 try { Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{} } catch {}
-                Should -Invoke Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
                     $ClaimsChallenge -ne $null
                 }
             }
@@ -387,7 +387,7 @@ Describe 'Invoke-OPIMGraphRequest' {
             InModuleScope Omnicit.PIM {
                 $Result = Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{}
                 $Result.id | Should -Be 'req-001'
-                Should -Invoke Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
                     $ClaimsChallenge -match 'access_token' -and
                     $ClaimsChallenge -match 'acrs' -and
                     $ClaimsChallenge -match 'c1'
@@ -418,7 +418,7 @@ Describe 'Invoke-OPIMGraphRequest' {
             InModuleScope Omnicit.PIM {
                 $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/some/resource'
                 $Result.value[0].id | Should -Be 'after-refresh'
-                Should -Invoke Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
                     $ForceRefresh -eq $true
                 }
             }

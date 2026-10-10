@@ -223,7 +223,8 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   lacks `-ModuleName` outside `InModuleScope`, and either leaves the real command reachable. The
   gate reads those two commands' own calls and runnable strings, not their callers
   (`Connect-OPIM`, the wrapper's retries, the pillar cmdlets), and its own file is exempt from both
-  rules, since it names the commands as data.
+  rules, since it names the commands as data. And every `Should -Invoke` whose `-Times` is not the
+  constant 0 carries `-Exactly`.
 - **`sourcehygiene.tests.ps1`** -- every `.ps1`, `.psd1`, `.psm1` and `.ps1xml` under `source/` and
   `tests/` is ASCII without a BOM; every `Verb-OPIM` name in `source/**/*.ps1` resolves to a
   function file, an exported alias, or a function defined inside another function in a function

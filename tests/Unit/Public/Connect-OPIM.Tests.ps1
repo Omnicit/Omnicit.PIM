@@ -17,14 +17,14 @@ Describe 'Connect-OPIM' {
 
         It 'calls Initialize-OPIMAuth with the supplied TenantId' {
             Connect-OPIM -TenantId 'contoso.onmicrosoft.com'
-            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
                 $TenantId -eq 'contoso.onmicrosoft.com'
             }
         }
 
         It 'passes -IncludeARM when specified' {
             Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -IncludeARM
-            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
                 $IncludeARM -eq $true
             }
         }
@@ -249,7 +249,7 @@ Describe 'Connect-OPIM' {
 
         It 'resolves the TenantId from the TenantMap and calls Initialize-OPIMAuth' {
             Connect-OPIM -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
                 $TenantId -eq '00000000-0000-0000-0000-000000000001'
             }
         }
@@ -266,7 +266,7 @@ Describe 'Connect-OPIM' {
 
         It 'resolves the TenantId from the hashtable and calls Initialize-OPIMAuth' {
             Connect-OPIM -TenantAlias 'fabrikam' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
                 $TenantId -eq '00000000-0000-0000-0000-000000000002'
             }
         }

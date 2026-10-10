@@ -54,7 +54,7 @@ Describe 'ConvertTo-ActiveDurationTooShortError' {
                 Add-Member -InputObject $FakeCmdlet -MemberType ScriptMethod -Name WriteError -Value { param($E) }
                 $null = ConvertTo-ActiveDurationTooShortError -CaughtError $FakeRecord -ResourceType 'role' -Cmdlet $FakeCmdlet
             }
-            Should -Invoke Write-CmdletError -ModuleName Omnicit.PIM -Times 1 -Scope It `
+            Should -Invoke Write-CmdletError -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It `
                 -ParameterFilter { $ErrorId -eq 'ActiveDurationTooShort' }
         }
 
@@ -72,7 +72,7 @@ Describe 'ConvertTo-ActiveDurationTooShortError' {
                 Add-Member -InputObject $FakeCmdlet -MemberType ScriptMethod -Name WriteError -Value { param($E) }
                 $null = ConvertTo-ActiveDurationTooShortError -CaughtError $FakeRecord -ResourceType 'group' -Cmdlet $FakeCmdlet
             }
-            Should -Invoke Write-CmdletError -ModuleName Omnicit.PIM -Times 1 -Scope It `
+            Should -Invoke Write-CmdletError -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It `
                 -ParameterFilter { $Message.Message -match 'group' }
         }
     }
@@ -112,7 +112,7 @@ Describe 'ConvertTo-ActiveDurationTooShortError' {
                 Add-Member -InputObject $FakeCmdlet -MemberType ScriptMethod -Name WriteError -Value { param($E) }
                 $null = ConvertTo-ActiveDurationTooShortError -CaughtError $FakeRecord -ResourceType 'role' -Cmdlet $FakeCmdlet
             }
-            Should -Invoke Write-CmdletError -ModuleName Omnicit.PIM -Times 1 -Scope It `
+            Should -Invoke Write-CmdletError -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It `
                 -ParameterFilter { $Category -eq 'ResourceUnavailable' }
         }
     }
@@ -364,7 +364,7 @@ Describe 'ConvertTo-ActiveDurationTooShortError' {
                 Add-Member -InputObject $FakeCmdlet -MemberType ScriptMethod -Name WriteError -Value { param($E) }
                 $null = ConvertTo-ActiveDurationTooShortError -CaughtError $FakeRecord -Cmdlet $FakeCmdlet
             }
-            Should -Invoke Write-CmdletError -ModuleName Omnicit.PIM -Times 1 -Scope It `
+            Should -Invoke Write-CmdletError -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It `
                 -ParameterFilter { $Message.Message -match 'role' }
         }
     }

@@ -73,7 +73,7 @@ Describe 'Enable-OPIMDirectoryRole' {
 
         It 'calls Invoke-OPIMGraphRequest with POST to the roleAssignmentScheduleRequests endpoint' {
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Uri -like '*roleAssignmentScheduleRequests*'
             }
         }
@@ -85,21 +85,21 @@ Describe 'Enable-OPIMDirectoryRole' {
 
         It 'sends SelfActivate as the action in the request body' {
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.action -eq 'SelfActivate'
             }
         }
 
         It 'uses AfterDuration expiration type by default' {
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.scheduleInfo.expiration.type -eq 'AfterDuration'
             }
         }
 
         It 'passes a PT1H ISO 8601 duration when -Hours defaults to 1' {
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.scheduleInfo.expiration.duration -eq 'PT1H'
             }
         }
@@ -142,7 +142,7 @@ Describe 'Enable-OPIMDirectoryRole' {
 
         It 'calls Invoke-OPIMGraphRequest once per role name supplied' {
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)', 'User Administrator (elig-002)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Scope It -ParameterFilter { $Method -eq 'POST' }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
         }
     }
 
@@ -173,7 +173,7 @@ Describe 'Enable-OPIMDirectoryRole' {
 
         It 'calls Invoke-OPIMGraphRequest with the roleDefinitionId and directoryScopeId from the piped role' {
             $fakeRole | Enable-OPIMDirectoryRole
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and
                 $Body.roleDefinitionId -eq 'role-def-002' -and
                 $Body.directoryScopeId -eq '/administrativeUnits/au-001'
@@ -182,7 +182,7 @@ Describe 'Enable-OPIMDirectoryRole' {
 
         It 'calls Invoke-OPIMGraphRequest with the principalId from the piped role' {
             $fakeRole | Enable-OPIMDirectoryRole
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.principalId -eq 'principal-002'
             }
         }
@@ -221,14 +221,14 @@ Describe 'Enable-OPIMDirectoryRole' {
 
         It 'uses AfterDateTime expiration type when -Until is provided' {
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Until $script:UntilDateTime
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.scheduleInfo.expiration.type -eq 'AfterDateTime'
             }
         }
 
         It 'does not include a duration in the request body when -Until is specified' {
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Until $script:UntilDateTime
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and -not $Body.scheduleInfo.expiration.duration
             }
         }
@@ -362,14 +362,14 @@ Describe 'Enable-OPIMDirectoryRole' {
 
         It 'passes PT4H ISO 8601 duration when -Hours 4 is specified' {
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Hours 4
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.scheduleInfo.expiration.duration -eq 'PT4H'
             }
         }
 
         It 'passes PT8H ISO 8601 duration when -Hours 8 is specified' {
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Hours 8
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.scheduleInfo.expiration.duration -eq 'PT8H'
             }
         }
@@ -453,7 +453,7 @@ Describe 'Enable-OPIMDirectoryRole' {
 
         It 'passes TicketNumber and TicketSystem in the ticketInfo request body' {
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -TicketNumber 'INC-123' -TicketSystem 'ServiceNow'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and
                 $Body.ticketInfo.ticketNumber -eq 'INC-123' -and
                 $Body.ticketInfo.ticketSystem -eq 'ServiceNow'
@@ -488,7 +488,7 @@ Describe 'Enable-OPIMDirectoryRole' {
 
         It 'passes the justification text in the request body' {
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Justification 'Deploying hotfix'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.justification -eq 'Deploying hotfix'
             }
         }
@@ -638,7 +638,7 @@ Describe 'Enable-OPIMDirectoryRole' {
 
         It 'calls Wait-OPIMDirectoryRole when -Wait is specified' {
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -Wait
-            Should -Invoke -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Wait-OPIMDirectoryRole -Times 1 -Exactly -Scope It
         }
 
         It 'does not call Wait-OPIMDirectoryRole when -Wait is not specified' {
@@ -736,7 +736,7 @@ Describe 'Enable-OPIMDirectoryRole' {
 
         It 'calls Invoke-OPIMGraphRequest once only (ACRS retry is handled inside Invoke-OPIMGraphRequest)' {
             Enable-OPIMDirectoryRole -RoleName 'Global Administrator (elig-001)' -ErrorAction SilentlyContinue
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It
         }
     }
 
@@ -772,7 +772,7 @@ Describe 'Enable-OPIMDirectoryRole' {
 
         It 'submits the SelfActivate request' {
             Enable-OPIMDirectoryRole -Identity 'elig-010'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It
         }
 
         It 'returns a PSCustomObject tagged with Omnicit.PIM.DirectoryAssignmentScheduleRequest' {
@@ -927,7 +927,7 @@ Describe 'Enable-OPIMDirectoryRole' {
 
         It 'accepts RoleName as position 0, Justification as position 1, Hours as position 2' {
             Enable-OPIMDirectoryRole 'Reports Reader (elig-pos-001)' 'Incident response' 4
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Body.justification -eq 'Incident response' -and
                 $Body.scheduleInfo.expiration.duration -eq 'PT4H'
             }
