@@ -3,6 +3,7 @@ BeforeAll {
     Import-Module Omnicit.PIM -Force
     . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
     Install-OPIMTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OPIMScrubFixture.ps1"
 }
 
 AfterAll {
@@ -811,6 +812,44 @@ Describe 'The six completer classes' {
             $Completer.CompleteArgument($Command, 'Name', 'typed', $null, @{ Scope = 'scope-x' }).CompletionText
         }
         @($Got) | Should -Be @("'$Pillar|typed|$Command|scope-x|$Listed'")
+    }
+
+    # A listing that fails behind tab completion throws the record of a failed request, and that
+    # record points at the request whose Authorization header carries the bearer token. Each
+    # listing throws the same fixture record, so the request shows whether the catch scrubbed it;
+    # the printed 'Completer Error:' line shows that the catch ran at all, which is what gives the
+    # header assertion its reach.
+    It 'clears the bearer token off the request behind a failed listing in <Class>' -ForEach @(
+        @{ Class = 'AzureActivatedRoleCompleter'; Command = 'Disable-OPIMAzureRole' }
+        @{ Class = 'AzureEligibleRoleCompleter'; Command = 'Enable-OPIMAzureRole' }
+        @{ Class = 'DirectoryActivatedRoleCompleter'; Command = 'Disable-OPIMDirectoryRole' }
+        @{ Class = 'DirectoryEligibleRoleCompleter'; Command = 'Enable-OPIMDirectoryRole' }
+        @{ Class = 'GroupActivatedCompleter'; Command = 'Disable-OPIMEntraIDGroup' }
+        @{ Class = 'GroupEligibleCompleter'; Command = 'Enable-OPIMEntraIDGroup' }
+    ) {
+        $F = New-ScrubFixture
+        $F.Request.Headers.Contains('Authorization') | Should -BeTrue -Because 'the fixture must carry the header the catch is to clear'
+        Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+        Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole { $PSCmdlet.ThrowTerminatingError($F.Record) }
+        Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole { $PSCmdlet.ThrowTerminatingError($F.Record) }
+        Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $PSCmdlet.ThrowTerminatingError($F.Record) }
+        $Output = @(InModuleScope Omnicit.PIM -Parameters @{ Class = $Class; Command = $Command } {
+                param($Class, $Command)
+                $Completer = switch ($Class) {
+                    'AzureActivatedRoleCompleter'     { [AzureActivatedRoleCompleter]::new() }
+                    'AzureEligibleRoleCompleter'      { [AzureEligibleRoleCompleter]::new() }
+                    'DirectoryActivatedRoleCompleter' { [DirectoryActivatedRoleCompleter]::new() }
+                    'DirectoryEligibleRoleCompleter'  { [DirectoryEligibleRoleCompleter]::new() }
+                    'GroupActivatedCompleter'         { [GroupActivatedCompleter]::new() }
+                    'GroupEligibleCompleter'          { [GroupEligibleCompleter]::new() }
+                }
+                $Completer.CompleteArgument($Command, 'Name', '', $null, @{})
+            } 6>&1)
+        @($Output | Where-Object {
+                $_ -is [System.Management.Automation.InformationRecord] -and "$($_.MessageData)" -match 'Completer Error:'
+            }).Count | Should -Be 1 -Because 'the listing must have failed into the catch of the completer, or the header assertion below proves nothing'
+        @($Output | Where-Object { $_ -is [System.Management.Automation.CompletionResult] }).Count | Should -Be 0 -Because 'a failed listing offers no completion'
+        $F.Request.Headers.Contains('Authorization') | Should -BeFalse -Because 'the catch must clear the bearer token off the request the record points at before it prints the message'
     }
 }
 
