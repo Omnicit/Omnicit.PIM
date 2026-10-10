@@ -5,53 +5,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Each GitHub release of the module, and the version tag that marks it, now always points at the
-commit whose build was published to the PowerShell Gallery. When the publish workflow cannot prove
-which commit that is, it stops and says how to set the tag by hand, instead of tagging another
-commit.
-
 Azure roles (`Get-`, `Enable-` and `Disable-OPIMAzureRole`, and the Azure part of `pim` and `unpim`)
-now sign in with AzAuth and send their requests themselves instead of through the Az modules'
-commands. The Azure sign-in, in the system browser or with a device code, no longer reuses or ends
-an Az context of yours: a `Connect-AzAccount` session is left alone. Its token must be for the Graph
-session's tenant and account, else `TenantMismatch` or the new `AccountMismatch`, and nothing is
-sent. Output keeps its property names, but Az's .NET type names are gone: a script that tested `-is`
-against an Az type checks `$Obj.PSObject.TypeNames -contains 'Omnicit.PIM.AzureEligibilitySchedule'`
-(or another `Omnicit.PIM.Azure*` name) instead. `Disconnect-OPIM` clears the module's Azure token,
-but not AzAuth's own sign-in in the PowerShell process.
+now sign in with AzAuth and send their requests themselves. Installing the module brings AzAuth
+(2.9.0 or later) and Microsoft.Graph.Authentication instead of Az.Resources and Az.Accounts,
+importing it loads no Az module, and it now requires PowerShell 7.4 or later. A script that used an
+Az command only because this module brought it along must install and import that module itself.
+The Azure sign-in leaves your own Az context alone, and its token must be for the Graph session's
+tenant and account, else `TenantMismatch` or the new `AccountMismatch`, and nothing is sent. Output
+keeps its property names, but Az's .NET type names are gone: instead of `-is` against an Az type,
+test `$Obj.PSObject.TypeNames -contains 'Omnicit.PIM.AzureEligibilitySchedule'` (or another
+`Omnicit.PIM.Azure*` name). `Disconnect-OPIM` clears the module's Azure token, not AzAuth's own
+sign-in in the PowerShell process.
 
-Omnicit.PIM no longer depends on the Az modules. Installing it brings AzAuth (2.9.0 or later) and
-Microsoft.Graph.Authentication instead of Az.Resources and Az.Accounts, and importing it loads no Az
-module. A script that used an Az.Resources or Az.Accounts command only because this module brought
-it along must now install and import that module itself. The module now requires PowerShell 7.4 or
-later, which AzAuth needs: on PowerShell 7.2 or 7.3 it no longer imports.
+`Connect-OPIM`, `pim` and `unpim` take `-Environment`: `Global` (the default, also for a Microsoft
+365 GCC tenant), `USGov` (GCC High), `USGovDoD` or `China` (21Vianet), and every sign-in and request
+then goes to that cloud. A command for the session's tenant keeps the session's cloud, and naming
+another cloud signs in again. `Install-` and `Set-OPIMConfiguration -Environment` store a cloud
+other than `Global` on a tenant alias, which `-TenantAlias` then signs in to; a stored cloud the
+module does not know is refused before any sign-in. A 0.6.x module, like 0.7.0-preview0001 to 0003,
+ignores the stored cloud: its sign-in goes to the global cloud, where the tenant does not exist, and
+when it changes the map it writes it back without the cloud of every alias, which this version then
+reads as `Global`. Only `Global` is verified live; the sovereign clouds are covered by unit tests
+only, and a China sign-in may need an application of the tenant's own, which the module does not
+yet take.
 
-Microsoft Graph requests now wait out throttling that outlasts the Graph SDK's own retries. A
-request Graph answers with 429 is sent again after the wait Graph names in `Retry-After`, or after a
-short, growing wait when it names none; a read answered with 503 and a `Retry-After` is sent again
-the same way. A change such as an activation is sent again only after a 429, which Graph returns
-before it acts on the request. Each wait lasts at most two minutes, and a request waits at most five
-minutes in all, with at most ten retries; a list read page by page stops waiting after fifteen
-minutes. When they run out, the command fails with the same error as before. A token Graph rejects
-is now refreshed once also when the rejection arrives inside the Graph SDK's own retry error.
+`pim` and `unpim` now pass on every refusal of the activations and deactivations they make, such as
+an activation the policy refuses for a missing justification: it is written as their own error and
+reaches `-ErrorVariable`, also under `-ErrorAction SilentlyContinue`. The seconds right after a
+change are handled too. An Azure activation refused with `RoleAssignmentExists` because an earlier
+assignment has just ended is sent again, as a new request, for up to a minute (or reported as
+already active), and no other refusal is ever sent again. A group deactivation that Graph refuses
+with `RoleAssignmentDoesNotExist`, as it does moments after another, is `ActiveRoleNotFound`. And
+`Get-OPIMAzureRole -Activated -Scope` reads at the root, so a new activation shows at once.
 
-Omnicit.PIM now also signs in to the US Government clouds and the China cloud. `Connect-OPIM`,
-`Enable-OPIMMyRole` (`pim`) and `Disable-OPIMMyRole` (`unpim`) take `-Environment` with `Global`
-(the default, which is also the cloud of a Microsoft 365 GCC tenant), `USGov` (GCC High),
-`USGovDoD` (DoD) or `China` (21Vianet), and the sign-in and every Microsoft Graph and Azure
-Resource Manager request then go to that cloud. Without `-Environment`, a command for the session's
-tenant keeps the session's cloud, a command for any other tenant uses `Global`, and naming another
-cloud signs in again. `Install-` and `Set-OPIMConfiguration` take `-Environment` too and store it on
-the tenant alias when it is not `Global`, so `Connect-OPIM`, `pim` and `unpim` with `-TenantAlias`
-sign in to the alias's cloud (`Global` when it stores none); a stored cloud the module does not know
-is an error, and nothing is signed in. A 0.6.x module ignores the stored cloud and signs in to the
-global cloud, where the tenant does not exist, so its sign-in fails; it also writes the map back
-without the cloud of every alias whenever it changes it (`Install-`, `Set-` or `Remove-OPIMConfiguration`),
-as do 0.7.0-preview0001 to 0003, and this version then signs in to `Global` for those aliases. Only `Global` is verified live:
-the three sovereign clouds are covered by unit tests only and are untested live, and a China
-sign-in may need an application of the tenant's own, which the module does not yet take.
-
-Tab completion of role and group names is now fast for an account with hundreds of them.
+Microsoft Graph requests now wait out throttling as Azure requests do: a 429, or a read's 503 with
+`Retry-After`, is sent again after the wait the service names (or a short, growing one), at most two
+minutes each and five minutes per request, with at most ten retries; a change is sent again only
+after a 429, which comes before the service acts. Tab completion never waits out throttling, the
+reads of `-Wait` never wait past `-TimeoutSeconds`, and completing role and group names is fast for
+hundreds of them. Each GitHub release and its version tag now always point at the commit whose
+build was published.
 
 ## [0.6.0] - 2026-10-09
 
