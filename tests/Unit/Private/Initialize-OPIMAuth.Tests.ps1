@@ -63,6 +63,7 @@ BeforeAll {
         $script:ArmNoTid = $false
         $script:ArmNoOid = $false
         $script:ArmWarning = $null
+        $script:SeenAuthorityHost = 'Get-AzToken was not called'
         $script:ArmExpiresOn = [DateTimeOffset]::new(2030, 1, 1, 12, 0, 0, [TimeSpan]::FromHours(2))
         $script:GraphTid = 'aaaaaaaa-0000-0000-0000-00000000000a'
         $script:GraphOid = '22222222-2222-2222-2222-222222222222'
@@ -258,6 +259,9 @@ Describe 'Initialize-OPIMAuth' {
                 if ($PesterBoundParameters.ContainsKey('WarningAction')) {
                     $WarningPreference = $PesterBoundParameters['WarningAction']
                 }
+                # The authority AzAuth would read while it builds its credential (OPIM-29): $null when
+                # the variable is absent. Reset-ArmTestFixture puts a marker here before every It.
+                $script:SeenAuthorityHost = [System.Environment]::GetEnvironmentVariable('AZURE_AUTHORITY_HOST')
                 if ($script:ArmWarning) { Microsoft.PowerShell.Utility\Write-Warning $script:ArmWarning }
                 $ArmTokenArgs = @{ TenantId = $script:ArmTid; ObjectId = $script:ArmOid }
                 if ($script:ArmNoTid) { $ArmTokenArgs.NoTenant = $true }
@@ -473,6 +477,255 @@ Describe 'Initialize-OPIMAuth' {
                 }
                 Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
                 Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter { -not $Force }
+            }
+        }
+
+        Context 'When the Azure sign-in follows the cloud (OPIM-29)' {
+            # A11. AzAuth is asked for the ARM resource of the session's cloud, and the authority
+            # Azure.Identity signs in at moves with it through AZURE_AUTHORITY_HOST. That variable is
+            # process-wide state the module borrows: it is set only off Global, only around Get-AzToken,
+            # and put back on every path. Every It starts with the variable absent and puts the
+            # operator's own value back afterwards, so no test leaks it and none depends on the
+            # environment the suite runs in. The Get-AzToken mock above records what it saw in
+            # $script:SeenAuthorityHost ($null for an absent variable).
+            BeforeAll {
+                # Signs in with -IncludeARM on a state and returns the error it raised (if any), the state
+                # afterwards and the warnings it wrote.
+                function Invoke-CloudArmSignIn {
+                    param([hashtable]$State, [hashtable]$Arguments = @{})
+                    InModuleScope Omnicit.PIM -Parameters @{ State = $State; Arguments = $Arguments } {
+                        param($State, $Arguments)
+                        $script:_OPIMAuthState = $State
+                        $Caught = $null
+                        $Warned = $null
+                        try {
+                            Initialize-OPIMAuth -IncludeARM @Arguments -WarningVariable Warned -WarningAction SilentlyContinue
+                        } catch {
+                            $Caught = $PSItem
+                        }
+                        @{ Caught = $Caught; State = $script:_OPIMAuthState; Warnings = @($Warned) }
+                    }
+                }
+            }
+            BeforeEach {
+                $script:SavedAuthorityHost = [System.Environment]::GetEnvironmentVariable('AZURE_AUTHORITY_HOST')
+                [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', [NullString]::Value)
+            }
+            AfterEach {
+                if ($null -eq $script:SavedAuthorityHost) {
+                    [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', [NullString]::Value)
+                } else {
+                    [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', $script:SavedAuthorityHost)
+                }
+            }
+
+            It 'asks AzAuth for the ARM resource of <Name>, and the new state records it' -ForEach @(
+                @{ Name = 'Global'; Cloud = 'Global'; Expected = 'https://management.azure.com' }
+                @{ Name = 'a session that records no cloud'; Cloud = $null; Expected = 'https://management.azure.com' }
+                @{ Name = 'USGov'; Cloud = 'USGov'; Expected = 'https://management.usgovcloudapi.net' }
+                @{ Name = 'USGovDoD'; Cloud = 'USGovDoD'; Expected = 'https://management.usgovcloudapi.net' }
+                @{ Name = 'China'; Cloud = 'China'; Expected = 'https://management.chinacloudapi.cn' }
+            ) {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                if ($Cloud) { $State.Environment = $Cloud }
+                $Result = Invoke-CloudArmSignIn -State $State
+                $Result.Caught | Should -BeNullOrEmpty
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Resource -ceq $Expected -and $Tenant -ceq 'aaaaaaaa-0000-0000-0000-00000000000a'
+                }
+                $Result.State.ArmResourceUrl | Should -BeExactly $Expected
+            }
+
+            It 'asks AzAuth for the ARM resource of the cloud a call names, in a first sign-in' {
+                $Result = Invoke-CloudArmSignIn -State @{ DeviceCode = $true } -Arguments @{ TenantId = $TenantA; Environment = 'China' }
+                $Result.Caught | Should -BeNullOrEmpty
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Resource -ceq 'https://management.chinacloudapi.cn'
+                }
+                $Result.State.Environment | Should -BeExactly 'China'
+                $Result.State.ArmResourceUrl | Should -BeExactly 'https://management.chinacloudapi.cn'
+            }
+
+            It 'sets AZURE_AUTHORITY_HOST to the authority of <Name> while Get-AzToken runs' -ForEach @(
+                @{ Name = 'USGov'; Cloud = 'USGov'; DeviceCode = $true; Expected = 'https://login.microsoftonline.us/' }
+                @{ Name = 'USGovDoD'; Cloud = 'USGovDoD'; DeviceCode = $true; Expected = 'https://login.microsoftonline.us/' }
+                @{ Name = 'China'; Cloud = 'China'; DeviceCode = $true; Expected = 'https://login.chinacloudapi.cn/' }
+                @{ Name = 'USGov in the system browser'; Cloud = 'USGov'; DeviceCode = $false; Expected = 'https://login.microsoftonline.us/' }
+            ) {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $State.Environment = $Cloud
+                $State.DeviceCode = $DeviceCode
+                $Result = Invoke-CloudArmSignIn -State $State
+                $Result.Caught | Should -BeNullOrEmpty
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                $script:SeenAuthorityHost | Should -BeExactly $Expected
+            }
+
+            It 'writes no AZURE_AUTHORITY_HOST in the Global cloud (<Name>)' -ForEach @(
+                @{ Name = 'a session in Global'; Cloud = 'Global' }
+                @{ Name = 'a session that records no cloud'; Cloud = $null }
+            ) {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                if ($Cloud) { $State.Environment = $Cloud }
+                $Result = Invoke-CloudArmSignIn -State $State
+                $Result.Caught | Should -BeNullOrEmpty
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                $null -eq $script:SeenAuthorityHost | Should -BeTrue -Because 'the Global path writes no AZURE_AUTHORITY_HOST at all'
+                Test-Path Env:AZURE_AUTHORITY_HOST | Should -BeFalse
+            }
+
+            It 'removes AZURE_AUTHORITY_HOST again after a <Cloud> sign-in when it was not set' -ForEach @(
+                @{ Cloud = 'USGov' }
+                @{ Cloud = 'China' }
+            ) {
+                # Review Focus 2. Absent stays absent: not '', which Test-Path Env: would still find.
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $State.Environment = $Cloud
+                $Result = Invoke-CloudArmSignIn -State $State
+                $Result.Caught | Should -BeNullOrEmpty
+                $script:SeenAuthorityHost | Should -Not -BeNullOrEmpty -Because 'the variable was set while Get-AzToken ran'
+                Test-Path Env:AZURE_AUTHORITY_HOST | Should -BeFalse
+                $null -eq [System.Environment]::GetEnvironmentVariable('AZURE_AUTHORITY_HOST') | Should -BeTrue
+            }
+
+            It 'puts the operator''s own AZURE_AUTHORITY_HOST back after a <Cloud> sign-in' -ForEach @(
+                @{ Cloud = 'USGov'; Expected = 'https://login.microsoftonline.us/' }
+                @{ Cloud = 'China'; Expected = 'https://login.chinacloudapi.cn/' }
+            ) {
+                # Review Focus 2. A value the operator set is put back exactly, not deleted.
+                [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', 'https://login.example.com/')
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $State.Environment = $Cloud
+                $Result = Invoke-CloudArmSignIn -State $State
+                $Result.Caught | Should -BeNullOrEmpty
+                $script:SeenAuthorityHost | Should -BeExactly $Expected -Because 'the cloud''s authority replaces the operator''s value for the call'
+                [System.Environment]::GetEnvironmentVariable('AZURE_AUTHORITY_HOST') | Should -BeExactly 'https://login.example.com/'
+            }
+
+            It 'restores AZURE_AUTHORITY_HOST when Get-AzToken throws and the variable was <Was>' -ForEach @(
+                @{ Was = 'absent'; Operator = $null }
+                @{ Was = 'set by the operator'; Operator = 'https://login.example.com/' }
+            ) {
+                Mock -ModuleName Omnicit.PIM Get-AzToken { throw [System.InvalidOperationException]::new('AzAuth sign-in failure') }
+                if ($null -ne $Operator) { [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', $Operator) }
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $State.Environment = 'USGov'
+                $Result = Invoke-CloudArmSignIn -State $State
+                $Result.Caught.FullyQualifiedErrorId | Should -BeLike 'AzureConnectFailed*'
+                $Result.Caught.Exception.Message | Should -BeExactly 'Azure connection failed: AzAuth sign-in failure'
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                Test-Path Env:AZURE_AUTHORITY_HOST | Should -Be ($null -ne $Operator)
+                [System.Environment]::GetEnvironmentVariable('AZURE_AUTHORITY_HOST') | Should -Be $Operator
+            }
+
+            It 'restores AZURE_AUTHORITY_HOST when the ARM token is refused and the variable was <Was>' -ForEach @(
+                @{ Was = 'absent'; Operator = $null }
+                @{ Was = 'set by the operator'; Operator = 'https://login.example.com/' }
+            ) {
+                $script:ArmTid = $TenantB
+                if ($null -ne $Operator) { [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', $Operator) }
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $State.Environment = 'USGov'
+                $Result = Invoke-CloudArmSignIn -State $State
+                $Result.Caught.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                $script:SeenAuthorityHost | Should -BeExactly 'https://login.microsoftonline.us/'
+                Test-Path Env:AZURE_AUTHORITY_HOST | Should -Be ($null -ne $Operator)
+                [System.Environment]::GetEnvironmentVariable('AZURE_AUTHORITY_HOST') | Should -Be $Operator
+            }
+
+            It 'warns when AZURE_AUTHORITY_HOST names another authority in the Global cloud, and leaves it as it is' {
+                [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', 'https://login.example.com/')
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $Result = Invoke-CloudArmSignIn -State $State
+                $Result.Caught | Should -BeNullOrEmpty
+                @($Result.Warnings).Count | Should -Be 1
+                $Result.Warnings[0].Message | Should -BeLike '*AZURE_AUTHORITY_HOST is set to ''https://login.example.com/''*'
+                $Result.Warnings[0].Message | Should -BeLike '*global cloud''s authority ''https://login.microsoftonline.com/''*'
+                $Result.Warnings[0].Message | Should -BeLike '*Remove-Item Env:AZURE_AUTHORITY_HOST*'
+                # The Global path writes nothing: AzAuth was still called, and saw the operator's value.
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                $script:SeenAuthorityHost | Should -BeExactly 'https://login.example.com/'
+                [System.Environment]::GetEnvironmentVariable('AZURE_AUTHORITY_HOST') | Should -BeExactly 'https://login.example.com/'
+            }
+
+            It 'does not warn when AZURE_AUTHORITY_HOST names the global authority <Spelling>' -ForEach @(
+                @{ Spelling = 'with a trailing slash'; Value = 'https://login.microsoftonline.com/' }
+                @{ Spelling = 'without a trailing slash'; Value = 'https://login.microsoftonline.com' }
+            ) {
+                [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', $Value)
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $Result = Invoke-CloudArmSignIn -State $State
+                $Result.Caught | Should -BeNullOrEmpty
+                @($Result.Warnings).Count | Should -Be 0
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                $script:SeenAuthorityHost | Should -BeExactly $Value
+                [System.Environment]::GetEnvironmentVariable('AZURE_AUTHORITY_HOST') | Should -BeExactly $Value
+            }
+
+            It 'does not warn about AZURE_AUTHORITY_HOST when the cloud is sovereign, where it is replaced for the call' {
+                [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', 'https://login.example.com/')
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $State.Environment = 'USGov'
+                $Result = Invoke-CloudArmSignIn -State $State
+                $Result.Caught | Should -BeNullOrEmpty
+                @($Result.Warnings).Count | Should -Be 0
+            }
+
+            It 'passes -Force on the ARM sign-in after a cloud switch, and never reuses the old cloud''s ARM token' {
+                # Review Focus 4. The session is in Global with a valid ARM token for its tenant and
+                # account; naming USGov signs in again, drops that token and rebuilds AzAuth's credential
+                # (it keeps one per process and bakes its authority in), now for the USGov resource.
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $State.Environment = 'Global'
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
+                $OldToken = $State.ArmToken
+                $Result = Invoke-CloudArmSignIn -State $State -Arguments @{ Environment = 'USGov' }
+                $Result.Caught | Should -BeNullOrEmpty
+                Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Force -and $Resource -ceq 'https://management.usgovcloudapi.net'
+                }
+                [object]::ReferenceEquals($OldToken, $Result.State.ArmToken) | Should -BeFalse
+                $Result.State.Environment | Should -BeExactly 'USGov'
+                $Result.State.ArmResourceUrl | Should -BeExactly 'https://management.usgovcloudapi.net'
+            }
+
+            It 'does not reuse an ARM token recorded for another cloud''s resource' {
+                # Unreachable by construction -- a cloud switch drops the token, and a state records its
+                # cloud and its resource together -- so this guards the resource term of the cache check:
+                # a USGov session, a valid Graph token and an ARM token for the same tenant and account
+                # with an hour left, but minted for the global resource.
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $State.Environment = 'USGov'
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
+                $State.ArmResourceUrl | Should -BeExactly 'https://management.azure.com'
+                $OldToken = $State.ArmToken
+                $Result = Invoke-CloudArmSignIn -State $State
+                $Result.Caught | Should -BeNullOrEmpty
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Force -and $Resource -ceq 'https://management.usgovcloudapi.net'
+                }
+                [object]::ReferenceEquals($OldToken, $Result.State.ArmToken) | Should -BeFalse
+                $Result.State.ArmResourceUrl | Should -BeExactly 'https://management.usgovcloudapi.net'
+            }
+
+            It 'reuses an ARM token recorded for the resource of the session''s own cloud, without a call' {
+                # The positive control of the test above: the same token, minted for the session's own
+                # resource, is reused.
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -AuthorityTenant $TenantA -ObjectId $SessionOid
+                $State.Environment = 'USGov'
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
+                $State.ArmResourceUrl = 'https://management.usgovcloudapi.net'
+                $OldToken = $State.ArmToken
+                $Result = Invoke-CloudArmSignIn -State $State
+                $Result.Caught | Should -BeNullOrEmpty
+                Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 0 -Scope It
+                [object]::ReferenceEquals($OldToken, $Result.State.ArmToken) | Should -BeTrue
+                $Result.State.ArmResourceUrl | Should -BeExactly 'https://management.usgovcloudapi.net'
             }
         }
 
@@ -2143,6 +2396,94 @@ namespace OPIMTestMsal {
             @($Uses | Where-Object { $_ -eq 'NetworkCredential' }).Count | Should -Be 1 -Because 'the ARM token reaches .NET through the NetworkCredential constructor exactly once'
             @($Uses | Where-Object { $_ -eq 'IfTest' }).Count | Should -BeGreaterOrEqual 1 -Because 'the walk must find the test that the ARM result carries a token'
             @($Uses | Where-Object { $_ -notin 'NetworkCredential', 'IfTest' }) | Should -BeNullOrEmpty
+        }
+
+        It 'binds the plaintext token to no hashtable that reaches a command' {
+            # The walk above reads each command's own elements, so it cannot see a token handed on in a
+            # splat: `Connect-MgGraph @ConnectParams` and the Get-AzToken calls carry no argument of
+            # their own, and the values sit in the hashtable assigned to the variable that is splatted,
+            # or passed by name, into a command. This walk reads every assignment to such a variable --
+            # the literal itself, any `$Name.Key = ...` or `$Name['Key'] = ...` after it, and a plain
+            # `$Name = ...` -- and refuses a plaintext token member (.AccessToken, .Token) in one. The
+            # one reading it allows is the NetworkCredential constructor, the way the plaintext reaches
+            # .NET and becomes the SecureString every command receives.
+            $ReadHandOnByHashtable = {
+                param($RootAst)
+                $Carried = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $Commands = @($RootAst.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true))
+                foreach ($Command in $Commands) {
+                    foreach ($Element in @($Command.CommandElements | Select-Object -Skip 1)) {
+                        $Value = if ($Element -is [System.Management.Automation.Language.CommandParameterAst]) { $Element.Argument } else { $Element }
+                        if ($Value -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                            $null = $Carried.Add($Value.VariablePath.UserPath)
+                        }
+                    }
+                }
+                $Literals = [System.Collections.Generic.List[string]]::new()
+                $Leaks = [System.Collections.Generic.List[string]]::new()
+                $Assignments = @($RootAst.FindAll({ $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true))
+                foreach ($Assignment in $Assignments) {
+                    $Target = $Assignment.Left
+                    $Variable = if ($Target -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                        $Target
+                    } elseif ($Target -is [System.Management.Automation.Language.MemberExpressionAst]) {
+                        $Target.Expression
+                    } elseif ($Target -is [System.Management.Automation.Language.IndexExpressionAst]) {
+                        $Target.Target
+                    }
+                    if (($Variable -isnot [System.Management.Automation.Language.VariableExpressionAst]) -or
+                        -not $Carried.Contains($Variable.VariablePath.UserPath)) {
+                        continue
+                    }
+                    $Name = $Variable.VariablePath.UserPath
+                    $IsLiteral = $Target -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                        $null -ne $Assignment.Right.Find({ $args[0] -is [System.Management.Automation.Language.HashtableAst] }, $true)
+                    if ($IsLiteral) { $Literals.Add($Name) }
+                    $Leak = $Assignment.Right.Find({
+                            param($Node)
+                            $Node -is [System.Management.Automation.Language.MemberExpressionAst] -and
+                            $Node.Member.Extent.Text -in 'AccessToken', 'Token' -and
+                            -not ($Node.Parent -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                                $Node.Parent.Member.Extent.Text -eq 'new' -and
+                                $Node.Parent.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and
+                                $Node.Parent.Expression.TypeName.FullName -eq 'System.Net.NetworkCredential')
+                        }, $true)
+                    if ($Leak) { $Leaks.Add(('line {0}: ${1}' -f $Assignment.Extent.StartLineNumber, $Name)) }
+                }
+                @{ Carried = @($Carried); Literals = @($Literals); Leaks = @($Leaks) }
+            }
+
+            # Known answers: the walk flags a token in the literal and in a later assignment, and flags
+            # nothing for a hashtable that holds the SecureString.
+            $ParseTokens = $null
+            $ParseErrors = $null
+            $Leaky = [System.Management.Automation.Language.Parser]::ParseInput(
+                '$P = @{ AccessToken = $R.AccessToken; NoWelcome = $true }; $P.Extra = $R.Token; $P[''Other''] = $R.Token; Connect-MgGraph @P',
+                [ref]$ParseTokens, [ref]$ParseErrors)
+            $Found = & $ReadHandOnByHashtable $Leaky
+            @($Found.Leaks).Count | Should -Be 3 -Because 'the literal, the member assignment and the index assignment each hold a token'
+            @($Found.Literals) | Should -Contain 'P'
+            $Plain = [System.Management.Automation.Language.Parser]::ParseInput(
+                '$X = $R.AccessToken; Connect-MgGraph -AccessToken $X',
+                [ref]$ParseTokens, [ref]$ParseErrors)
+            $Found = & $ReadHandOnByHashtable $Plain
+            @($Found.Leaks).Count | Should -Be 1 -Because 'a plain variable that carries the plaintext into a command is a leak too'
+            $Clean = [System.Management.Automation.Language.Parser]::ParseInput(
+                '$S = [System.Net.NetworkCredential]::new('''', $R.AccessToken).SecurePassword; $P = @{ AccessToken = $S; NoWelcome = $true }; $P.Extra = $S; Connect-MgGraph @P',
+                [ref]$ParseTokens, [ref]$ParseErrors)
+            $Found = & $ReadHandOnByHashtable $Clean
+            @($Found.Leaks).Count | Should -Be 0
+            @($Found.Literals) | Should -Contain 'P'
+
+            # The function as the module loaded it. The floors prove the walk reached both hand-offs: the
+            # Connect-MgGraph splat and the hashtable the Azure sign-in passes to its nested wrapper.
+            $Ast = InModuleScope Omnicit.PIM { (Get-Command Initialize-OPIMAuth).ScriptBlock.Ast }
+            $Real = & $ReadHandOnByHashtable $Ast
+            $Real.Carried | Should -Contain 'ConnectParams'
+            $Real.Carried | Should -Contain 'ArmTokenParams'
+            $Real.Literals | Should -Contain 'ConnectParams'
+            $Real.Literals | Should -Contain 'ArmTokenParams'
+            $Real.Leaks | Should -BeNullOrEmpty
         }
 
         It 'reads AzAuth through no command parameter in device code mode' {

@@ -60,11 +60,10 @@ function Invoke-OPIMGraphRequest {
        when that is an absolute https URI, else the Graph host of the session's cloud
        (graph.microsoft.com in the global cloud; the cloud table, Get-OPIMCloudEndpoint, owns the
        others). Any other link would carry the session's bearer token to another host, so it is never
-       sent: the same kind of error is
-       thrown, with no error id (category SecurityError), the same three facts (PageNumber is the
-       page that would have been read) and a message that names neither the link nor its host. The
-       verbose stream names a page by its number and item count, never by its link, which can carry
-       a skip token.
+       sent: the same kind of error is thrown, with no error id (category SecurityError), the same
+       three facts (PageNumber is the page that would have been read) and a message that names
+       neither the link nor its host. The verbose stream names a page by its number and item count,
+       never by its link, which can carry a skip token.
 
     7. Throttling (OPIM-28): a request Microsoft Graph throttles is sent again after a bounded wait,
        with the rules of the ARM transport (A5). A 429 is always waited out; a 503 only when it

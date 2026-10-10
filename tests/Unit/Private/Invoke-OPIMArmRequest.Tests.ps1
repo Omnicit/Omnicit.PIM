@@ -233,6 +233,77 @@ Describe 'Invoke-OPIMArmRequest' {
                 }
             }
         }
+
+        It 'sends to https://management.azure.com for a state with no ArmResourceUrl and the cloud <Name>' -ForEach @(
+            @{ Name = 'Global'; Cloud = 'Global' }
+            @{ Name = 'a null value'; Cloud = $null }
+            @{ Name = 'an empty value'; Cloud = '' }
+        ) {
+            $State = New-ArmTestState
+            $State.Remove('ArmResourceUrl')
+            $State.Environment = $Cloud
+            Set-ArmTestState -State $State
+            InModuleScope Omnicit.PIM {
+                Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{}' } }
+                $null = Invoke-OPIMArmRequest -Path '/x?api-version=2020-10-01'
+                Should -Invoke Invoke-WebRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Uri.OriginalString -ceq 'https://management.azure.com/x?api-version=2020-10-01'
+                }
+            }
+        }
+
+        It 'sends to the ARM host of the state''s cloud when the state records no ArmResourceUrl (<Name>)' -ForEach @(
+            @{ Name = 'USGov, no key'; Cloud = 'USGov'; Remove = $true; Url = $null; Expected = 'https://management.usgovcloudapi.net/x?api-version=2020-10-01' }
+            @{ Name = 'USGov, a null value'; Cloud = 'USGov'; Remove = $false; Url = $null; Expected = 'https://management.usgovcloudapi.net/x?api-version=2020-10-01' }
+            @{ Name = 'USGov, an empty value'; Cloud = 'USGov'; Remove = $false; Url = ''; Expected = 'https://management.usgovcloudapi.net/x?api-version=2020-10-01' }
+            @{ Name = 'USGovDoD'; Cloud = 'USGovDoD'; Remove = $true; Url = $null; Expected = 'https://management.usgovcloudapi.net/x?api-version=2020-10-01' }
+            @{ Name = 'China'; Cloud = 'China'; Remove = $true; Url = $null; Expected = 'https://management.chinacloudapi.cn/x?api-version=2020-10-01' }
+            @{ Name = 'a cloud in another letter case'; Cloud = 'usgov'; Remove = $true; Url = $null; Expected = 'https://management.usgovcloudapi.net/x?api-version=2020-10-01' }
+        ) {
+            # Defence in depth: every state Initialize-OPIMAuth builds with an ARM token records its
+            # ArmResourceUrl, but a state without one takes the host of its own cloud, never the global
+            # host for a sovereign session.
+            $State = New-ArmTestState
+            if ($Remove) { $State.Remove('ArmResourceUrl') } else { $State.ArmResourceUrl = $Url }
+            $State.Environment = $Cloud
+            Set-ArmTestState -State $State
+            InModuleScope Omnicit.PIM -Parameters @{ Expected = $Expected } {
+                param($Expected)
+                Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{}' } }
+                $null = Invoke-OPIMArmRequest -Path '/x?api-version=2020-10-01'
+                Should -Invoke Invoke-WebRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Uri.OriginalString -ceq $Expected
+                }
+            }
+        }
+
+        It 'prefers the state''s ArmResourceUrl to the host of its cloud' {
+            $State = New-ArmTestState
+            $State.Environment = 'USGov'
+            $State.ArmResourceUrl = 'https://management.contoso.com/'
+            Set-ArmTestState -State $State
+            InModuleScope Omnicit.PIM {
+                Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{}' } }
+                $null = Invoke-OPIMArmRequest -Path '/x?api-version=2020-10-01'
+                Should -Invoke Invoke-WebRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Uri.OriginalString -ceq 'https://management.contoso.com/x?api-version=2020-10-01'
+                }
+            }
+        }
+
+        It 'sends nothing, and does not fall back to the global host, for a state whose cloud is unknown and which records no ArmResourceUrl' {
+            $State = New-ArmTestState
+            $State.Remove('ArmResourceUrl')
+            $State.Environment = 'Atlantis'
+            Set-ArmTestState -State $State
+            $Caught = InModuleScope Omnicit.PIM {
+                Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{}' } }
+                try { $null = Invoke-OPIMArmRequest -Path '/x?api-version=2020-10-01' } catch { $PSItem }
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-WebRequest -Times 0 -Scope It
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.Exception.Message | Should -BeLike "*no endpoint table entry for the cloud 'Atlantis'*"
+        }
     }
 
     Context 'When Azure Resource Manager answers with an error' {
@@ -609,6 +680,26 @@ Describe 'Invoke-OPIMArmRequest' {
                 @($script:_OPIMTestSent) | Should -Be @(
                     'https://management.contoso.com/providers/x?api-version=2020-10-01'
                     'https://management.contoso.com/providers/x?api-version=2020-10-01&$skiptoken=2'
+                )
+            }
+        }
+
+        It 'follows a link on the ARM host of the state''s cloud, with no ArmResourceUrl, and refuses one on management.azure.com' {
+            $State = New-ArmTestState
+            $State.Remove('ArmResourceUrl')
+            $State.Environment = 'China'
+            Set-ArmTestState -State $State
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMTestLinks = @(
+                    'https://management.chinacloudapi.cn/providers/x?api-version=2020-10-01&$skiptoken=2'
+                    'https://management.azure.com/providers/x?api-version=2020-10-01&$skiptoken=3'
+                )
+                $Caught = $null
+                try { $null = Invoke-OPIMArmRequest -Path '/providers/x?api-version=2020-10-01' -All } catch { $Caught = $PSItem }
+                $Caught.Exception.Message | Should -BeLike 'Page 3: *'
+                @($script:_OPIMTestSent) | Should -Be @(
+                    'https://management.chinacloudapi.cn/providers/x?api-version=2020-10-01'
+                    'https://management.chinacloudapi.cn/providers/x?api-version=2020-10-01&$skiptoken=2'
                 )
             }
         }
