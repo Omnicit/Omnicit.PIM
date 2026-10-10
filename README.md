@@ -963,6 +963,11 @@ progress at the limit is an `ActivationWaitTimedOut` error and returns nothing; 
 submitted. Each role or group is reported on its own, so one that fails or times out never stops the
 next.
 
+A group deactivation sent right after another one can still find the group in the list of active
+assignments, which lags by about 30 seconds, and Graph then answers that the assignment does not
+exist. `Disable-OPIMEntraIDGroup` writes that as `ActiveRoleNotFound`, with a message that says it
+was deactivated moments ago; every other refusal is written under the error id Graph gave it.
+
 `pim` and `unpim` write every refusal of an activation or a deactivation as an error of their own,
 with the error id the role or group cmdlet gave it. It is in `-ErrorVariable` too, also under
 `-ErrorAction SilentlyContinue`.

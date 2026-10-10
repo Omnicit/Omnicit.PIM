@@ -613,6 +613,109 @@ Describe 'Disable-OPIMEntraIDGroup' {
         }
     }
 
+    Context 'When Graph says the assignment no longer exists (OPIM-50)' {
+        # A second deactivation right after one: the list of active assignments still shows the group
+        # (about 30 seconds), and Graph answers RoleAssignmentDoesNotExist (404, "The Role assignment
+        # does not exist.", recorded live 2026-10-07). That is the outcome of a name that is no longer
+        # active: ActiveRoleNotFound. Only that code; BadRequest and every other refusal stay as they are.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
+            $Active = New-GroupPost -Id 'grp-act-001' -GroupId 'g-1' -Name 'Finance Team' -AccessId 'member' -Active
+            Mock -ModuleName Omnicit.PIM Resolve-OPIMSchedule { $Active }
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { $Active }
+            # What the wrapper throws: a record whose id is the Graph error code. The code and the
+            # message are read when the POST is made, so each test sets the refusal it wants.
+            $Refusal = @{ Code = 'RoleAssignmentDoesNotExist'; Message = 'RoleAssignmentDoesNotExist: The Role assignment does not exist.' }
+            Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
+                $PSCmdlet.ThrowTerminatingError(
+                    [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new($Refusal.Message),
+                        $Refusal.Code,
+                        [System.Management.Automation.ErrorCategory]::InvalidOperation,
+                        $null
+                    )
+                )
+            } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        BeforeEach {
+            $Refusal.Code = 'RoleAssignmentDoesNotExist'
+            $Refusal.Message = 'RoleAssignmentDoesNotExist: The Role assignment does not exist.'
+        }
+
+        It 'writes one non-terminating ActiveRoleNotFound that says it was deactivated moments ago (<Path>)' -ForEach @(
+            @{ Path = 'GroupName' }
+            @{ Path = 'piped group' }
+            @{ Path = 'Identity' }
+        ) {
+            $Out = & {
+                switch ($Path) {
+                    'GroupName' { Disable-OPIMEntraIDGroup -GroupName 'Finance Team' -ErrorAction Continue }
+                    'piped group' { $Active | Disable-OPIMEntraIDGroup -ErrorAction Continue }
+                    'Identity' { Disable-OPIMEntraIDGroup -Identity 'grp-act-001' -ErrorAction Continue }
+                }
+                'reached'
+            } 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Results = @($Out | Where-Object { $_.PSObject.TypeNames -contains 'Omnicit.PIM.GroupAssignmentScheduleRequest' })
+            # The statement after the call ran, so the error did not end the script block.
+            ($Out -contains 'reached') | Should -BeTrue
+            $Results.Count | Should -Be 0
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Disable-OPIMEntraIDGroup'
+            $Written[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+            $Written[0].TargetObject | Should -Be 'Finance Team - member'
+            $Written[0].Exception.Message | Should -BeExactly "No active group assignment matches the name 'Finance Team - member'. Microsoft Graph reports that it does not exist: it was deactivated moments ago, and the list of active assignments can still show it for a short while."
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'reaches -ErrorVariable as ActiveRoleNotFound, last, under -ErrorAction SilentlyContinue' {
+            $Errs = @()
+            $Result = Disable-OPIMEntraIDGroup -GroupName 'Finance Team' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Result).Count | Should -Be 0
+            $Errs[-1].FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound,Disable-OPIMEntraIDGroup'
+            $Errs[-1].Exception.Message | Should -BeLike '*Finance Team - member*deactivated moments ago*'
+        }
+
+        It 'writes <Code> as itself and never as ActiveRoleNotFound' -ForEach @(
+            @{ Code = 'BadRequest'; Message = 'BadRequest: The request is not valid.' }
+            @{ Code = 'Forbidden'; Message = 'Forbidden: Insufficient privileges to complete the operation.' }
+            @{ Code = 'CannotDeleteLastAdminAssignment'; Message = 'CannotDeleteLastAdminAssignment: The last owner cannot be removed.' }
+            @{ Code = 'RoleAssignmentDoesNotExistElsewhere'; Message = 'RoleAssignmentDoesNotExistElsewhere: Another refusal.' }
+        ) {
+            $Refusal.Code = $Code
+            $Refusal.Message = $Message
+            $Out = & {
+                Disable-OPIMEntraIDGroup -GroupName 'Finance Team' -ErrorAction Continue
+                'reached'
+            } 2>&1
+            $Written = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            ($Out -contains 'reached') | Should -BeTrue
+            $Written.Count | Should -Be 1
+            $Written[0].FullyQualifiedErrorId | Should -Be "$Code,Disable-OPIMEntraIDGroup"
+            $Written[0].Exception.Message | Should -BeExactly $Message
+            $Written[0].Exception.Message | Should -Not -BeLike '*moments ago*'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'still turns ActiveDurationTooShort into its own error, not ActiveRoleNotFound' {
+            $Refusal.Code = 'ActiveDurationTooShort'
+            $Refusal.Message = 'ActiveDurationTooShort: Group was not activated long enough to meet the minimum wait period.'
+            $Errs = @()
+            Disable-OPIMEntraIDGroup -GroupName 'Finance Team' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Errs[-1].FullyQualifiedErrorId | Should -Be 'ActiveDurationTooShort,Disable-OPIMEntraIDGroup'
+            $Errs[-1].Exception.Message | Should -BeLike 'You must wait at least 5 minutes after activating a group*'
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'ActiveRoleNotFound*' }).Count | Should -Be 0
+        }
+
+        It 'sends no request under -WhatIf, so nothing is refused and nothing is written' {
+            $Errs = @()
+            Disable-OPIMEntraIDGroup -GroupName 'Finance Team' -WhatIf -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Errs).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It -ParameterFilter { $Method -eq 'POST' }
+        }
+    }
+
     Context 'When the resolver writes an error instead of throwing it' {
         # The cmdlet calls the resolver with -ErrorAction Stop, so an error the resolver only writes
         # ends that name inside the cmdlet's own try and is written as the cmdlet's own error. The

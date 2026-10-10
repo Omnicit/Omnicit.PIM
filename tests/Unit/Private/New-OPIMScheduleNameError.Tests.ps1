@@ -489,6 +489,111 @@ Describe 'New-OPIMScheduleNameError' {
         }
     }
 
+    Context 'When the service refused the deactivation since the assignment is gone (OPIM-50)' {
+        # The list of active assignments still showed the post, but Graph (or ARM) answered that the
+        # assignment does not exist: it was deactivated moments ago, and the list lags behind.
+        It 'says the service reports it does not exist and that it was deactivated moments ago (<Pillar>)' -ForEach @(
+            @{
+                Pillar = 'Group'; Name = 'opim-grp - member'
+                Expected = "No active group assignment matches the name 'opim-grp - member'. Microsoft Graph reports that it does not exist: it was deactivated moments ago, and the list of active assignments can still show it for a short while."
+            }
+            @{
+                Pillar = 'Directory'; Name = 'Usage Summary Reports Reader'
+                Expected = "No active directory role matches the name 'Usage Summary Reports Reader'. Microsoft Graph reports that it does not exist: it was deactivated moments ago, and the list of active assignments can still show it for a short while."
+            }
+            @{
+                Pillar = 'Azure'; Name = 'Reader -> rg-one'
+                Expected = "No active Azure role matches the name 'Reader -> rg-one'. Azure Resource Manager reports that it does not exist: it was deactivated moments ago, and the list of active assignments can still show it for a short while."
+            }
+        ) {
+            $Record = InModuleScope Omnicit.PIM -Parameters @{ Pillar = $Pillar; Name = $Name } {
+                param($Pillar, $Name)
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar $Pillar -Name $Name -Status Active -JustDeactivated
+            }
+            $Record.Exception.Message | Should -BeExactly $Expected
+        }
+
+        It 'returns ActiveRoleNotFound with the category ObjectNotFound and the name as target' {
+            $Record = InModuleScope Omnicit.PIM {
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Group -Name 'opim-grp - member' -Status Active -JustDeactivated
+            }
+            $Record | Should -BeOfType [System.Management.Automation.ErrorRecord]
+            $Record.FullyQualifiedErrorId | Should -Be 'ActiveRoleNotFound'
+            $Record.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+            $Record.TargetObject | Should -Be 'opim-grp - member'
+        }
+
+        It 'adds no advice to give the display name, since its sentence stands in for it' {
+            $Record = InModuleScope Omnicit.PIM {
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Group -Name 'opim-grp - member' -Status Active -JustDeactivated
+            }
+            $Record.Exception.Message | Should -Not -BeLike '*Give the display name*'
+            $Record.Exception.Message | Should -Not -BeLike '*or use tab completion*'
+        }
+
+        It 'wins over -AlreadyInactive, which says the post is already deactivated' {
+            $Record = InModuleScope Omnicit.PIM {
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Group -Name 'opim-grp - member' -Status Active `
+                    -AlreadyInactive -JustDeactivated
+            }
+            $Record.Exception.Message | Should -BeLike '*reports that it does not exist: it was deactivated moments ago*'
+            $Record.Exception.Message | Should -Not -BeLike '*eligible but not active*'
+            $Record.Exception.Message | Should -Not -BeLike '*already deactivated*'
+        }
+
+        It 'wins over -ActiveForm, which says the post is active under another key' {
+            $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes } {
+                param($Fakes)
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Group -Name 'opim-grp - member' -Status Active `
+                    -ActiveForm @($Fakes.GroupMemberActive) -JustDeactivated
+            }
+            $Record.Exception.Message | Should -BeLike '*reports that it does not exist: it was deactivated moments ago*'
+            $Record.Exception.Message | Should -Not -BeLike '*It is active as*'
+        }
+
+        It 'leaves the record without the switch exactly as it was (<Pillar>)' -ForEach @(
+            @{ Pillar = 'Group'; Expected = "No active group assignment matches the name 'Nobody'. Give the display name as Get-OPIMEntraIDGroup -Activated shows it, or use tab completion." }
+            @{ Pillar = 'Azure'; Expected = "No active Azure role matches the name 'Nobody'. Give the display name as Get-OPIMAzureRole -Activated shows it, or use tab completion." }
+        ) {
+            $Record = InModuleScope Omnicit.PIM -Parameters @{ Pillar = $Pillar } {
+                param($Pillar)
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar $Pillar -Name 'Nobody' -Status Active
+            }
+            $Record.Exception.Message | Should -BeExactly $Expected
+            $Record.Exception.Message | Should -Not -BeLike '*moments ago*'
+        }
+
+        It 'keeps the already-deactivated sentence without the switch' {
+            $Record = InModuleScope Omnicit.PIM {
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Group -Name 'opim-grp - member' -Status Active -AlreadyInactive
+            }
+            $Record.Exception.Message | Should -BeExactly "No active group assignment matches the name 'opim-grp - member'. It is eligible but not active: it is already deactivated, or its activation has not finished yet."
+        }
+
+        It 'does not touch an AmbiguousName record' {
+            $Plain = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes } {
+                param($Fakes)
+                New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Group -Name 'Twin' -Status Active `
+                    -Candidate @($Fakes.TwinOne, $Fakes.TwinTwo)
+            }
+            $Switched = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes } {
+                param($Fakes)
+                New-OPIMScheduleNameError -ErrorId AmbiguousName -Pillar Group -Name 'Twin' -Status Active `
+                    -Candidate @($Fakes.TwinOne, $Fakes.TwinTwo) -JustDeactivated
+            }
+            $Switched.Exception.Message | Should -BeExactly $Plain.Exception.Message
+        }
+
+        It 'writes nothing to any stream' {
+            $Out = InModuleScope Omnicit.PIM {
+                New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Group -Name 'opim-grp - member' -Status Active `
+                    -JustDeactivated -Verbose *>&1
+            }
+            @($Out).Count | Should -Be 1
+            @($Out)[0] | Should -BeOfType [System.Management.Automation.ErrorRecord]
+        }
+    }
+
     Context 'When -Status Both lists an eligible and an active post (M5)' {
         It 'suggests -Scope when the scopes differ within each state, though an eligible and an active post share one' {
             $Record = InModuleScope Omnicit.PIM -Parameters @{ Fakes = $Fakes } {

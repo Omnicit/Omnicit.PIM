@@ -1393,6 +1393,11 @@ expand `group,principal`.
   followed by `return`; when the name still matches an eligible post, its message says the role is
   eligible but not active (already deactivated, or its activation has not finished yet) -- unless an
   active post carries the same label under another key, when it names that active form instead.
+- A group deactivation that Graph refuses with `RoleAssignmentDoesNotExist` (OPIM-50: the assignment
+  was deactivated moments ago and the active list still shows it, about 30 seconds) is the same
+  non-terminating `ActiveRoleNotFound` (target the group's label, category `ObjectNotFound`), with the
+  message that says so; `Disable-OPIMEntraIDGroup` maps that one code and no other (see **Name
+  errors have one owner**), after the `ActiveDurationTooShort` converter.
 - An eligible-only object piped in is skipped with a verbose message.
 - `-WhatIf` / `-Confirm` through `[CmdletBinding(SupportsShouldProcess)]`.
 - `Disable-OPIMMyRole -TenantAlias` matches every configured entry of a hashtable alias against
@@ -1709,6 +1714,16 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   `AmbiguousName` (the message says "identity"), and the cmdlet returns without acting. An entry of
   a tenant alias that matches several active posts is written by `Disable-OPIMMyRole` as the same
   `AmbiguousName`, built with `-Configuration` (the message says "configured entry").
+  `ActiveRoleNotFound` has one more message of its own, built with `-JustDeactivated` (OPIM-50): the
+  service reports that the assignment does not exist, it was deactivated moments ago, and the list
+  of active assignments can still show it for a short while (Microsoft Graph for a directory role or
+  a group, Azure Resource Manager for an Azure role). The switch takes the place of
+  `-AlreadyInactive` and `-ActiveForm`. Only `Disable-OPIMEntraIDGroup` uses it today, in its
+  catch, for the Graph code `RoleAssignmentDoesNotExist` alone (R-50a, recorded live 2026-10-07 in
+  `docs/live-verification/fix-pin-the-tenant-and-scrub-the-token-checklist.md`): `BadRequest` (the
+  second code seen live, generic for any refused request) and every other refusal are written as
+  themselves, and `ActiveDurationTooShort` still goes through its converter first. A new match
+  needs a measured code AND message, never a status.
 - **`LinkedEligibilityNotFound` has one owner.** `ConvertTo-OPIMTenantMapKey` builds it (category
   `ObjectNotFound`, the instance as its target) and throws it with `ThrowTerminatingError` when an
   active Azure role cannot be stored in the tenant map (OPIM-22): its

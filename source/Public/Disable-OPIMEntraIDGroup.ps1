@@ -9,7 +9,9 @@ function Disable-OPIMEntraIDGroup {
     -AccessType Owner for the ownership. Two groups with the same display name are refused with
     AmbiguousName and nothing is deactivated. A name that matches no active assignment is written as
     a (non-terminating) ActiveRoleNotFound error; when the assignment is eligible but not active, the
-    message says it is already deactivated.
+    message says it is already deactivated. A deactivation that Graph refuses because the assignment
+    was deactivated moments ago (the list of active assignments still shows it for about 30 seconds)
+    is written as ActiveRoleNotFound too, as when the list has caught up.
     The request is reported by the status Graph gives it: a deactivation that does not end Revoked
     is written as an ActivationRequestFailed error, and one that waits for approval or is still
     being processed is returned with a warning.
@@ -131,9 +133,18 @@ function Disable-OPIMEntraIDGroup {
             } catch {
                 Remove-OPIMErrorRecord -Record $PSItem
                 $Err = $PSItem
-                if (-not (ConvertTo-ActiveDurationTooShortError -CaughtError $Err -ResourceType 'group' -Cmdlet $PSCmdlet)) {
-                    $PSCmdlet.WriteError($Err)
+                if (ConvertTo-ActiveDurationTooShortError -CaughtError $Err -ResourceType 'group' -Cmdlet $PSCmdlet) { return }
+                if ($Err.FullyQualifiedErrorId.Split(',')[0] -eq 'RoleAssignmentDoesNotExist') {
+                    # OPIM-50 (R-50a): Graph answers RoleAssignmentDoesNotExist when the assignment was
+                    # deactivated moments ago and its active list still shows it (about 30 seconds). That is
+                    # the outcome of a name that is no longer active: ActiveRoleNotFound. Only this code,
+                    # measured live; BadRequest and every other refusal are written as themselves.
+                    $Label = (Get-OPIMScheduleName -Pillar Group -InputObject $Group).Label
+                    $PSCmdlet.WriteError((New-OPIMScheduleNameError -ErrorId ActiveRoleNotFound -Pillar Group `
+                        -Name $Label -Status Active -JustDeactivated))
+                    return
                 }
+                $PSCmdlet.WriteError($Err)
                 return
             }
 
