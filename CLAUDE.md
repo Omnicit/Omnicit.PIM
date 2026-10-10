@@ -643,7 +643,7 @@ and cloud (the `-Environment` they were given, else the one their `-TenantAlias`
 first `Connect-OPIM` for Microsoft Graph, then -- only when an Azure pillar runs (an `-All*` Azure
 switch, a hashtable alias that lists `AzureRoles`, or the plain string form of an alias) --
 `Connect-OPIM -IncludeARM` for the same tenant and cloud, and only then the pillar cmdlets
-(`Enable-OPIMMyRole.ps1:202-231`, `Disable-OPIMMyRole.ps1:186-215`). Each sign-in runs with
+(`Enable-OPIMMyRole.ps1:205-234`, `Disable-OPIMMyRole.ps1:189-218`). Each sign-in runs with
 `-ErrorAction Stop` in a `try` whose catch scrubs first and writes the record. A failed Graph
 sign-in stops the command before anything is listed or changed. A failed Azure sign-in is written
 as a non-terminating error and skips the Azure pillar only -- except under the `Stop` error
@@ -1075,7 +1075,9 @@ token-rejected retry -- a refresh and a third send. On a failure:
    private `-WaitDeadline` the Graph `-Wait` polls pass (`Wait-OPIMDirectoryRole`,
    `Enable-OPIMEntraIDGroup`), a wait is shortened to the time left and, with less than a second
    left, the request ends with the converted error, which the poll writes as itself; the deadline is
-   read only at a decision to wait, so a poll past it still sends once.
+   read only at a decision to wait, so a poll past it still sends once. Both rules bound the
+   module's own waits only: the Graph SDK's retry handler, inside `Invoke-MgGraphRequest`, retries a
+   429 (honouring `Retry-After`) before the module sees the failure, and neither rule reaches it.
 2. **ACRS claims-challenge retry.** It looks for `claims=` in the `WWW-Authenticate` header, the
    response body and the exception message, and decodes the value as URL-encoded JSON (the PIM 400
    `RoleAssignmentRequestAcrsValidationFailed` body form), base64url JSON (the 401 step-up header
@@ -1265,8 +1267,9 @@ scope lags a new activation by about 20 seconds, while the root list shows it at
 `-Activated`, since the resolver calls `Get-OPIMAzureRole -Activated` with no scope. So a `Name` is
 found among the listed posts and never requested by itself, which a normal user is refused at `/`
 (OPIM-23). The `-Scope` of `Enable-` and `Disable-OPIMAzureRole` does the same: it selects among the
-posts of the root listing and changes what is read in no way. The `<prefix>` `Get-OPIMAzureRole`
-reads at is the scope with exactly one leading slash, so a `-Scope` typed without it
+posts of the root listing and changes what is read in no way. For a plain listing, the `<prefix>`
+`Get-OPIMAzureRole` reads at is the scope with exactly one leading slash (an `-Activated` read has
+no prefix: it reads at the root), so a `-Scope` typed without it
 (`subscriptions/...`) is read at that scope and its path stays on the ARM host; only the path
 changes, and the module's own scope filters compare `-Scope` as it was given. A role object that
 `Enable-` or `Disable-OPIMAzureRole` gets with a `ScopeId` that does not start with `/` (empty, or
@@ -1343,7 +1346,8 @@ expand `group,principal`.
   for it; it stays submitted), and a failed poll written as itself -- all non-terminating, so the
   next role or group still runs. Every poll read hands its deadline (the request's own in
   `Wait-OPIMDirectoryRole`) to the transport as the private `-WaitDeadline` (scope 5b), so a
-  throttled read is never waited out past it: it then fails with the transport's converted error,
+  throttled read is never waited out by the module past it (a Graph read's SDK retries come first):
+  it then fails with the transport's converted error,
   written as itself like any failed poll and never as `ActivationWaitTimedOut`. The bound covers
   the reads DURING the wait only (each status read, and each read of a directory role's
   assignment). The `-PassThru` listing of the activated instances after the wait
@@ -1385,9 +1389,10 @@ expand `group,principal`.
   `$ActiveReadFailed` (nothing more is sent by this command) and ends that role.
   **Only that code starts a retry**: `ArmTransportError` (a 2xx answer with no body, or no answer,
   may have been accepted), a policy refusal, a 5xx and every other error are written as themselves
-  and never sent again, because a write is repeated only after an answer that proves it was not
-  carried out. The retry does not ask `ShouldProcess` again, and `-Wait` polls the request finally
-  accepted. A direct caller's `-ErrorVariable` also holds every intermediate `RoleAssignmentExists`
+  and not retried by this loop, since a write is repeated only after an answer that proves it was
+  not carried out (the transport's own throttle and 401 retries are separate and unchanged). The
+  retry does not ask `ShouldProcess` again, and `-Wait` polls the request finally accepted. A direct
+  caller's `-ErrorVariable` also holds every intermediate `RoleAssignmentExists`
   record the transport threw and the cmdlet caught (one per refused request, up to six), even when
   the retry finally succeeds, since the engine collects a caught nested record; the cmdlet writes
   none of them, and `pim` and `unpim` take only what the pillar cmdlet writes, so these records do
@@ -1534,7 +1539,8 @@ completion authenticates and calls Graph or ARM on the prompt path. Keep that ca
 administrative unit it cannot read and the Azure sign-in behind `Get-OPIMAzureRole` can warn about
 an `AZURE_AUTHORITY_HOST` that names another authority, and a completion must not print a warning
 into the prompt. Each completer's warning context in `ArgumentCompleters.Tests.ps1` holds it.
-A completion never waits out throttling (scope 5b): each completer sets the module flag
+A completion never waits out throttling itself (scope 5b; the Graph SDK's own retries come first,
+see **Authentication Architecture**): each completer sets the module flag
 `$script:_OPIMCompletionInProgress` with `& ([scriptblock]::Create('Set-OPIMCompletionState -InProgress $true'))`
 before its listing and clears it the same way in a `finally` block, so a failed listing clears it
 too, and while it is set both transports end a throttled request at once with the converted error.
@@ -2136,14 +2142,15 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   of its pipeline, or when its output is captured by an assignment or a parenthesised expression**
   (measured 2026-10-10, PowerShell 7.6.6, OPIM-52). The list is registered on the caller's output
   pipe, so a nested command feeds it only when its own output pipe is that one; in the middle of a
-  pipeline its errors reach the error stream (under `Continue`) and `$Error`, never the list, as
-  under `SilentlyContinue` (`1 | Inner | Conv` leaves it empty; `1 | Inner` and
-  `(1 | Inner) | Conv` fill it; a terminating error reaches it too). That is why `Enable-` and
+  pipeline its errors reach the error stream (under `Continue`) and `$Error`, never the list; under
+  `SilentlyContinue` they reach only `$Error` (`1 | Inner | Conv` leaves the list empty; `1 | Inner`
+  and `(1 | Inner) | Conv` fill it; a terminating error reaches it too). That is why `Enable-` and
   `Disable-OPIMMyRole` redirect each pillar's error stream into `ConvertTo-OPIMMyRoleResult`
   (see **Error Handling**). A test that expects a nested command's record in `-ErrorVariable`
   has to shape the call the same way.
 - **`-ErrorVariable` also collects more than the command's own error.** The engine fills it from
-  every nested frame's error stream, so a mock that throws can leave several entries -- wrapper
+  the error stream of every nested frame that reaches it (see the bullet above), so a mock that
+  throws can leave several entries -- wrapper
   exceptions first -- before the record the command itself wrote, which is the LAST entry.
   Assert on the entry you mean, not on `$Errs[0]` by habit.
 - **Pin `-ErrorAction` on any call whose non-terminating error the test observes or has to

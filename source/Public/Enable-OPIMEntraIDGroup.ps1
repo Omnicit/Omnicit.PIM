@@ -93,8 +93,9 @@ function Enable-OPIMEntraIDGroup {
     With -Wait, the most seconds to wait for the request to finish, counted from the start of the
     wait. Defaults to 300. A request that waits for approval ends the wait at once, with a warning;
     one still in progress at the limit is written as an ActivationWaitTimedOut error and stays
-    submitted. A read that Microsoft Graph throttles is not waited out past the limit either; it then
-    fails and is written as its own error.
+    submitted. Beyond the retries the Graph SDK makes on its own, the module does not wait out
+    Microsoft Graph throttling of a read past the limit either; the read then fails and is written
+    as its own error.
     #>
     [Alias('Enable-PIMGroup')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'GroupName')]

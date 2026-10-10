@@ -9,9 +9,10 @@ function Disable-OPIMEntraIDGroup {
     -AccessType Owner for the ownership. Two groups with the same display name are refused with
     AmbiguousName and nothing is deactivated. A name that matches no active assignment is written as
     a (non-terminating) ActiveRoleNotFound error; when the assignment is eligible but not active, the
-    message says it is already deactivated. A deactivation that Graph refuses because the assignment
-    was deactivated moments ago (the list of active assignments still shows it for about 30 seconds)
-    is written as ActiveRoleNotFound too, as when the list has caught up.
+    message says it is already deactivated. A deactivation that Graph refuses with the error
+    RoleAssignmentDoesNotExist (as it does when the assignment was deactivated moments ago and the
+    list of active assignments still shows it, for about 30 seconds) is written as ActiveRoleNotFound
+    too, as when the list has caught up. Any other refusal, BadRequest included, is written as itself.
     The request is reported by the status Graph gives it: a deactivation that does not end Revoked
     is written as an ActivationRequestFailed error, and one that waits for approval or is still
     being processed is returned with a warning.

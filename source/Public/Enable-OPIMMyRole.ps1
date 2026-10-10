@@ -29,7 +29,7 @@ function Enable-OPIMMyRole {
     activated; the other categories still run, except under the error preference Stop, where the
     first such error ends the command. Every refusal of an activation is written as an error of
     this command -- in -ErrorVariable too, also under -ErrorAction SilentlyContinue -- with the
-    error id the pillar gave it.
+    error id the role or group cmdlet gave it.
 
     Use the 'pim' alias for daily quick activation:
 

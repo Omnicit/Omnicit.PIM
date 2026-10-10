@@ -26,7 +26,7 @@ function Enable-OPIMAzureRole {
     request is sent every 10 seconds for up to a minute, after which RoleAssignmentExists is written
     with a message that says so. A role assigned to you permanently is refused the same way and is
     never in the active list, so it ends in that message too, which names that case. No other refusal
-    is ever sent again.
+    starts that retry.
     .NOTES
     The default activation period is 1 hour. Override with -Hours. Make it persistent in your profile:
 
@@ -281,7 +281,7 @@ function Enable-OPIMAzureRole {
                         # Only ARM's RoleAssignmentExists starts a retry: it is a 400 refusal, so nothing was
                         # created. Every other error -- ArmTransportError (a 2xx answer with no body, or no
                         # answer at all, which may have been accepted), a policy refusal, a 5xx -- is written
-                        # as itself and the request is never sent again.
+                        # as itself and this loop never sends the request again.
                         if ($PSItem.FullyQualifiedErrorId.Split(',')[0] -ne 'RoleAssignmentExists') {
                             if (-not (ConvertTo-PolicyValidationError -CaughtError $PSItem -ResourceType 'role' -Cmdlet $PSCmdlet)) {
                                 $PSCmdlet.WriteError($PSItem)

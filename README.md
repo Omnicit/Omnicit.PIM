@@ -900,8 +900,11 @@ Enable-OPIMDirectoryRole 'Usage Summary Reports Reader (elig-001)'    # tab-comp
 - Tab completion offers the bare name whenever it is unique, and the longer form -- the name, the
   scope or access type, and the schedule id -- when it is not. A name that contains an apostrophe,
   straight or typographic, is completed with the apostrophe doubled, as PowerShell needs it.
-  Tab completion never waits out throttling: when Graph or Azure throttles the listing, the
-  completion fails at once and offers nothing, instead of holding the prompt.
+  Tab completion never waits out throttling itself: when Graph or Azure throttles the listing
+  request (for Graph, after the retries the Graph SDK makes on its own), the completion fails at
+  once and offers nothing, instead of holding the prompt. A directory completion whose lookup of an
+  administrative unit is throttled still offers the roles, and its longer form names that scope by
+  its id instead of the administrative unit's display name.
 - **A name that matches more than one role or group is never resolved by guessing.** The command
   writes `AmbiguousName`, lists the candidates and activates or deactivates nothing. For a role
   name, `-Scope` picks one on the cmdlets that have it (`Enable-`/`Disable-OPIMDirectoryRole`,
@@ -950,7 +953,7 @@ role or group named or piped twice in one command is requested once, with a warn
 When Azure refuses an Azure role with `RoleAssignmentExists` right after the role was deactivated or
 activated, `Enable-OPIMAzureRole` reads the active list again and, if the role is not active, sends a
 new request every 10 seconds for up to a minute before it writes that error, which also covers a
-role assigned to you permanently and says so; no other refusal is ever sent again.
+role assigned to you permanently and says so; no other refusal starts that retry.
 
 With `-Wait`, the `Enable-OPIM*` role and group cmdlets wait for at most `-TimeoutSeconds` (default
 300) and then report the request by its last status. For a directory role or a group that status is
@@ -962,18 +965,20 @@ failed to `Wait-OPIMDirectoryRole`, which reads each one at least once, waits fo
 assignment to appear once a request is provisioned, and counts from the time Graph created the
 request. A request that waits for approval ends the wait at once, with a warning. One still in
 progress at the limit is an `ActivationWaitTimedOut` error and returns nothing; the request stays
-submitted. The limit also bounds throttling during the wait: each read of a request's status, and
-of a directory role's assignment, waits out Graph or Azure throttling only up to that request's
-limit, and a read still throttled there is written as that throttling error. The listing of the
+submitted. The limit also bounds the throttling waits the module itself adds during the wait: each
+read of a request's status, and of a directory role's assignment, waits out Graph or Azure
+throttling only up to that request's limit (for Graph, beyond the retries the Graph SDK makes on
+its own), and a read still throttled there is written as that throttling error. The listing of the
 activated directory roles returned after the wait (by `Wait-OPIMDirectoryRole -PassThru`, and so by
 `Enable-OPIMDirectoryRole -Wait` and `pim -Wait`) is an ordinary listing and waits out throttling as
 any listing does. Each role or group is reported on its own, so one that fails or times out never
 stops the next.
 
 A group deactivation sent right after another one can still find the group in the list of active
-assignments, which lags by about 30 seconds, and Graph then answers that the assignment does not
-exist. `Disable-OPIMEntraIDGroup` writes that as `ActiveRoleNotFound`, with a message that says it
-was deactivated moments ago; every other refusal is written under the error id Graph gave it.
+assignments, which lags by about 30 seconds, and Graph then refuses it with
+`RoleAssignmentDoesNotExist`. `Disable-OPIMEntraIDGroup` writes a refusal with that error id as
+`ActiveRoleNotFound`, with a message that says the group was deactivated moments ago; any other
+refusal, `BadRequest` included, is written under the error id Graph gave it.
 
 `pim` and `unpim` write every refusal of an activation or a deactivation as an error of their own,
 with the error id the role or group cmdlet gave it. It is in `-ErrorVariable` too, also under

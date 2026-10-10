@@ -95,11 +95,12 @@ function Enable-OPIMDirectoryRole {
     With -Wait, the most seconds to wait for each request, counted from the time Graph created it.
     Defaults to 300. A request that waits for approval ends its wait at once, with a warning; one
     still in progress at the limit is written as an ActivationWaitTimedOut error and stays
-    submitted. The limit also bounds throttling during the wait: each read of a request's status,
-    and of its role assignment, waits out Microsoft Graph throttling only up to that request's limit,
-    and a read still throttled there fails and is written as its own error. The listing of the
-    activated roles that -Wait returns after the wait is an ordinary listing and waits out
-    throttling as any listing does.
+    submitted. The limit also bounds the throttling waits the module itself adds during the wait:
+    beyond the retries the Graph SDK makes on its own, each read of a request's status, and of its
+    role assignment, waits out Microsoft Graph throttling only up to that request's limit, and a
+    read still throttled there fails and is written as its own error. The listing of the activated
+    roles that -Wait returns after the wait is an ordinary listing and waits out throttling as any
+    listing does.
     #>
     [Alias('Enable-PIMADRole', 'Enable-PIMRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
