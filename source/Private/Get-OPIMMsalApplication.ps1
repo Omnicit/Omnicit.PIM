@@ -8,7 +8,11 @@ function Get-OPIMMsalApplication {
     Constructs an IPublicClientApplication via reflection (the MSAL types live in a separate
     Assembly Load Context owned by the Graph SDK and are not directly accessible from the default
     ALC). The application is cached in $script:_OPIMMsalApp for the lifetime of the session and
-    is only rebuilt when the target tenant changes.
+    is only rebuilt when the target tenant or the cloud changes. The cloud is part of the cache key
+    since an application is built for one sign-in authority and holds the token cache of that
+    authority: an application for one cloud is never handed out for another, even for the same
+    tenant. The authority host of each cloud comes from Get-OPIMCloudEndpoint, which owns the cloud
+    table; this function holds no host of its own.
 
     No Add-Type or path-pinning is used: the assembly is located through
     [System.Runtime.Loader.AssemblyLoadContext]::All after ensuring that
@@ -20,24 +24,45 @@ function Get-OPIMMsalApplication {
     to 'organizations' for multi-tenant-capable accounts. The cached app is rebuilt whenever this
     value differs from the previously cached value.
 
+    .PARAMETER Environment
+    The cloud to build the application for: 'Global', 'USGov', 'USGovDoD' or 'China', in any letter
+    case. Defaults to 'Global'. It selects the sign-in authority host of that cloud, and the cached
+    app is rebuilt whenever it differs from the cloud the cached app was built for. A cache written
+    before the cloud was recorded counts as Global. An unknown cloud is an error before anything
+    else is read, never a fallback to the Global cloud.
+
     .OUTPUTS
     The IPublicClientApplication instance (opaque object via reflection).
 
     .EXAMPLE
     $MsalApp = Get-OPIMMsalApplication -TenantId 'contoso.onmicrosoft.com'
+
+    .EXAMPLE
+    $MsalApp = Get-OPIMMsalApplication -TenantId 'contoso.onmicrosoft.us' -Environment USGov
     #>
     [OutputType([object])]
     param(
-        [string]$TenantId = 'organizations'
+        [string]$TenantId = 'organizations',
+        [string]$Environment = 'Global'
     )
 
-    # Return cached instance when tenant has not changed.
-    if ($script:_OPIMMsalApp -and $script:_OPIMMsalAppTenantId -eq $TenantId) {
-        Write-Verbose "[Get-OPIMMsalApplication] Returning cached MSAL app for tenant '$TenantId'."
+    # Get-OPIMCloudEndpoint is pure, owns every cloud host, validates the cloud (an unknown cloud
+    # throws, never falls back to Global) and returns its canonical name. It runs before the cache is
+    # read, so a cloud outside the table is refused even when an application is cached.
+    $Endpoint = Get-OPIMCloudEndpoint -Environment $Environment
+
+    # The cloud the cached application was built for. A cache written before the cloud was recorded
+    # has none, and counts as Global, the only cloud there was.
+    $CachedEnvironment = if ($script:_OPIMMsalAppEnvironment) { [string]$script:_OPIMMsalAppEnvironment } else { 'Global' }
+
+    # Return the cached instance when neither the tenant nor the cloud has changed: an application
+    # holds the token cache of the authority it was built for.
+    if ($script:_OPIMMsalApp -and $script:_OPIMMsalAppTenantId -eq $TenantId -and $CachedEnvironment -eq $Endpoint.Environment) {
+        Write-Verbose "[Get-OPIMMsalApplication] Returning cached MSAL app for tenant '$TenantId' in cloud '$CachedEnvironment'."
         return $script:_OPIMMsalApp
     }
 
-    Write-Verbose "[Get-OPIMMsalApplication] Building new MSAL PublicClientApplication for tenant '$TenantId'."
+    Write-Verbose "[Get-OPIMMsalApplication] Building new MSAL PublicClientApplication for tenant '$TenantId' in cloud '$($Endpoint.Environment)'."
 
     # Force-load the Graph.Authentication module assemblies (no-op if already loaded).
     # This is intentionally a throwaway call; Get-MgContext returns $null when not connected
@@ -92,7 +117,9 @@ function Get-OPIMMsalApplication {
     # --- Build the PublicClientApplication via reflection ---
     # Client ID: Microsoft Graph Command Line Tools (public, no app registration required)
     [string]$ClientId = '14d82eec-204b-4c2f-b7e8-296a70dab67e'
-    [string]$Authority = "https://login.microsoftonline.com/$TenantId"
+    # The authority host is the cloud's, from the table; AuthorityHost ends in a slash, so the tenant
+    # follows it directly. For Global this is https://login.microsoftonline.com/<tenant>, as it always was.
+    [string]$Authority = '{0}{1}' -f $Endpoint.AuthorityHost, $TenantId
 
     $BuilderType = $MsalAssembly.GetType('Microsoft.Identity.Client.PublicClientApplicationBuilder')
     if (-not $BuilderType) {
@@ -151,8 +178,9 @@ function Get-OPIMMsalApplication {
             -Terminating
     }
 
-    $script:_OPIMMsalApp         = $MsalApp
-    $script:_OPIMMsalAppTenantId = $TenantId
+    $script:_OPIMMsalApp            = $MsalApp
+    $script:_OPIMMsalAppTenantId    = $TenantId
+    $script:_OPIMMsalAppEnvironment = $Endpoint.Environment
 
     Write-Verbose "[Get-OPIMMsalApplication] MSAL app built and cached."
     return $MsalApp

@@ -2080,6 +2080,106 @@ Describe 'Invoke-OPIMGraphRequest' {
             }
         }
 
+        It 'follows a next link on the Graph host of the session''s cloud for a relative -Uri: <Name>' -ForEach @(
+            @{ Name = 'Global'; Cloud = 'Global'; Link = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+            @{ Name = 'USGov'; Cloud = 'USGov'; Link = 'https://graph.microsoft.us/v1.0/x?$skiptoken=2' }
+            @{ Name = 'USGovDoD'; Cloud = 'USGovDoD'; Link = 'https://dod-graph.microsoft.us/v1.0/x?$skiptoken=2' }
+            @{ Name = 'China'; Cloud = 'China'; Link = 'https://microsoftgraph.chinacloudapi.cn/v1.0/x?$skiptoken=2' }
+            @{ Name = 'USGov, link host in another letter case'; Cloud = 'USGov'; Link = 'https://GRAPH.microsoft.us/v1.0/x?$skiptoken=2' }
+        ) {
+            InModuleScope Omnicit.PIM -Parameters @{ Cloud = $Cloud; Link = $Link } {
+                param($Cloud, $Link)
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com'; Environment = $Cloud }
+                $script:_OPIMTestLinks = @($Link)
+                $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All
+                (@($Result.value) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1,2'
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                $script:_OPIMTestSent[1] | Should -Be $Link
+            }
+        }
+
+        It 'refuses <Name> for a relative -Uri and sends nothing for it' -ForEach @(
+            @{ Name = 'a link to the global Graph host in a USGov session'; Cloud = 'USGov'; Link = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+            @{ Name = 'a link to a USGov Graph host in a Global session'; Cloud = 'Global'; Link = 'https://graph.microsoft.us/v1.0/x?$skiptoken=2' }
+            @{ Name = 'a link to the USGov Graph host in a USGovDoD session'; Cloud = 'USGovDoD'; Link = 'https://graph.microsoft.us/v1.0/x?$skiptoken=2' }
+            @{ Name = 'a link to the USGovDoD Graph host in a USGov session'; Cloud = 'USGov'; Link = 'https://dod-graph.microsoft.us/v1.0/x?$skiptoken=2' }
+            @{ Name = 'a link to the global Graph host in a China session'; Cloud = 'China'; Link = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+            @{ Name = 'a link to a lookalike of the USGov Graph host'; Cloud = 'USGov'; Link = 'https://graph.microsoft.us.evil.example.com/v1.0/x?$skiptoken=2' }
+            @{ Name = 'a USGov link over http'; Cloud = 'USGov'; Link = 'http://graph.microsoft.us/v1.0/x?$skiptoken=2' }
+        ) {
+            InModuleScope Omnicit.PIM -Parameters @{ Cloud = $Cloud; Link = $Link } {
+                param($Cloud, $Link)
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com'; Environment = $Cloud }
+                $script:_OPIMTestLinks = @($Link)
+                $Caught = $null
+                try { $null = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All } catch { $Caught = $PSItem }
+                $Caught | Should -Not -BeNullOrEmpty -Because 'a link that is not followed leaves the list incomplete'
+                $Caught.Exception.Message | Should -BeExactly 'Page 2: Microsoft Graph returned a next link that is not an https link on the host of the first request, so it was not followed and the list is incomplete.'
+                $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::SecurityError)
+                $Caught.Exception.NextLink | Should -BeExactly $Link
+                $Caught.Exception.PageNumber | Should -Be 2
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                @($script:_OPIMTestSent).Count | Should -Be 1 -Because 'the link is never sent'
+            }
+        }
+
+        It 'keeps graph.microsoft.com for a session that records no cloud: <Name>' -ForEach @(
+            @{ Name = 'no state'; State = $null }
+            @{ Name = 'a state without an Environment key'; State = @{ TenantId = 'contoso.onmicrosoft.com' } }
+            @{ Name = 'a state with an empty Environment'; State = @{ TenantId = 'contoso.onmicrosoft.com'; Environment = '' } }
+            @{ Name = 'a state that is not a dictionary'; State = 'not a state' }
+        ) {
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                param($State)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestLinks = @('https://graph.microsoft.com/v1.0/x?$skiptoken=2')
+                $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All
+                (@($Result.value) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1,2'
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+            }
+        }
+
+        It 'refuses a USGov link for a session that records no cloud' {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com' }
+                $script:_OPIMTestLinks = @('https://graph.microsoft.us/v1.0/x?$skiptoken=2')
+                $Caught = $null
+                try { $null = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All } catch { $Caught = $PSItem }
+                $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::SecurityError)
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+            }
+        }
+
+        It 'takes the host of an absolute -Uri over the session''s cloud' {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com'; Environment = 'USGov' }
+                $script:_OPIMTestLinks = @('https://graph.example.com/v1.0/x?$skiptoken=2')
+                $Result = Invoke-OPIMGraphRequest -Uri 'https://graph.example.com/v1.0/x' -All
+                (@($Result.value) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1,2'
+
+                # The session's cloud does not widen the set of hosts: its own Graph host is another host.
+                $script:_OPIMTestSent.Clear()
+                $script:_OPIMTestLinks = @('https://graph.microsoft.us/v1.0/x?$skiptoken=2')
+                $Caught = $null
+                try { $null = Invoke-OPIMGraphRequest -Uri 'https://graph.example.com/v1.0/x' -All } catch { $Caught = $PSItem }
+                $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::SecurityError)
+                @($script:_OPIMTestSent).Count | Should -Be 1
+            }
+        }
+
+        It 'sends nothing and never falls back to the global host when the state records a cloud outside the table' {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com'; Environment = 'Germany' }
+                $script:_OPIMTestLinks = @('https://graph.microsoft.com/v1.0/x?$skiptoken=2')
+                $Caught = $null
+                try { $null = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All } catch { $Caught = $PSItem }
+                $Caught | Should -Not -BeNullOrEmpty
+                $Caught.Exception.Message | Should -Match "no endpoint table entry for the cloud 'Germany'"
+                Should -Invoke Invoke-MgGraphRequest -Times 0 -Scope It
+                @($script:_OPIMTestSent).Count | Should -Be 0
+            }
+        }
+
         It 'numbers the page that would have been read and keeps what was read before it' {
             InModuleScope Omnicit.PIM {
                 $script:_OPIMTestLinks = @(

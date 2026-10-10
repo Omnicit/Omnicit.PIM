@@ -57,8 +57,10 @@ function Invoke-OPIMGraphRequest {
        throws an error with no error id (category InvalidResult) and the same three facts, since the
        list is incomplete. A first page with no body is an empty list. A next link is followed only
        when it is an absolute https URI on the host of the first request (OPIM-46): the host of -Uri
-       when that is an absolute https URI, else graph.microsoft.com. Any other link would carry the
-       session's bearer token to another host, so it is never sent: the same kind of error is
+       when that is an absolute https URI, else the Graph host of the session's cloud
+       (graph.microsoft.com in the global cloud; the cloud table, Get-OPIMCloudEndpoint, owns the
+       others). Any other link would carry the session's bearer token to another host, so it is never
+       sent: the same kind of error is
        thrown, with no error id (category SecurityError), the same three facts (PageNumber is the
        page that would have been read) and a message that names neither the link nor its host. The
        verbose stream names a page by its number and item count, never by its link, which can carry
@@ -95,9 +97,9 @@ function Invoke-OPIMGraphRequest {
     @{ value = <the items of every page> }. A failed page throws its own error, with PartialValue,
     NextLink and PageNumber on its Exception, and nothing is returned; so does a later page that
     comes back with no body, with an error that carries no error id. A next link is followed only
-    when it is an absolute https URI on the host of the first request (graph.microsoft.com when
-    -Uri is relative); any other is the same kind of error, category SecurityError, and is never
-    sent.
+    when it is an absolute https URI on the host of the first request (the Graph host of the
+    session's cloud when -Uri is relative, graph.microsoft.com in the global cloud); any other is
+    the same kind of error, category SecurityError, and is never sent.
 
     .OUTPUTS
     The Graph API response hashtable on success; with -All, a hashtable whose value holds the items
@@ -616,14 +618,23 @@ function Invoke-OPIMGraphRequest {
     $NextUri = $Uri
     [int]$PageNumber = 0
     # OPIM-46 (SEC), ruling P10: the host a next link must stay on is the host of the first request --
-    # the host of -Uri when that is an absolute https URI, else graph.microsoft.com, since the module's
-    # tokens are for the global Microsoft Graph only. TryCreate, not IsWellFormedUriString, which
-    # refuses an unescaped ' or $ in an absolute Graph URI.
+    # the host of -Uri when that is an absolute https URI, else the Graph host of the session's cloud.
+    # A relative -Uri goes to the Graph SDK session, which Initialize-OPIMAuth connected to the cloud the
+    # auth state records as Environment (OPIM-29; a state without one is Global, the only cloud there
+    # was), and the module's tokens are for that cloud's Microsoft Graph only. The host comes from the
+    # cloud table, Get-OPIMCloudEndpoint, which throws for a cloud outside it: a state that names one is
+    # an error before anything is sent, never a fallback to the global host. TryCreate, not
+    # IsWellFormedUriString, which refuses an unescaped ' or $ in an absolute Graph URI.
     $FirstParsed = $null
     $FirstHost = if ([uri]::TryCreate($Uri, [UriKind]::Absolute, [ref]$FirstParsed) -and $FirstParsed.Scheme -eq 'https') {
         $FirstParsed.Host
     } else {
-        'graph.microsoft.com'
+        $SessionCloud = if ($script:_OPIMAuthState -is [System.Collections.IDictionary] -and $script:_OPIMAuthState['Environment']) {
+            [string]$script:_OPIMAuthState['Environment']
+        } else {
+            'Global'
+        }
+        ([uri](Get-OPIMCloudEndpoint -Environment $SessionCloud).GraphServiceRoot).Host
     }
     while ($NextUri) {
         $PageNumber++

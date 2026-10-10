@@ -81,6 +81,40 @@ Describe 'Disconnect-OPIM' {
         }
     }
 
+    Context 'When the cached MSAL application was built for a sovereign cloud (OPIM-29)' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Disconnect-MgGraph {}
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMMsalApp = $null
+                $script:_OPIMMsalAppTenantId = $null
+                $script:_OPIMMsalAppEnvironment = $null
+            }
+        }
+
+        It 'clears the cloud of the cached MSAL app' {
+            # The cloud belongs to the application with its tenant; left behind, it would key the next
+            # application's cache on the old cloud.
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com'; Environment = 'USGov' }
+                $script:_OPIMMsalApp = [pscustomobject]@{ Name = 'msal-application-stand-in' }
+                $script:_OPIMMsalAppTenantId = 'contoso.onmicrosoft.com'
+                $script:_OPIMMsalAppEnvironment = 'USGov'
+            }
+
+            Disconnect-OPIM
+
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState | Should -BeNullOrEmpty
+                $script:_OPIMMsalApp | Should -BeNullOrEmpty
+                $script:_OPIMMsalAppTenantId | Should -BeNullOrEmpty
+                $script:_OPIMMsalAppEnvironment | Should -BeNullOrEmpty
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Disconnect-MgGraph -Times 1 -Exactly -Scope It
+        }
+    }
+
     Context 'When the session signed in with a device code' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Disconnect-MgGraph {}

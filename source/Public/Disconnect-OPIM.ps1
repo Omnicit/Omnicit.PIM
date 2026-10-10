@@ -9,7 +9,8 @@ function Disconnect-OPIM {
     module's next Azure sign-in rebuilds it or the process ends.
 
     It clears the module-scoped authentication state ($script:_OPIMAuthState) and the cached MSAL
-    PublicClientApplication with its tenant, whose in-memory cache holds the Microsoft Graph tokens.
+    PublicClientApplication with its tenant and its cloud, whose in-memory cache holds the Microsoft
+    Graph tokens.
     The module's Azure Resource Manager token lives only in that state, so it is cleared with it.
     Then it calls Disconnect-MgGraph to end the Microsoft Graph SDK session of this PowerShell
     process. Clearing the auth state also forgets a device code sign-in mode (-DeviceCode), so the
@@ -39,6 +40,8 @@ function Disconnect-OPIM {
     $script:_OPIMAuthState = $null
     $script:_OPIMMsalApp   = $null
     $script:_OPIMMsalAppTenantId = $null
+    # The cloud the cached application was built for goes with it (OPIM-29).
+    $script:_OPIMMsalAppEnvironment = $null
 
     try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch { $null = $PSItem }
 

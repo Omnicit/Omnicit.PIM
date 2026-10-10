@@ -100,6 +100,12 @@ function Initialize-OPIMAuth {
     never carried into another, even for the same tenant and account. An unknown cloud is an error,
     never a fallback to Global.
 
+    The Microsoft Graph sign-in follows the cloud. The MSAL application is built for the cloud's
+    sign-in authority host (Get-OPIMMsalApplication -Environment), so a switch of cloud never asks
+    the old cloud's application for a token, and the token is wired into the Graph SDK with
+    Connect-MgGraph -Environment, named by the cloud table's GraphEnvironment. The Global cloud passes
+    no -Environment to Connect-MgGraph at all, so the call stays the one the module always made.
+
     .PARAMETER TenantId
     The Entra ID tenant GUID or domain. When omitted or empty, the session keeps the tenant it is
     signed in to. Only before the first sign-in is 'organizations' used (the home tenant of the
@@ -332,7 +338,9 @@ function Initialize-OPIMAuth {
 
         Write-Verbose "[Initialize-OPIMAuth] Acquiring Graph token for tenant '$EffectiveTenant' (authority '$Authority', cloud '$EffectiveEnvironment'). ClaimsChallenge=$(if ($ClaimsChallenge) { 'YES' } else { 'NO' })"
 
-        $MsalApp = Get-OPIMMsalApplication -TenantId $Authority
+        # The application is built for the cloud's sign-in authority and cached per tenant AND cloud, so
+        # a switch of cloud never reuses the old cloud's application or its token cache.
+        $MsalApp = Get-OPIMMsalApplication -TenantId $Authority -Environment $EffectiveEnvironment
 
         # -- Graph scopes (all PIM surfaces in one prompt) ---------------------
         [string[]]$GraphScopes = @(
@@ -511,8 +519,12 @@ function Initialize-OPIMAuth {
         # -- Wire Graph token into Connect-MgGraph -----------------------------
         # The same SecureString as the tenant check. A failure is scrubbed first, as on every
         # transport path, and still ends this function, before the auth state is written.
+        # Global passes no -Environment at all, so the public call stays the one the module always
+        # made; any other cloud names the Graph SDK's environment from the table (EntraRBAC).
+        $ConnectParams = @{ AccessToken = $SecureToken; NoWelcome = $true; ErrorAction = 'Stop' }
+        if ($EffectiveEnvironment -ne 'Global') { $ConnectParams.Environment = $Endpoint.GraphEnvironment }
         try {
-            Connect-MgGraph -AccessToken $SecureToken -NoWelcome -ErrorAction Stop
+            Connect-MgGraph @ConnectParams
         } catch {
             Remove-OPIMErrorRecord -Record $PSItem
             $PSCmdlet.ThrowTerminatingError($PSItem)
