@@ -11,10 +11,8 @@ AfterAll {
 
 Describe 'Disable-OPIMDirectoryRole' {
     BeforeAll {
-        # A post as Get-OPIMDirectoryRole lists it, typed as it types it. Each carries the properties
-        # the self-referencing ScriptProperties of its type read (Omnicit.PIM.Types.ps1xml): the
-        # instance type reads memberType and endDateTime, and a typed fake without them overflows the
-        # stack when a failing assertion formats it.
+        # A post as Get-OPIMDirectoryRole lists it, typed as it types it. An active post also carries
+        # the memberType and endDateTime notes Graph returns for an instance.
         function New-DirectoryPost {
             param([string]$Id, [string]$DefinitionId, [string]$RoleName, [string]$ScopeId = '/', [string]$ScopeName, [switch]$Active)
             $Post = [PSCustomObject]@{
@@ -70,21 +68,21 @@ Describe 'Disable-OPIMDirectoryRole' {
 
         It 'calls Invoke-OPIMGraphRequest with POST to the roleAssignmentScheduleRequests endpoint' {
             Disable-OPIMDirectoryRole -RoleName 'Global Administrator (instance-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Uri -like '*roleAssignmentScheduleRequests*'
             }
         }
 
         It 'sends SelfDeactivate as the action in the request body' {
             Disable-OPIMDirectoryRole -RoleName 'Global Administrator (instance-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.action -eq 'SelfDeactivate'
             }
         }
 
         It 'sends the roleAssignmentScheduleId as targetScheduleId in the request body' {
             Disable-OPIMDirectoryRole -RoleName 'Global Administrator (instance-001)'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.targetScheduleId -eq 'schedule-001'
             }
         }
@@ -121,7 +119,7 @@ Describe 'Disable-OPIMDirectoryRole' {
 
         It 'calls Invoke-OPIMGraphRequest with the roleDefinitionId and directoryScopeId from the piped role' {
             $FakeRole | Disable-OPIMDirectoryRole
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and
                 $Body.roleDefinitionId -eq 'role-def-002' -and
                 $Body.directoryScopeId -eq '/administrativeUnits/au-001'
@@ -130,7 +128,7 @@ Describe 'Disable-OPIMDirectoryRole' {
 
         It 'calls Invoke-OPIMGraphRequest with the principalId from the piped role' {
             $FakeRole | Disable-OPIMDirectoryRole
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST' -and $Body.principalId -eq 'principal-002'
             }
         }
@@ -254,12 +252,12 @@ Describe 'Disable-OPIMDirectoryRole' {
 
         It 'looks up the role via Get-OPIMDirectoryRole -Activated -Identity' {
             Disable-OPIMDirectoryRole -Identity 'instance-002'
-            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Exactly -Scope It
         }
 
         It 'submits the SelfDeactivate request' {
             Disable-OPIMDirectoryRole -Identity 'instance-002'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Method -eq 'POST'
             }
         }

@@ -11,12 +11,10 @@ AfterAll {
 
 Describe 'Resolve-OPIMSchedule' {
     BeforeAll {
-        # Typed fakes, one list per pillar and state. Each fake carries the properties the
-        # self-referencing ScriptProperties of its type names read (Omnicit.PIM.Types.ps1xml): the
-        # directory instance memberType and endDateTime, the group types accessId and memberType, the
-        # group instance also assignmentType and endDateTime. The Azure type names have none. The
-        # first Context checks this against the type data. Every fake carries a Status, as the -All
-        # listing tags it ('Eligible' or 'Active').
+        # Typed fakes, one list per pillar and state. An instance fake also carries the notes Graph
+        # returns for an instance (memberType and endDateTime; assignmentType and endDateTime for a
+        # group), which shadow the ScriptProperties of its type (Omnicit.PIM.Types.ps1xml). Every
+        # fake carries a Status, as the -All listing tags it ('Eligible' or 'Active').
         $Sets = InModuleScope Omnicit.PIM {
             function New-DirectoryPost {
                 param([string]$Id, [string]$Role, [string]$ScopeId = '/', [string]$ScopeName, [string]$Status = 'Eligible')
@@ -29,8 +27,7 @@ Describe 'Resolve-OPIMSchedule' {
                     Status           = $Status
                 }
                 if ($Status -eq 'Active') {
-                    # MemberType and EndDateTime of the instance type read $this.memberType and
-                    # $this.endDateTime; a fake without them overflows the stack when formatted.
+                    # The notes Graph returns for a directory instance.
                     $Post | Add-Member -NotePropertyName memberType -NotePropertyValue 'Direct'
                     $Post | Add-Member -NotePropertyName endDateTime -NotePropertyValue $null
                     $TypeName = 'Omnicit.PIM.DirectoryAssignmentScheduleInstance'
@@ -52,8 +49,7 @@ Describe 'Resolve-OPIMSchedule' {
                     Status         = $Status
                 }
                 if ($Status -eq 'Active') {
-                    # AssignmentType and EndDateTime of the instance type read $this.assignmentType and
-                    # $this.endDateTime; the eligibility type reads neither of its own name.
+                    # The notes Graph returns for a group instance.
                     $Post | Add-Member -NotePropertyName assignmentType -NotePropertyValue 'activated'
                     $Post | Add-Member -NotePropertyName endDateTime -NotePropertyValue $null
                     $TypeName = 'Omnicit.PIM.GroupAssignmentScheduleInstance'
@@ -162,37 +158,6 @@ Describe 'Resolve-OPIMSchedule' {
             InModuleScope Omnicit.PIM -Parameters @{ Params = $Params } {
                 param($Params)
                 try { Resolve-OPIMSchedule @Params } catch { $PSItem }
-            }
-        }
-    }
-
-    Context 'When the fakes are typed' {
-        # A ScriptProperty that reads its own name (MemberType reading $this.memberType) resolves to
-        # itself on a typed fake without that note property, and formatting such a fake overflows the
-        # stack. Read from the type data: every self-referencing getter of every type name a fake
-        # carries needs a note property of that name on the fake. Nothing is evaluated here.
-        It 'gives every typed fake the properties its self-referencing ScriptProperties read' {
-            $Posts = foreach ($Pillar in $Sets.Values) { foreach ($List in $Pillar.Values) { $List } }
-            $Checked = [System.Collections.Generic.HashSet[string]]::new()
-            $Missing = foreach ($Post in $Posts) {
-                foreach ($TypeName in $Post.PSObject.TypeNames) {
-                    $TypeData = Get-TypeData -TypeName $TypeName
-                    if ($null -eq $TypeData) { continue }
-                    foreach ($Entry in $TypeData.Members.GetEnumerator()) {
-                        $Getter = $Entry.Value.GetScriptBlock
-                        if ($null -eq $Getter -or $Getter.ToString() -notmatch "(?i)\`$this\.$([regex]::Escape($Entry.Key))\b") { continue }
-                        $null = $Checked.Add("$TypeName/$($Entry.Key)")
-                        if ($Post.PSObject.Properties[$Entry.Key].MemberType -ne 'NoteProperty') {
-                            "$TypeName/$($Entry.Key)"
-                        }
-                    }
-                }
-            }
-            @($Missing | Sort-Object -Unique) | Should -BeNullOrEmpty -Because 'each self-referencing ScriptProperty needs its note property on the fake'
-            foreach ($Expected in 'DirectoryAssignmentScheduleInstance/MemberType', 'DirectoryAssignmentScheduleInstance/EndDateTime',
-                'GroupEligibilitySchedule/AccessId', 'GroupEligibilitySchedule/MemberType',
-                'GroupAssignmentScheduleInstance/AccessId', 'GroupAssignmentScheduleInstance/AssignmentType', 'GroupAssignmentScheduleInstance/EndDateTime') {
-                $Checked | Should -Contain "Omnicit.PIM.$Expected"
             }
         }
     }
@@ -553,7 +518,7 @@ Describe 'Resolve-OPIMSchedule' {
             $Eligible = $Sets[$Pillar].Eligible
         }
 
-        It 'says a display name is already deactivated when it is still eligible (<Pillar>)' {
+        It 'says a display name is already deactivated when it is eligible but not active (<Pillar>)' {
             Mock -ModuleName Omnicit.PIM $Lister { $Eligible }
             Mock -ModuleName Omnicit.PIM $Lister { } -ParameterFilter { $Activated }
             $Record = & $Capture @{ Pillar = $Pillar; Name = $DisplayName; Status = 'Active' }
@@ -575,7 +540,7 @@ Describe 'Resolve-OPIMSchedule' {
             $Record.Exception.Message | Should -BeLike '*already deactivated*'
         }
 
-        It 'says the old form of an active post is already deactivated when its label is still eligible (<Pillar>)' {
+        It 'says the old form of an active post is already deactivated when its label is eligible but not active (<Pillar>)' {
             Mock -ModuleName Omnicit.PIM $Lister { $Eligible }
             Mock -ModuleName Omnicit.PIM $Lister { } -ParameterFilter { $Activated }
             foreach ($OldForm in $OldForms) {

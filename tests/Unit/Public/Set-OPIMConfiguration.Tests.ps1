@@ -90,7 +90,7 @@ Describe 'Set-OPIMConfiguration' {
 
         It 'calls Set-Content once' {
             Set-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000099' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Scope It
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
         }
 
         It 'writes the new TenantId into the PSD1 content' {
@@ -504,10 +504,12 @@ Describe 'Set-OPIMConfiguration' {
     }
 
     Context 'When the cloud of an alias is set (A12)' {
-        # Set changes only what it is asked to: -Environment sets the cloud, -Environment Global removes
-        # it, and without -Environment whatever is stored stays, an unknown cloud included. Connect-OPIM,
-        # pim and unpim are the commands that refuse a cloud the module does not know. Set writes the
-        # whole map, so each It reads the written text back as data and looks at its own alias.
+        # Set changes no cloud it is not asked to: -Environment sets the cloud, -Environment Global
+        # removes it, and without -Environment whatever is stored stays, an unknown cloud included,
+        # except a stored Global in any letter case, which is dropped since Global is never written.
+        # Connect-OPIM, pim and unpim are the commands that refuse a cloud the module does not know.
+        # Set writes the whole map, so each It reads the written text back as data and looks at its
+        # own alias.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }
@@ -524,6 +526,8 @@ Describe 'Set-OPIMConfiguration' {
                     lower    = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = 'usgovdod' }
                     unknown  = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = 'Germany' }
                     globalc  = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = 'Global' }
+                    globall  = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = 'global' }
+                    globalu  = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = 'GLOBAL' }
                     blank    = @{ TenantId = '00000000-0000-0000-0000-000000000003'; Environment = '  ' }
                     oldstyle = '00000000-0000-0000-0000-000000000001'
                 }
@@ -631,6 +635,21 @@ Describe 'Set-OPIMConfiguration' {
             (Get-WrittenMap).blank.ContainsKey('Environment') | Should -BeFalse
         }
 
+        It 'drops a stored Global in any letter case when -Environment is omitted' {
+            # Global is never written, so a stored Global (written by hand, in any letter case) means the
+            # same as none, and Set writes the entry back without the key. The documented exception to
+            # "the stored cloud is kept as it is written".
+            foreach ($Alias in 'globall', 'globalu') {
+                $script:writtenContent = $null
+                Set-OPIMConfiguration -TenantAlias $Alias -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -ErrorAction SilentlyContinue
+                $Errs.Count | Should -Be 0
+                $Map = Get-WrittenMap
+                $Map.$Alias.ContainsKey('Environment') | Should -BeFalse -Because "$Alias stores Global, which is never written"
+                $Map.$Alias.TenantId | Should -BeExactly '00000000-0000-0000-0000-000000000003'
+            }
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 2 -Exactly -Scope It
+        }
+
         It 'writes no Environment without -Environment for an alias that stores none' {
             Set-OPIMConfiguration -TenantAlias 'plain' -TenantMapPath 'TestDrive:\TenantMap.psd1'
             (Get-WrittenMap).plain.ContainsKey('Environment') | Should -BeFalse
@@ -653,6 +672,31 @@ Describe 'Set-OPIMConfiguration' {
 
         It 'writes nothing under -WhatIf' {
             Set-OPIMConfiguration -TenantAlias 'plain' -Environment USGov -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
+        }
+
+        It 'names the cloud the alias will store in the confirmation' {
+            # The cloud -Environment names, and the stored cloud Set keeps without it.
+            $Text = Get-WhatIfText { Set-OPIMConfiguration -TenantAlias 'plain' -Environment USGov -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Line = 'What if: Performing the operation "' +
+                "Update alias 'plain' -> tenant 'Mock Tenant' (00000000-0000-0000-0000-000000000001) in cloud 'USGov'" +
+                '" on target "TestDrive:\TenantMap.psd1".'
+            $Text | Should -MatchExactly ([regex]::Escape($Line))
+            $Text = Get-WhatIfText { Set-OPIMConfiguration -TenantAlias 'gov' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Text | Should -MatchExactly ([regex]::Escape("Update alias 'gov' -> tenant 'N/A' (00000000-0000-0000-0000-000000000002) in cloud 'USGov'" + '"'))
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
+        }
+
+        It 'names Global in the confirmation when the alias will store no cloud' {
+            # An alias that stores none, and one whose stored Global (in another letter case) is dropped.
+            # Case-sensitive: the prompt says 'Global', never the 'global' the file holds.
+            $Text = Get-WhatIfText { Set-OPIMConfiguration -TenantAlias 'plain' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Line = 'What if: Performing the operation "' +
+                "Update alias 'plain' -> tenant 'Mock Tenant' (00000000-0000-0000-0000-000000000001) in cloud 'Global'" +
+                '" on target "TestDrive:\TenantMap.psd1".'
+            $Text | Should -MatchExactly ([regex]::Escape($Line))
+            $Text = Get-WhatIfText { Set-OPIMConfiguration -TenantAlias 'globall' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Text | Should -MatchExactly ([regex]::Escape("Update alias 'globall' -> tenant 'N/A' (00000000-0000-0000-0000-000000000003) in cloud 'Global'" + '"'))
             Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
         }
 

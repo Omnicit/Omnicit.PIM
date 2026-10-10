@@ -78,7 +78,7 @@ Describe 'Remove-OPIMConfiguration' {
 
         It 'calls Set-Content once' {
             Remove-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Scope It
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
         }
 
         It 'does not include the removed alias in the PSD1 content' {

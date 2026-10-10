@@ -341,4 +341,43 @@ Describe 'README and about topic stay in step' -Tags 'helpQuality' {
         $Total | Should -Be $script:ExportedNames.Count -Because (
             'the cohort counts partition the exported set, so they must sum to FunctionsToExport ({0}); they sum to {1}' -f $script:ExportedNames.Count, $Total)
     }
+
+    It 'Should use only the case-sensitive membership operators on roster variables (static)' {
+        # Comparisons are ordinal (see the header): -in, -notin, -contains and -notcontains fold
+        # case, so a roster check written with one would take Get-OPIMdirectoryRole for
+        # Get-OPIMDirectoryRole and stay green on a misspelt document. This reads the file itself
+        # with the parser (no module is imported) and holds every membership comparison whose
+        # operand refers to one of the five roster variables below to the case-sensitive kinds.
+        # It reads nothing else: not a hashtable lookup ($Seen.ContainsKey), not Compare-Object,
+        # not -eq, and not a membership comparison on any other variable.
+        $Tokens = $null
+        $ParseErrors = $null
+        $Ast = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref]$Tokens, [ref]$ParseErrors)
+        $ParseErrors | Should -BeNullOrEmpty -Because 'this test file must parse; a parse error would leave the checks below measuring nothing'
+
+        $RosterVariables = @('ExportedNames', 'KnownNames', 'Rostered', 'ReadmeSet', 'AboutSet')
+        $SensitiveKinds = @('Cin', 'Cnotin', 'Ccontains', 'Cnotcontains')
+        $InsensitiveKinds = @('In', 'Iin', 'NotIn', 'Inotin', 'Contains', 'Icontains', 'NotContains', 'Inotcontains')
+        $MembershipKinds = $SensitiveKinds + $InsensitiveKinds
+
+        $Comparisons = @($Ast.FindAll({
+                    param($Node)
+                    $Node -is [System.Management.Automation.Language.BinaryExpressionAst] -and $Node.Operator.ToString() -cin $MembershipKinds
+                }, $true) | Where-Object {
+                    $Operands = @($_.Left, $_.Right)
+                    $Roster = @($Operands | ForEach-Object {
+                            $_.FindAll({
+                                    param($Inner)
+                                    $Inner -is [System.Management.Automation.Language.VariableExpressionAst] -and ($Inner.VariablePath.UserPath -split ':')[-1] -in $RosterVariables
+                                }, $true)
+                        })
+                    $Roster.Count -gt 0
+                })
+
+        $Insensitive = @($Comparisons | Where-Object { $_.Operator.ToString() -cin $InsensitiveKinds } | ForEach-Object { $_.Extent.StartLineNumber })
+        $Insensitive.Count | Should -Be 0 -Because ('a roster name spelled in another case is a defect in the document, so every -in, -notin, -contains or -notcontains on a roster variable must use its case-sensitive form (-cin, -cnotin, -ccontains, -cnotcontains); case-insensitive ones at lines: {0}' -f ($Insensitive -join ', '))
+
+        $Sensitive = @($Comparisons | Where-Object { $_.Operator.ToString() -cin $SensitiveKinds })
+        $Sensitive.Count | Should -BeGreaterOrEqual 9 -Because ('the roster checks held 9 case-sensitive membership comparisons on a roster variable on 2026-10-10; {0} means the scan lost them, and the check above then measures nothing' -f $Sensitive.Count)
+    }
 }

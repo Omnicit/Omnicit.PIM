@@ -3,6 +3,7 @@ BeforeAll {
     Import-Module Omnicit.PIM -Force
     . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
     Install-OPIMTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OPIMScrubFixture.ps1"
 }
 
 AfterAll {
@@ -30,14 +31,14 @@ Describe 'Get-OPIMDirectoryRole' {
 
         It 'calls Invoke-OPIMGraphRequest targeting roleEligibilitySchedules' {
             Get-OPIMDirectoryRole
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like '*roleEligibilitySchedules*'
             }
         }
 
         It 'calls Invoke-OPIMGraphRequest with filterByCurrentUser' {
             Get-OPIMDirectoryRole
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like "*filterByCurrentUser*"
             }
         }
@@ -55,7 +56,7 @@ Describe 'Get-OPIMDirectoryRole' {
         It 'sets the directoryScope property to the root scope shortcut without a second API call' {
             $Result = Get-OPIMDirectoryRole
             $Result.directoryScope.id | Should -Be '/'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It
         }
     }
 
@@ -83,7 +84,7 @@ Describe 'Get-OPIMDirectoryRole' {
 
         It 'calls Invoke-OPIMGraphRequest a second time to rehydrate the directoryScope' {
             Get-OPIMDirectoryRole
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like '*directory/administrativeUnits*'
             }
         }
@@ -254,7 +255,7 @@ Describe 'Get-OPIMDirectoryRole' {
 
         It 'calls Invoke-OPIMGraphRequest targeting roleAssignmentScheduleInstances' {
             Get-OPIMDirectoryRole -Activated
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like '*roleAssignmentScheduleInstances*'
             }
         }
@@ -405,14 +406,14 @@ Describe 'Get-OPIMDirectoryRole' {
 
         It 'calls Invoke-OPIMGraphRequest for roleEligibilitySchedules with filterByCurrentUser' {
             Get-OPIMDirectoryRole -All
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like '*roleEligibilitySchedules*' -and $Uri -like '*filterByCurrentUser*'
             }
         }
 
         It 'calls Invoke-OPIMGraphRequest for roleAssignmentScheduleInstances with filterByCurrentUser' {
             Get-OPIMDirectoryRole -All
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Uri -like '*roleAssignmentScheduleInstances*' -and $Uri -like '*filterByCurrentUser*'
             }
         }
@@ -448,7 +449,7 @@ Describe 'Get-OPIMDirectoryRole' {
 
         It 'queries both eligible and active endpoints with the id filter (dual-search)' {
             Get-OPIMDirectoryRole -Identity 'elig-001'
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter {
                 $Uri -like "*id eq 'elig-001'*"
             }
         }
@@ -478,7 +479,7 @@ Describe 'Get-OPIMDirectoryRole' {
 
         It 'queries both eligible and active endpoints with the OData filter (dual-search)' {
             Get-OPIMDirectoryRole -Filter "roleDefinitionId eq 'role-def-001'"
-            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 2 -Exactly -Scope It -ParameterFilter {
                 $Uri -like "*roleDefinitionId eq 'role-def-001'*"
             }
         }
@@ -537,23 +538,6 @@ Describe 'Get-OPIMDirectoryRole' {
                 $PSCmdlet.ThrowTerminatingError($script:ScrubFixture.Record)
             }
 
-            # A failed Graph read as the SDK leaves it. The token is built at runtime in the shape a
-            # real one has, and says it is not one, so no token-shaped literal sits in this file.
-            function New-ScrubFixture {
-                param([int]$Status)
-                $Token = 'Bearer ' + 'eyJ' + ('A' * 20) + '.' + 'NOT-A-REAL-TOKEN'
-                $Request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://graph.microsoft.com/v1.0/roleManagement/directory/roleEligibilitySchedules')
-                $null = $Request.Headers.TryAddWithoutValidation('Authorization', $Token)
-                $Response = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]$Status)
-                $Response.RequestMessage = $Request
-                $Response.Content = [System.Net.Http.StringContent]::new('{"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges."}}')
-                $Exception = [Microsoft.PowerShell.Commands.HttpResponseException]::new('Response status code does not indicate success.', $Response)
-                [pscustomobject]@{
-                    Request = $Request
-                    Record  = [System.Management.Automation.ErrorRecord]::new($Exception, 'HttpFail', 'InvalidOperation', $Request)
-                }
-            }
-
             # Walks every record, exception, target and request reachable from the given roots and
             # returns what each renders as, plus every HttpRequestMessage it passed through.
             function Get-RenderedErrorText {
@@ -585,7 +569,8 @@ Describe 'Get-OPIMDirectoryRole' {
             # so only what this run added is read.
             function Invoke-ScrubbedListing {
                 param([int]$Status)
-                $script:ScrubFixture = New-ScrubFixture -Status $Status
+                # The token is built in the shape a real one has (Jwt), since the render test below looks for eyJ.
+                $script:ScrubFixture = New-ScrubFixture -Status $Status -Uri 'https://graph.microsoft.com/v1.0/roleManagement/directory/roleEligibilitySchedules' -TokenShape Jwt
                 $HadHeader = $script:ScrubFixture.Request.Headers.Contains('Authorization')
                 $Before = [System.Collections.Generic.HashSet[object]]::new([System.Collections.Generic.ReferenceEqualityComparer]::Instance)
                 foreach ($Entry in @($global:Error)) { $null = $Before.Add($Entry) }
@@ -695,8 +680,8 @@ Describe 'Get-OPIMDirectoryRole' {
         # and the whole path runs for real.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
-            # Typed fakes carry every property a self-referencing ScriptProperty of their type reads:
-            # memberType and endDateTime on an assignment instance.
+            # Typed fakes carry the notes Graph returns: memberType and endDateTime on an assignment
+            # instance.
             Mock -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest {
                 @{
                     value = @(
@@ -862,7 +847,7 @@ Describe 'Get-OPIMDirectoryRole' {
             }
         }
 
-        It 'writes the listing''s own error and never EligibleRoleNotFound' {
+        It 'writes the listing''s own error and no EligibleRoleNotFound' {
             $Output = @(Get-OPIMDirectoryRole -RoleName 'Global Administrator' -ErrorAction Continue 2>&1)
             $Written = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
             $Written | Should -HaveCount 1

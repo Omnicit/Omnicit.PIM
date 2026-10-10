@@ -333,7 +333,7 @@ Describe 'Invoke-OPIMArmRequest' {
             }
         }
 
-        It 'still converts a non-2xx response that carries headers' {
+        It 'converts a non-2xx response that carries headers' {
             InModuleScope Omnicit.PIM {
                 Mock Invoke-WebRequest {
                     [PSCustomObject]@{
@@ -407,7 +407,7 @@ Describe 'Invoke-OPIMArmRequest' {
             }
         }
 
-        It 'still refreshes and retries once on 401 when the response carries headers' {
+        It 'refreshes and retries once on 401 when the response carries headers' {
             InModuleScope Omnicit.PIM {
                 Mock Initialize-OPIMAuth {}
                 $script:ArmCallCount = 0
@@ -570,7 +570,7 @@ Describe 'Invoke-OPIMArmRequest' {
             }
         }
 
-        It 'still aggregates pages when every page carries headers' {
+        It 'aggregates pages when every page carries headers' {
             InModuleScope Omnicit.PIM {
                 $script:ArmCallCount = 0
                 Mock Invoke-WebRequest {
@@ -734,7 +734,7 @@ Describe 'Invoke-OPIMArmRequest' {
             }
         }
 
-        It 'never writes the request body or a token to the verbose stream' {
+        It 'writes no request body or token to the verbose stream' {
             InModuleScope Omnicit.PIM {
                 Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{}' } }
                 $Verbose = (Invoke-OPIMArmRequest -Method PUT -Path '/x?api-version=2020-10-01' -Body @{ secretish = 'do-not-log-me' } -Verbose 4>&1) |
@@ -765,7 +765,7 @@ Describe 'Invoke-OPIMArmRequest' {
             }
         }
 
-        It 'never writes header material to the verbose stream' {
+        It 'writes no header material to the verbose stream' {
             InModuleScope Omnicit.PIM {
                 Mock Invoke-WebRequest {
                     [PSCustomObject]@{
@@ -1212,7 +1212,7 @@ Describe 'Invoke-OPIMArmRequest' {
             }
         }
 
-        It 'never writes header material to the verbose stream while backing off' {
+        It 'writes no header material to the verbose stream while backing off' {
             InModuleScope Omnicit.PIM {
                 Mock Start-Sleep {}
                 $script:Call = 0
@@ -1271,7 +1271,7 @@ Describe 'Invoke-OPIMArmRequest' {
             }
         }
 
-        It 'still allows exactly one 401 refresh after a throttle, and does not compound the two loops' {
+        It 'allows exactly one 401 refresh after a throttle, and does not compound the two loops' {
             InModuleScope Omnicit.PIM {
                 Mock Start-Sleep {}
                 $script:RefreshCount = 0
@@ -1418,7 +1418,7 @@ Describe 'Invoke-OPIMArmRequest' {
             Should -Invoke -ModuleName Omnicit.PIM Invoke-WebRequest -Times 0 -Scope It
         }
 
-        It 'sends the request when the latch table was never created' {
+        It 'sends the request when the latch table does not exist' {
             Mock -ModuleName Omnicit.PIM Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{"id":"sent"}' } }
             $Result = InModuleScope Omnicit.PIM {
                 Remove-Variable -Scope Script -Name _OPIMSignInLatch -ErrorAction Ignore
@@ -1873,7 +1873,7 @@ $R
             @($Sent | Select-Object -Unique).Count | Should -Be $Sends -Because 'no link is requested twice'
         }
 
-        It 'still returns $null for an empty 200 body without -All' {
+        It 'returns $null for an empty 200 body without -All' {
             InModuleScope Omnicit.PIM {
                 $script:_OPIMTestBodies = @('')
                 Invoke-OPIMArmRequest -Path '/x?api-version=2020-10-01' | Should -BeNullOrEmpty

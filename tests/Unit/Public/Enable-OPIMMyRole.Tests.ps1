@@ -23,7 +23,7 @@ Describe 'Enable-OPIMMyRole' {
     Context 'When called without -TenantAlias (uses current MgGraph context)' {
         It 'calls Connect-OPIM with -IncludeARM when -AllEligible is specified' {
             Enable-OPIMMyRole -AllEligible -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It -ParameterFilter {
                 $IncludeARM -eq $true
             }
         }
@@ -32,17 +32,17 @@ Describe 'Enable-OPIMMyRole' {
 
         It 'calls Get-OPIMDirectoryRole to retrieve eligible directory roles' {
             Enable-OPIMMyRole -AllEligible -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Exactly -Scope It
         }
 
         It 'calls Get-OPIMEntraIDGroup to retrieve eligible group assignments' {
             Enable-OPIMMyRole -AllEligible -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Exactly -Scope It
         }
 
         It 'calls Get-OPIMAzureRole to retrieve eligible Azure RBAC roles' {
             Enable-OPIMMyRole -AllEligible -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It
         }
     }
 
@@ -78,29 +78,29 @@ Describe 'Enable-OPIMMyRole' {
 
         It 'calls Enable-OPIMDirectoryRole for each eligible directory role' {
             Enable-OPIMMyRole -AllEligible -Hours 2 -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Exactly -Scope It
         }
 
         It 'calls Enable-OPIMEntraIDGroup for each eligible group assignment' {
             Enable-OPIMMyRole -AllEligible -Hours 2 -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 1 -Exactly -Scope It
         }
 
         It 'calls Enable-OPIMAzureRole for each eligible Azure role' {
             Enable-OPIMMyRole -AllEligible -Hours 2 -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 1 -Exactly -Scope It
         }
 
         It 'passes -Hours to Enable-OPIMDirectoryRole' {
             Enable-OPIMMyRole -AllEligible -Hours 3 -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Hours -eq 3
             }
         }
 
         It 'passes -Justification when supplied' {
             Enable-OPIMMyRole -AllEligible -Confirm:$false -Justification 'Incident response'
-            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Justification -eq 'Incident response'
             }
         }
@@ -118,7 +118,8 @@ Describe 'Enable-OPIMMyRole' {
 
         It 'calls Connect-OPIM with the resolved TenantId' {
             Enable-OPIMMyRole -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
+            # Two sign-ins, both for the resolved tenant: Graph first, then Azure (-IncludeARM), since the string form runs the Azure pillar.
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 2 -Exactly -Scope It -ParameterFilter {
                 $TenantId -eq $fakeTenantId
             }
         }
@@ -149,14 +150,15 @@ Describe 'Enable-OPIMMyRole' {
 
         It 'calls Connect-OPIM with the resolved TenantId' {
             Enable-OPIMMyRole -TenantAlias 'fabrikam' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
+            # Two sign-ins, both for the resolved tenant: Graph first, then Azure (-IncludeARM), since the alias lists AzureRoles.
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 2 -Exactly -Scope It -ParameterFilter {
                 $TenantId -eq $fakeTenantId
             }
         }
 
         It 'calls Connect-OPIM with -IncludeARM when AzureRoles are configured' {
             Enable-OPIMMyRole -TenantAlias 'fabrikam' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It -ParameterFilter {
                 $IncludeARM -eq $true
             }
         }
@@ -236,7 +238,7 @@ Describe 'Enable-OPIMMyRole' {
 
         It 'passes -Wait to Enable-OPIMDirectoryRole' {
             Enable-OPIMMyRole -AllEligible -Wait -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Wait -eq $true
             }
         }
@@ -318,9 +320,9 @@ Describe 'Enable-OPIMMyRole' {
 
         It 'activates all three categories when -Confirm:$false is specified' {
             Enable-OPIMMyRole -AllEligible -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 1 -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 1 -Exactly -Scope It
         }
 
         It 'does not activate any category when -WhatIf is specified' {
@@ -332,7 +334,7 @@ Describe 'Enable-OPIMMyRole' {
 
         It 'calls Connect-OPIM with -IncludeARM when -AllEligible is used' {
             Enable-OPIMMyRole -AllEligible -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It -ParameterFilter {
                 $IncludeARM -eq $true
             }
         }
@@ -542,8 +544,8 @@ Describe 'Enable-OPIMMyRole' {
             }
             $FakeDirectoryRole = [PSCustomObject]@{ id = 'elig-lf-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/' }
             $FakeDirectoryRole.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.DirectoryEligibilitySchedule')
-            # memberType is set as Graph sets it: the type's MemberType ScriptProperty reads
-            # $this.memberType, which resolves to itself on an object without the property.
+            # The group fake carries accessId and memberType, as Graph returns them for
+            # Omnicit.PIM.GroupEligibilitySchedule.
             $FakeGroup = [PSCustomObject]@{ id = 'grp-lf-001'; groupId = 'group-id-001'; accessId = 'member'; memberType = 'Direct' }
             $FakeGroup.PSObject.TypeNames.Insert(0, 'Omnicit.PIM.GroupEligibilitySchedule')
             $FakeAzureRole = [PSCustomObject]@{ Name = 'az-lf-001'; Scope = '/subscriptions/sub-001' }
@@ -626,7 +628,7 @@ Describe 'Enable-OPIMMyRole' {
 
         It 'activates only directory roles' {
             Enable-OPIMMyRole -AllEligibleDirectoryRoles -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 1 -Exactly -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 0 -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 0 -Scope It
         }
@@ -666,7 +668,7 @@ Describe 'Enable-OPIMMyRole' {
         It 'activates only Entra ID group assignments' {
             Enable-OPIMMyRole -AllEligibleEntraIDGroups -Confirm:$false
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 0 -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 1 -Exactly -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 0 -Scope It
         }
 
@@ -691,12 +693,12 @@ Describe 'Enable-OPIMMyRole' {
             Enable-OPIMMyRole -AllEligibleAzureRoles -Confirm:$false
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMDirectoryRole -Times 0 -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMEntraIDGroup -Times 0 -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Enable-OPIMAzureRole -Times 1 -Exactly -Scope It
         }
 
         It 'calls Connect-OPIM with -IncludeARM when -AllEligibleAzureRoles is used' {
             Enable-OPIMMyRole -AllEligibleAzureRoles -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It -ParameterFilter {
                 $IncludeARM -eq $true
             }
         }

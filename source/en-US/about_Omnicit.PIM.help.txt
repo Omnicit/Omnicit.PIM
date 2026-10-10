@@ -82,10 +82,13 @@ LONG DESCRIPTION
       Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -DeviceCode
 
     A script reads both messages as they arrive by merging the Information stream into a
-    pipeline. Capturing the output in a variable (for example, $x = Connect-OPIM -DeviceCode
-    6>&1) shows nothing until the flow ends, which can take 15 minutes.
+    pipeline that only shows them. The sign-in waits while that pipeline handles a message, so a
+    pipeline that also waits for the user, calls the module or waits for the sign-in holds the
+    sign-in up, and one that waits for the sign-in never returns: run the rest of the script after
+    the command has returned. Capturing the output in a variable (for example, $x = Connect-OPIM
+    -DeviceCode 6>&1) shows nothing until the flow ends, which can take 15 minutes.
 
-      Connect-OPIM -DeviceCode -IncludeARM 6>&1 | ForEach-Object { $PSItem.ToString() }
+      Connect-OPIM -DeviceCode -IncludeARM 6>&1 | ForEach-Object { Write-Host $PSItem.ToString() }
 
     The following Microsoft Graph scopes are requested automatically. These are listed for
     reference (least-privilege review, custom app registration scenarios):
@@ -135,8 +138,8 @@ LONG DESCRIPTION
     does not know is an error, and nothing is signed in. A 0.6.x module ignores the key and signs
     in to the global cloud, where a sovereign tenant does not exist. It also writes the map back
     without the key of every alias whenever it changes it (Install-, Set- or
-    Remove-OPIMConfiguration), as do the earlier 0.7.0 previews, and this version then signs in
-    to Global for those aliases.
+    Remove-OPIMConfiguration), as do 0.7.0-preview0001 to 0.7.0-preview0003, and this version
+    then signs in to Global for those aliases.
 
     AzAuth has no authority parameter; Azure.Identity reads the AZURE_AUTHORITY_HOST environment
     variable. For a sovereign cloud the module sets it only around the Azure sign-in and puts it

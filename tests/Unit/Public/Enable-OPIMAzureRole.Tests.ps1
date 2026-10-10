@@ -709,7 +709,7 @@ Describe 'Enable-OPIMAzureRole' {
             $Result | Should -BeNullOrEmpty
         }
 
-        It 'still requests the next role after one that names no scope' {
+        It 'requests the next role after one that names no scope' {
             $Result = Enable-OPIMAzureRole -Role @((New-ScopelessPost -ScopeId ''), $GoodPost) -ErrorVariable Errs -ErrorAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
@@ -721,7 +721,7 @@ Describe 'Enable-OPIMAzureRole' {
             $Result.LinkedRoleEligibilityScheduleId | Should -BeExactly 'azure-003'
         }
 
-        It 'never counts a role that names no scope as requested' {
+        It 'does not count a role that names no scope as requested' {
             # Two such objects with the same role definition: each is refused for its scope, and the
             # second never reads as already requested by this command.
             $null = Enable-OPIMAzureRole -Role @((New-ScopelessPost -ScopeId ''), (New-ScopelessPost -ScopeId '')) `
@@ -910,7 +910,7 @@ Describe 'Enable-OPIMAzureRole' {
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 9 -Exactly -Scope It -ParameterFilter { $All.IsPresent }
         }
 
-        It 'times out with the request it sent when the poll never lists it' {
+        It 'times out with the request it sent when no poll lists it' {
             $Clock.Step = 30
             $Plan.Poll['azure-001'] = @('Missing')
             $Result = Enable-OPIMAzureRole -RoleName 'Reader' -Wait -TimeoutSeconds 60 -ErrorVariable Errs -ErrorAction SilentlyContinue
@@ -1011,7 +1011,7 @@ Describe 'Enable-OPIMAzureRole' {
             @($Warns).Count | Should -Be 0
         }
 
-        It 'takes only the polled item whose name is the request name, never another request of the user' {
+        It 'takes only the polled item whose name is the request name, not another request of the user' {
             # The unrelated request comes first in every answer and is Denied; taking it would fail
             # the activation.
             $Plan.Poll['azure-001'] = @('Provisioned')

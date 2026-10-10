@@ -38,6 +38,10 @@ BeforeAll {
     #      written inside a nested It. Any Mock of Get-OPIMMsalApplication counts as a guard, even
     #      one whose -ParameterFilter never matches or that has no -ModuleName outside InModuleScope
     #      (which does not intercept a call made inside the module): the real command stays reachable.
+    # Exact counts: Pester reads Should -Invoke X -Times N as AT LEAST N calls when N is 1 or more
+    #      (only -Times 0 implies -Exactly), so a code path that makes one call too many -- a second
+    #      activation request, say -- stays green. Every Should -Invoke in a unit test file whose
+    #      -Times is not the constant 0 carries -Exactly.
     #
     # The gate reads files statically: it imports nothing and runs no module code. The QA gate
     # files are outside the tripwire on purpose: they call help, the analyzer and pure maps only.
@@ -76,6 +80,11 @@ BeforeAll {
     # This gate names the commands it looks for, as data and in known-answer texts that it parses
     # and never runs, so the R3 reference scan skips this one file.
     $script:ReferenceScanExempt = @('tests/QA/testhygiene.tests.ps1')
+
+    # The floor of the exact-count scan: the unit test files held 1479 Should -Invoke commands on
+    # 2026-10-10. A scan under the floor has lost a directory or broken its walk, not found fewer
+    # assertions; raise it when the tree genuinely grows.
+    $script:InvokeAssertionFloor = 1477
 
     function Get-TestHygieneRootBlockBody {
         <#
@@ -632,6 +641,71 @@ BeforeAll {
         }
     }
 
+    function Get-TestHygieneInvokeAssertion {
+        <#
+        .SYNOPSIS
+        Returns every Should -Invoke command in a parsed file, and every Pester 6 Should-Invoke.
+        #>
+        [OutputType([System.Management.Automation.Language.CommandAst])]
+        param(
+            [Parameter(Mandatory)]
+            [System.Management.Automation.Language.Ast]$Ast
+        )
+        $Ast.FindAll({
+                param($Node)
+                if ($Node -isnot [System.Management.Automation.Language.CommandAst]) { return $false }
+                $Name = $Node.GetCommandName()
+                if ($Name -eq 'Should-Invoke') { return $true }
+                if ($Name -ne 'Should') { return $false }
+                @($Node.CommandElements | Where-Object {
+                        $_ -is [System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -eq 'Invoke'
+                    }).Count -gt 0
+            }, $true)
+    }
+
+    function Get-TestHygieneInexactInvoke {
+        <#
+        .SYNOPSIS
+        Returns every Should -Invoke in a parsed file whose -Times is not the constant 0 and that
+        carries no -Exactly switch.
+        .DESCRIPTION
+        Pester reads Should -Invoke X -Times N as AT LEAST N calls when N is 1 or more; only
+        -Times 0 implies -Exactly. The commands are those of Get-TestHygieneInvokeAssertion. The
+        -Times argument is read in both forms, -Times 1 and -Times:1, and counts as 0 only when it
+        is the numeric constant 0: a variable or any other expression is reported. -Exactly counts
+        when it stands alone or as -Exactly:$true. A command with no -Times is not reported, and
+        neither is a -Times written abbreviated or a count passed by position, which this scan
+        does not read.
+        #>
+        [OutputType([System.Management.Automation.Language.CommandAst])]
+        param(
+            [Parameter(Mandatory)]
+            [System.Management.Automation.Language.Ast]$Ast
+        )
+        foreach ($Command in @(Get-TestHygieneInvokeAssertion -Ast $Ast)) {
+            $Elements = $Command.CommandElements
+            $HasTimes = $false
+            $Times = $null
+            $Exactly = $false
+            for ($Index = 1; $Index -lt $Elements.Count; $Index++) {
+                $Element = $Elements[$Index]
+                if ($Element -isnot [System.Management.Automation.Language.CommandParameterAst]) { continue }
+                if ($Element.ParameterName -eq 'Times') {
+                    $HasTimes = $true
+                    $Times = if ($Element.Argument) { $Element.Argument } elseif ($Index + 1 -lt $Elements.Count) { $Elements[$Index + 1] } else { $null }
+                } elseif ($Element.ParameterName -eq 'Exactly') {
+                    $Exactly = $null -eq $Element.Argument -or (
+                        $Element.Argument -is [System.Management.Automation.Language.VariableExpressionAst] -and $Element.Argument.VariablePath.UserPath -eq 'true')
+                }
+            }
+            if (-not $HasTimes -or $Exactly) { continue }
+            $IsZero = $Times -is [System.Management.Automation.Language.ConstantExpressionAst] -and
+                $Times -isnot [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                $Times.Value -eq 0
+            if (-not $IsZero) { $Command }
+        }
+    }
+
     function ConvertTo-TestHygieneRelativePath {
         <#
         .SYNOPSIS
@@ -1120,5 +1194,47 @@ Describe 'Initialize-OPIMAuth' -Tag 'Initialize-OPIMAuth' {
         @(Get-TestHygieneInitializeFinding -Ast (& $Parse $DescribeData)) | Should -Be @("line 1: $Reason")
         @(Get-TestHygieneInitializeFinding -Ast (& $Parse $DescribeGuarded)).Count | Should -Be 0 -Because 'a mocked MSAL build beside the Get-MgContext mock keeps the real client out of reach'
         @(Get-TestHygieneInitializeFinding -Ast (& $Parse $Labels)).Count | Should -Be 0 -Because 'a block name and a -Tag that name Initialize-OPIMAuth do not run it'
+    }
+
+    It 'Should give every Should -Invoke with a -Times other than 0 the -Exactly switch' {
+        $UnitRoot = Join-Path -Path $script:ProjectPath -ChildPath (Join-Path -Path 'tests' -ChildPath 'Unit')
+        $Files = @(Get-ChildItem -Path $UnitRoot -Recurse -File | Where-Object Name -like '*.Tests.ps1')
+        $Files.Count | Should -BeGreaterThan 0 -Because 'the gate must read at least one unit test file; zero files means the enumeration failed and the check ran on nothing'
+
+        $Hits = [System.Collections.Generic.List[string]]::new()
+        $Scanned = 0
+        foreach ($File in $Files) {
+            $Relative = ConvertTo-TestHygieneRelativePath -Path $File.FullName
+            $Ast = [System.Management.Automation.Language.Parser]::ParseFile($File.FullName, [ref]$null, [ref]$null)
+            $Scanned += @(Get-TestHygieneInvokeAssertion -Ast $Ast).Count
+            foreach ($Command in @(Get-TestHygieneInexactInvoke -Ast $Ast)) {
+                $Hits.Add(('{0}:{1}' -f $Relative, $Command.Extent.StartLineNumber))
+            }
+        }
+
+        $Scanned | Should -BeGreaterOrEqual $script:InvokeAssertionFloor -Because ('the unit test files held 1479 Should -Invoke commands on 2026-10-10; {0} scanned means the walk lost files or broke, not that the tree shrank' -f $Scanned)
+        @($Hits).Count | Should -Be 0 -Because ('Pester reads -Times N without -Exactly as AT LEAST N calls, so an extra activation, deactivation or write request would stay green; every Should -Invoke whose -Times is not the constant 0 must carry -Exactly. {0} do not: {1}' -f $Hits.Count, ($Hits -join '; '))
+    }
+
+    It 'Should tell an inexact Should -Invoke from an exact one (known answer)' {
+        $Text = @'
+Should -Invoke X -Times 1 -Scope It
+Should -Invoke X -Times:2
+Should -Invoke X -Times $N
+Should -Invoke X -Times 1 -Exactly
+Should -Invoke X -Exactly -Times 2
+Should -Invoke X -Times 0
+Should -Not -Invoke X
+Should -Invoke X -Scope It
+Should-Invoke -CommandName X -Times 1
+Should -Invoke X -Times 1 -Exactly:$false
+Should -Invoke X -Times 1 -Exactly:$true
+1 | Should -Be 1
+Mock X { }
+'@
+        $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$null)
+
+        @(Get-TestHygieneInvokeAssertion -Ast $Ast).Count | Should -Be 11 -Because 'each Should -Invoke and Should-Invoke counts toward the floor, and no other Should or Mock does'
+        @(Get-TestHygieneInexactInvoke -Ast $Ast | ForEach-Object { $_.Extent.StartLineNumber }) | Should -Be @(1, 2, 3, 9, 10) -Because 'a -Times other than the constant 0, in either form and also as a variable, needs -Exactly; -Times 0 and a command without -Times are not counts to hold'
     }
 }

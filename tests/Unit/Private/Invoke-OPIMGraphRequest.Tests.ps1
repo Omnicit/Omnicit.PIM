@@ -4,32 +4,10 @@ BeforeAll {
     . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
     Install-OPIMTransportTripwire
     . "$PSScriptRoot/../TestHelpers/OPIMTestToken.ps1"
+    . "$PSScriptRoot/../TestHelpers/OPIMScrubFixture.ps1"
 
     # The tenant of the device code sessions below; a letter-repeat placeholder, not a version-4 id.
     $SessionTenant = 'aaaaaaaa-0000-0000-0000-00000000000a'
-
-    # A failed Graph call as the SDK leaves it: a request message carrying an Authorization header,
-    # the response pointing back at it, and an HttpResponseException holding the response. The
-    # token is built at runtime and says what it is, so no token-shaped literal sits in this file.
-    function New-ScrubFixture {
-        param(
-            [int]$Status = 403,
-            [string]$Content = '{"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges."}}',
-            [string]$RetryAfter
-        )
-        $Token = 'Bearer ' + ('x' * 40) + 'NOT-A-REAL-TOKEN'
-        $Request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://graph.microsoft.com/v1.0/me')
-        $null = $Request.Headers.TryAddWithoutValidation('Authorization', $Token)
-        $Response = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]$Status)
-        $Response.RequestMessage = $Request
-        $Response.Content = [System.Net.Http.StringContent]::new($Content)
-        if ($RetryAfter) { $null = $Response.Headers.TryAddWithoutValidation('Retry-After', $RetryAfter) }
-        $Exception = [Microsoft.PowerShell.Commands.HttpResponseException]::new('Response status code does not indicate success.', $Response)
-        [pscustomobject]@{
-            Request = $Request
-            Record  = [System.Management.Automation.ErrorRecord]::new($Exception, 'HttpFail', 'InvalidOperation', $Request)
-        }
-    }
 
     # Runs a script in Omnicit.PIM's scope in a nested pipeline of this runspace and returns what it
     # wrote. Pester runs every It inside a try, and while any try is up the call stack a throw always
@@ -137,7 +115,7 @@ Describe 'Invoke-OPIMGraphRequest' {
         It 'passes the URI to Invoke-MgGraphRequest' {
             InModuleScope Omnicit.PIM {
                 Invoke-OPIMGraphRequest -Uri 'v1.0/some/resource'
-                Should -Invoke Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                     $Uri -eq 'v1.0/some/resource'
                 }
             }
@@ -157,7 +135,7 @@ Describe 'Invoke-OPIMGraphRequest' {
             InModuleScope Omnicit.PIM {
                 $Result = Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{ action = 'selfActivate' }
                 $Result.id | Should -Be 'req-001'
-                Should -Invoke Invoke-MgGraphRequest -Times 1 -Scope It -ParameterFilter {
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
                     $Method -eq 'POST' -and $Uri -eq 'v1.0/some/requests'
                 }
             }
@@ -194,7 +172,7 @@ Describe 'Invoke-OPIMGraphRequest' {
         It 'does not retry on non-ACRS errors' {
             InModuleScope Omnicit.PIM {
                 try { Invoke-OPIMGraphRequest -Uri 'v1.0/some/resource' } catch {}
-                Should -Invoke Invoke-MgGraphRequest -Times 1 -Scope It
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
             }
         }
     }
@@ -377,7 +355,7 @@ Describe 'Invoke-OPIMGraphRequest' {
         It 'calls Initialize-OPIMAuth with the claims challenge on retry' {
             InModuleScope Omnicit.PIM {
                 try { Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{} } catch {}
-                Should -Invoke Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
                     $ClaimsChallenge -ne $null
                 }
             }
@@ -409,7 +387,7 @@ Describe 'Invoke-OPIMGraphRequest' {
             InModuleScope Omnicit.PIM {
                 $Result = Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{}
                 $Result.id | Should -Be 'req-001'
-                Should -Invoke Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
                     $ClaimsChallenge -match 'access_token' -and
                     $ClaimsChallenge -match 'acrs' -and
                     $ClaimsChallenge -match 'c1'
@@ -440,7 +418,7 @@ Describe 'Invoke-OPIMGraphRequest' {
             InModuleScope Omnicit.PIM {
                 $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/some/resource'
                 $Result.value[0].id | Should -Be 'after-refresh'
-                Should -Invoke Initialize-OPIMAuth -Times 1 -Scope It -ParameterFilter {
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
                     $ForceRefresh -eq $true
                 }
             }
@@ -688,7 +666,7 @@ Describe 'Invoke-OPIMGraphRequest' {
             }
         }
 
-        It 'takes the Retry-After from the same exception as the status, never from another one' {
+        It 'takes the Retry-After from the same exception as the status, not from another one' {
             # The status and its header are one response's facts: an inner exception that carries only
             # a Retry-After is no response, and its header is not borrowed for the outer 429. The
             # exponential fallback (1 s) applies, not the 17 s.
@@ -835,7 +813,7 @@ Describe 'Invoke-OPIMGraphRequest' {
             }
         }
 
-        It 'falls back to exponential backoff when Retry-After cannot be read, never to zero' {
+        It 'falls back to exponential backoff when Retry-After cannot be read, not to zero' {
             $Throttle = New-KiotaFailure -StatusCode 429 -Header @{ 'Retry-After' = 'soon' } -Message $script:TooManyMessage
             InModuleScope Omnicit.PIM -Parameters @{ Queue = @($Throttle) } {
                 param($Queue)
@@ -2081,7 +2059,7 @@ Describe 'Invoke-OPIMGraphRequest' {
         }
 
         It 'follows a next link on the Graph host of the session''s cloud for a relative -Uri: <Name>' -ForEach @(
-            @{ Name = 'Global'; Cloud = 'Global'; Link = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+            @{ Name = 'Global (the baseline; the other rows and the refusal test tell the clouds apart)'; Cloud = 'Global'; Link = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
             @{ Name = 'USGov'; Cloud = 'USGov'; Link = 'https://graph.microsoft.us/v1.0/x?$skiptoken=2' }
             @{ Name = 'USGovDoD'; Cloud = 'USGovDoD'; Link = 'https://dod-graph.microsoft.us/v1.0/x?$skiptoken=2' }
             @{ Name = 'China'; Cloud = 'China'; Link = 'https://microsoftgraph.chinacloudapi.cn/v1.0/x?$skiptoken=2' }

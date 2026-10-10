@@ -10,8 +10,8 @@ function Get-OPIMCurrentTenantInfo {
     tenant the module signed in to. The tenant of a Microsoft Graph session that another
     Connect-MgGraph started is never used (OPIM-45), and this function does not call Get-MgContext
     itself. TenantId is $null while the module holds no sign-in: no auth state, a state that is not
-    a dictionary, or a state without TokenTenantId, such as the one that holds only the device code
-    mode before the first sign-in.
+    a dictionary, or a state without TokenTenantId, such as the one holding only DeviceCode, which
+    -DeviceCode creates on a call with no auth state and which stays so until a sign-in succeeds.
 
     The display name is read, best-effort, from v1.0/organization, and only when
     Get-OPIMGraphSessionState is Own -- the process still holds the Graph session the module

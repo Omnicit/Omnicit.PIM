@@ -143,12 +143,12 @@ Describe 'Get-OPIMTenantMapEnvironment' {
             $Command.CommandElements[2].Value | Should -BeExactly $Alias
         }
 
-        It 'never returns Global for an unknown cloud' {
+        It 'throws instead of returning Global for an unknown cloud' {
             $script:Facts.Threw | Should -BeTrue
             $script:Facts.Result | Should -BeNullOrEmpty
         }
 
-        It 'refuses <Stored> as unknown, and never as Global or as a known cloud' -ForEach @(
+        It 'refuses <Stored> as unknown, not as Global or as a known cloud' -ForEach @(
             @{ Stored = 'GCC' }
             @{ Stored = 'Global ' }
             @{ Stored = ' USGov' }

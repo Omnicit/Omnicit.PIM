@@ -74,20 +74,29 @@
           }
         </GetScriptBlock>
       </ScriptProperty>
+      <!--
+        Seven ScriptProperties of this file share their name with a note property that every
+        object the module returns carries: five echo the note (MemberType below and on the group
+        eligibility, AccessId on both group types, AssignmentType on the group instance), and the
+        EndDateTime below and the one on the group instance return the note, or 'Never' when it is
+        empty. The other EndDateTime properties compute from scheduleInfo. An object's own note
+        shadows a type-data ScriptProperty of that name (compared without regard to case), so
+        these seven run only on an object WITHOUT the note, a hand-built object or a test fake,
+        and there a read of $this.<same name> would call the ScriptProperty itself until the stack
+        overflows. They read the note by member type instead. tests/QA/sourcehygiene.tests.ps1
+        holds it.
+      -->
       <ScriptProperty>
         <Name>MemberType</Name>
         <GetScriptBlock>
-          $this.memberType
+          foreach ($Note in $this.PSObject.Properties.Match('memberType', [System.Management.Automation.PSMemberTypes]::NoteProperty)) { $Note.Value }
         </GetScriptBlock>
       </ScriptProperty>
       <ScriptProperty>
         <Name>EndDateTime</Name>
         <GetScriptBlock>
-          if ($this.endDateTime) {
-            $this.endDateTime
-          } else {
-            'Never'
-          }
+          $Raw = foreach ($Note in $this.PSObject.Properties.Match('endDateTime', [System.Management.Automation.PSMemberTypes]::NoteProperty)) { $Note.Value }
+          if ($Raw) { $Raw } else { 'Never' }
         </GetScriptBlock>
       </ScriptProperty>
     </Members>
@@ -163,13 +172,13 @@
       <ScriptProperty>
         <Name>AccessId</Name>
         <GetScriptBlock>
-          $this.accessId
+          foreach ($Note in $this.PSObject.Properties.Match('accessId', [System.Management.Automation.PSMemberTypes]::NoteProperty)) { $Note.Value }
         </GetScriptBlock>
       </ScriptProperty>
       <ScriptProperty>
         <Name>MemberType</Name>
         <GetScriptBlock>
-          $this.memberType
+          foreach ($Note in $this.PSObject.Properties.Match('memberType', [System.Management.Automation.PSMemberTypes]::NoteProperty)) { $Note.Value }
         </GetScriptBlock>
       </ScriptProperty>
       <ScriptProperty>
@@ -203,23 +212,20 @@
       <ScriptProperty>
         <Name>AccessId</Name>
         <GetScriptBlock>
-          $this.accessId
+          foreach ($Note in $this.PSObject.Properties.Match('accessId', [System.Management.Automation.PSMemberTypes]::NoteProperty)) { $Note.Value }
         </GetScriptBlock>
       </ScriptProperty>
       <ScriptProperty>
         <Name>AssignmentType</Name>
         <GetScriptBlock>
-          $this.assignmentType
+          foreach ($Note in $this.PSObject.Properties.Match('assignmentType', [System.Management.Automation.PSMemberTypes]::NoteProperty)) { $Note.Value }
         </GetScriptBlock>
       </ScriptProperty>
       <ScriptProperty>
         <Name>EndDateTime</Name>
         <GetScriptBlock>
-          if ($this.endDateTime) {
-            $this.endDateTime
-          } else {
-            'Never'
-          }
+          $Raw = foreach ($Note in $this.PSObject.Properties.Match('endDateTime', [System.Management.Automation.PSMemberTypes]::NoteProperty)) { $Note.Value }
+          if ($Raw) { $Raw } else { 'Never' }
         </GetScriptBlock>
       </ScriptProperty>
     </Members>

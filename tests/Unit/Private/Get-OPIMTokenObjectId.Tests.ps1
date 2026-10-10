@@ -37,7 +37,7 @@ Describe 'Get-OPIMTokenObjectId' {
             $Result | Should -BeExactly 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
         }
 
-        It 'reads the oid claim and never the tid claim' {
+        It 'reads the oid claim and not the tid claim' {
             $Token = ConvertTo-TestSecureString (New-OPIMTestAccessToken -TenantId '33333333-3333-3333-3333-333333333333' -ObjectId '22222222-2222-2222-2222-222222222222')
             $Result = InModuleScope Omnicit.PIM -Parameters @{ Token = $Token } {
                 param($Token)

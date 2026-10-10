@@ -11,7 +11,8 @@ function Get-OPIMCompletionText {
     exclude is not offered. Every text is single-quoted with every kind of single quote doubled --
     the straight apostrophe and the typographic U+2018, U+2019, U+201A and U+201B, which the
     PowerShell tokenizer reads as quotes too (OPIM-26) -- and the word typed so far is compared
-    with StartsWith, case-insensitively, never as a wildcard.
+    with StartsWith, case-insensitively, never as a wildcard. The posts are indexed once per call,
+    so a list of hundreds completes at once (OPIM-51).
 
     .PARAMETER Pillar
     Directory, Group or Azure.
@@ -67,13 +68,22 @@ function Get-OPIMCompletionText {
     $Word = [regex]::Replace($Word, '([''\u2018\u2019\u201A\u201B])\1', '$1')
 
     $Items = @($InputObject | Where-Object { $null -ne $PSItem })
-    foreach ($Item in $Items) {
-        $Names = Get-OPIMScheduleName -Pillar $Pillar -InputObject $Item
-        # A post the typed filters exclude is not offered: its own old form must still find it.
-        if (@(Find-OPIMScheduleMatch -Pillar $Pillar -Name $Names.OldForm -InputObject $Items @Filters).Count -eq 0) {
-            continue
+    if ($Items.Count -eq 0) { return }
+    # OPIM-51: each post's names are read once, and one call of the matcher answers every name the
+    # loop asks about from one index of the posts, instead of two scans of every post per post.
+    $AllNames = @(foreach ($Item in $Items) { Get-OPIMScheduleName -Pillar $Pillar -InputObject $Item })
+    $Answers = Find-OPIMScheduleMatch -Pillar $Pillar -NameList (@($AllNames.OldForm) + @($AllNames.DisplayName)) -InputObject $Items @Filters
+    for ($Index = 0; $Index -lt $AllNames.Count; $Index++) {
+        $Names = $AllNames[$Index]
+        # No answers at all (a matcher that returns nothing) offers no post.
+        $Own = @()
+        $ByName = @()
+        if ($null -ne $Answers) {
+            $Own = @($Answers[$Names.OldForm])
+            $ByName = @($Answers[$Names.DisplayName])
         }
-        $ByName = @(Find-OPIMScheduleMatch -Pillar $Pillar -Name $Names.DisplayName -InputObject $Items @Filters)
+        # A post the typed filters exclude is not offered: its own old form must still find it.
+        if ($Own.Count -eq 0) { continue }
         $Unique = $ByName.Count -eq 1 -and
             (Get-OPIMScheduleName -Pillar $Pillar -InputObject $ByName[0]).Key -eq $Names.Key
         $Text = if ($Unique) { $Names.DisplayName } else { $Names.OldForm }

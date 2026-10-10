@@ -97,10 +97,10 @@ function Initialize-OPIMAuth {
     state, so every later sign-in in the session uses it -- the silent refresh, the token-rejected
     retry and the ACRS step-up in Invoke-OPIMGraphRequest pass no -DeviceCode -- until
     Disconnect-OPIM clears the state. A device code session never falls back to the system browser.
-    Before the first sign-in the state holds only DeviceCode, which never counts as signed in, so a
-    first sign-in that fails (a declined or expired code, Ctrl+C) keeps the mode too. A failed device
-    code flow ends this function with the helper's DeviceCodeAuthFailed error and no second error
-    after it.
+    With no state, -DeviceCode creates one holding only DeviceCode until a sign-in succeeds. It is
+    no sign-in (no TenantId, no GraphTokenExpiry), so a failed first sign-in keeps the mode. A
+    latched command sends nothing (SignInRefused), though the token-rejected and 401 retries check
+    only that a state exists. A failed Graph device code flow ends with DeviceCodeAuthFailed alone.
 
     The cloud (OPIM-29) is a property of the tenant, so it follows the tenant. -Environment names it:
     Global, USGov, USGovDoD or China, in any letter case, resolved by Get-OPIMCloudEndpoint, which
@@ -278,10 +278,10 @@ function Initialize-OPIMAuth {
     # -DeviceCode is remembered in the auth state, so every later sign-in in the session uses it:
     # the silent refresh, the token-rejected retry and the ACRS step-up in Invoke-OPIMGraphRequest
     # pass no -DeviceCode. A cached token that is still valid stays in use; only the mode changes.
-    # Before the first sign-in the state holds only DeviceCode. That never counts as signed in (the
-    # cache checks below need TenantId and GraphTokenExpiry), so a failed first sign-in keeps the
-    # mode, and the next call asks for a device code again instead of opening the browser, until
-    # Disconnect-OPIM clears it.
+    # With no state, -DeviceCode creates one holding only DeviceCode until a sign-in succeeds. The
+    # session and cache checks need TenantId and GraphTokenExpiry, so it never counts and a failed
+    # first sign-in keeps the mode until Disconnect-OPIM. The token-rejected and 401 retries check
+    # only that a state exists, though a latched command sends nothing.
     if ($DeviceCode) {
         if ($script:_OPIMAuthState) {
             $script:_OPIMAuthState.DeviceCode = $true
@@ -368,9 +368,9 @@ function Initialize-OPIMAuth {
         )
 
         # MSAL methods that take MSAL types are found by name through GetMethods(), never through
-        # GetMethod(name, [Type[]]): MSAL lives in the Graph SDK's own AssemblyLoadContext, whose
-        # types are not the default context's. A typed GetMethod is used below only for [bool] and
-        # [string] (WithForceRefresh, WithUseEmbeddedWebView, WithLoginHint, WithClaims).
+        # GetMethod(name, [Type[]]): MSAL lives in another AssemblyLoadContext than the default one
+        # (Microsoft.Graph.Authentication's, or AzAuth's; see Get-OPIMMsalApplication), whose types
+        # are not the default context's. A typed GetMethod is used only for [bool] and [string].
         $AppType = $MsalApp.GetType()
 
         $CachedAccount = if ($script:_OPIMAuthState -and $script:_OPIMAuthState.Account) {

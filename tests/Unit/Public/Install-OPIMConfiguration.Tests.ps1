@@ -46,7 +46,7 @@ Describe 'Install-OPIMConfiguration' {
 
         It 'calls Set-Content once to write the PSD1' {
             Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Scope It
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
         }
 
         It 'does not call New-Item when the directory already exists' {
@@ -312,7 +312,7 @@ Describe 'Install-OPIMConfiguration' {
 
         It 'silently ignores the unknown object and still calls Set-Content' {
             [PSCustomObject]@{ SomeProperty = 'value' } | Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Scope It
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It
         }
     }
 
@@ -355,7 +355,7 @@ Describe 'Install-OPIMConfiguration' {
 
         It 'calls New-Item to create the directory' {
             Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\NewDir\TenantMap.psd1'
-            Should -Invoke New-Item -ModuleName Omnicit.PIM -Times 1 -Scope It -ParameterFilter { $ItemType -eq 'Directory' }
+            Should -Invoke New-Item -ModuleName Omnicit.PIM -Times 1 -Exactly -Scope It -ParameterFilter { $ItemType -eq 'Directory' }
         }
     }
 
@@ -531,13 +531,32 @@ Describe 'Install-OPIMConfiguration' {
         It 'names the cloud in a verbose line' {
             $Verbose = Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Environment USGov -Verbose 4>&1 |
                 Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message }
-            @($Verbose | Where-Object { $_ -like "*cloud*USGov*" }).Count | Should -Be 1
+            # The cloud line itself; the ShouldProcess line of -Verbose names the cloud too.
+            @($Verbose | Where-Object { $_ -like "Cloud for tenant alias*USGov*" }).Count | Should -Be 1
         }
 
         It 'names Global in the verbose line when no cloud is stored' {
             $Verbose = Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Verbose 4>&1 |
                 Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message }
-            @($Verbose | Where-Object { $_ -like "*cloud*Global*" }).Count | Should -Be 1
+            @($Verbose | Where-Object { $_ -like "Cloud for tenant alias*Global*" }).Count | Should -Be 1
+        }
+
+        It 'names the cloud the alias will store in the confirmation' {
+            $Text = Get-WhatIfText { Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -Environment USGov -WhatIf }
+            $Line = 'What if: Performing the operation "' +
+                "Add alias 'contoso' for tenant 'Mock Tenant' (00000000-0000-0000-0000-000000000001) in cloud 'USGov'" +
+                '" on target "TestDrive:\TenantMap.psd1".'
+            $Text | Should -MatchExactly ([regex]::Escape($Line))
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
+        }
+
+        It 'names Global in the confirmation when the alias will store no cloud' {
+            $Text = Get-WhatIfText { Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId '00000000-0000-0000-0000-000000000001' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Line = 'What if: Performing the operation "' +
+                "Add alias 'contoso' for tenant 'Mock Tenant' (00000000-0000-0000-0000-000000000001) in cloud 'Global'" +
+                '" on target "TestDrive:\TenantMap.psd1".'
+            $Text | Should -MatchExactly ([regex]::Escape($Line))
+            Should -Invoke Set-Content -ModuleName Omnicit.PIM -Times 0 -Scope It
         }
 
         It 'refuses an unknown -Environment at binding' {
@@ -596,6 +615,11 @@ Describe 'Install-OPIMConfiguration' {
             Install-OPIMConfiguration -TenantAlias 'contoso' -TenantId 'AAAAAAAA-0000-0000-0000-00000000000A' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errs -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
             $Errs.Count | Should -Be 0
             $script:writtenContent | Should -Match "Environment\s+=\s+'China'"
+        }
+
+        It 'names the cloud of the sign-in in the confirmation when the alias takes it' {
+            $Text = Get-WhatIfText { Install-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -WhatIf }
+            $Text | Should -MatchExactly ([regex]::Escape("Add alias 'contoso' for tenant 'Mock Tenant' (00000000-0000-0000-0000-000000000001) in cloud 'USGov'"))
         }
 
         It 'stores no cloud for another tenant than the sign-in''s' {

@@ -307,24 +307,13 @@ function Uninstall-OPIMTransportTripwire {
     # nothing and raises no error, with or without -Force (measured in Omnicit.EntraRBAC 2026-10-05,
     # PowerShell 7.6). An unqualified path removes the NEAREST definition up the scope chain, so a
     # name is removed only while its nearest definition IS a replacement. Every replacement is a
-    # global function; the pass from inside the module is a guard that removes a marked function
-    # left in the module scope and nothing else there (a Mock -ModuleName is an alias, never a
-    # replacement). The check below then reads from here AND from the module's scope, so a
+    # global function. The check below then reads from here AND from the module's scope, so a
     # replacement left behind is reported, not silently kept.
     $Names = @((Get-OPIMTransportTripwireName).Keys)
     $Module = Get-Module -Name Omnicit.PIM | Select-Object -First 1
     foreach ($Name in $Names) {
         if (Test-OPIMTransportTripwireFunction -Command (Get-Command -Name $Name -CommandType Function -ErrorAction Ignore)) {
             Remove-Item -Path ('function:' + $Name) -ErrorAction SilentlyContinue
-        }
-        if ($Module) {
-            & $Module {
-                param($N)
-                $F = Get-Command -Name $N -CommandType Function -ErrorAction Ignore
-                if (($F -is [System.Management.Automation.FunctionInfo]) -and $F.ScriptBlock.ToString().Contains('OPIM-TRANSPORT-TRIPWIRE')) {
-                    Remove-Item -Path ('function:' + $N) -ErrorAction SilentlyContinue
-                }
-            } $Name
         }
     }
     Remove-OPIMTransportTripwireRunspaceForm

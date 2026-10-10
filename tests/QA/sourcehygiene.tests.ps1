@@ -6,6 +6,16 @@ BeforeAll {
     #
     # The gate reads files and parses text. It imports nothing and runs no module code.
     #
+    # It holds seven checks, one Describe each, in this order (Pass 1 to Pass 5 below are the steps
+    # of this BeforeAll behind the third, the sixth and the seventh):
+    #   Source encoding -- ASCII only and no BOM, in every authored file.
+    #   Cmdlet reference hygiene -- every Verb-OPIM name in source/**/*.ps1 names a command.
+    #   Bearer-token hygiene -- every catch on a transport path scrubs first (call-edge closure).
+    #   suffix.ps1 / psm1 mirror sync -- the region the two files share is byte-identical.
+    #   Format and type data -- every .ps1xml parses as XML; no ScriptProperty reads its own name.
+    #   Az boundary (decision A7) -- no Az command or module, .ps1xml script blocks included.
+    #   Cloud hosts (decision A11) -- each cloud host is written only in Get-OPIMCloudEndpoint.
+    #
     # '*.txt' and '*.md' are deliberately NOT in the include list. The about topic
     # (source/en-US/about_Omnicit.PIM.help.txt) belongs to the about-topic check,
     # tests/QA/about.tests.ps1, which reads its bytes. If that coverage is ever removed, add
@@ -13,10 +23,10 @@ BeforeAll {
     # source/Formats/README.md is a shipped note that no command shows. Every path below is
     # compared with '/' separators, so the gate holds on every operating system.
     #
-    # The floors sit just under the counts measured on 2026-10-06: source/ held 42 authored files
-    # of these extensions, tests/ 37 (this file included), and source/**/*.ps1 38 files carrying
-    # 349 Verb-OPIM tokens. The tests/ floor leaves no slack, since tests/Unit/Classes holds a
-    # single file. Raise a floor when the tree genuinely grows.
+    # The floors of the first two checks sit just under the counts measured on 2026-10-06: source/
+    # held 42 authored files of these extensions, tests/ 37 (this file included), and
+    # source/**/*.ps1 38 files carrying 349 Verb-OPIM tokens. The tests/ floor leaves no slack,
+    # since tests/Unit/Classes holds a single file. Raise a floor when the tree genuinely grows.
     # =====================================================================================
     $script:SourceFileFloor = 40
     $script:TestFileFloor = 36
@@ -147,10 +157,10 @@ BeforeAll {
     $script:ScrubExemptions = @{}
 
     <#
-        The floors sit just under the counts measured on 2026-10-07, after every catch in a
-        transport-reaching file was made to scrub first and the Connect-MgGraph hand-off in
-        Initialize-OPIMAuth was wrapped: 20 transport-reaching files under source/ holding 30 of the
-        52 catch clauses in source/. The named control,
+        The floors sit just under the counts measured on 2026-10-10, after the six completer classes
+        under source/Classes joined the closure through the run-string edge (below) and their
+        catches were made to scrub first: 26 transport-reaching files under source/, the six classes
+        among them, holding 85 of the 103 catch clauses in source/. The named control,
         source/Private/Invoke-OPIMGraphRequest.ps1, is asserted with its EXACT count instead (9: the three in its nested
         Get-ClaimsFromException; the one in each of its nested Get-GraphResponseFact and
         Get-GraphRetryAfterHeaderValue, which read a failure's status and Retry-After in both
@@ -159,10 +169,54 @@ BeforeAll {
         OPIM-13), so a catch that stops being seen fails there with a clear cause instead of
         quietly shrinking a total.
     #>
-    $script:ScrubTransportFileFloor = 18
-    $script:ScrubCatchFloor = 28
+    $script:ScrubTransportFileFloor = 24
+    $script:ScrubCatchFloor = 83
     $script:ScrubControlPath = 'source/Private/Invoke-OPIMGraphRequest.ps1'
     $script:ScrubControlCatchCount = 9
+
+    <#
+        THE RUN-STRING EDGE. A constant string handed to [scriptblock]::Create is code its file runs,
+        so every command the string names is a call of that file, just as a command written out is.
+        That is how the six completer classes reach the Get-OPIM* cmdlets:
+        & ([scriptblock]::Create('Get-OPIMDirectoryRole -WarningAction SilentlyContinue')). Pass 1
+        collects those names per file with Get-SourceHygieneRunnableName, and Pass 2 makes an edge of
+        every one that names a module function, public or private.
+
+        KNOWN LIMITS: only a static call of Create on a type written [scriptblock] or
+        [System.Management.Automation.ScriptBlock] (in any letter case) whose first argument is a
+        constant string is read. A string built at run time ([scriptblock]::Create($Text), or an
+        expandable string that holds a variable), the type written another way
+        ([Management.Automation.ScriptBlock]), and a string run by Invoke-Expression or by & $Name
+        make no edge. Review has to catch those shapes; this pass cannot.
+    #>
+    function Get-SourceHygieneRunnableName {
+        <#
+        .SYNOPSIS
+        Returns the name of every command a parsed file runs through a constant string handed to
+        [scriptblock]::Create, in the order the strings and their commands appear.
+        #>
+        [OutputType([string])]
+        param(
+            [Parameter(Mandatory)]
+            [System.Management.Automation.Language.Ast]$Ast
+        )
+        foreach ($Node in $Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true)) {
+            if (-not $Node.Static) { continue }
+            if ($Node.Expression -isnot [System.Management.Automation.Language.TypeExpressionAst]) { continue }
+            $TypeName = $Node.Expression.TypeName.FullName
+            if (-not ([string]::Equals($TypeName, 'scriptblock', [System.StringComparison]::OrdinalIgnoreCase) -or
+                    [string]::Equals($TypeName, 'System.Management.Automation.ScriptBlock', [System.StringComparison]::OrdinalIgnoreCase))) { continue }
+            if ($Node.Member -isnot [System.Management.Automation.Language.StringConstantExpressionAst] -or
+                -not [string]::Equals($Node.Member.Value, 'Create', [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+            $Argument = @($Node.Arguments)[0]
+            if ($Argument -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) { continue }
+            $Inner = [System.Management.Automation.Language.Parser]::ParseInput($Argument.Value, [ref]$null, [ref]$null)
+            foreach ($Call in $Inner.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+                $Name = $Call.GetCommandName()
+                if (-not [string]::IsNullOrEmpty($Name)) { $Name }
+            }
+        }
+    }
 
     <#
         =====================================================================================
@@ -182,7 +236,8 @@ BeforeAll {
         say the module does not call it (a comment, comment-based help) is never offered to it.
 
         THREE REFUSED SHAPES, found in every .ps1, .psm1 and .psd1 under source/ on the AST Pass 1
-        already parsed (each file is parsed once):
+        already parsed (each file is parsed once), and in every script block of the .ps1xml files
+        under source/, each parsed on its own (Get-SourceHygieneXmlScriptBlock):
           - Call: a command whose static name matches '-Az' (Connect-AzAccount), or that is
             module-qualified with an Az module (Az.Accounts\Get-AzContext). GetCommandName() also
             returns a quoted first element, so & 'Disconnect-AzAccount' is a call.
@@ -204,16 +259,16 @@ BeforeAll {
         Az command named by a bareword argument rather than called, as in
         & (Get-Command Connect-AzAccount) or $C = Get-Command -Name Get-AzContext; & $C, since a
         bareword argument is neither a call nor a quoted string. And so is an alias the Az modules
-        export without -Az in its name (Resolve-Error, say), called bare. And so is the XML under
-        source/: this pass reads .ps1, .psm1 and .psd1 only, while the Types and Format files hold
-        script blocks (GetScriptBlock, ScriptBlock, ...) that run at property access and at
-        formatting, where an Az command could sit unseen. Review must catch these shapes; this pass
-        cannot.
+        export without -Az in its name (Resolve-Error, say), called bare. Review must catch these
+        shapes; this pass cannot. The XML under source/ is no such gap: the pass also reads every
+        script block of the .ps1xml files -- each GetScriptBlock, SetScriptBlock, ScriptBlock and
+        Script element, the code the Types and Format files run at property access, as a method
+        and at formatting -- and the limits above hold inside a script block as in a .ps1 file.
 
-        The positive controls are the known-answer It, which runs the detector over a text holding
-        every refused shape, and the named control: the two Get-AzToken calls of
-        source/Private/Initialize-OPIMAuth.ps1, which a matcher that stopped seeing the tree would
-        no longer find.
+        The positive controls are the two known-answer Its, which run the detector over a text
+        holding every refused shape and over in-memory Types and Format texts, and the named
+        control: the two Get-AzToken calls of source/Private/Initialize-OPIMAuth.ps1, which a
+        matcher that stopped seeing the tree would no longer find.
         =====================================================================================
     #>
     $script:AzAllowedCommands = [System.Collections.Generic.HashSet[string]]::new(
@@ -286,16 +341,75 @@ BeforeAll {
         }
     }
 
+    # The elements of a .ps1xml file that hold PowerShell code: a ScriptProperty's two accessors and
+    # a ScriptMethod's body (Script) in a Types file, and every ScriptBlock of a Format file.
+    $script:AzXmlScriptElements = @('GetScriptBlock', 'SetScriptBlock', 'ScriptBlock', 'Script')
+
+    function Get-SourceHygieneXmlScriptBlock {
+        <#
+        .SYNOPSIS
+        Returns one record per script element of a .ps1xml text, in document order: Path, Line (the
+        line of the element's start tag), Element (its local name), Ast (its text, parsed) and Errors
+        (the parse errors). A text that is not well-formed XML throws.
+        #>
+        [OutputType([pscustomobject])]
+        param(
+            [Parameter(Mandatory)]
+            [string]$Text,
+
+            [Parameter(Mandatory)]
+            [string]$RelativePath
+        )
+        # PreserveWhitespace keeps the whitespace text beside a CDATA section, which the line of a
+        # finding inside the element is counted through; without it that text is dropped.
+        $Document = [System.Xml.Linq.XDocument]::Parse($Text,
+            [System.Xml.Linq.LoadOptions]::SetLineInfo -bor [System.Xml.Linq.LoadOptions]::PreserveWhitespace)
+        foreach ($Element in $Document.Descendants()) {
+            if ($Element.Name.LocalName -notin $script:AzXmlScriptElements) { continue }
+            $Errors = $null
+            $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Element.Value, [ref]$null, [ref]$Errors)
+            [pscustomobject]@{
+                Path    = $RelativePath
+                Line    = ([System.Xml.IXmlLineInfo]$Element).LineNumber
+                Element = $Element.Name.LocalName
+                Ast     = $Ast
+                Errors  = @($Errors)
+            }
+        }
+    }
+
+    function Get-SourceHygieneXmlAzFinding {
+        <#
+        .SYNOPSIS
+        Returns the findings of Get-SourceHygieneAzFinding for one script block that
+        Get-SourceHygieneXmlScriptBlock returned, each with the block's Path and a Line counted in
+        the file: the element's line plus the finding's own line in the block, less one.
+        #>
+        [OutputType([pscustomobject])]
+        param(
+            [Parameter(Mandatory)]
+            [pscustomobject]$Block
+        )
+        foreach ($Finding in @(Get-SourceHygieneAzFinding -Ast $Block.Ast)) {
+            $Finding.Line = $Block.Line + $Finding.Line - 1
+            $Finding | Add-Member -NotePropertyName Path -NotePropertyValue $Block.Path -PassThru
+        }
+    }
+
     <#
         The floors sit just under the counts Pass 1 measured on 2026-10-09: 65 parsed files under
-        source/ (.ps1, .psm1, .psd1) holding 759 CommandAst nodes. A scan below a floor has lost a
-        directory or broken its walk, not found less code; raise a floor when the tree genuinely grows.
+        source/ (.ps1, .psm1, .psd1) holding 759 CommandAst nodes; and on 2026-10-10, 37 script
+        blocks in the two .ps1xml files (the 29 GetScriptBlock of the Types file and the 8
+        ScriptBlock of the Format file). A scan below a floor has lost a directory or broken its
+        walk, not found less code; raise a floor when the tree genuinely grows.
     #>
     $script:AzParsedFileFloor = 63
     $script:AzCommandAstFloor = 740
+    $script:AzXmlScriptBlockFloor = 35
     $script:AzFindings = [System.Collections.Generic.List[object]]::new()
     $script:AzParsedFileCount = 0
     $script:AzCommandAstCount = 0
+    $script:AzXmlScriptBlockCount = 0
 
     <#
         =====================================================================================
@@ -495,13 +609,41 @@ BeforeAll {
 
     # --- Pass 1: parse every PowerShell-syntax source file exactly once. ---
     #
-    # .ps1xml is excluded since it is XML, which the PowerShell parser would report as errors.
+    # A .ps1xml file is XML, which the PowerShell parser would report as errors, so it is never
+    # parsed whole: the Az boundary (Pass 4) parses each of its script blocks instead, through
+    # Get-SourceHygieneXmlScriptBlock, and no other pass of this loop reads it.
     # .psd1 parses cleanly as a hashtable literal.
     $script:SourceUnits = [System.Collections.Generic.List[object]]::new()
     $script:ParseFailures = [System.Collections.Generic.List[string]]::new()
 
     foreach ($File in $script:HygieneFiles) {
         if ($File.RelativePath -notlike 'source/*') { continue }
+        if ($File.Extension -eq '.ps1xml') {
+            <#
+                A file that is not well-formed XML yields no script block, so it would drop out of
+                the walk without failing anything; it is recorded as a parse failure instead. So is
+                a script block that does not parse, whose findings are not read, as for a .ps1 file.
+            #>
+            try {
+                $XmlBlocks = @(Get-SourceHygieneXmlScriptBlock -Text $File.Text -RelativePath $File.RelativePath)
+            } catch {
+                $script:ParseFailures.Add(('{0} -- not well-formed XML: {1}' -f
+                        $File.RelativePath, ($_.Exception.InnerException ?? $_.Exception).Message))
+                continue
+            }
+            foreach ($Block in $XmlBlocks) {
+                $script:AzXmlScriptBlockCount++
+                if ($Block.Errors.Count -gt 0) {
+                    $script:ParseFailures.Add(('{0}:{1} ({2}) -- {3} parse error(s), first: {4}' -f
+                            $Block.Path, $Block.Line, $Block.Element, $Block.Errors.Count, $Block.Errors[0].Message))
+                    continue
+                }
+                foreach ($Finding in @(Get-SourceHygieneXmlAzFinding -Block $Block)) {
+                    $script:AzFindings.Add($Finding)
+                }
+            }
+            continue
+        }
         if ($File.Extension -notin '.ps1', '.psm1', '.psd1') { continue }
 
         $Tokens = $null
@@ -539,7 +681,9 @@ BeforeAll {
             source/Private/Remove-OPIMErrorRecord.ps1 carries the literal 'Invoke-MgGraphRequest
             @InvokeParams' inside its .EXAMPLE help block, and a grep would score it as a transport
             file. The AST never sees comment tokens. ONE FindAll walk collects the three node kinds
-            the passes below need; the walk count is what costs time, not the bucketing.
+            the passes below need; the walk count is what costs time, not the bucketing. The names
+            run through [scriptblock]::Create take one walk more, in Get-SourceHygieneRunnableName,
+            so the known-answer It runs the very code this pass runs.
         #>
         $Nodes = $FileAst.FindAll({
                 $args[0] -is [System.Management.Automation.Language.CommandAst] -or
@@ -579,6 +723,7 @@ BeforeAll {
                 IsPrivate      = [bool]($File.RelativePath -like 'source/Private/*')
                 CommandNames   = $CommandNames
                 StringValues   = $StringValues
+                RunnableNames  = @(Get-SourceHygieneRunnableName -Ast $FileAst)
                 Catches        = $Catches
                 CallsTransport = $CallsTransport
                 Edges          = $null
@@ -592,10 +737,12 @@ BeforeAll {
         transitively, any module function that does: a public cmdlet that reaches Graph only through
         Initialize-OPIMAuth or Get-OPIMCurrentTenantInfo receives the same records. A string
         constant naming a PRIVATE module function also counts as an edge, so a helper called through
-        a name held in a variable is not missed; a public name does not, since the completer classes
-        and the manifest name public cmdlets without being their callers. Comment-based help is a
-        comment token and never an AST expression, so a name that appears only in help creates no
-        edge.
+        a name held in a variable is not missed. A public name in a plain string is no edge (the
+        manifest names every public cmdlet), but a command in a string handed to
+        [scriptblock]::Create is one, public or private, since that string is run -- which is how
+        the six completer classes reach the Get-OPIM* cmdlets (the run-string edge, above Pass 1).
+        Comment-based help is a comment token and never an AST expression, so a name that appears
+        only in help creates no edge.
 
         Reachability is a FIXED-POINT iteration over a boolean, not a memoized depth-first walk: a
         DFS that caches results its own re-entry guard truncated can silently under-reach across a
@@ -618,6 +765,9 @@ BeforeAll {
         }
         foreach ($Value in $Unit.StringValues) {
             if ($script:PrivateFunctions.Contains($Value)) { $null = $Edges.Add($Value) }
+        }
+        foreach ($Name in $Unit.RunnableNames) {
+            if ($script:AllFunctions.Contains($Name)) { $null = $Edges.Add($Name) }
         }
         $Unit.Edges = $Edges
     }
@@ -807,9 +957,9 @@ exclude the file
             they sit under are in the BeforeAll.
         #>
         $script:ScrubTransportFiles.Count | Should -BeGreaterThan $script:ScrubTransportFileFloor -Because (
-            'source/ held 20 transport-reaching files on 2026-10-07; a scan at the floor or below has broken transport detection, not found fewer files. Found: {0}' -f ($script:ScrubTransportFiles -join ', '))
+            'source/ held 26 transport-reaching files on 2026-10-10, the six completer classes among them; a scan at the floor or below has broken transport detection, not found fewer files. Found: {0}' -f ($script:ScrubTransportFiles -join ', '))
         $script:ScrubCatchCount | Should -BeGreaterThan $script:ScrubCatchFloor -Because (
-            'those files held 30 of the 52 catch clauses in source/ on 2026-10-07; a count at the floor or below has broken the catch enumeration, not found fewer catches')
+            'those files held 85 of the 103 catch clauses in source/ on 2026-10-10; a count at the floor or below has broken the catch enumeration, not found fewer catches')
     }
 
     It 'counts every catch of the named control file' {
@@ -822,6 +972,49 @@ exclude the file
             Should -BeTrue -Because 'the Graph wrapper must be detected as a transport file; if it is not, transport detection is broken'
         $script:ScrubCatchByFile[$script:ScrubControlPath] | Should -Be $script:ScrubControlCatchCount -Because (
             'source/Private/Invoke-OPIMGraphRequest.ps1 holds {0} catch clauses, every one of them scrubbing first' -f $script:ScrubControlCatchCount)
+    }
+
+    It 'reaches the six completer classes through the commands their [scriptblock]::Create strings run' {
+        <#
+            The second named control. Each completer class lists through a Get-OPIM* cmdlet that it
+            names only inside a string handed to [scriptblock]::Create, so the classes are on a
+            transport path through the run-string edge of Pass 2 alone. The paths are read from
+            the files on disk, not from the parsed units, so a class that stopped parsing is
+            missing here as well as in the parse It above.
+        #>
+        $ClassPaths = @($script:HygieneFiles | Where-Object { $_.RelativePath -like 'source/Classes/*.ps1' } | ForEach-Object { $_.RelativePath })
+        $ClassPaths.Count | Should -Be 6 -Because 'source/Classes holds the six completer classes; fewer means the scan lost them, more means a class was added and this control must name it'
+        $Missing = @($ClassPaths | Where-Object { $script:ScrubTransportFiles -notcontains $_ })
+        $Missing -join ', ' | Should -BeNullOrEmpty -Because (
+            'a command in a string handed to [scriptblock]::Create is run, so it is a call; a class that lists through one is on a transport path and its catches must scrub first. Classes outside the closure')
+    }
+
+    It 'counts a command in a [scriptblock]::Create string as a call, and a public name in a plain string as none (known answer)' {
+        # The positive control of the run-string edge, run through the function Pass 1 calls. Line 1
+        # is the completers' own form and line 2 the full type name: both are calls. Line 3 is a
+        # public name in a plain string, which is no call. Line 4 hands Create a variable, whose
+        # text no parser can see. Line 5 writes the type and the method in other letter cases, which
+        # PowerShell resolves the same. Line 6 calls Create on an instance and line 7 on another
+        # type, and neither builds a script block from a constant: no call either.
+        $Text = @'
+$Listed = @(& ([scriptblock]::Create('Get-OPIMDirectoryRole -Activated')))
+$Group = [System.Management.Automation.ScriptBlock]::Create('Get-OPIMEntraIDGroup')
+$X = 'Get-OPIMAzureRole'
+$Run = [scriptblock]::Create($Variable)
+$Config = [ScriptBlock]::create('Get-OPIMConfiguration -TenantAlias contoso')
+$Again = $Factory.Create('Disable-OPIMMyRole')
+$Other = [string]::Create('Enable-OPIMMyRole')
+'@
+        $Errors = $null
+        $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$Errors)
+        $Errors | Should -BeNullOrEmpty -Because 'the known-answer text must parse, or it proves nothing'
+        @(Get-SourceHygieneRunnableName -Ast $Ast) | Should -Be @('Get-OPIMDirectoryRole', 'Get-OPIMEntraIDGroup', 'Get-OPIMConfiguration')
+
+        # The real-tree half of line 3: the source manifest names every public cmdlet in a plain
+        # string (FunctionsToExport) and runs none of them, so Pass 2 gives it no edge and it is on
+        # no transport path.
+        @($script:ScrubTransportFiles) | Should -Not -Contain 'source/Omnicit.PIM.psd1' -Because (
+            'a public name in a plain string is no call; the manifest lists the public cmdlets without running them')
     }
 
     It 'calls Remove-OPIMErrorRecord as the first statement of every catch on a transport path' {
@@ -878,6 +1071,75 @@ Describe 'suffix.ps1 / psm1 mirror sync' -Tags 'SourceHygiene' {
 
 Describe 'Format and type data' -Tags 'SourceHygiene' {
 
+    BeforeAll {
+        <#
+            A ScriptProperty of Omnicit.PIM.Types.ps1xml must not read a member of its own name
+            through $this (OPIM-48). An object's own NoteProperty shadows a type-data ScriptProperty
+            of the same name, compared without regard to case, so such a property runs only on an
+            object WITHOUT the note, and there $this.<same name> resolves to the ScriptProperty
+            itself: unbounded recursion that kills the process. The echoes read the note by member
+            type instead, $this.PSObject.Properties.Match('<name>', 'NoteProperty').
+
+            The detector is given the XML TEXT, so a test can feed it a copy of the file. It parses
+            every GetScriptBlock and SetScriptBlock of every Type/Members/ScriptProperty with the
+            PowerShell parser and reports each MemberExpressionAst whose expression is the variable
+            this and whose member is a constant string equal to the property's Name, ignoring case
+            (a method call on the member is a MemberExpressionAst too). It returns Walked (the
+            ScriptProperty members read, the floor of the walk), ParseErrors, and Findings.
+
+            KNOWN LIMITS, which review has to catch: a member name assembled at run time
+            ($this.$Name, $this.('member' + 'Type')), a read through $_ or $PSItem, which the
+            detector does not follow, and a self-read through another member of the same object
+            ($this.PSObject.Properties['MemberType'].Value). Nothing here runs module code.
+        #>
+        function Get-SourceHygieneSelfReadingProperty {
+            [OutputType([pscustomobject])]
+            param(
+                [Parameter(Mandatory)]
+                [string]$Xml
+            )
+            $Document = [xml]::new()
+            $Document.LoadXml($Xml)
+            $Walked = 0
+            $ParseErrors = [System.Collections.Generic.List[string]]::new()
+            $Findings = [System.Collections.Generic.List[pscustomobject]]::new()
+            foreach ($TypeNode in $Document.SelectNodes('/Types/Type')) {
+                $TypeName = $TypeNode.SelectSingleNode('Name').InnerText.Trim()
+                foreach ($PropertyNode in $TypeNode.SelectNodes('Members/ScriptProperty')) {
+                    $Walked++
+                    $PropertyName = $PropertyNode.SelectSingleNode('Name').InnerText.Trim()
+                    foreach ($Accessor in 'GetScriptBlock', 'SetScriptBlock') {
+                        $BlockNode = $PropertyNode.SelectSingleNode($Accessor)
+                        if ($null -eq $BlockNode) { continue }
+                        $Errors = $null
+                        $Ast = [System.Management.Automation.Language.Parser]::ParseInput($BlockNode.InnerText, [ref]$null, [ref]$Errors)
+                        foreach ($ParseError in $Errors) {
+                            $ParseErrors.Add(('{0}/{1} {2}: {3}' -f $TypeName, $PropertyName, $Accessor, $ParseError.Message))
+                        }
+                        foreach ($Node in $Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.MemberExpressionAst] }, $true)) {
+                            if ($Node.Expression -isnot [System.Management.Automation.Language.VariableExpressionAst]) { continue }
+                            if ($Node.Expression.VariablePath.UserPath -ne 'this') { continue }
+                            if ($Node.Member -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) { continue }
+                            if (-not [string]::Equals($Node.Member.Value, $PropertyName, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+                            $Findings.Add([pscustomobject]@{
+                                    Type     = $TypeName
+                                    Property = $PropertyName
+                                    Accessor = $Accessor
+                                    Line     = $Node.Extent.StartLineNumber
+                                    Read     = $Node.Extent.Text
+                                })
+                        }
+                    }
+                }
+            }
+            [pscustomobject]@{
+                Walked      = $Walked
+                ParseErrors = $ParseErrors.ToArray()
+                Findings    = $Findings.ToArray()
+            }
+        }
+    }
+
     It 'parses every .ps1xml file under source/ as XML' {
         <#
             suffix.ps1 loads Omnicit.PIM.Types.ps1xml with Update-TypeData -ErrorAction
@@ -898,6 +1160,109 @@ Describe 'Format and type data' -Tags 'SourceHygiene' {
             }
         }
         $Failures -join "`n" | Should -BeNullOrEmpty -Because 'every .ps1xml file under source/ must be well-formed XML, or PowerShell cannot load it'
+    }
+
+    It 'tells a ScriptProperty that reads its own name from one that reads the note by member type (known answer)' {
+        # The positive control of the next It: if the detector stops matching, this text no longer
+        # yields its findings. Each Type below is one case, named for what it holds.
+        $Text = @'
+<?xml version="1.0" encoding="utf-8"?>
+<Types>
+  <Type>
+    <Name>Case.OwnName</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>MemberType</Name>
+        <GetScriptBlock>
+          $this.memberType
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+  <Type>
+    <Name>Case.MatchForm</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>MemberType</Name>
+        <GetScriptBlock>
+          foreach ($Note in $this.PSObject.Properties.Match('memberType', [System.Management.Automation.PSMemberTypes]::NoteProperty)) { $Note.Value }
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+  <Type>
+    <Name>Case.OwnNameOtherCase</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>AccessId</Name>
+        <GetScriptBlock>
+          $this.AccessID
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+  <Type>
+    <Name>Case.OtherMember</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>RoleName</Name>
+        <GetScriptBlock>
+          $this.roleDefinition.displayName
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+  <Type>
+    <Name>Case.OtherObject</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>MemberType</Name>
+        <GetScriptBlock>
+          $Other.memberType
+        </GetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+  <Type>
+    <Name>Case.OwnNameInSetter</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>AssignmentType</Name>
+        <GetScriptBlock>
+          $this.scheduleInfo
+        </GetScriptBlock>
+        <SetScriptBlock>
+          $this.assignmentType = $args[0]
+        </SetScriptBlock>
+      </ScriptProperty>
+    </Members>
+  </Type>
+</Types>
+'@
+        $Result = Get-SourceHygieneSelfReadingProperty -Xml $Text
+        $Result.ParseErrors | Should -BeNullOrEmpty
+        $Result.Walked | Should -Be 6
+        @($Result.Findings | ForEach-Object { '{0} {1} {2} {3}' -f $_.Type, $_.Property, $_.Accessor, $_.Read }) | Should -Be @(
+            'Case.OwnName MemberType GetScriptBlock $this.memberType'
+            'Case.OwnNameOtherCase AccessId GetScriptBlock $this.AccessID'
+            'Case.OwnNameInSetter AssignmentType SetScriptBlock $this.assignmentType'
+        )
+    }
+
+    It 'reads no member of its own name through $this in any ScriptProperty of the Types file' {
+        # The path is named, not found by a pattern: a renamed Types file must turn this red instead
+        # of leaving it with nothing to read.
+        $TypesFile = @($script:HygieneFiles | Where-Object { $_.RelativePath -eq 'source/Formats/Omnicit.PIM.Types.ps1xml' })
+        $TypesFile.Count | Should -Be 1 -Because 'the gate reads the Types file by its path, and a renamed file would leave it with nothing to check'
+
+        $Result = Get-SourceHygieneSelfReadingProperty -Xml $TypesFile[0].Text
+        # 29 ScriptProperty members today; the floor sits under it, so an emptied walk cannot pass.
+        $Result.Walked | Should -BeGreaterOrEqual 25 -Because 'a walk that read almost no ScriptProperty proves nothing'
+        $Result.ParseErrors -join "`n" | Should -BeNullOrEmpty -Because 'a script block that does not parse cannot be checked'
+
+        $Report = $Result.Findings | ForEach-Object { '{0} / {1} ({2}, line {3}): {4}' -f $_.Type, $_.Property, $_.Accessor, $_.Line, $_.Read }
+        $Report -join "`n" | Should -BeNullOrEmpty -Because (
+            'an object''s own note of the same name shadows the ScriptProperty, so a ScriptProperty runs only on an object without that note, and there a $this read of its own name calls the property itself until the stack overflows and the process dies; read the note with $this.PSObject.Properties.Match(''<name>'', ''NoteProperty'') instead')
     }
 }
 
@@ -949,6 +1314,121 @@ function Test-AzShape {
         @($All | Where-Object Allowed | ForEach-Object { '{0} {1}' -f $_.Line, $_.Name }) | Should -Be @('11 Get-AzToken', '16 AzAuth\Get-AzToken')
     }
 
+    It 'finds an Az command in a script block of a .ps1xml file, and allows Get-AzToken there (known answer)' {
+        # The positive control of the .ps1xml walk, run through the functions Pass 1 calls. The Types
+        # text holds one case per script element the walk reads: a call (line 8), a command run
+        # through [scriptblock]::Create (line 12, its & written &amp; as XML requires), the allowed
+        # Get-AzToken (line 16), a SetScriptBlock whose call sits on its third line (line 19), a
+        # ScriptMethod body in a CDATA section (line 26), and a script block that does not parse
+        # (line 32), which Pass 1 reports as a parse failure instead of reading it. The NoteProperty
+        # of line 34 and the column Label of the Format text name Az commands as data, which is never
+        # run, so the walk reads neither. A finding's line is the line of the file it sits on.
+        $Types = @'
+<?xml version="1.0" encoding="utf-8"?>
+<Types>
+  <Type>
+    <Name>Case.Types</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>Call</Name>
+        <GetScriptBlock>Connect-AzAccount</GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>RunString</Name>
+        <GetScriptBlock>&amp; ([scriptblock]::Create('Get-AzContext'))</GetScriptBlock>
+      </ScriptProperty>
+      <ScriptProperty>
+        <Name>Allowed</Name>
+        <GetScriptBlock>Get-AzToken -Resource x</GetScriptBlock>
+        <SetScriptBlock>
+          $Value = $args[0]
+          Set-AzContext -Subscription $Value
+        </SetScriptBlock>
+      </ScriptProperty>
+      <ScriptMethod>
+        <Name>Method</Name>
+        <Script>
+          <![CDATA[
+          Update-AzConfig -Scope Process
+          ]]>
+        </Script>
+      </ScriptMethod>
+      <ScriptProperty>
+        <Name>Broken</Name>
+        <GetScriptBlock>if ($this.Name) {</GetScriptBlock>
+      </ScriptProperty>
+      <NoteProperty>
+        <Name>Connect-AzAccount</Name>
+        <Value>Get-AzContext</Value>
+      </NoteProperty>
+    </Members>
+  </Type>
+</Types>
+'@
+        $Format = @'
+<?xml version="1.0" encoding="utf-8"?>
+<Configuration>
+  <ViewDefinitions>
+    <View>
+      <Name>Case.Format</Name>
+      <ViewSelectedBy>
+        <TypeName>Case.Format</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader>
+            <Label>Get-AzContext</Label>
+          </TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem>
+                <ScriptBlock>Get-AzRoleAssignment</ScriptBlock>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+  </ViewDefinitions>
+</Configuration>
+'@
+        $Blocks = @(
+            Get-SourceHygieneXmlScriptBlock -Text $Types -RelativePath 'source/Formats/Case.Types.ps1xml'
+            Get-SourceHygieneXmlScriptBlock -Text $Format -RelativePath 'source/Formats/Case.Format.ps1xml'
+        )
+        @($Blocks | ForEach-Object { '{0}:{1} {2} {3}' -f $_.Path, $_.Line, $_.Element, ($_.Errors.Count -gt 0) }) | Should -Be @(
+            'source/Formats/Case.Types.ps1xml:8 GetScriptBlock False'
+            'source/Formats/Case.Types.ps1xml:12 GetScriptBlock False'
+            'source/Formats/Case.Types.ps1xml:16 GetScriptBlock False'
+            'source/Formats/Case.Types.ps1xml:17 SetScriptBlock False'
+            'source/Formats/Case.Types.ps1xml:24 Script False'
+            'source/Formats/Case.Types.ps1xml:32 GetScriptBlock True'
+            'source/Formats/Case.Format.ps1xml:19 ScriptBlock False'
+        )
+
+        # As in Pass 1, a script block that does not parse is not read, and a finding's line counts
+        # from the line of its element.
+        $Findings = foreach ($Block in $Blocks) {
+            if ($Block.Errors.Count -gt 0) { continue }
+            foreach ($Finding in @(Get-SourceHygieneXmlAzFinding -Block $Block)) {
+                [pscustomobject]@{
+                    Text    = '{0}:{1} {2} {3}' -f $Finding.Path, $Finding.Line, $Finding.Kind, $Finding.Name
+                    Allowed = $Finding.Allowed
+                }
+            }
+        }
+        @($Findings | Where-Object { -not $_.Allowed } | ForEach-Object Text) | Should -Be @(
+            'source/Formats/Case.Types.ps1xml:8 Call Connect-AzAccount'
+            'source/Formats/Case.Types.ps1xml:12 String Get-AzContext'
+            'source/Formats/Case.Types.ps1xml:19 Call Set-AzContext'
+            'source/Formats/Case.Types.ps1xml:26 Call Update-AzConfig'
+            'source/Formats/Case.Format.ps1xml:19 Call Get-AzRoleAssignment'
+        )
+        @($Findings | Where-Object Allowed | ForEach-Object Text) | Should -Be @('source/Formats/Case.Types.ps1xml:16 Call Get-AzToken')
+    }
+
     It 'parses every source file and walks a meaningful number of command nodes' {
         # A missing floor would compare with $null, which every count passes.
         $script:AzParsedFileFloor | Should -BeGreaterThan 0
@@ -956,6 +1436,16 @@ function Test-AzShape {
         $script:ParseFailures | Should -BeNullOrEmpty
         $script:AzParsedFileCount | Should -BeGreaterOrEqual $script:AzParsedFileFloor
         $script:AzCommandAstCount | Should -BeGreaterOrEqual $script:AzCommandAstFloor
+    }
+
+    It 'reads a meaningful number of script blocks in the .ps1xml files' {
+        # The floor of the .ps1xml walk: a walk that lost a file, an element name or its loop would
+        # read no script block at all, which is indistinguishable from a clean tree without this. The
+        # Types file alone holds fewer script blocks than the floor, and so does the Format file.
+        $script:AzXmlScriptBlockFloor | Should -BeGreaterThan 0 -Because 'a missing floor would compare with $null, which every count passes'
+        $script:ParseFailures | Should -BeNullOrEmpty
+        $script:AzXmlScriptBlockCount | Should -BeGreaterOrEqual $script:AzXmlScriptBlockFloor -Because (
+            'the two .ps1xml files under source/ held 37 script blocks on 2026-10-10 (29 GetScriptBlock in the Types file, 8 ScriptBlock in the Format file); a count under the floor has broken the walk, not found less code')
     }
 
     It 'sees the two Get-AzToken calls of Initialize-OPIMAuth, the named control' {

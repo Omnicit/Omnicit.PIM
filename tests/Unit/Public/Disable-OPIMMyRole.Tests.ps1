@@ -79,16 +79,16 @@ Describe 'Disable-OPIMMyRole' {
 
         It 'calls Connect-OPIM with -IncludeARM when -AllActivated is specified' {
             Disable-OPIMMyRole -AllActivated -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It -ParameterFilter {
                 $IncludeARM -eq $true
             }
         }
 
         It 'deactivates all three categories when -Confirm:$false is specified' {
             Disable-OPIMMyRole -AllActivated -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMEntraIDGroup -Times 1 -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMEntraIDGroup -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 1 -Exactly -Scope It
         }
 
         It 'does not deactivate any category when -WhatIf is specified' {
@@ -100,21 +100,21 @@ Describe 'Disable-OPIMMyRole' {
 
         It 'calls Get-OPIMDirectoryRole -Activated to retrieve only active directory roles' {
             Disable-OPIMMyRole -AllActivated -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMDirectoryRole -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Activated -eq $true
             }
         }
 
         It 'calls Get-OPIMEntraIDGroup -Activated to retrieve only active group assignments' {
             Disable-OPIMMyRole -AllActivated -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Activated -eq $true
             }
         }
 
         It 'calls Get-OPIMAzureRole -Activated to retrieve only active Azure roles' {
             Disable-OPIMMyRole -AllActivated -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Activated -eq $true
             }
         }
@@ -326,9 +326,8 @@ Describe 'Disable-OPIMMyRole' {
                 'ConfiguredAlias' { @{ TenantAlias = 'fabrikam'; TenantMapPath = 'TestDrive:\TenantMap.psd1' } }
                 default { @{ AllActivated = $true; Confirm = $false } }
             }
-            # memberType, endDateTime and assignmentType are set as Graph sets them: the types'
-            # ScriptProperties of those names read $this.<name>, which resolves to itself on an
-            # object without the property.
+            # The active directory and group fakes carry the notes Graph returns for an instance, set
+            # as Graph sets them: memberType and endDateTime, and assignmentType too for a group.
             $FakeActiveDirectoryRole = [PSCustomObject]@{
                 id = 'active-lf-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'
                 memberType = 'Direct'; endDateTime = '2026-10-07T18:00:00Z'
@@ -459,7 +458,7 @@ Describe 'Disable-OPIMMyRole' {
 
         It 'deactivates only directory roles' {
             Disable-OPIMMyRole -AllActivatedDirectoryRoles -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMEntraIDGroup -Times 0 -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 0 -Scope It
         }
@@ -504,7 +503,7 @@ Describe 'Disable-OPIMMyRole' {
         It 'deactivates only Entra ID group assignments' {
             Disable-OPIMMyRole -AllActivatedEntraIDGroups -Confirm:$false
             Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 0 -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMEntraIDGroup -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMEntraIDGroup -Times 1 -Exactly -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 0 -Scope It
         }
     }
@@ -528,12 +527,12 @@ Describe 'Disable-OPIMMyRole' {
             Disable-OPIMMyRole -AllActivatedAzureRoles -Confirm:$false
             Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 0 -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMEntraIDGroup -Times 0 -Scope It
-            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 1 -Exactly -Scope It
         }
 
         It 'calls Connect-OPIM with -IncludeARM when -AllActivatedAzureRoles is used' {
             Disable-OPIMMyRole -AllActivatedAzureRoles -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It -ParameterFilter {
                 $IncludeARM -eq $true
             }
         }
@@ -554,7 +553,8 @@ Describe 'Disable-OPIMMyRole' {
 
         It 'calls Connect-OPIM with the resolved TenantId' {
             Disable-OPIMMyRole -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
+            # Two sign-ins, both for the resolved tenant: Graph first, then Azure (-IncludeARM), since the string form runs the Azure pillar.
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 2 -Exactly -Scope It -ParameterFilter {
                 $TenantId -eq $FakeTenantId
             }
         }
@@ -602,7 +602,7 @@ Describe 'Disable-OPIMMyRole' {
 
         It 'deactivates only the configured role that is currently active' {
             Disable-OPIMMyRole -TenantAlias 'fabrikam' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMDirectoryRole -Times 1 -Exactly -Scope It
         }
 
         It 'does not write an error when a configured role is not currently active' {
@@ -658,26 +658,26 @@ Describe 'Disable-OPIMMyRole' {
 
         It 'calls Connect-OPIM with -IncludeARM when AzureRoles are configured' {
             Disable-OPIMMyRole -TenantAlias 'azure' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Connect-OPIM -Times 1 -Exactly -Scope It -ParameterFilter {
                 $IncludeARM -eq $true
             }
         }
 
         It 'deactivates the configured Azure role when it is currently active' {
             Disable-OPIMMyRole -TenantAlias 'azure' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 1 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Disable-OPIMAzureRole -Times 1 -Exactly -Scope It
         }
 
         It 'calls Get-OPIMAzureRole without -Activated to retrieve eligible schedules for config matching' {
             Disable-OPIMMyRole -TenantAlias 'azure' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter {
                 -not $Activated
             }
         }
 
         It 'calls Get-OPIMAzureRole -Activated to retrieve currently active Azure roles' {
             Disable-OPIMMyRole -TenantAlias 'azure' -TenantMapPath 'TestDrive:\TenantMap.psd1'
-            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Scope It -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMAzureRole -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Activated -eq $true
             }
         }
@@ -746,8 +746,8 @@ Describe 'Disable-OPIMMyRole' {
                 }
             }
 
-            # memberType, assignmentType and endDateTime are set as Graph sets them: the types'
-            # ScriptProperties of those names read $this.<name>.
+            # The active directory and group fakes carry the notes Graph returns for an instance
+            # (memberType, assignmentType and endDateTime), set as Graph sets them.
             # Two overlapping activations of role-def-001 at '/': the entry 'role-def-001|/' names the
             # role at that scope, and both posts carry its key (OPIM-10, A13).
             $DirectoryRoot = [PSCustomObject]@{
@@ -950,8 +950,8 @@ Describe 'Disable-OPIMMyRole' {
                 }
             }
 
-            # memberType and endDateTime are set as Graph sets them: the type's ScriptProperties of
-            # those names read $this.<name>.
+            # The active fakes carry the notes Graph returns for a directory instance (memberType,
+            # assignmentType and endDateTime), set as Graph sets them.
             $ActiveRoot = [PSCustomObject]@{
                 id = 'active-a13-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'
                 memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T12:00:00Z'
@@ -1041,8 +1041,8 @@ Describe 'Disable-OPIMMyRole' {
                 }
             }
 
-            # memberType, assignmentType and endDateTime are set as Graph sets them: the types'
-            # ScriptProperties of those names read $this.<name>.
+            # The active directory and group fakes carry the notes Graph returns for an instance
+            # (memberType, assignmentType and endDateTime), set as Graph sets them.
             $ActiveDir = [PSCustomObject]@{
                 id = 'active-blank-dir-001'; roleDefinitionId = 'role-def-001'; directoryScopeId = '/'
                 memberType = 'Direct'; assignmentType = 'Activated'; endDateTime = '2026-10-08T12:00:00Z'

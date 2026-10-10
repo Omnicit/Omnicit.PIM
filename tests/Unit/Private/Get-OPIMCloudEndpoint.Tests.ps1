@@ -91,7 +91,7 @@ Describe 'Get-OPIMCloudEndpoint' {
     }
 
     Context 'When the cloud is unknown' {
-        It 'throws for <Name>, and never returns the Global row' -ForEach @(
+        It 'throws for <Name> instead of returning the Global row' -ForEach @(
             @{ Name = 'Germany' }, @{ Name = 'GCC' }, @{ Name = '' }, @{ Name = 'Global ' }
         ) {
             { InModuleScope Omnicit.PIM -Parameters @{ Name = $Name } { param($Name) Get-OPIMCloudEndpoint -Environment $Name } } |
@@ -110,7 +110,14 @@ Describe 'Get-OPIMCloudEndpoint' {
         # Drift guard: every -Environment ValidateSet names exactly the clouds the table answers, so a
         # fifth row, or a fifth name in a ValidateSet, fails here until both are changed together.
         BeforeAll {
-            $script:CloudEndpointSourcePath = Join-Path $PSScriptRoot '../../../source/Private/Get-OPIMCloudEndpoint.ps1'
+            # The table's source, parsed once for the two AST tests; the first of them asserts that it
+            # parsed without errors.
+            $CloudEndpointSourcePath = Join-Path $PSScriptRoot '../../../source/Private/Get-OPIMCloudEndpoint.ps1'
+            $Tokens = $null
+            $Errors = $null
+            $script:CloudEndpointAst = [System.Management.Automation.Language.Parser]::ParseFile(
+                (Resolve-Path -LiteralPath $CloudEndpointSourcePath).Path, [ref]$Tokens, [ref]$Errors)
+            $script:CloudEndpointParseErrors = $Errors
         }
 
         It 'gives <Command> a ValidateSet of exactly the four clouds of the table' -ForEach @(
@@ -145,19 +152,15 @@ Describe 'Get-OPIMCloudEndpoint' {
                 }
             }
             $Facts.Found | Should -BeTrue -Because "$Command is a function of the module"
-            $Facts.HasParameter | Should -BeTrue -Because "$Command has no -Environment parameter"
+            $Facts.HasParameter | Should -BeTrue -Because "$Command takes -Environment"
             $Facts.SetCount | Should -Be 1 -Because "$Command carries exactly one ValidateSet on -Environment"
             $Facts.Values | Should -BeExactly 'China,Global,USGov,USGovDoD'
             $Facts.Resolved | Should -BeExactly 'China,Global,USGov,USGovDoD'
         }
 
         It 'answers exactly the clouds its switch names (read from the source AST)' {
-            $Tokens = $null
-            $Errors = $null
-            $Ast = [System.Management.Automation.Language.Parser]::ParseFile(
-                (Resolve-Path -LiteralPath $script:CloudEndpointSourcePath).Path, [ref]$Tokens, [ref]$Errors)
-            $Errors | Should -BeNullOrEmpty
-            $Switches = @($Ast.FindAll({ param($Node) $Node -is [System.Management.Automation.Language.SwitchStatementAst] }, $true))
+            $script:CloudEndpointParseErrors | Should -BeNullOrEmpty
+            $Switches = @($script:CloudEndpointAst.FindAll({ param($Node) $Node -is [System.Management.Automation.Language.SwitchStatementAst] }, $true))
             $Switches.Count | Should -Be 1 -Because 'the table is one switch'
             $Names = foreach ($Clause in $Switches[0].Clauses) {
                 $Condition = $Clause.Item1
@@ -173,12 +176,7 @@ Describe 'Get-OPIMCloudEndpoint' {
         }
 
         It 'matches the name exactly and ends its switch in a default that throws (read from the source AST)' {
-            $Tokens = $null
-            $Errors = $null
-            $Ast = [System.Management.Automation.Language.Parser]::ParseFile(
-                (Resolve-Path -LiteralPath $script:CloudEndpointSourcePath).Path, [ref]$Tokens, [ref]$Errors)
-            $Errors | Should -BeNullOrEmpty
-            $Switches = @($Ast.FindAll({ param($Node) $Node -is [System.Management.Automation.Language.SwitchStatementAst] }, $true))
+            $Switches = @($script:CloudEndpointAst.FindAll({ param($Node) $Node -is [System.Management.Automation.Language.SwitchStatementAst] }, $true))
             $Switches.Count | Should -Be 1
             $Switch = $Switches[0]
             $Switch.Condition.Extent.Text | Should -BeExactly '$Environment'

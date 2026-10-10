@@ -74,15 +74,15 @@ function Connect-OPIM {
 
     .PARAMETER DeviceCode
     Sign in with a device code instead of the system browser, for a machine without one, such as a
-    remote session or a cloud PC. The sign-in message with the code and the address is written to
-    the Information stream with the tag OPIMDeviceCode and shown whatever the information preference
-    is. With -IncludeARM, Azure shows a second code: AzAuth hands it over as a warning, which
-    Omnicit.PIM writes on the Information stream instead, with the same tag, so it is shown even
+    cloud PC. The sign-in message goes to the Information stream with the tag OPIMDeviceCode, shown
+    whatever the information preference is. With -IncludeARM, Azure shows a second code, handed over
+    as a warning and written on the Information stream instead, with the same tag, so it shows even
     where warnings are silenced. A script reads both as they arrive by merging the Information
-    stream into a pipeline, for example 6>&1 | ForEach-Object { $PSItem.ToString() }; capturing
-    the output in a variable shows nothing until the flow ends, which can take 15 minutes. The mode
-    is remembered for this PowerShell session: the refresh stays silent while it can, and any later
-    sign-in that needs a prompt, a step-up included, uses a device code until Disconnect-OPIM.
+    stream into a pipeline that only shows them, for example 6>&1 | ForEach-Object { Write-Host
+    $PSItem.ToString() }. The sign-in waits while the pipeline handles a message, so run the rest of
+    the script after the command has returned. Capturing the output in a variable shows nothing
+    until the flow ends (up to 15 minutes). The mode is remembered until Disconnect-OPIM: the
+    refresh stays silent while it can, and a later prompt, a step-up included, uses a device code.
 
     .PARAMETER Environment
     The cloud to sign in to: 'Global', 'USGov' (US Government, GCC High), 'USGovDoD' (US Government,

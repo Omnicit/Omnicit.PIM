@@ -3,25 +3,7 @@ BeforeAll {
     Import-Module Omnicit.PIM -Force
     . "$PSScriptRoot/../TestHelpers/OPIMTransportTripwire.ps1"
     Install-OPIMTransportTripwire
-
-    # A failed Graph read as the SDK leaves it: a request message carrying an Authorization header,
-    # the response pointing back at it, and an HttpResponseException holding the response. The
-    # token is built at runtime and says what it is, so no token-shaped literal sits in this file.
-    function New-ScrubFixture {
-        param([int]$Status = 403)
-        $Token = 'Bearer ' + ('x' * 40) + 'NOT-A-REAL-TOKEN'
-        $Request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://graph.microsoft.com/v1.0/me')
-        $null = $Request.Headers.TryAddWithoutValidation('Authorization', $Token)
-        $Response = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]$Status)
-        $Response.RequestMessage = $Request
-        $Response.Content = [System.Net.Http.StringContent]::new('{"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges."}}')
-        $Exception = [Microsoft.PowerShell.Commands.HttpResponseException]::new('Response status code does not indicate success.', $Response)
-        [pscustomobject]@{
-            Request   = $Request
-            Exception = $Exception
-            Record    = [System.Management.Automation.ErrorRecord]::new($Exception, 'HttpFail', 'InvalidOperation', $Request)
-        }
-    }
+    . "$PSScriptRoot/../TestHelpers/OPIMScrubFixture.ps1"
 }
 
 AfterAll {

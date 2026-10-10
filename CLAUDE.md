@@ -106,13 +106,17 @@ source/
 tests/
   QA/                         # The QA gate, six files (below), run by ./build.ps1 -Tasks test
   Unit/Classes/               # ArgumentCompleters.Tests.ps1 -- all six completer classes
+  Unit/Formats/               # Omnicit.PIM.Types.Tests.ps1 -- the type data's ScriptProperties
   Unit/Private/, Unit/Public/ # One *.Tests.ps1 per source file
   Unit/TestHelpers/           # OPIMTransportTripwire.ps1 (the transport tripwire every unit
                               #   test file installs) and its known-answer suite -- see
                               #   Testing Conventions -- OPIMTestToken.ps1
                               #   (New-OPIMTestAccessToken: token-shaped fixtures built at
                               #   runtime, NOT-A-REAL-TOKEN) and its suite,
-                              #   OPIMTestToken.Tests.ps1, and ArmResponse/ (ARM
+                              #   OPIMTestToken.Tests.ps1, OPIMScrubFixture.ps1
+                              #   (New-ScrubFixture: the failed-request fixture, a request
+                              #   with an Authorization header, NOT-A-REAL-TOKEN) and its
+                              #   suite, OPIMScrubFixture.Tests.ps1, and ArmResponse/ (ARM
                               #   api-version 2020-10-01 answers and error bodies, redacted)
   Workflow/                   # ReleaseTag.Tests.ps1 -- the tag decision and its YAML wiring
 docs/live-verification/       # README.md: the redaction and credential rules, the placeholder
@@ -219,17 +223,22 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   lacks `-ModuleName` outside `InModuleScope`, and either leaves the real command reachable. The
   gate reads those two commands' own calls and runnable strings, not their callers
   (`Connect-OPIM`, the wrapper's retries, the pillar cmdlets), and its own file is exempt from both
-  rules, since it names the commands as data.
+  rules, since it names the commands as data. And every `Should -Invoke` whose `-Times` is not the
+  constant 0 carries `-Exactly`.
 - **`sourcehygiene.tests.ps1`** -- every `.ps1`, `.psd1`, `.psm1` and `.ps1xml` under `source/` and
   `tests/` is ASCII without a BOM; every `Verb-OPIM` name in `source/**/*.ps1` resolves to a
   function file, an exported alias, or a function defined inside another function in a function
   file (found through the AST, such as `Invoke-OPIMGraphSingle`); the region `suffix.ps1` shares
-  with the dev-mode psm1 is byte-identical; every `.ps1xml` under `source/` parses as XML; and the
-  bearer scrub: in every file under `source/` that reaches a transport command -- directly or
+  with the dev-mode psm1 is byte-identical; every `.ps1xml` under `source/` parses as XML, and no
+  ScriptProperty of `Omnicit.PIM.Types.ps1xml` reads a member of its own name through `$this` (see
+  **Testing Conventions**); and the bearer scrub: in every file under `source/` that reaches a transport command -- directly or
   through any module function it calls -- every `catch` starts with
   `Remove-OPIMErrorRecord -Record $PSItem`, with floors on the files and catches scanned and the
   exact catch count of `Invoke-OPIMGraphRequest.ps1` as its named control. The six completer
-  classes are outside that call closure (see **Error Handling**). And the Az boundary (decision
+  classes are inside that call closure, through its run-string edge -- a command in a constant
+  string handed to `[scriptblock]::Create` is a call, so the `Get-OPIM*` listing each class runs
+  puts it on a transport path -- and a second named control holds all six there, beside a
+  known-answer `It` for the edge (see **Error Handling**). And the Az boundary (decision
   A7): on the AST of every `.ps1`, `.psm1` and `.psd1` under `source/`, the manifest included, it
   refuses three shapes -- a command whose static name matches `-Az` or is qualified with an Az
   module, other than AzAuth's `Get-AzToken` (bare or `AzAuth\`-qualified), the one entry of its
@@ -242,10 +251,12 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   refused shape and both allowed calls, and the named control: the two `Get-AzToken` calls of
   `Initialize-OPIMAuth.ps1`; floors on the files parsed and the command nodes walked guard the walk
   itself. Its comment states its KNOWN LIMITS, which review has to catch: a command name assembled
-  at run time, an Az command named by a bareword argument (`Get-Command Connect-AzAccount`), an
-  Az alias without `-Az` in its name, called bare, and the `.ps1xml` files under `source/`, which
-  the scan does not read although the Types and Format files hold script blocks that run at
-  property access and at formatting. And the cloud hosts (decision A11; Describe `Cloud hosts`, the
+  at run time, an Az command named by a bareword argument (`Get-Command Connect-AzAccount`), and an
+  Az alias without `-Az` in its name, called bare. The pass also reads the `.ps1xml` files under
+  `source/`: every script block of the Types and Format files (`GetScriptBlock`, `SetScriptBlock`,
+  `ScriptBlock`, `Script`), which run at property access, as a method and at formatting, is parsed
+  on its own and held to the same three shapes, with a known-answer `It` and a floor on the script
+  blocks read. And the cloud hosts (decision A11; Describe `Cloud hosts`, the
   pass after the Az boundary): every Graph, Azure Resource Manager and sign-in authority host of
   the four clouds is written in ONE place, `source/Private/Get-OPIMCloudEndpoint.ps1`, and the pass
   refuses a second copy anywhere else under `source/`, since a copy can drift from the table and
@@ -291,7 +302,9 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   function or alias, and names at least one cmdlet in each of the four cohorts.
 - **`docsync.tests.ps1`** -- README's `## Available Cmdlets` and the about topic's
   `COMMAND COHORTS` roster the same cmdlets, every exported one, and README's `### <Cohort> (N)`
-  counts match what each cohort lists.
+  counts match what each cohort lists; and every membership comparison
+  (`-in`/`-notin`/`-contains`/`-notcontains`, in any case form) whose operand is a roster variable
+  uses the case-sensitive form, held statically.
 
 The QA files sit outside the tripwire on purpose: they call help, the analyzer and pure maps only,
 and `testhygiene`, `sourcehygiene`, `dochygiene` and `docsync` read files statically.
@@ -315,7 +328,7 @@ loaded modules; it calls no command of the module.
 
 # Full test suite -- the authoritative gate, and the command every CI leg runs.
 # QA tests + unit tests + per-function PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-10: 3,362 passed, 0 failed, 0 skipped; coverage 96.32% over 3,803 analysed
+# (measured 2026-10-10: 3,477 passed, 0 failed, 0 skipped; coverage 96.37% over 3,855 analysed
 #  commands; Pester 6.2.0)
 ./build.ps1 -Tasks test
 
@@ -332,11 +345,11 @@ The Sampler test task measures coverage against the **built** module output, not
 `build.yaml`'s `test` workflow does not include `build` (`build.yaml:63-70`; only the default
 workflow, `./build.ps1` with no `-Tasks`, runs both). Always run `-Tasks build` before `-Tasks test`
 after changing source files -- and never build while the tests are running. The coverage threshold
-is 80 % (`build.yaml:152`): measured on 2026-10-10, 3,663 of 3,803 commands are covered, 620 more
-than the 3,043 that 80 % requires. The margin was once only four commands: the MSAL reflection
+is 80 % (`build.yaml:152`): measured on 2026-10-10, 3,715 of 3,855 commands are covered, 631 more
+than the 3,084 that 80 % requires. The margin was once only four commands: the MSAL reflection
 lines in `Get-OPIMMsalApplication` stopped being run by any unit test, since reaching them builds a
 real MSAL client (see **Testing Conventions**), and that took coverage from 83.7 % to 80.28 % --
-four commands above the line. It is 620 today, but a change that adds untested commands can still
+four commands above the line. It is 631 today, but a change that adds untested commands can still
 bring it close.
 
 **The build stamps the version GitVersion computes, and a local build needs GitVersion to do it.**
@@ -667,8 +680,9 @@ public boundary, where `Connect-OPIM`, `Enable-OPIMMyRole`, `Disable-OPIMMyRole`
 `[ValidateSet('Global', 'USGov', 'USGovDoD', 'China')]` on `-Environment`, and its unit test holds
 every one of them to the table. Write a cloud host nowhere else (see the cloud-host pass of
 `sourcehygiene.tests.ps1` under **Module Layout** and **Common Pitfalls**). Only `Global` is verified
-live; the three sovereign clouds are covered by unit tests only (P-12), so do not describe one as
-verified until a live run has covered it.
+live; the three sovereign clouds are covered by unit tests only (P-12), apart from one live
+measurement of the US Government authority refusing a global tenant (below), so do not describe one
+as verified until a live run has covered it.
 
 `Initialize-OPIMAuth` resolves ONE effective cloud per call (`:245-275`): the explicit
 `-Environment`; else the session's cloud when the request names the session's tenant
@@ -683,10 +697,11 @@ key: the MSAL application (`$script:_OPIMMsalApp`, with `$script:_OPIMMsalAppTen
 cloud never asks the old cloud's application or token cache for a token. A session pinned by a tenant
 GUID (which a first sign-in under `organizations` also ends up as) that switches cloud without
 `-TenantId` is held to that GUID, and an organisation has a separate tenant, with its own GUID, in
-each cloud, so the switch fails:
-a token for the tenant of the other cloud is refused with `TenantMismatch` (the other cloud may
-refuse the GUID itself first; untested live). A switch of cloud names the tenant (or an alias) of the
-target cloud.
+each cloud, so the switch fails at the other cloud's authority, which refuses a tenant of another
+cloud (AADSTS90038, measured on 2026-10-10 for `USGov` in device code mode, where the module raises
+`DeviceCodeAuthFailed`; an interactive sign-in raises `InteractiveAuthFailed`), and a token it did
+issue for another tenant would be refused with `TenantMismatch`. A switch of cloud names the tenant
+(or an alias) of the target cloud.
 
 What the cloud selects, all from the table: the MSAL authority is `AuthorityHost` followed by the
 tenant (`Get-OPIMMsalApplication.ps1:122`, `https://login.microsoftonline.com/<tenant>` for `Global`,
@@ -1489,11 +1504,14 @@ the alias takes the cloud of the module's own sign-in (`Get-OPIMCurrentTenantInf
 also takes that sign-in's tenant -- no `-TenantId`, or one equal to the sign-in's tenant ID,
 compared `OrdinalIgnoreCase` -- and is `Global` for any other tenant, and `-Environment Global`
 stores no cloud, also for the tenant of a sovereign sign-in. `Set-OPIMConfiguration` resolves it
-from `-Environment`; without it the stored value stays EXACTLY as written, an unknown cloud
-included, since Set changes only what it is asked to (the sign-in commands refuse the value), and
-`-Environment Global` removes the key. `Get-OPIMConfiguration` shows the stored value as written and
-`Global` for an alias that stores none. A 0.6.x module ignores the key and writes the file back
-without it (so do the 0.7.0 previews before this one), and this version then signs in to `Global`
+from `-Environment`; without it the stored value stays as written, an unknown cloud included (the
+sign-in commands refuse the value), except a stored `Global` (any letter case), which is dropped
+since `Global` is never written -- an alias without the key is `Global` too, so Set changes no cloud
+it is not asked to -- and `-Environment Global` removes the key. The confirmation prompt of both
+names the cloud the alias will store (`in cloud '<cloud>'`, `Global` when it stores none).
+`Get-OPIMConfiguration` shows the stored value as written and `Global` for an alias that stores
+none. A 0.6.x module ignores the key and writes the file back without it (so do 0.7.0-preview0001
+to 0.7.0-preview0003; preview0004 reads and writes it), and this version then signs in to `Global`
 for those aliases.
 
 **The stored keys (OPIM-10, A13, OPIM-22).** `DirectoryRoles` holds
@@ -1748,11 +1766,14 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   in `Initialize-OPIMAuth` sits in a `try` whose `catch` scrubs first and rethrows, AzAuth's
   `Get-AzToken` runs inside the `try` around its nested `Invoke-OPIMAzTokenCall`, and
   `Invoke-WebRequest` inside the one in `Invoke-OPIMArmSingle` -- so wrap any new raw call. And its
-  call closure follows command names and string constants that name a PRIVATE function, never a
-  public name in a string, so the six completer classes, which reach the
-  `Get-OPIM*` cmdlets through `[scriptblock]::Create('Get-OPIM...')`, are outside it: their catches
-  print the message with `Write-Host` and do not scrub. Any request behind the error they catch was
-  already scrubbed by the catch inside the cmdlet that failed.
+  call closure follows command names, string constants that name a PRIVATE function, and every
+  command in a constant string handed to `[scriptblock]::Create`, public or private, since that
+  string is run -- but never a public name in a plain string, a string built at run time or one
+  run by `Invoke-Expression`, so review has to catch a call made that way. The run-string edge is
+  what brings the six completer classes inside the closure: they reach the `Get-OPIM*` cmdlets
+  through `[scriptblock]::Create('Get-OPIM...')`, and their catches scrub first, like every other,
+  before they print the message with `Write-Host`. A request behind the error they catch has
+  normally been scrubbed already by a catch inside the cmdlet that failed; theirs makes sure of it.
 - **Error flow patterns:**
   ```powershell
   # In process blocks (single-item cmdlets: Disable-*, Get-*): use return
@@ -1776,14 +1797,16 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
 
 ## Testing Conventions
 
-- **Tests are written in Pester 5 syntax** under `tests/Unit/{Classes,Private,Public}/`. The build
-  resolves the newest Pester (`RequiredModules.psd1` asks for `latest`), and CI resolves it afresh
-  on every run, so no version is a standing fact here; 6.2.0 was resolved when measured on
+- **Tests are written in Pester 5 syntax** under `tests/Unit/{Classes,Formats,Private,Public}/`. The
+  build resolves the newest Pester (`RequiredModules.psd1` asks for `latest`), and CI resolves it
+  afresh on every run, so no version is a standing fact here; 6.2.0 was resolved when measured on
   2026-10-06. One `*.Tests.ps1` per source file -- the six completer classes share
-  `Unit/Classes/ArgumentCompleters.Tests.ps1` -- plus the two test helpers' own suites: the
-  tripwire's known-answer suite, `Unit/TestHelpers/OPIMTransportTripwire.Tests.ps1`, and
+  `Unit/Classes/ArgumentCompleters.Tests.ps1`, and `Unit/Formats/Omnicit.PIM.Types.Tests.ps1`
+  holds the type data's ScriptProperties on typed fakes -- plus the three test helpers' own suites:
+  the tripwire's known-answer suite, `Unit/TestHelpers/OPIMTransportTripwire.Tests.ps1`,
   `Unit/TestHelpers/OPIMTestToken.Tests.ps1`, which pins the claims `New-OPIMTestAccessToken`
-  writes. The QA gate (`tests/QA/module.tests.ps1`) requires a unit test file for every function.
+  writes, and `Unit/TestHelpers/OPIMScrubFixture.Tests.ps1`, which pins what `New-ScrubFixture`
+  builds. The QA gate (`tests/QA/module.tests.ps1`) requires a unit test file for every function.
 - **Structure:** one `Describe` per file, named exactly after the function under test. Group
   scenarios (happy path, error cases, parameter sets) in `Context` blocks, with a `BeforeAll`
   inside each `Context` for shared arrangement; use `BeforeEach` only for state that must reset
@@ -2038,11 +2061,18 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
       $PesterBoundParameters['ErrorAction']
   } else { 'Continue' }
   ```
-- **Give a typed fake every property a self-referencing ScriptProperty reads.** `MemberType`,
-  `EndDateTime`, `AccessId` and `AssignmentType` in `Omnicit.PIM.Types.ps1xml` read
-  `$this.<same name>`, which resolves to the ScriptProperty itself on an object without the note
-  property; formatting such a fake (a failing `Should -Invoke` prints every piped argument)
-  overflows the stack and kills the test process.
+- **No ScriptProperty in `Omnicit.PIM.Types.ps1xml` reads a member of its own name through
+  `$this`**, and `tests/QA/sourcehygiene.tests.ps1` (Describe 'Format and type data') holds it. An
+  object's own NoteProperty shadows a type-data ScriptProperty of the same name, compared without
+  regard to case, so such a property runs only on an object WITHOUT the note -- a hand-built
+  object or a test fake -- and there a `$this.<same name>` read resolves to the ScriptProperty
+  itself and recurses until the stack overflows and the test process dies (formatting the object,
+  which a failing `Should -Invoke` does with every piped argument, is enough). A property that
+  echoes a note of its own name -- `MemberType`, `AccessId`, `AssignmentType` and the two
+  `EndDateTime` of the instance types -- reads it with
+  `$this.PSObject.Properties.Match('<name>', 'NoteProperty')`, so a typed fake needs no note it
+  does not use. `tests/Unit/Formats/Omnicit.PIM.Types.Tests.ps1` holds the behaviour for the
+  seven properties.
 - **Test `-WhatIf` by invocation count**, not by catching an exception:
   `Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 0 -Scope It`.
 - **`Should -Invoke -Times N` is AT LEAST N for `N >= 1` -- add `-Exactly`.** `-Times 0` already
@@ -2057,6 +2087,13 @@ rule there is drawn with `=`. A malformed Types file would stop loading SILENTLY
   with placeholder claims and the signature segment `NOT-A-REAL-TOKEN`; `-ObjectId <guid>` sets the
   `oid` claim, and `-NoTenant` and `-NoObjectId` leave the `tid` or the `oid` claim out, for a token
   whose tenant or account cannot be read.
+- **Build a failed-request record with `New-ScrubFixture`, never a local copy.** Dot-source
+  `tests/Unit/TestHelpers/OPIMScrubFixture.ps1` in the root `BeforeAll`, after the tripwire.
+  `New-ScrubFixture` returns `Request` (an `HttpRequestMessage` carrying an `Authorization` header
+  built at runtime and ending in `NOT-A-REAL-TOKEN`), `Exception` (an `HttpResponseException`
+  whose response points back at that request) and `Record` (the `ErrorRecord` `HttpFail`, with the
+  request as its target); `-Status`, `-Content`, `-RetryAfter`, `-Uri` and `-TokenShape` (`Plain`,
+  or `Jwt` for a test that looks for `eyJ` in a rendered error) shape it.
 - **Test data:** typed `PSCustomObject` input carrying the module's type names
   (`Omnicit.PIM.DirectoryEligibilitySchedule`, `Omnicit.PIM.AzureEligibilitySchedule`,
   `Omnicit.PIM.GroupEligibilitySchedule`), PascalCase variables, `contoso`/`fabrikam` for any

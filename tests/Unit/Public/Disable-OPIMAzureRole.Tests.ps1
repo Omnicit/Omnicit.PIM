@@ -529,7 +529,7 @@ Describe 'Disable-OPIMAzureRole' {
             $Result | Should -BeNullOrEmpty
         }
 
-        It 'still deactivates the next piped role after one that names no scope' {
+        It 'deactivates the next piped role after one that names no scope' {
             $Result = @((New-ScopelessPost -ScopeId ''), $GoodPost) | Disable-OPIMAzureRole -ErrorVariable Errs -ErrorAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {

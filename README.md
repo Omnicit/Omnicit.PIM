@@ -104,12 +104,16 @@ pim -TenantAlias corp -DeviceCode                     # Enable-OPIMMyRole and Di
 The message with the code goes to the Information stream with the tag `OPIMDeviceCode`. AzAuth
 hands over the code Azure shows as a warning; Omnicit.PIM writes it on the Information stream
 instead, with the same tag, so it shows even where warnings are silenced. A script reads both as
-they arrive by merging the Information stream into a pipeline. Capturing the output in a variable
-instead (`$x = Connect-OPIM -DeviceCode 6>&1`) shows nothing until the flow ends, which can take 15
-minutes.
+they arrive by merging the Information stream into a pipeline that only shows them. The sign-in
+waits while that pipeline handles a message: a pipeline that also waits for the user, calls
+Omnicit.PIM or waits for the sign-in to finish holds the sign-in up until it returns, and one that
+waits for the sign-in never returns. Run the rest of the script after the command has returned.
+Capturing the output in a variable instead (`$x = Connect-OPIM -DeviceCode 6>&1`) shows nothing
+until the flow ends, which can take 15 minutes.
 
 ```powershell
-Connect-OPIM -TenantAlias corp -DeviceCode -IncludeARM 6>&1 | ForEach-Object { $PSItem.ToString() }
+Connect-OPIM -TenantAlias corp -DeviceCode -IncludeARM 6>&1 | ForEach-Object { Write-Host $PSItem.ToString() }
+Get-OPIMAzureRole    # the rest of the script runs once the sign-in has returned
 ```
 
 For Azure RBAC cmdlets (`Get-/Enable-/Disable-OPIMAzureRole`) an Azure Resource Manager token
@@ -221,14 +225,17 @@ Get-OPIMConfiguration -TenantAlias gov                      # shows Environment,
   sign-in when, and only when, the alias also takes that sign-in's tenant: no `-TenantId`, or the tenant
   ID that sign-in was issued for. The alias of any other tenant is `Global`, and `-Environment Global`
   stores no cloud, also for the tenant of a sovereign sign-in.
-- `Set-OPIMConfiguration` without `-Environment` keeps the stored cloud as it is written.
+- `Set-OPIMConfiguration` without `-Environment` keeps the stored cloud as it is written, except a
+  stored `Global`, which means the same as none and is dropped.
+- The confirmation prompt of `Install-` and `Set-OPIMConfiguration` names the cloud the alias will
+  store, `Global` when it stores none.
 - A cloud in the file that the module does not know, a hand-typed `Environment = 'Germany'` say, is an
   error, and nothing is signed in. The letter case of a known cloud does not matter.
 
-A 0.6.x module ignores the stored cloud and signs in to the global cloud, where a sovereign tenant
-does not exist, so its sign-in fails. It also writes the file without the key whenever it changes
-it (`Install-`, `Set-` or `Remove-OPIMConfiguration`), so a map shared with a 0.6.x module loses its
-clouds.
+A 0.6.x module, and 0.7.0-preview0001 to 0.7.0-preview0003, ignore the stored cloud and sign in to
+the global cloud, where a sovereign tenant does not exist, so the sign-in fails. They also write the
+file without the key whenever they change it (`Install-`, `Set-` or `Remove-OPIMConfiguration`), so a
+map shared with a 0.6.x module, or with one of those three previews, loses its clouds.
 
 ### Azure and AZURE_AUTHORITY_HOST
 

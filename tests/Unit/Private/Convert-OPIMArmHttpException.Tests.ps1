@@ -122,7 +122,7 @@ Describe 'Convert-OPIMArmHttpException' {
     }
 
     Context 'When the response carries headers' {
-        It 'never reads the headers: a Headers property that throws when read does not stop the conversion' {
+        It 'reads no header: a Headers property that throws when read does not stop the conversion' {
             InModuleScope Omnicit.PIM {
                 $Response = [PSCustomObject]@{
                     StatusCode  = 403
@@ -145,7 +145,7 @@ Describe 'Convert-OPIMArmHttpException' {
             }
         }
 
-        It 'never surfaces a header in the record' {
+        It 'surfaces no header in the record' {
             InModuleScope Omnicit.PIM {
                 $Response = [PSCustomObject]@{
                     StatusCode = 429

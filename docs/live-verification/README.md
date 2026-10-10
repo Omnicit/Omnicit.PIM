@@ -292,7 +292,9 @@ The sections, in this order:
    `### 1.1. <title>`, `### 1.2. <title>`, and so on. Every check has, in this order:
    - the box `- [ ] **1.1** <one-line claim>`;
    - a fenced PowerShell block;
-   - `**Expect:**` with what a pass looks like, or `**Record:**` where that is not known;
+   - `**Expect:**` with what a pass looks like, or `**Record:**` where that is not known; an Expect
+     names only what the block prints, and a fact the block does not print -- a line in a raw file it
+     writes -- names the file it is read from;
    - `**Failure looks like:**` with what a fail looks like, and whether to stop;
    - `Result:`, left empty when the file is written and filled in at the run.
 7. **`## Teardown`.** Numbered `T.1`, `T.2`, ..., accounting for every object and every eligibility
