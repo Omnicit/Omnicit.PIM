@@ -415,35 +415,47 @@ not waited out) -- record it. A sign-in prompt -- STOP (0.1).
 
 Result:
 
-### 2.3. A second `pim` straight away (G8)
+### 2.3. `pim` again straight away: Azure's window, and a second call (G8)
 
-- [ ] **2.3** Window B. The same `pim` again, straight after 2.2, sends no second activation: it reports Reader already active, or -- while Azure's list does not show the activation yet -- ends with `RoleAssignmentExists` and the message about the earlier assignment, after at most about a minute.
+- [ ] **2.3** Window B. `pim -TenantAlias s25-az` runs twice more, straight after 2.2. When 2.2 activated Reader, neither call sends a second activation. When 2.2 ended in the give-up and nothing is active, the first call measures how long after the deactivation Azure accepts a new activation, and the second call sends no second activation.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ((Get-Module Omnicit.PIM) -and (Get-Module Omnicit.PIM).ModuleBase -ne $Built.DirectoryName) { throw 'A different build of Omnicit.PIM is loaded; use a fresh window.' }
 if (-not (Get-Module Omnicit.PIM)) { Import-Module $Built.FullName }
 $Map = Join-Path (Get-Location).Path 'docs/live-verification/raw/opim-s25/TenantMap.psd1'
-$Started = [datetime]::UtcNow
-$Again = @(Enable-OPIMMyRole -TenantAlias 's25-az' -TenantMapPath $Map -Justification 'Omnicit.PIM step 5 live check 2.3' -Verbose 2>&1 3>&1 4>&1)
-$Errors = @($Again | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
-"Second pim, $([int]($Started - $global:OpimS25Az2).TotalSeconds) s after 2.2's, took $([int]([datetime]::UtcNow - $Started).TotalSeconds) s: results $(@($Again | Where-Object { $_.PSObject.TypeNames -contains 'Omnicit.PIM.MyRoleResult' }).Count); already active warnings $(@($Again | Where-Object { $_ -is [System.Management.Automation.WarningRecord] -and $_.Message -match 'already active' }).Count); new requests after RoleAssignmentExists $(@($Again | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message -match 'still sees an earlier assignment' }).Count)"
-"Errors: $(@($Errors | ForEach-Object FullyQualifiedErrorId) -join ', '); the message names the earlier assignment: $(@($Errors | Where-Object { $_.Exception.Message -match 'still sees an earlier assignment' }).Count -eq $Errors.Count)"
-"Active Azure roles: $(@(Get-OPIMAzureRole -Activated -ErrorAction Stop).Count)"
+$Reference = $global:OpimS25Az2
+"Active Azure roles before: $(@(Get-OPIMAzureRole -Activated -ErrorAction Stop).Count)"
+$Accepted = 0
+foreach ($Try in 1, 2) {
+    $Started = [datetime]::UtcNow
+    $Again = @(Enable-OPIMMyRole -TenantAlias 's25-az' -TenantMapPath $Map -Justification "Omnicit.PIM step 5 live check 2.3, call $Try" -Verbose 2>&1 3>&1 4>&1)
+    $Results = @($Again | Where-Object { $_.PSObject.TypeNames -contains 'Omnicit.PIM.MyRoleResult' })
+    $Errors = @($Again | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+    if ($Results.Count -gt 0) { $Accepted += $Results.Count; $global:OpimS25Az2 = $Started }
+    "Call $Try, started $([int]($Started - $Reference).TotalSeconds) s after 2.2's pim, took $([int]([datetime]::UtcNow - $Started).TotalSeconds) s: results $(@($Results | ForEach-Object { '{0} {1}' -f $_.DisplayName, $_.Status }) -join '; '); already active warnings $(@($Again | Where-Object { $_ -is [System.Management.Automation.WarningRecord] -and $_.Message -match 'already active' }).Count); new requests after RoleAssignmentExists $(@($Again | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message -match 'still sees an earlier assignment' }).Count)"
+    "  Errors: $(@($Errors | ForEach-Object FullyQualifiedErrorId) -join ', '); the message names the earlier assignment: $(@($Errors | Where-Object { $_.Exception.Message -match 'still sees an earlier assignment' }).Count -eq $Errors.Count)"
+}
+"Activations accepted in 2.2 and 2.3 together: $Accepted (2.2 accepted none when it ended in the give-up); active Azure roles: $(@(Get-OPIMAzureRole -Activated -ErrorAction Stop).Count)"
 ```
 
-**Expect:** `results 0`, and either one `already active` warning and no error, or one error
-`RoleAssignmentExists,Enable-OPIMMyRole` whose message names the earlier assignment (`True`), after
-at most about 70 seconds; `Active Azure roles: 1`.
-**Record:** which of the two it was, the seconds and the count of new requests.
-**Failure looks like:** a result -- a second activation request was accepted: STOP (G8, SECURITY 4).
-An error other than `RoleAssignmentExists` -- record it.
+**Expect:** never more than one activation accepted in 2.2 and 2.3 together; each error
+`RoleAssignmentExists,Enable-OPIMMyRole` with a message that names the earlier assignment (`True`).
+When 2.2 activated Reader (`Active Azure roles before: 1`): both calls `results` none, each with an
+`already active` warning or the `RoleAssignmentExists` error. When 2.2 ended in the give-up
+(`Active Azure roles before: 0`): call 2 `results` none, with an `already active` warning or the
+`RoleAssignmentExists` error.
+**Record:** for each call the seconds after 2.2's `pim`, how long it took, the count of new requests
+and the outcome -- in the give-up case, call 1's outcome tells how long after the deactivation Azure
+accepted a new activation (or that it still refused).
+**Failure looks like:** two activations accepted in 2.2 and 2.3 together, or a result in a call
+while Reader was already active -- STOP (G8, SECURITY 4). An error other than `RoleAssignmentExists`
+-- record it.
 
 Result:
-
 ### 2.4. `unpim` after five minutes, and nothing left active in Azure
 
-- [ ] **2.4** Window B. Five minutes after 2.2's activation, `unpim -TenantAlias s25-az` deactivates Reader, and Azure then lists nothing active.
+- [ ] **2.4** Window B. Five minutes after the activation of 2.2 or 2.3, `unpim -TenantAlias s25-az` deactivates Reader, and Azure then lists nothing active.
 
 ```powershell
 $Built = Get-ChildItem -Path 'output/module/Omnicit.PIM/*/Omnicit.PIM.psd1' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -463,8 +475,8 @@ while (([datetime]::UtcNow - $Gone).TotalSeconds -lt 300 -and -not $Settled) {
 "Azure list settled after $([int]([datetime]::UtcNow - $Gone).TotalSeconds) s: $Settled"
 ```
 
-**Expect:** `unpim s25-az: results Reader Revoked` and no error; `Azure list settled after ... s:
-True`.
+**Expect:** `unpim s25-az: results Reader Revoked` and no error (`results` none when 2.2 and 2.3
+activated nothing); `Azure list settled after ... s: True`.
 **Failure looks like:** `ActiveDurationTooShort` -- run the block again after a minute. `False` --
 record it, and deactivate before the teardown.
 
