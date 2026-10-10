@@ -250,10 +250,12 @@ Get-ChildItem source/Classes -Filter '*.ps1' | Select-Object -ExpandProperty Bas
   refused shape and both allowed calls, and the named control: the two `Get-AzToken` calls of
   `Initialize-OPIMAuth.ps1`; floors on the files parsed and the command nodes walked guard the walk
   itself. Its comment states its KNOWN LIMITS, which review has to catch: a command name assembled
-  at run time, an Az command named by a bareword argument (`Get-Command Connect-AzAccount`), an
-  Az alias without `-Az` in its name, called bare, and the `.ps1xml` files under `source/`, which
-  the scan does not read although the Types and Format files hold script blocks that run at
-  property access and at formatting. And the cloud hosts (decision A11; Describe `Cloud hosts`, the
+  at run time, an Az command named by a bareword argument (`Get-Command Connect-AzAccount`), and an
+  Az alias without `-Az` in its name, called bare. The pass also reads the `.ps1xml` files under
+  `source/`: every script block of the Types and Format files (`GetScriptBlock`, `SetScriptBlock`,
+  `ScriptBlock`, `Script`), which run at property access, as a method and at formatting, is parsed
+  on its own and held to the same three shapes, with a known-answer `It` and a floor on the script
+  blocks read. And the cloud hosts (decision A11; Describe `Cloud hosts`, the
   pass after the Az boundary): every Graph, Azure Resource Manager and sign-in authority host of
   the four clouds is written in ONE place, `source/Private/Get-OPIMCloudEndpoint.ps1`, and the pass
   refuses a second copy anywhere else under `source/`, since a copy can drift from the table and
