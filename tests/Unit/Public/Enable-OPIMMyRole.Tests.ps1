@@ -672,10 +672,20 @@ Describe 'Enable-OPIMMyRole' {
         It 'lists the refusal once in $global:Error' {
             # The engine already skips a write of the record that sits first in the list, so this pins the
             # end result; the removal itself is proven by ConvertTo-OPIMMyRoleResult.Tests.ps1.
-            $Before = @($global:Error | Where-Object { $_.FullyQualifiedErrorId -like 'RoleAssignmentRequestPolicyValidationFailed*' }).Count
-            Enable-OPIMMyRole -AllEligibleDirectoryRoles -Confirm:$false -ErrorAction SilentlyContinue
-            $After = @($global:Error | Where-Object { $_.FullyQualifiedErrorId -like 'RoleAssignmentRequestPolicyValidationFailed*' }).Count
-            ($After - $Before) | Should -Be 1
+            # $global:Error holds 256 records at most and drops the OLDEST when it is full, which earlier
+            # test files can leave it (the same error id among them): a count taken before and after the
+            # call then loses the oldest matching record as the new one arrives and reads 0. So the list
+            # is emptied for the call, what it listed is counted, and the saved list is put back.
+            $SavedErrors = @($global:Error)
+            try {
+                $global:Error.Clear()
+                Enable-OPIMMyRole -AllEligibleDirectoryRoles -Confirm:$false -ErrorAction SilentlyContinue
+                $Listed = @($global:Error | Where-Object { $_.FullyQualifiedErrorId -like 'RoleAssignmentRequestPolicyValidationFailed*' })
+                $Listed.Count | Should -Be 1
+            } finally {
+                $global:Error.Clear()
+                $global:Error.AddRange($SavedErrors)
+            }
         }
 
         It 'ends at the first refusal under -ErrorAction Stop, after emitting the activation before it, when the pillar writes it as <PillarPreference>' -ForEach @(
