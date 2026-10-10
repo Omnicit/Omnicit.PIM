@@ -96,7 +96,11 @@ BeforeAll {
         record each call as one line and set $LASTEXITCODE the way the real tools would. Nothing leaves
         the process: no gh, no git, no network. The step runs from the project root, as a workflow
         step runs from the checkout, and the environment variables it reads are set for the call and
-        put back afterwards. Returns Thrown (the message of the terminating error, or $null) and Calls.
+        put back afterwards. GH_TOKEN is set to the fake NOT-A-REAL-TOKEN, so a real gh that were ever
+        reached would not be signed in as the user. An alias outranks a function, so before the step
+        runs each of gh and git is resolved with Get-Command, and the harness throws, running nothing,
+        when one does not resolve to its fake function. Returns Thrown (the message of the terminating
+        error, or $null), Calls and Tokens (GH_TOKEN as each gh call saw it).
         #>
         param(
             [hashtable]$Environment = @{},
@@ -112,15 +116,18 @@ BeforeAll {
             PublishPrerelease  = 'preview0002'
             ModulePath         = $script:StepModulePath
             RUNNER_TEMP        = $script:StepModulePath
+            GH_TOKEN           = 'NOT-A-REAL-TOKEN'
         }
         foreach ($Key in $Environment.Keys) { $Variables[$Key] = $Environment[$Key] }
         $Saved = @{}
         foreach ($Key in $Variables.Keys) { $Saved[$Key] = [System.Environment]::GetEnvironmentVariable($Key) }
         $SavedExitCode = $global:LASTEXITCODE
         $Calls = [System.Collections.Generic.List[string]]::new()
+        $Tokens = [System.Collections.Generic.List[string]]::new()
 
         function gh {
             $Calls.Add('gh ' + ($args -join ' '))
+            $Tokens.Add($env:GH_TOKEN)
             $global:LASTEXITCODE = if ($args[0] -ceq 'release' -and $args[1] -ceq 'view') { $GhViewExit } else { 0 }
         }
 
@@ -130,8 +137,16 @@ BeforeAll {
             $GitOutput
         }
 
+        foreach ($Tool in 'gh', 'git') {
+            $Resolved = Get-Command -Name $Tool -ErrorAction Ignore | Select-Object -First 1
+            if (($Resolved -isnot [System.Management.Automation.FunctionInfo]) -or -not $Resolved.ScriptBlock.ToString().Contains('$Calls.Add(')) {
+                $Found = if ($Resolved) { '{0} {1}' -f $Resolved.CommandType, $Resolved.Name } else { 'nothing' }
+                throw ('Invoke-TagStep: {0} resolves to {1}, not to the fake function, so the step would reach the real tool; nothing was run.' -f $Tool, $Found)
+            }
+        }
+
         $Thrown = $null
-        Push-Location -Path $script:ProjectPath
+        Push-Location -LiteralPath $script:ProjectPath
         try {
             foreach ($Key in $Variables.Keys) { [System.Environment]::SetEnvironmentVariable($Key, $Variables[$Key]) }
             & ([scriptblock]::Create($script:TagRun)) 6>$null
@@ -142,7 +157,7 @@ BeforeAll {
             foreach ($Key in $Saved.Keys) { [System.Environment]::SetEnvironmentVariable($Key, $Saved[$Key]) }
             $global:LASTEXITCODE = $SavedExitCode
         }
-        [PSCustomObject]@{ Thrown = $Thrown; Calls = $Calls }
+        [PSCustomObject]@{ Thrown = $Thrown; Calls = $Calls; Tokens = $Tokens }
     }
 }
 
@@ -410,6 +425,31 @@ Describe 'ReleaseTag.ps1' {
             $Run = Invoke-TagStep -Environment @{ PublishedByThisJob = '' } -GhViewExit 0
             $Run.Thrown | Should -BeNullOrEmpty
             @($Run.Calls | Where-Object { $_ -like 'gh release create*' }).Count | Should -Be 0
+        }
+
+        It 'runs the tag step with GH_TOKEN set to NOT-A-REAL-TOKEN' {
+            $Run = Invoke-TagStep
+            $Run.Thrown | Should -BeNullOrEmpty
+            @($Run.Tokens).Count | Should -BeGreaterThan 0 -Because 'a step that never called gh would leave every token check below empty'
+            foreach ($Token in $Run.Tokens) {
+                $Token | Should -BeExactly 'NOT-A-REAL-TOKEN'
+            }
+        }
+
+        # An alias outranks a function, so a profile alias named gh or git would run instead of the
+        # fake. The shadow below only sets a global flag; it reaches no real tool.
+        It 'refuses to run the tag step when <Tool> does not resolve to its fake' -ForEach @(@{ Tool = 'gh' }, @{ Tool = 'git' }) {
+            $global:ShadowToolHit = $null
+            try {
+                function global:Invoke-ShadowTool { $global:ShadowToolHit = $true }
+                Set-Alias -Name $Tool -Value Invoke-ShadowTool -Scope Global
+                { Invoke-TagStep } | Should -Throw -ExpectedMessage "*$Tool*fake*"
+                $global:ShadowToolHit | Should -BeNullOrEmpty
+            } finally {
+                Remove-Item -Path "Alias:$Tool" -ErrorAction SilentlyContinue
+                Remove-Item -Path 'Function:Invoke-ShadowTool' -ErrorAction SilentlyContinue
+                Remove-Variable -Name ShadowToolHit -Scope Global -ErrorAction SilentlyContinue
+            }
         }
     }
 
