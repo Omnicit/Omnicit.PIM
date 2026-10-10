@@ -504,11 +504,12 @@ Describe 'Set-OPIMConfiguration' {
     }
 
     Context 'When the cloud of an alias is set (A12)' {
-        # Set changes no cloud it is not asked to: -Environment sets the cloud, -Environment Global removes
-        # it, and without -Environment whatever is stored stays, an unknown cloud included, except a
-        # stored Global in any letter case, which is dropped since Global is never written. Connect-OPIM,
-        # pim and unpim are the commands that refuse a cloud the module does not know. Set writes the
-        # whole map, so each It reads the written text back as data and looks at its own alias.
+        # Set changes no cloud it is not asked to: -Environment sets the cloud, -Environment Global
+        # removes it, and without -Environment whatever is stored stays, an unknown cloud included,
+        # except a stored Global in any letter case, which is dropped since Global is never written.
+        # Connect-OPIM, pim and unpim are the commands that refuse a cloud the module does not know.
+        # Set writes the whole map, so each It reads the written text back as data and looks at its
+        # own alias.
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Initialize-OPIMAuth {}
             Mock -ModuleName Omnicit.PIM Test-Path { return $true }
