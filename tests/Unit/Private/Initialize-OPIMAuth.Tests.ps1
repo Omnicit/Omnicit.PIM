@@ -2349,12 +2349,18 @@ namespace OPIMTestMsal {
                 Should -Be 1 -Because 'the walk must reach the Connect-MgGraph hand-off; a walk that reads nothing would pass vacuously'
             @($Commands | Where-Object { $_.GetCommandName() -eq 'Get-AzToken' }).Count |
                 Should -Be 2 -Because 'the walk must reach both AzAuth calls, with and without the device code pipeline'
+            # The member is read by its string VALUE, not by its source text: $Result.AccessToken,
+            # $Result.'AccessToken' and $Result."AccessToken" name the same member, and only the first
+            # has the text AccessToken. Member names are case-insensitive in PowerShell, so -in (which
+            # is too) is right. KNOWN LIMIT: a member named by an expression ($Result.$Name) has no
+            # constant value to read; review has to catch that shape.
             $Hits = foreach ($Command in $Commands) {
                 foreach ($Element in @($Command.CommandElements | Select-Object -Skip 1)) {
                     $Member = $Element.Find({
                             param($Node)
                             $Node -is [System.Management.Automation.Language.MemberExpressionAst] -and
-                            $Node.Member.Extent.Text -in 'AccessToken', 'Token'
+                            $Node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                            $Node.Member.Value -in 'AccessToken', 'Token'
                         }, $true)
                     if ($Member) { 'line {0}: {1}' -f $Command.Extent.StartLineNumber, $Command.GetCommandName() }
                 }
@@ -2368,7 +2374,8 @@ namespace OPIMTestMsal {
                         param($Node)
                         $Node -is [System.Management.Automation.Language.MemberExpressionAst] -and
                         $Node -isnot [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
-                        $Node.Member.Extent.Text -in 'AccessToken', 'Token'
+                        $Node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                        $Node.Member.Value -in 'AccessToken', 'Token'
                     }, $true))
             $Uses = foreach ($Member in $TokenMembers) {
                 $Parent = $Member.Parent
@@ -2377,7 +2384,7 @@ namespace OPIMTestMsal {
                     $Parent.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and
                     $Parent.Expression.TypeName.FullName -eq 'System.Net.NetworkCredential' -and
                     @($Parent.Arguments | Where-Object { [object]::ReferenceEquals($_, $Member) }).Count -eq 1) {
-                    'NetworkCredential:{0}' -f $Member.Member.Extent.Text
+                    'NetworkCredential:{0}' -f $Member.Member.Value
                     continue
                 }
                 # A truthiness test: from the member up to an if condition through -not, -or, -and,
@@ -2400,13 +2407,13 @@ namespace OPIMTestMsal {
                     }
                     break
                 }
-                if ($InIfCondition) { 'IfTest:{0}' -f $Member.Member.Extent.Text } else { 'line {0}: {1}' -f $Member.Extent.StartLineNumber, $Member.Parent.Extent.Text }
+                if ($InIfCondition) { 'IfTest:{0}' -f $Member.Member.Value } else { 'line {0}: {1}' -f $Member.Extent.StartLineNumber, $Member.Parent.Extent.Text }
             }
             foreach ($Name in 'AccessToken', 'Token') {
-                @($Uses | Where-Object { $_ -ceq "NetworkCredential:$Name" }).Count | Should -Be 1 -Because "the $Name member reaches .NET through the NetworkCredential constructor exactly once"
-                @($Uses | Where-Object { $_ -ceq "IfTest:$Name" }).Count | Should -Be 1 -Because "the walk must find the one test that the result carries a $Name"
+                @($Uses | Where-Object { $_ -ieq "NetworkCredential:$Name" }).Count | Should -Be 1 -Because "the $Name member reaches .NET through the NetworkCredential constructor exactly once"
+                @($Uses | Where-Object { $_ -ieq "IfTest:$Name" }).Count | Should -Be 1 -Because "the walk must find the one test that the result carries a $Name"
             }
-            @($Uses | Where-Object { $_ -cnotmatch '^(NetworkCredential|IfTest):(AccessToken|Token)$' }) | Should -BeNullOrEmpty
+            @($Uses | Where-Object { $_ -inotmatch '^(NetworkCredential|IfTest):(AccessToken|Token)$' }) | Should -BeNullOrEmpty
 
             # The constructor's result is read only through .SecurePassword: the plaintext property
             # (.Password) or the user name would hand the token on as a string. Every constructor in the

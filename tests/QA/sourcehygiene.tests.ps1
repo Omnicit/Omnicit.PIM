@@ -337,9 +337,10 @@ BeforeAll {
             the transport's one documented public-cloud fallback for a call with no auth state at
             all (where the request is refused for its missing token anyway). The function
             Test-SourceHygieneArmFallbackLiteral checks the node's parent chain -- the literal is
-            the sole statement of the ElseClause of an IfStatementAst (compared by reference, so
-            the body of an if or an elseif does not qualify), whose parent is an assignment to the
-            variable ArmBaseUrl -- and that the literal is exactly 'https://management.azure.com',
+            the only element of its pipeline and the only statement of the ElseClause of an
+            IfStatementAst (compared by reference, so the body of an if or an elseif does not
+            qualify), whose parent is a plain assignment (the operator =, not +=) to the variable
+            ArmBaseUrl -- and that the literal is exactly 'https://management.azure.com',
             so a sovereign host written into the fallback slot is refused as well. A file-level key would
             silently unguard every OTHER literal the transport might ever carry; the known-answer It
             holds a probe in that file that must stay refused.
@@ -348,9 +349,11 @@ BeforeAll {
         ('https://graph.' + 'microsoft.us', a -f format, a [uri] built from a scheme and a name) is
         invisible to a parser: no node holds the whole host. A host in a .ps1xml file is not read
         at all, since this pass walks .ps1, .psm1 and .psd1 only, while the Types and Format files
-        hold script blocks that run at property access and at formatting. A host that is only a
-        PART of a longer name is reported (the match is a substring match), which errs on the side
-        of refusing. Review has to catch the first two; this pass cannot.
+        hold script blocks that run at property access and at formatting. A host escaped for a
+        regular expression ('graph\.microsoft\.us' in a -match or -replace pattern) is not seen
+        either: the string holds a backslash inside the host, so the plain host never occurs in it.
+        A host that is only a PART of a longer name is reported (the match is a substring match),
+        which errs on the side of refusing. Review has to catch the first three; this pass cannot.
 
         The positive controls are the known-answer It, which runs the detector over in-memory texts
         holding every refused shape and both exemptions, and the named control: the ARM fallback
@@ -419,7 +422,8 @@ BeforeAll {
         <#
         .SYNOPSIS
         Returns true when a string node is the transport's one documented fallback: the sole
-        statement of the else branch of an if that is assigned to the variable ArmBaseUrl.
+        statement of the else branch of an if (and the whole of its pipeline) that is assigned,
+        with a plain =, to the variable ArmBaseUrl.
         #>
         [OutputType([bool])]
         param(
@@ -432,14 +436,20 @@ BeforeAll {
         if ($Expression -isnot [System.Management.Automation.Language.CommandExpressionAst]) { return $false }
         $Pipeline = $Expression.Parent
         if ($Pipeline -isnot [System.Management.Automation.Language.PipelineAst]) { return $false }
+        # The literal is the whole of its pipeline: 'https://management.azure.com' | Out-Null is not it.
+        if ($Pipeline.PipelineElements.Count -ne 1) { return $false }
         $Block = $Pipeline.Parent
         if ($Block -isnot [System.Management.Automation.Language.StatementBlockAst]) { return $false }
+        # ... and the whole of its block: { 'y'; 'https://management.azure.com' } is not the fallback.
+        if ($Block.Statements.Count -ne 1) { return $false }
         $IfStatement = $Block.Parent
         if ($IfStatement -isnot [System.Management.Automation.Language.IfStatementAst]) { return $false }
         # Reference equality: the body of an if or an elseif has the same parent and must not pass.
         if (-not [object]::ReferenceEquals($IfStatement.ElseClause, $Block)) { return $false }
         $Assignment = $IfStatement.Parent
         if ($Assignment -isnot [System.Management.Automation.Language.AssignmentStatementAst]) { return $false }
+        # A plain assignment: ArmBaseUrl += if (...) { ... } else { '...' } appends to the variable.
+        if ($Assignment.Operator -ne [System.Management.Automation.Language.TokenKind]::Equals) { return $false }
         if ($Assignment.Left -isnot [System.Management.Automation.Language.VariableExpressionAst]) { return $false }
         return ($Assignment.Left.VariablePath.UserPath -eq $script:CloudArmFallbackVariable)
     }
@@ -1038,7 +1048,8 @@ $Shout = 'GRAPH.MICROSOFT.COM'
         # literal in the body of an elseif and of the if (same parent as the else, a different clause);
         # line 6 is a sovereign host in the fallback slot; line 7 is no if at all; line 8 is the
         # literal as the argument of a command, and line 9 is an expandable string, both inside the
-        # else.
+        # else; line 10 is the literal as the second statement of the else block, line 11 the literal
+        # as the first element of a longer pipeline, and line 12 an append (+=) to the variable.
         $Transport = @'
 $ArmBaseUrl = if ($A) { 'x' } elseif ($B) { 'y' } else { 'https://management.azure.com' }
 $Probe = 'https://management.chinacloudapi.cn'
@@ -1049,6 +1060,9 @@ $ArmBaseUrl = if ($A) { 'x' } else { 'https://management.chinacloudapi.cn' }
 $ArmBaseUrl = 'https://management.azure.com'
 $ArmBaseUrl = if ($A) { 'x' } else { Write-Output 'https://management.azure.com' }
 $ArmBaseUrl = if ($A) { 'x' } else { "https://$Suffix.management.azure.com" }
+$ArmBaseUrl = if ($A) { 'x' } else { 'y'; 'https://management.azure.com' }
+$ArmBaseUrl = if ($A) { 'x' } else { 'https://management.azure.com' | Out-Null }
+$ArmBaseUrl += if ($A) { 'x' } else { 'https://management.azure.com' }
 '@
         & $ShowExempt (& $Run $Transport 'source/Private/Invoke-OPIMArmRequest.ps1') | Should -Be @(
             '1 management.azure.com True'
@@ -1060,6 +1074,9 @@ $ArmBaseUrl = if ($A) { 'x' } else { "https://$Suffix.management.azure.com" }
             '7 management.azure.com False'
             '8 management.azure.com False'
             '9 management.azure.com False'
+            '10 management.azure.com False'
+            '11 management.azure.com False'
+            '12 management.azure.com False'
         )
         # The fallback is exempt in the transport and nowhere else.
         @(& $Run $Transport 'source/Private/Fake.ps1' | Where-Object Exempt).Count | Should -Be 0 -Because 'the fallback exemption belongs to the transport file alone'
