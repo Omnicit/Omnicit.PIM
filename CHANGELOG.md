@@ -51,6 +51,8 @@ as do the earlier 0.7.0 previews, and this version then signs in to `Global` for
 the three sovereign clouds are covered by unit tests only and are untested live, and a China
 sign-in may need an application of the tenant's own, which the module does not yet take.
 
+Tab completion of role and group names is now fast for an account with hundreds of them.
+
 ## [0.6.0] - 2026-10-09
 
 Roles and groups can be named by display name, as `Enable-OPIMEntraIDGroup 'Finance Team' -AccessType Owner` (a group name alone means membership), and completion offers the bare name when unique. A name or `-Identity` matching several is refused with the candidates (`AmbiguousName`) and nothing changes; `-Scope` (a role, where the command has it), `-AccessType` (a group) or the tab-completed form picks one. A name matching nothing is `EligibleRoleNotFound` (`ActiveRoleNotFound` when deactivating, saying if the role is only eligible or active under another name); neither stops the command or the next name. `Get-OPIMAzureRole -RoleName` and `-Identity` work below the root scope without extra rights, `-All -Scope` returns only that scope's roles, and a `-Scope` ending in a slash is refused.
