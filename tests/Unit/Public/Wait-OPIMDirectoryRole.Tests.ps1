@@ -324,6 +324,41 @@ Describe 'Wait-OPIMDirectoryRole' {
         }
     }
 
+    Context 'When the deadline of a request reaches the transport (scope 5b)' {
+        # A throttled read never waits past the request's own deadline: both reads hand it to the Graph
+        # transport as -WaitDeadline, and the transport waits out a throttle only up to it.
+        It 'passes the deadline counted from the createdDateTime to both reads' {
+            # Created 12:00:00 with -TimeoutSeconds 600: the deadline is 12:10:00. The status read finds
+            # Provisioned and the instance read finds the instance.
+            $Request = New-WaitTestRequest -Id 'req-a' -Created '2026-10-08T12:00:00Z'
+            $Request | Wait-OPIMDirectoryRole -NoSummary -TimeoutSeconds 600 -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Errs).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Uri -like '*roleAssignmentScheduleRequests*' -and
+                $WaitDeadline -eq [datetime]::new(2026, 10, 8, 12, 10, 0, [DateTimeKind]::Utc)
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Uri -like '*roleAssignmentScheduleInstances*' -and
+                $WaitDeadline -eq [datetime]::new(2026, 10, 8, 12, 10, 0, [DateTimeKind]::Utc)
+            }
+        }
+
+        It 'passes the deadline counted from the start of the wait to both reads when the request has no createdDateTime' {
+            # The start of the wait is the first read, 12:00:01: with -TimeoutSeconds 60 the deadline
+            # is 12:01:01.
+            New-WaitTestRequest -Id 'req-a' | Wait-OPIMDirectoryRole -NoSummary -TimeoutSeconds 60 -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Errs).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Uri -like '*roleAssignmentScheduleRequests*' -and
+                $WaitDeadline -eq [datetime]::new(2026, 10, 8, 12, 1, 1, [DateTimeKind]::Utc)
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Uri -like '*roleAssignmentScheduleInstances*' -and
+                $WaitDeadline -eq [datetime]::new(2026, 10, 8, 12, 1, 1, [DateTimeKind]::Utc)
+            }
+        }
+    }
+
     Context 'When the request reaches Provisioned' {
         It 'waits for the instance and writes Provisioned back onto the request' {
             $Request = New-WaitTestRequest -Id 'req-a' -Status 'PendingProvisioning'

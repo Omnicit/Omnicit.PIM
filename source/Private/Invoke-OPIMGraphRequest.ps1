@@ -82,6 +82,17 @@ function Invoke-OPIMGraphRequest {
        under -All the list fails, never shorter. The claims step-up and the token refresh still run
        at most once per request, after the waits, and their retries are single sends.
 
+       Two callers may not wait as long as that (scope 5b), and both rules are read at the decision
+       to wait, before the bounds above. During a tab completion -- the module flag
+       $script:_OPIMCompletionInProgress, which the six argument completers set through
+       Set-OPIMCompletionState while they list -- a throttled request is never waited out: it ends at
+       once with the converted error, so a completion under throttling fails instead of holding the
+       prompt. With -WaitDeadline, which the -Wait polls pass, a wait never runs past that instant: a
+       wait longer than the time left is shortened to it, and when less than one second is left the
+       request ends with the converted error, which the poll writes as itself. The deadline is never
+       read before the first attempt, so a poll past it still sends once. Without the flag and
+       without -WaitDeadline nothing changes.
+
     .PARAMETER Method
     HTTP method for the Graph request. Defaults to GET.
 
@@ -99,6 +110,12 @@ function Invoke-OPIMGraphRequest {
     when it is an absolute https URI on the host of the first request (the Graph host of the
     session's cloud when -Uri is relative, graph.microsoft.com in the global cloud); any other is
     the same kind of error, category SecurityError, and is never sent.
+
+    .PARAMETER WaitDeadline
+    The instant, in UTC, past which a throttled request is never waited out (scope 5b): a wait longer
+    than the time left is shortened to it, and when less than one second is left the request ends
+    with the converted error. Wait-OPIMDirectoryRole and Enable-OPIMEntraIDGroup -Wait pass the
+    deadline of their wait. Without it the throttle bounds alone apply.
 
     .OUTPUTS
     The Graph API response hashtable on success; with -All, a hashtable whose value holds the items
@@ -126,7 +143,8 @@ function Invoke-OPIMGraphRequest {
         [Parameter(Mandatory)]
         [string]$Uri,
         [hashtable]$Body,
-        [switch]$All
+        [switch]$All,
+        [Nullable[datetime]]$WaitDeadline
     )
 
     # -- Helper: extract claims from a Graph failure --------------------------
@@ -402,8 +420,8 @@ function Invoke-OPIMGraphRequest {
     # same gates, scrubs and retries as a single call. The retries call Initialize-OPIMAuth from this
     # function's own body, so a refused retry sign-in latches this function's frame, and the retry's
     # latch gate, in the same body, finds it. $CallBudget is the per-CALL state the outer function
-    # creates and every page shares.
-    function Invoke-OPIMGraphSingle ([string]$SingleMethod, [string]$SingleUri, [hashtable]$SingleBody, [hashtable]$CallBudget) {
+    # creates and every page shares; $SingleWaitDeadline is the outer -WaitDeadline (scope 5b).
+    function Invoke-OPIMGraphSingle ([string]$SingleMethod, [string]$SingleUri, [hashtable]$SingleBody, [hashtable]$CallBudget, [Nullable[datetime]]$SingleWaitDeadline) {
         # -- First attempt -----------------------------------------------------
         $InvokeParams = @{
             Method      = $SingleMethod
@@ -477,6 +495,34 @@ function Invoke-OPIMGraphRequest {
 
             $Delay = Get-GraphThrottleDelay -ErrorRecord $FirstError -Attempt $ThrottleAttempt -RequestMethod $SingleMethod
             if ($null -eq $Delay) { break }
+
+            # Scope 5b: two callers may not wait as long as the bounds below allow. Both rules come
+            # before those bounds, and both give up the way a spent budget does (break, so the error is
+            # converted and thrown below). A tab completion never waits: the six completers set the
+            # flag while they list, and a completion under throttling fails at once instead of holding
+            # the prompt.
+            if ($script:_OPIMCompletionInProgress -eq $true) {
+                Write-Verbose '[Invoke-OPIMGraphRequest] Throttled during tab completion; tab completion does not wait. Giving up.'
+                break
+            }
+            # A -Wait poll never waits past its deadline: a longer wait is shortened to the time left,
+            # and with less than a second left the poll ends with the error, which it writes as itself.
+            # The deadline is read only here, at a decision to wait, so a poll past it still sends once.
+            # The seconds left stay a [double] until they are known to be under the delay (at most
+            # 120): a deadline years off would overflow an [int] cast, which would throw out of the
+            # failure path and replace the Graph error.
+            if ($null -ne $SingleWaitDeadline) {
+                [double]$DeadlineRemaining = [Math]::Floor(($SingleWaitDeadline.ToUniversalTime() - (Get-Date -AsUTC)).TotalSeconds)
+                if ($DeadlineRemaining -lt 1) {
+                    Write-Verbose ("[Invoke-OPIMGraphRequest] Throttled. The -Wait deadline leaves no time for the next wait of " +
+                        "$($Delay.Seconds) s ($($Delay.Source)). Giving up.")
+                    break
+                }
+                if ($Delay.Seconds -gt $DeadlineRemaining) {
+                    $Delay.Seconds = [int]$DeadlineRemaining
+                    $Delay.Source = "$($Delay.Source), clamped to the -Wait deadline"
+                }
+            }
 
             [int]$RequestRemaining = $ThrottleWaitBudgetSeconds - $ThrottleWaitSpent
             [int]$CallRemaining = $CallDeadlineSeconds - (Get-GraphCallElapsed -CallBudget $CallBudget)
@@ -603,7 +649,7 @@ function Invoke-OPIMGraphRequest {
     $CallBudget = @{ StartUtc = [DateTime]::UtcNow; WaitSpent = 0 }
 
     if (-not $All) {
-        return Invoke-OPIMGraphSingle -SingleMethod $Method -SingleUri $Uri -SingleBody $Body -CallBudget $CallBudget
+        return Invoke-OPIMGraphSingle -SingleMethod $Method -SingleUri $Uri -SingleBody $Body -CallBudget $CallBudget -SingleWaitDeadline $WaitDeadline
     }
 
     # -- Paging (OPIM-13): follow @odata.nextLink ----------------------------------
@@ -639,7 +685,7 @@ function Invoke-OPIMGraphRequest {
         $PageNumber++
         $PageFailed = $false
         try {
-            $Page = Invoke-OPIMGraphSingle -SingleMethod $Method -SingleUri $NextUri -SingleBody $Body -CallBudget $CallBudget
+            $Page = Invoke-OPIMGraphSingle -SingleMethod $Method -SingleUri $NextUri -SingleBody $Body -CallBudget $CallBudget -SingleWaitDeadline $WaitDeadline
         } catch {
             Remove-OPIMErrorRecord -Record $PSItem
             $PageFailed = $true

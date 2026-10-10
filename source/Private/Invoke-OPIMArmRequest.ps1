@@ -69,6 +69,17 @@ function Invoke-OPIMArmRequest {
     rather than nesting inside it, so a throttled response can never consume the single per-call
     refresh budget and the two retry paths cannot compound.
 
+    Two callers may not wait as long as that (scope 5b), and both rules are read at the decision to
+    wait, before the bounds above. During a tab completion -- the module flag
+    $script:_OPIMCompletionInProgress, which the six argument completers set through
+    Set-OPIMCompletionState while they list -- a throttled request is never waited out: the throttled
+    response is converted and thrown at once, so a completion under throttling fails instead of
+    holding the prompt. With -WaitDeadline, which the Enable-OPIMAzureRole -Wait poll passes, a wait
+    never runs past that instant, on any page: a wait longer than the time left is shortened to it,
+    and when less than one second is left the call ends with the converted error, which the poll
+    writes as itself. The deadline is never read before the first attempt, so a poll past it still
+    sends once. Without the flag and without -WaitDeadline nothing changes.
+
     The verbose stream names each request by its method and its path without the query string -- a
     next link's query can carry a skip token -- and never carries the token, the body or a header.
 
@@ -87,6 +98,12 @@ function Invoke-OPIMArmRequest {
     .PARAMETER All
     Follow nextLink/@nextLink paging on GET list responses and return a single object whose value
     property contains all aggregated items.
+
+    .PARAMETER WaitDeadline
+    The instant, in UTC, past which a throttled request is never waited out (scope 5b), on every page
+    of a -All read: a wait longer than the time left is shortened to it, and when less than one second
+    is left the call ends with the converted error. The Enable-OPIMAzureRole -Wait poll passes the
+    deadline of its wait. Without it the throttle bounds alone apply.
 
     .EXAMPLE
     $Eligible = (Invoke-OPIMArmRequest -Path '/providers/Microsoft.Authorization/roleEligibilitySchedules?$filter=asTarget()&api-version=2020-10-01' -All).value
@@ -107,7 +124,9 @@ function Invoke-OPIMArmRequest {
 
         [hashtable]$Body,
 
-        [switch]$All
+        [switch]$All,
+
+        [Nullable[datetime]]$WaitDeadline
     )
 
     # Suppress the Invoke-WebRequest progress bar for the lifetime of this call.
@@ -399,7 +418,11 @@ function Invoke-OPIMArmRequest {
     # were complete. When the budget is gone this returns the throttled response and lets the caller's
     # non-2xx check convert and THROW it. The cost is deliberate: a call may overrun the deadline by
     # the last request's own duration.
-    function Invoke-OPIMArmWithBackoff ([string]$CallPath, [string]$CallMethod, [hashtable]$CallBody, [string]$BaseUrl, [ref]$RefreshBudget, [hashtable]$CallBudget) {
+    #
+    # Scope 5b: two callers may not wait as long as these bounds allow, and their rules come first: a
+    # tab completion ($script:_OPIMCompletionInProgress) never waits, and a -Wait poll ($WaitDeadline,
+    # the outer -WaitDeadline) never waits past its deadline. Both give up the way a spent budget does.
+    function Invoke-OPIMArmWithBackoff ([string]$CallPath, [string]$CallMethod, [hashtable]$CallBody, [string]$BaseUrl, [ref]$RefreshBudget, [hashtable]$CallBudget, [Nullable[datetime]]$WaitDeadline) {
         [int]$ThrottleWaitBudgetSeconds = 300
         [int]$CallDeadlineSeconds = 900
         [int]$ThrottleRetryHardCap = 10
@@ -412,6 +435,32 @@ function Invoke-OPIMArmRequest {
 
             $Delay = Get-ArmThrottleDelay $CallResult $ThrottleAttempt
             if ($null -eq $Delay) { return $CallResult }
+
+            # Scope 5b: a tab completion never waits. The six completers set the flag while they list,
+            # and a completion under throttling fails at once instead of holding the prompt; the
+            # throttled response goes back for the caller's non-2xx check to convert and throw.
+            if ($script:_OPIMCompletionInProgress -eq $true) {
+                Write-Verbose '[Invoke-OPIMArmRequest] Throttled during tab completion; tab completion does not wait. Giving up.'
+                return $CallResult
+            }
+            # Scope 5b: a -Wait poll never waits past its deadline: a longer wait is shortened to the
+            # time left, and with less than a second left the poll ends with the error, which it writes
+            # as itself. The deadline is read only here, at a decision to wait, so a poll past it still
+            # sends once. The seconds left stay a [double] until they are known to be under the delay
+            # (at most 120): a deadline years off would overflow an [int] cast, which would throw out
+            # of the failure path and replace the ARM error.
+            if ($null -ne $WaitDeadline) {
+                [double]$DeadlineRemaining = [Math]::Floor(($WaitDeadline.ToUniversalTime() - (Get-Date -AsUTC)).TotalSeconds)
+                if ($DeadlineRemaining -lt 1) {
+                    Write-Verbose ("[Invoke-OPIMArmRequest] Throttled. The -Wait deadline leaves no time for the next wait of " +
+                        "$($Delay.Seconds) s ($($Delay.Source)). Giving up.")
+                    return $CallResult
+                }
+                if ($Delay.Seconds -gt $DeadlineRemaining) {
+                    $Delay.Seconds = [int]$DeadlineRemaining
+                    $Delay.Source = "$($Delay.Source), clamped to the -Wait deadline"
+                }
+            }
 
             [int]$RequestRemaining = $ThrottleWaitBudgetSeconds - $ThrottleWaitSpent
             [int]$CallRemaining = $CallDeadlineSeconds - (Get-ArmCallElapsed -CallBudget $CallBudget)
@@ -459,7 +508,7 @@ function Invoke-OPIMArmRequest {
     $CallBudget = @{ StartUtc = [DateTime]::UtcNow; WaitSpent = 0 }
 
     $Response = Invoke-OPIMArmWithBackoff -CallPath $Path -CallMethod $Method -CallBody $Body `
-        -BaseUrl $ArmBaseUrl -RefreshBudget $RefreshBudget -CallBudget $CallBudget
+        -BaseUrl $ArmBaseUrl -RefreshBudget $RefreshBudget -CallBudget $CallBudget -WaitDeadline $WaitDeadline
 
     # EVERY THROW IN THIS FUNCTION IS FOLLOWED BY A RETURN (one inside a catch, by a flag read straight
     # after its try), and none of them is tidiness: under -ErrorAction SilentlyContinue or Ignore, with
@@ -574,7 +623,7 @@ function Invoke-OPIMArmRequest {
         # Each page gets its own per-REQUEST wait budget and shares the per-CALL deadline, so the paging
         # path backs off exactly like the single-request path.
         $PageResponse = Invoke-OPIMArmWithBackoff -CallPath $NextPath -CallMethod $Method -CallBody $Body `
-            -BaseUrl $ArmBaseUrl -RefreshBudget $RefreshBudget -CallBudget $CallBudget
+            -BaseUrl $ArmBaseUrl -RefreshBudget $RefreshBudget -CallBudget $CallBudget -WaitDeadline $WaitDeadline
         # The same two checks as for the first page above. return, never break: break would hand back
         # the pages so far as though they were the whole collection.
         if ($null -eq $PageResponse) { return }

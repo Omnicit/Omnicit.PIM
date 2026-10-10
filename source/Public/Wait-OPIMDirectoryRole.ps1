@@ -41,8 +41,9 @@ function Wait-OPIMDirectoryRole {
     The most seconds to wait for each request, counted from the time Graph created it, or from the
     start of the wait when the request carries no readable creation time. Default is 300 seconds (5
     minutes), from 1 to 86400. A request still in progress at the limit is written as an
-    ActivationWaitTimedOut error, and the wait for the other requests goes on. The old name
-    -Timeout still works.
+    ActivationWaitTimedOut error, and the wait for the other requests goes on. A read that Microsoft
+    Graph throttles is not waited out past the limit either; it then fails and is written as its own
+    error. The old name -Timeout still works.
     .PARAMETER ThrottleLimit
     Accepted for compatibility and has no effect: the requests are polled in sequence. Default is 5.
     .PARAMETER PassThru
@@ -116,8 +117,10 @@ function Wait-OPIMDirectoryRole {
                 $State = $Tracked[[string]$RequestItem.id]
                 if (-not $State.Provisioned) {
                     $StatusUri = "v1.0/roleManagement/directory/roleAssignmentScheduleRequests/filterByCurrentUser(on='principal')?`$select=status&`$filter=id eq '$($RequestItem.id)'"
+                    # Scope 5b: both reads hand the request's deadline to the transport, which never
+                    # waits out a throttle past it; a read throttled there fails and is written as itself.
                     try {
-                        $State.Status = [string](Invoke-OPIMGraphRequest -Uri $StatusUri).value.status
+                        $State.Status = [string](Invoke-OPIMGraphRequest -Uri $StatusUri -WaitDeadline $State.Deadline).value.status
                     } catch {
                         # A poll that fails is reported as itself and ends the wait for this request only.
                         Remove-OPIMErrorRecord -Record $PSItem
@@ -146,7 +149,7 @@ function Wait-OPIMDirectoryRole {
                 if ($State.Provisioned) {
                     $InstanceUri = "v1.0/roleManagement/directory/roleAssignmentScheduleInstances/filterByCurrentUser(on='principal')?`$select=startDateTime&`$filter=roleAssignmentScheduleId eq '$($RequestItem.targetScheduleId)'"
                     try {
-                        $Instances = (Invoke-OPIMGraphRequest -Uri $InstanceUri).value
+                        $Instances = (Invoke-OPIMGraphRequest -Uri $InstanceUri -WaitDeadline $State.Deadline).value
                     } catch {
                         Remove-OPIMErrorRecord -Record $PSItem
                         $PSCmdlet.WriteError($PSItem)

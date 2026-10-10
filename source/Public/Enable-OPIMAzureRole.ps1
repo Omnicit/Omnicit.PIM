@@ -100,7 +100,8 @@ function Enable-OPIMAzureRole {
     With -Wait, the most seconds to wait for the request to finish, counted from the start of the
     wait. Defaults to 300. A request that waits for approval ends the wait at once, with a warning;
     one still in progress at the limit is written as an ActivationWaitTimedOut error and stays
-    submitted.
+    submitted. A read that Azure Resource Manager throttles is not waited out past the limit either;
+    it then fails and is written as its own error.
     #>
     [Alias('Enable-PIMResourceRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
@@ -350,10 +351,12 @@ function Enable-OPIMAzureRole {
                             # at the scope. asRequestor() would fail exactly while the poll is needed:
                             # ARM refuses it to a user who holds no active role there yet
                             # (InsufficientPermissions, measured live 2026-10-08). The list is read
-                            # across every page (-All), and the root scope has no prefix.
+                            # across every page (-All), and the root scope has no prefix. Scope 5b: the
+                            # transport never waits out a throttle past the deadline; a poll throttled
+                            # there fails and is written as itself below.
                             $PollScope = if ($Response.Scope -eq '/') { '' } else { $Response.Scope }
                             $PollPath = '{0}/providers/Microsoft.Authorization/roleAssignmentScheduleRequests?$filter=asTarget()&api-version=2020-10-01' -f $PollScope
-                            $Polled = @((Invoke-OPIMArmRequest -Path $PollPath -All).value |
+                            $Polled = @((Invoke-OPIMArmRequest -Path $PollPath -All -WaitDeadline $Deadline).value |
                                     Where-Object { $_.name -eq $Response.Name } |
                                     ConvertFrom-OPIMArmSchedule -Kind AssignmentScheduleRequest)
                         } catch {

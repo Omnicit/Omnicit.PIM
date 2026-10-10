@@ -900,6 +900,8 @@ Enable-OPIMDirectoryRole 'Usage Summary Reports Reader (elig-001)'    # tab-comp
 - Tab completion offers the bare name whenever it is unique, and the longer form -- the name, the
   scope or access type, and the schedule id -- when it is not. A name that contains an apostrophe,
   straight or typographic, is completed with the apostrophe doubled, as PowerShell needs it.
+  Tab completion never waits out throttling: when Graph or Azure throttles the listing, the
+  completion fails at once and offers nothing, instead of holding the prompt.
 - **A name that matches more than one role or group is never resolved by guessing.** The command
   writes `AmbiguousName`, lists the candidates and activates or deactivates nothing. For a role
   name, `-Scope` picks one on the cmdlets that have it (`Enable-`/`Disable-OPIMDirectoryRole`,
@@ -960,8 +962,9 @@ failed to `Wait-OPIMDirectoryRole`, which reads each one at least once, waits fo
 assignment to appear once a request is provisioned, and counts from the time Graph created the
 request. A request that waits for approval ends the wait at once, with a warning. One still in
 progress at the limit is an `ActivationWaitTimedOut` error and returns nothing; the request stays
-submitted. Each role or group is reported on its own, so one that fails or times out never stops the
-next.
+submitted. A read that Graph or Azure throttles is waited out only up to `-TimeoutSeconds`, never
+past it; a read still throttled there is written as that throttling error. Each role or group is
+reported on its own, so one that fails or times out never stops the next.
 
 A group deactivation sent right after another one can still find the group in the list of active
 assignments, which lags by about 30 seconds, and Graph then answers that the assignment does not

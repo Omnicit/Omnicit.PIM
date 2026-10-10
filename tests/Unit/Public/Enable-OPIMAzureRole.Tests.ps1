@@ -980,6 +980,21 @@ Describe 'Enable-OPIMAzureRole' {
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 2 -Exactly -Scope It -ParameterFilter { $All.IsPresent }
         }
 
+        It 'passes the deadline of the wait to the poll as -WaitDeadline, and none to the request' {
+            # Scope 5b: a throttled poll never waits past the deadline of the wait. The first read,
+            # 12:00:01, starts the wait: with -TimeoutSeconds 60 the deadline is 12:01:01.
+            $null = Enable-OPIMAzureRole -RoleName 'Reader' -Wait -TimeoutSeconds 60 `
+                -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Errs).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $All.IsPresent -and
+                $WaitDeadline -eq [datetime]::new(2026, 10, 8, 12, 1, 1, [DateTimeKind]::Utc)
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'PUT' -and $null -eq $WaitDeadline
+            }
+        }
+
         It 'sleeps 5 seconds before each poll' {
             $Plan.Poll['azure-001'] = @('PendingProvisioning', 'Accepted', 'Provisioned')
             $Result = Enable-OPIMAzureRole -RoleName 'Reader' -Wait -ErrorAction SilentlyContinue

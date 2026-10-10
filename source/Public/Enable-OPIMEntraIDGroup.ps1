@@ -93,7 +93,8 @@ function Enable-OPIMEntraIDGroup {
     With -Wait, the most seconds to wait for the request to finish, counted from the start of the
     wait. Defaults to 300. A request that waits for approval ends the wait at once, with a warning;
     one still in progress at the limit is written as an ActivationWaitTimedOut error and stays
-    submitted.
+    submitted. A read that Microsoft Graph throttles is not waited out past the limit either; it then
+    fails and is written as its own error.
     #>
     [Alias('Enable-PIMGroup')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'GroupName')]
@@ -271,7 +272,9 @@ function Enable-OPIMEntraIDGroup {
                         if ((Get-Date -AsUTC) -ge $Deadline) { $TimedOut = $true; break }
                         Start-Sleep -Seconds 2
                         try {
-                            $Status = [string](Invoke-OPIMGraphRequest -Uri $PollUri).status
+                            # Scope 5b: the transport never waits out a throttle past the deadline; a
+                            # poll throttled there fails and is written as itself below.
+                            $Status = [string](Invoke-OPIMGraphRequest -Uri $PollUri -WaitDeadline $Deadline).status
                         } catch {
                             # A poll that fails is reported as itself for this group only.
                             Remove-OPIMErrorRecord -Record $PSItem

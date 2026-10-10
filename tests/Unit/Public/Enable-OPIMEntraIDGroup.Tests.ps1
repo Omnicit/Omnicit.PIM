@@ -682,6 +682,21 @@ Describe 'Enable-OPIMEntraIDGroup' {
             }
         }
 
+        It 'passes the deadline of the wait to the poll as -WaitDeadline, and none to the request' {
+            # Scope 5b: a throttled poll never waits past the deadline of the wait. The first read,
+            # 12:00:01, starts the wait: with -TimeoutSeconds 60 the deadline is 12:01:01.
+            $null = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' -Wait -TimeoutSeconds 60 `
+                -WarningAction SilentlyContinue -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Errs).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Uri -like '*/assignmentScheduleRequests/req-*' -and
+                $WaitDeadline -eq [datetime]::new(2026, 10, 8, 12, 1, 1, [DateTimeKind]::Utc)
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Method -eq 'POST' -and $null -eq $WaitDeadline
+            }
+        }
+
         It 'sleeps 2 seconds before each poll' {
             $Plan.Poll['g-1'] = @('PendingProvisioning', 'PendingProvisioning', 'Provisioned')
             $Result = Enable-OPIMEntraIDGroup -GroupName 'opim-s1-grp' -Wait -ErrorAction SilentlyContinue

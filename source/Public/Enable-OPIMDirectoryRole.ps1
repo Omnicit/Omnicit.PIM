@@ -95,7 +95,8 @@ function Enable-OPIMDirectoryRole {
     With -Wait, the most seconds to wait for each request, counted from the time Graph created it.
     Defaults to 300. A request that waits for approval ends its wait at once, with a warning; one
     still in progress at the limit is written as an ActivationWaitTimedOut error and stays
-    submitted.
+    submitted. A read that Microsoft Graph throttles is not waited out past the limit either; it then
+    fails and is written as its own error.
     #>
     [Alias('Enable-PIMADRole', 'Enable-PIMRole')]
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'RoleName')]
