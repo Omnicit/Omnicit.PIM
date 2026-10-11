@@ -1290,6 +1290,10 @@ Describe 'Invoke-OPIMGraphRequest' {
     }
 
     Context 'When a device code session has its token rejected' {
+        # R17: Initialize-OPIMAuth is mocked here and runs for real only in its own test file, where the
+        # end-to-end half of this retry is proved. This context holds what the wrapper asks of it: a
+        # forced sign-in for the session's tenant, with no -DeviceCode (the auth state remembers the
+        # mode) and no claims.
         BeforeAll {
             InModuleScope Omnicit.PIM {
                 Mock Invoke-MgGraphRequest {
@@ -1301,32 +1305,21 @@ Describe 'Invoke-OPIMGraphRequest' {
                     }
                     return @{ value = @(@{ id = 'after-refresh' }) }
                 }
-                # Initialize-OPIMAuth runs for real here, so the retry is seen choosing its flow.
-                Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
-                Mock Invoke-OPIMDeviceCodeAuth {
-                    [PSCustomObject]@{
-                        AccessToken = $script:_OPIMTestToken
-                        ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
-                        Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
-                    }
+                Mock Initialize-OPIMAuth {
+                    if ($script:_OPIMTestRefusal) { $PSCmdlet.ThrowTerminatingError($script:_OPIMTestRefusal) }
                 }
-                Mock Connect-MgGraph {}
-                # The session the sign-in records, and the one the retry's session gate then reads.
-                Mock Get-OPIMGraphSessionFingerprint { 'fp' }
             }
         }
         BeforeEach {
-            # A session as Initialize-OPIMAuth writes it, and a new token for the same tenant.
-            $Token = New-OPIMTestAccessToken -TenantId $SessionTenant
-            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; SessionTenant = $SessionTenant } {
-                param($Token, $SessionTenant)
+            # A session as Initialize-OPIMAuth writes it, in device code mode.
+            InModuleScope Omnicit.PIM -Parameters @{ SessionTenant = $SessionTenant } {
+                param($SessionTenant)
                 $script:_CallCount = 0
-                $script:_OPIMTestToken = $Token
+                $script:_OPIMTestRefusal = $null
                 $script:_OPIMAuthState = @{
                     TenantId         = $SessionTenant
                     TokenTenantId    = $SessionTenant
-                    AuthorityTenant  = $SessionTenant
-                    Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    Account          = 'user@contoso.com'
                     GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
                     ClaimsSatisfied  = $false
                     DeviceCode       = $true
@@ -1334,35 +1327,44 @@ Describe 'Invoke-OPIMGraphRequest' {
             }
         }
         AfterAll {
-            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null; $script:_OPIMTestToken = $null }
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null; $script:_OPIMTestRefusal = $null }
         }
 
-        It 'signs in again with the device code flow before it retries' {
-            InModuleScope Omnicit.PIM {
+        It 'signs in again for the session''s tenant with -ForceRefresh, never -DeviceCode, before it retries' {
+            InModuleScope Omnicit.PIM -Parameters @{ SessionTenant = $SessionTenant } {
+                param($SessionTenant)
                 $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/some/resource'
                 $Result.value[0].id | Should -Be 'after-refresh'
-                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $ForceRefresh -and $TenantId -eq 'aaaaaaaa-0000-0000-0000-00000000000a' -and
+                    -not $PesterBoundParameters.ContainsKey('DeviceCode') -and
+                    -not $PesterBoundParameters.ContainsKey('ClaimsChallenge')
+                }
             }
         }
 
-        It 'refuses a new token for another tenant and sends no retry' {
-            # OPIM-07 end to end: the refresh hands back a token for another tenant. Called inside a
+        It 'sends no retry when the new sign-in is refused' {
+            # The refresh's sign-in ends with TenantMismatch (a token for another tenant); called inside a
             # try, as the pillar cmdlets call the wrapper.
-            $Other = New-OPIMTestAccessToken -TenantId 'bbbbbbbb-0000-0000-0000-00000000000b'
-            InModuleScope Omnicit.PIM -Parameters @{ Other = $Other } {
-                param($Other)
-                $script:_OPIMTestToken = $Other
+            InModuleScope Omnicit.PIM -Parameters @{ SessionTenant = $SessionTenant } {
+                param($SessionTenant)
+                $script:_OPIMTestRefusal = New-OPIMTenantMismatchError -RequestedTenant $SessionTenant
                 $Caught = $null
                 try { Invoke-OPIMGraphRequest -Uri 'v1.0/some/resource' } catch { $Caught = $PSItem }
                 $Caught.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
                 Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
-                Should -Invoke Connect-MgGraph -Times 0 -Scope It
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter { $ForceRefresh }
                 $script:_OPIMAuthState.TokenTenantId | Should -Be 'aaaaaaaa-0000-0000-0000-00000000000a'
             }
         }
     }
 
     Context 'When a device code session receives an ACRS claims challenge' {
+        # R17: Initialize-OPIMAuth is mocked here; the end-to-end step-up is proved in its own test file.
+        # This context holds what the wrapper asks of it: one step-up for the session's tenant with the
+        # decoded claims, no -DeviceCode (the auth state remembers the mode) and no -ForceRefresh.
         BeforeAll {
             InModuleScope Omnicit.PIM {
                 Mock Invoke-MgGraphRequest {
@@ -1375,30 +1377,17 @@ Describe 'Invoke-OPIMGraphRequest' {
                     }
                     return @{ id = 'req-001'; status = 'Provisioned' }
                 }
-                Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
-                Mock Invoke-OPIMDeviceCodeAuth {
-                    [PSCustomObject]@{
-                        AccessToken = $script:_OPIMTestToken
-                        ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
-                        Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
-                    }
-                }
-                Mock Connect-MgGraph {}
-                # The session the step-up records, and the one the retry's session gate then reads.
-                Mock Get-OPIMGraphSessionFingerprint { 'fp' }
+                Mock Initialize-OPIMAuth {}
             }
         }
         BeforeEach {
-            $Token = New-OPIMTestAccessToken -TenantId $SessionTenant
-            InModuleScope Omnicit.PIM -Parameters @{ Token = $Token; SessionTenant = $SessionTenant } {
-                param($Token, $SessionTenant)
+            InModuleScope Omnicit.PIM -Parameters @{ SessionTenant = $SessionTenant } {
+                param($SessionTenant)
                 $script:_CallCount = 0
-                $script:_OPIMTestToken = $Token
                 $script:_OPIMAuthState = @{
                     TenantId         = $SessionTenant
                     TokenTenantId    = $SessionTenant
-                    AuthorityTenant  = $SessionTenant
-                    Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    Account          = 'user@contoso.com'
                     GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
                     ClaimsSatisfied  = $false
                     DeviceCode       = $true
@@ -1406,15 +1395,21 @@ Describe 'Invoke-OPIMGraphRequest' {
             }
         }
         AfterAll {
-            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null; $script:_OPIMTestToken = $null }
+            InModuleScope Omnicit.PIM { $script:_OPIMAuthState = $null }
         }
 
-        It 'steps up with the device code flow and the decoded claims' {
-            InModuleScope Omnicit.PIM {
+        It 'steps up once for the session''s tenant with the decoded claims, never -DeviceCode or -ForceRefresh' {
+            InModuleScope Omnicit.PIM -Parameters @{ SessionTenant = $SessionTenant } {
+                param($SessionTenant)
                 $Result = Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{}
                 $Result.id | Should -Be 'req-001'
-                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It -ParameterFilter {
-                    $ClaimsChallenge -match 'acrs' -and $ClaimsChallenge -match 'c1'
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $ClaimsChallenge -match 'acrs' -and $ClaimsChallenge -match 'c1' -and
+                    $TenantId -eq 'aaaaaaaa-0000-0000-0000-00000000000a' -and
+                    -not $PesterBoundParameters.ContainsKey('DeviceCode') -and
+                    -not $PesterBoundParameters.ContainsKey('ForceRefresh')
                 }
             }
         }
@@ -1745,10 +1740,12 @@ Describe 'Invoke-OPIMGraphRequest' {
         }
     }
 
-    Context 'When the sign-in of a retry is refused (real Initialize-OPIMAuth)' {
-        # Ruling R-T4b. Initialize-OPIMAuth runs for real inside the token-rejected retry, as in the
-        # device code context above, and the refresh hands back a token for another tenant. The latch
-        # table is a recorder that keeps the name of every command it latches and releases.
+    Context 'When the sign-in of a retry is refused' {
+        # Ruling R-T4b, R17. Initialize-OPIMAuth is mocked here and ends the token-rejected retry's
+        # sign-in with TenantMismatch, as it does for a new token of another tenant; the real
+        # function, and the latch it leaves on the wrapper's Invoke-OPIMGraphSingle, are proved in its
+        # own test file. This context holds what the wrapper does with the refusal: it asks for one
+        # forced sign-in for the session's tenant and sends no retry.
         BeforeAll {
             InModuleScope Omnicit.PIM {
                 Mock Invoke-MgGraphRequest {
@@ -1757,84 +1754,46 @@ Describe 'Invoke-OPIMGraphRequest' {
                         '{"error":{"code":"InvalidAuthenticationToken","message":"Access token has expired."}}'
                     )
                 }
-                Mock Get-OPIMMsalApplication { [PSCustomObject]@{} }
-                Mock Invoke-OPIMDeviceCodeAuth {
-                    [PSCustomObject]@{
-                        AccessToken = $script:_OPIMTestToken
-                        ExpiresOn   = [DateTimeOffset]::UtcNow.AddHours(1)
-                        Account     = [PSCustomObject]@{ Username = 'user@contoso.com' }
-                    }
-                }
-                Mock Connect-MgGraph {}
+                # The session the state records, and the one the retry's session gate then reads.
                 Mock Get-OPIMGraphSessionFingerprint { 'fp' }
+                Mock Initialize-OPIMAuth {
+                    $PSCmdlet.ThrowTerminatingError((New-OPIMTenantMismatchError -RequestedTenant $script:_OPIMAuthState.TenantId))
+                }
             }
         }
         BeforeEach {
-            $Other = New-OPIMTestAccessToken -TenantId 'bbbbbbbb-0000-0000-0000-00000000000b'
-            InModuleScope Omnicit.PIM -Parameters @{ Other = $Other; SessionTenant = $SessionTenant } {
-                param($Other, $SessionTenant)
+            InModuleScope Omnicit.PIM -Parameters @{ SessionTenant = $SessionTenant } {
+                param($SessionTenant)
                 $script:_CallCount = 0
-                $script:_OPIMTestToken = $Other
                 $script:_OPIMAuthState = @{
                     TenantId                = $SessionTenant
                     TokenTenantId           = $SessionTenant
-                    AuthorityTenant         = $SessionTenant
-                    Account                 = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                    Account                 = 'user@contoso.com'
                     GraphTokenExpiry        = [DateTime]::UtcNow.AddHours(1)
                     ClaimsSatisfied         = $false
                     DeviceCode              = $true
                     GraphSessionFingerprint = 'fp'
                 }
-                $Recorder = [pscustomobject]@{
-                    Table    = [System.Runtime.CompilerServices.ConditionalWeakTable[object, object]]::new()
-                    Latched  = [System.Collections.Generic.List[string]]::new()
-                    Released = [System.Collections.Generic.List[string]]::new()
-                }
-                Add-Member -InputObject $Recorder -MemberType ScriptMethod -Name AddOrUpdate -Value {
-                    param($Key, $Value)
-                    $this.Latched.Add([string]$Key.MyCommand.Name)
-                    $this.Table.AddOrUpdate($Key, $Value)
-                }
-                Add-Member -InputObject $Recorder -MemberType ScriptMethod -Name TryGetValue -Value {
-                    param($Key, $Reference)
-                    $Found = $null
-                    $Held = $this.Table.TryGetValue($Key, [ref]$Found)
-                    $Reference.Value = $Found
-                    $Held
-                }
-                Add-Member -InputObject $Recorder -MemberType ScriptMethod -Name Remove -Value {
-                    param($Key)
-                    $this.Released.Add([string]$Key.MyCommand.Name)
-                    $this.Table.Remove($Key)
-                }
-                $script:_OPIMSignInLatch = $Recorder
             }
         }
         AfterAll {
             InModuleScope Omnicit.PIM {
                 $script:_OPIMAuthState = $null
-                $script:_OPIMTestToken = $null
-                $script:_OPIMSignInLatch = $null
                 $script:_CallCount = $null
             }
         }
 
-        It 'latches the wrapper''s request function, keeps it latched and sends no retry' {
-            # Inside Pester the error the caller sees is TenantMismatch: the retry's Initialize-OPIMAuth
-            # raises it as a terminating error, and Pester's own try (and this test's) makes it propagate
-            # out of the wrapper before the retry's gates run. Outside any try the wrapper carries on to
-            # them, and the latch gate finds the frame of the wrapper's nested Invoke-OPIMGraphSingle,
-            # which called Initialize-OPIMAuth and holds the retry's gates -- latched, as this test
-            # records -- and throws SignInRefused; the mocked context above holds that gate.
-            InModuleScope Omnicit.PIM {
+        It 'asks for one forced sign-in for the session''s tenant and sends no retry' {
+            InModuleScope Omnicit.PIM -Parameters @{ SessionTenant = $SessionTenant } {
+                param($SessionTenant)
                 $Caught = $null
                 try { Invoke-OPIMGraphRequest -Uri 'v1.0/me' } catch { $Caught = $PSItem }
                 $Caught.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
                 Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
-                Should -Invoke Invoke-OPIMDeviceCodeAuth -Times 1 -Exactly -Scope It
-                Should -Invoke Connect-MgGraph -Times 0 -Scope It
-                ($script:_OPIMSignInLatch.Latched -join ', ') | Should -BeExactly 'Invoke-OPIMGraphSingle'
-                $script:_OPIMSignInLatch.Released.Count | Should -Be 0
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $ForceRefresh -and $TenantId -eq 'aaaaaaaa-0000-0000-0000-00000000000a' -and -not $PesterBoundParameters.ContainsKey('DeviceCode')
+                }
             }
         }
     }

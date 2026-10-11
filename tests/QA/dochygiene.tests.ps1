@@ -114,8 +114,9 @@ BeforeAll {
         @{
             # Microsoft Graph Command Line Tools, the first-party public client the module signs in
             # as. Documented by Microsoft, the same value in every tenant, and FUNCTIONAL here:
-            # source/Private/Get-OPIMMsalApplication.ps1 builds the MSAL public client application
-            # with it, so a placeholder would break authentication rather than redact anything.
+            # source/Private/Initialize-OPIMAuth.ps1 passes it to AzAuth's Get-AzToken as the client
+            # of the Microsoft Graph sign-in, so a placeholder would break authentication rather than
+            # redact anything.
             Value  = '14d82eec-204b-4c2f-b7e8-296a70dab67e'
             Reason = 'the Microsoft Graph Command Line Tools first-party application id'
         }

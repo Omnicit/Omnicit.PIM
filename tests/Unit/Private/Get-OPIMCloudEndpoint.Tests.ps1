@@ -66,7 +66,7 @@ Describe 'Get-OPIMCloudEndpoint' {
 
         It 'keeps the Global row byte-identical to the literals it replaces' {
             $Row = InModuleScope Omnicit.PIM { Get-OPIMCloudEndpoint -Environment 'Global' }
-            # The MSAL authority prefix and the ARM resource the module sent before the table existed.
+            # The sign-in authority prefix and the ARM resource the module sent before the table existed.
             ($Row.AuthorityHost + 'contoso.onmicrosoft.com') | Should -BeExactly 'https://login.microsoftonline.com/contoso.onmicrosoft.com'
             $Row.ArmHost | Should -BeExactly 'https://management.azure.com'
             ([uri]$Row.GraphServiceRoot).Host | Should -BeExactly 'graph.microsoft.com'
@@ -75,14 +75,15 @@ Describe 'Get-OPIMCloudEndpoint' {
         It 'reads and writes no module state' {
             InModuleScope Omnicit.PIM {
                 $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com'; Environment = 'China' }
-                $script:_OPIMMsalApp = $null
+                $script:_OPIMLastAuthorityHost = $null
                 try {
                     $Row = Get-OPIMCloudEndpoint -Environment 'USGov'
                     $Row.Environment | Should -BeExactly 'USGov'
                     $script:_OPIMAuthState.Environment | Should -BeExactly 'China'
                     $script:_OPIMAuthState.TenantId | Should -BeExactly 'contoso.onmicrosoft.com'
                     $script:_OPIMAuthState.Count | Should -Be 2
-                    $script:_OPIMMsalApp | Should -BeNullOrEmpty
+                    # Nor the authority tracker of the sign-in (R8).
+                    $script:_OPIMLastAuthorityHost | Should -BeNullOrEmpty
                 } finally {
                     $script:_OPIMAuthState = $null
                 }

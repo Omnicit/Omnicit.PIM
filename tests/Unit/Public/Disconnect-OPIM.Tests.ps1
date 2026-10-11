@@ -52,7 +52,7 @@ Describe 'Disconnect-OPIM' {
             Mock -ModuleName Omnicit.PIM Disconnect-MgGraph {}
         }
 
-        It 'clears the ARM token with the auth state, and the MSAL application with its tenant' {
+        It 'clears the ARM token with the auth state' {
             $Token = New-OPIMTestAccessToken -TenantId '22222222-2222-2222-2222-222222222222' -ObjectId '33333333-3333-3333-3333-333333333333'
             InModuleScope Omnicit.PIM -Parameters @{ Token = $Token } {
                 param($Token)
@@ -66,50 +66,39 @@ Describe 'Disconnect-OPIM' {
                     ArmTokenObjectId = '33333333-3333-3333-3333-333333333333'
                     ArmResourceUrl   = 'https://management.azure.com'
                 }
-                $script:_OPIMMsalApp = [pscustomobject]@{ Name = 'msal-application-stand-in' }
-                $script:_OPIMMsalAppTenantId = 'contoso.onmicrosoft.com'
             }
 
             Disconnect-OPIM
 
             InModuleScope Omnicit.PIM {
                 $script:_OPIMAuthState | Should -BeNullOrEmpty
-                $script:_OPIMMsalApp | Should -BeNullOrEmpty
-                $script:_OPIMMsalAppTenantId | Should -BeNullOrEmpty
             }
             Should -Invoke -ModuleName Omnicit.PIM Disconnect-MgGraph -Times 1 -Exactly -Scope It
         }
     }
 
-    Context 'When the cached MSAL application was built for a sovereign cloud (OPIM-29)' {
+    Context 'When AzAuth last built its credential at a sovereign authority (OPIM-29, R8)' {
         BeforeAll {
             Mock -ModuleName Omnicit.PIM Disconnect-MgGraph {}
         }
         AfterAll {
-            InModuleScope Omnicit.PIM {
-                $script:_OPIMMsalApp = $null
-                $script:_OPIMMsalAppTenantId = $null
-                $script:_OPIMMsalAppEnvironment = $null
-            }
+            InModuleScope Omnicit.PIM { $script:_OPIMLastAuthorityHost = $null }
         }
 
-        It 'clears the cloud of the cached MSAL app' {
-            # The cloud belongs to the application with its tenant; left behind, it would key the next
-            # application's cache on the old cloud.
+        It 'leaves the authority tracker as it is' {
+            # AzAuth's credential is process-wide and outlives Disconnect-OPIM, so the record of the
+            # authority it was last built at must outlive it too: the next sign-in elsewhere then still
+            # passes -Force.
             InModuleScope Omnicit.PIM {
                 $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com'; Environment = 'USGov' }
-                $script:_OPIMMsalApp = [pscustomobject]@{ Name = 'msal-application-stand-in' }
-                $script:_OPIMMsalAppTenantId = 'contoso.onmicrosoft.com'
-                $script:_OPIMMsalAppEnvironment = 'USGov'
+                $script:_OPIMLastAuthorityHost = 'https://login.microsoftonline.us/'
             }
 
             Disconnect-OPIM
 
             InModuleScope Omnicit.PIM {
                 $script:_OPIMAuthState | Should -BeNullOrEmpty
-                $script:_OPIMMsalApp | Should -BeNullOrEmpty
-                $script:_OPIMMsalAppTenantId | Should -BeNullOrEmpty
-                $script:_OPIMMsalAppEnvironment | Should -BeNullOrEmpty
+                $script:_OPIMLastAuthorityHost | Should -BeExactly 'https://login.microsoftonline.us/'
             }
             Should -Invoke -ModuleName Omnicit.PIM Disconnect-MgGraph -Times 1 -Exactly -Scope It
         }

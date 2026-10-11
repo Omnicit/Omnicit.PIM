@@ -20,7 +20,10 @@ class GroupActivatedCompleter : IArgumentCompleter {
             # [scriptblock]::Create, as the listing is called, so both resolve in the same module.
             & ([scriptblock]::Create('Set-OPIMCompletionState -InProgress $true'))
             Write-Progress -Id 51806 -Activity 'Get Activated PIM Groups' -Status 'Fetching from Azure' -PercentComplete 1
-            $Listed = @(& ([scriptblock]::Create('Get-OPIMEntraIDGroup -Activated')))
+            # -WarningAction SilentlyContinue: the Microsoft Graph sign-in behind Get-OPIMEntraIDGroup can warn
+            # (an AZURE_AUTHORITY_HOST that names another authority), which tab completion must not print into
+            # the prompt.
+            $Listed = @(& ([scriptblock]::Create('Get-OPIMEntraIDGroup -Activated -WarningAction SilentlyContinue')))
             [List[CompletionResult]]$Result = @(
                 Get-OPIMCompletionText -Pillar Group -InputObject $Listed -WordToComplete $WordToComplete `
                     -FakeBoundParameters $FakeBoundParameters -CommandName $CommandName
