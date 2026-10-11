@@ -7,18 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Microsoft Graph now signs in through AzAuth's `Get-AzToken`, as Azure already did, and the module
 builds no MSAL client of its own. 0.7.0 could not sign in when a Microsoft.Graph.Authentication
-newer than 2.36.0 was loaded beside AzAuth: `Connect-OPIM`, `pim` and every other command that
-signs in failed with "Could not load file or assembly 'Microsoft.IdentityModel.Abstractions,
+newer than 2.36.0 was loaded beside AzAuth: `Connect-OPIM`, `pim` and every other command that signs
+in failed with "Could not load file or assembly 'Microsoft.IdentityModel.Abstractions,
 Version=8.14.0.0, ...'" and "Failed to build MSAL PublicClientApplication via reflection". This
-version signs in with any
-Microsoft.Graph.Authentication from 2.36.0 on, imported before or after AzAuth, so the workaround
-for 0.7.0 (`Import-Module Microsoft.Graph.Authentication -RequiredVersion 2.36.0` before
-Omnicit.PIM) is no longer needed. A first sign-in asks as before: one browser window or one device
-code for Microsoft Graph, and one more for Azure with `-IncludeARM`, and a token with more than five
-minutes left is still reused without asking. What changes is the renewal: a token near its expiry,
-or one Microsoft Graph rejects, now signs in again, in a browser window or with a new device code,
-where 0.7.0 often renewed it silently. A failed Microsoft Graph sign-in is still
-`InteractiveAuthFailed` or `DeviceCodeAuthFailed`; the MSAL errors `MsalAssemblyNotFound`, `MsalBuilderTypeNotFound`,
+version signs in with any Microsoft.Graph.Authentication from 2.36.0 on,
+imported before or after AzAuth, so the workaround for 0.7.0
+(`Import-Module Microsoft.Graph.Authentication -RequiredVersion 2.36.0` before Omnicit.PIM) is no
+longer needed. A first sign-in asks as before: one browser window or one device code for Microsoft
+Graph, and one more for Azure with `-IncludeARM`, and a token with more than five minutes left is
+still reused without asking. What changes is the renewal: a token near its expiry, or one Microsoft
+Graph rejects, now signs in again, in a browser window or with a new device code, where 0.7.0 often
+renewed it silently. A failed Microsoft Graph sign-in is still `InteractiveAuthFailed` or
+`DeviceCodeAuthFailed`; the MSAL errors `MsalAssemblyNotFound`, `MsalBuilderTypeNotFound`,
 `MsalBuildFailed` and `MsalWithClaimsNotFound` no longer occur.
 
 ## [0.7.0] - 2026-10-11
