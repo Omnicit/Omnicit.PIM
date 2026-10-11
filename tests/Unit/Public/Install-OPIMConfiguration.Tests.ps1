@@ -413,7 +413,7 @@ Describe 'Install-OPIMConfiguration' {
         It 'writes one TenantIdNotResolvable error that names the missing module sign-in' {
             Install-OPIMConfiguration -TenantAlias 'contoso' -TenantMapPath 'TestDrive:\TenantMap.psd1' -ErrorVariable Errors -ErrorAction SilentlyContinue
             $Errors.Count | Should -Be 1
-            $Errors[0].FullyQualifiedErrorId | Should -BeLike 'TenantIdNotResolvable*'
+            ($Errors[0].FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'TenantIdNotResolvable'
             $Errors[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidOperation)
             $Errors[0].Exception.Message | Should -Match 'Omnicit\.PIM holds no sign-in'
             $Errors[0].Exception.Message | Should -Match 'give -TenantId'

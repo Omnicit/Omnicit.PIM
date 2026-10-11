@@ -1218,10 +1218,11 @@ Describe 'Initialize-OPIMAuth' {
                 $Caught.Exception.Message | Should -BeLike "*could not be read*'contoso.onmicrosoft.com'*"
             }
 
-            It 'reuses no cached token from a state that is not a dictionary, and asks AzAuth for a new one' {
+            It 'reuses no cached ARM token from a state that is not a dictionary, and asks AzAuth for a new one' {
                 # The module only ever writes a hashtable; a state of any other shape is no sign-in it
                 # made (as Get-OPIMArmRefusal and Get-OPIMGraphSessionState read it), so its ARM token
-                # is never reused, whatever its properties say.
+                # is never reused, whatever its properties say. Only the ARM half is pinned here: how the
+                # Microsoft Graph half treats such a state is not what this test proves.
                 $Table = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -ObjectId $SessionOid
                 $null = Add-ArmTestToken -State $Table -TenantId $TenantA -ObjectId $SessionOid
                 $State = [pscustomobject]$Table
@@ -1232,7 +1233,7 @@ Describe 'Initialize-OPIMAuth' {
                     Initialize-OPIMAuth -IncludeARM
                     -not [object]::ReferenceEquals($Before, $script:_OPIMAuthState.ArmToken)
                 }
-                Assert-AzTokenCall -Graph 0 -Arm 1
+                @(Get-AzTokenCall -Kind Arm).Count | Should -Be 1 -Because 'the ARM token of a state that is not a dictionary is never reused'
                 $Replaced | Should -BeTrue
             }
         }
@@ -1357,7 +1358,8 @@ Describe 'Initialize-OPIMAuth' {
                     }
                     Invoke-ArmSignInCommand
                 }
-                $Result.SignIn.FullyQualifiedErrorId | Should -BeLike 'AzureConnectFailed*'
+                # The id itself, not only its start: the record is AzureConnectFailed and no other id.
+                ($Result.SignIn.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'AzureConnectFailed'
                 $Result.SignIn.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
                 $Result.SignIn.Exception.Message | Should -BeExactly 'Azure connection failed: AzAuth sign-in failure'
                 $Result.SignIn.Exception.InnerException | Should -BeNullOrEmpty
@@ -1395,7 +1397,7 @@ Describe 'Initialize-OPIMAuth' {
                     $script:_OPIMAuthState = $State
                     try { Initialize-OPIMAuth -IncludeARM } catch { $PSItem }
                 }
-                $Caught.FullyQualifiedErrorId | Should -BeLike 'AzureConnectFailed*'
+                ($Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'AzureConnectFailed'
                 $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
                 $Caught.Exception.Message | Should -BeExactly 'Azure connection failed: the AzAuth module is not installed or could not be loaded. Install AzAuth 2.9.0 from the PowerShell Gallery; it needs PowerShell 7.4 or later.'
                 $Caught.Exception.InnerException | Should -BeNullOrEmpty
@@ -1419,7 +1421,7 @@ Describe 'Initialize-OPIMAuth' {
                     }
                     Invoke-ArmSignInCommand
                 }
-                $Result.SignIn.FullyQualifiedErrorId | Should -BeLike 'AzureConnectFailed*'
+                ($Result.SignIn.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'AzureConnectFailed'
                 $Result.SignIn.Exception.Message | Should -BeExactly 'Azure connection failed: the Azure sign-in returned no access token.'
                 $Result.SignIn.TargetObject | Should -BeExactly $TenantA
                 $Result.State.ArmToken | Should -BeNullOrEmpty
@@ -4084,8 +4086,8 @@ Describe 'Initialize-OPIMAuth' {
         }
 
         It 'steps up with one Microsoft Graph sign-in that carries the claims, <Text>, and sends the request once more, in <Mode>' -ForEach @(
-            @{ Mode = 'device code mode'; DeviceCode = $true; Expected = 'DeviceCode'; Other = 'Interactive'; Force = $true; Text = 'a new device code and Force' }
-            @{ Mode = 'the system browser'; DeviceCode = $false; Expected = 'Interactive'; Other = 'DeviceCode'; Force = $false; Text = 'the browser and no Force' }
+            @{ Mode = 'device code mode'; DeviceCode = $true; Key = @('Claim', 'DeviceCode', 'WarningAction'); Absent = @('Interactive'); Force = $true; Text = 'a new device code and Force' }
+            @{ Mode = 'the system browser'; DeviceCode = $false; Key = @('Claim', 'Interactive'); Absent = @('DeviceCode', 'WarningAction'); Force = $false; Text = 'the browser and no Force' }
         ) {
             $script:RetryFirstFailure = $AcrsFailure
             $State = New-RetrySessionState -DeviceCode $DeviceCode
@@ -4097,9 +4099,13 @@ Describe 'Initialize-OPIMAuth' {
             }
             $Out.Result.id | Should -BeExactly 'after-sign-in'
             $script:RetrySends.Count | Should -Be 2 -Because 'the request is sent once, and once more after the step-up'
-            # One Microsoft Graph sign-in, never an Azure Resource Manager one (Review Focus 3).
-            Assert-AzTokenCall -Graph 1 -Arm 0 -Force $Force -Key 'Claim', $Expected
-            (Get-AzTokenCall -Kind Graph)[0].Keys | Should -Not -Contain $Other
+            # One Microsoft Graph sign-in, never an Azure Resource Manager one (Review Focus 3), in the mode the
+            # session's state records -- in device code mode with -WarningAction Continue, so the new code
+            # reaches the Information stream (Review Focus 2).
+            Assert-AzTokenCall -Graph 1 -Arm 0 -Force $Force -Key $Key
+            foreach ($Name in $Absent) {
+                (Get-AzTokenCall -Kind Graph)[0].Keys | Should -Not -Contain $Name
+            }
             Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter {
                 $Resource -ceq 'https://graph.microsoft.com/' -and $Claim -match 'acrs' -and $Claim -match '"c1"'
             }
@@ -4113,8 +4119,8 @@ Describe 'Initialize-OPIMAuth' {
         }
 
         It 'signs in to Microsoft Graph again with Force, <Text>, and sends the request once more when the token is rejected, in <Mode>' -ForEach @(
-            @{ Mode = 'device code mode'; DeviceCode = $true; Expected = 'DeviceCode'; Other = 'Interactive'; Text = 'with a new device code' }
-            @{ Mode = 'the system browser'; DeviceCode = $false; Expected = 'Interactive'; Other = 'DeviceCode'; Text = 'in the browser' }
+            @{ Mode = 'device code mode'; DeviceCode = $true; Key = @('DeviceCode', 'WarningAction'); Absent = @('Interactive', 'Claim'); Text = 'with a new device code' }
+            @{ Mode = 'the system browser'; DeviceCode = $false; Key = @('Interactive'); Absent = @('DeviceCode', 'WarningAction', 'Claim'); Text = 'in the browser' }
         ) {
             $script:RetryFirstFailure = $RejectedFailure
             $State = New-RetrySessionState -DeviceCode $DeviceCode
@@ -4126,10 +4132,12 @@ Describe 'Initialize-OPIMAuth' {
             }
             $Out.Result.id | Should -BeExactly 'after-sign-in'
             $script:RetrySends.Count | Should -Be 2 -Because 'the request is sent once, and once more after the new sign-in'
-            # -ForceRefresh: Force in either mode (R8), and the session's mode, never the other one.
-            Assert-AzTokenCall -Graph 1 -Arm 0 -Force $true -Key $Expected
-            (Get-AzTokenCall -Kind Graph)[0].Keys | Should -Not -Contain $Other
-            (Get-AzTokenCall -Kind Graph)[0].Keys | Should -Not -Contain 'Claim'
+            # -ForceRefresh: Force in either mode (R8), and the mode the session's state records, never the
+            # other one -- in device code mode with -WarningAction Continue (Review Focus 2).
+            Assert-AzTokenCall -Graph 1 -Arm 0 -Force $true -Key $Key
+            foreach ($Name in $Absent) {
+                (Get-AzTokenCall -Kind Graph)[0].Keys | Should -Not -Contain $Name
+            }
             Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Exactly -Scope It
             $Out.State.ClaimsSatisfied | Should -BeFalse
             $Out.State.DeviceCode | Should -Be $DeviceCode
@@ -4159,7 +4167,7 @@ Describe 'Initialize-OPIMAuth' {
             }
             $Out.Caught.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
             $script:RetrySends.Count | Should -Be 1 -Because 'a refused sign-in sends no retry'
-            Assert-AzTokenCall -Graph 1 -Arm 0 -Force $true -Key 'DeviceCode'
+            Assert-AzTokenCall -Graph 1 -Arm 0 -Force $true -Key 'DeviceCode', 'WarningAction'
             Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
             # The session is left as it was.
             $Out.State.TenantId | Should -BeExactly $TenantA
@@ -4198,9 +4206,9 @@ Describe 'Initialize-OPIMAuth' {
         }
 
         It 'renews <Renewed> at the start of <Command>, <Text>, in <Mode>' -ForEach @(
-            @{ Command = 'Get-OPIMAzureRole'; Renewed = 'both tokens'; Arm = 1; Mode = 'device code mode'; DeviceCode = $true; Force = $true; Key = 'DeviceCode'; Text = 'with Force' }
+            @{ Command = 'Get-OPIMAzureRole'; Renewed = 'both tokens'; Arm = 1; Mode = 'device code mode'; DeviceCode = $true; Force = $true; Key = @('DeviceCode', 'WarningAction'); Text = 'with Force' }
             @{ Command = 'Get-OPIMAzureRole'; Renewed = 'both tokens'; Arm = 1; Mode = 'the system browser'; DeviceCode = $false; Force = $false; Key = 'Interactive'; Text = 'without Force' }
-            @{ Command = 'Get-OPIMDirectoryRole'; Renewed = 'the Microsoft Graph token'; Arm = 0; Mode = 'device code mode'; DeviceCode = $true; Force = $true; Key = 'DeviceCode'; Text = 'with Force' }
+            @{ Command = 'Get-OPIMDirectoryRole'; Renewed = 'the Microsoft Graph token'; Arm = 0; Mode = 'device code mode'; DeviceCode = $true; Force = $true; Key = @('DeviceCode', 'WarningAction'); Text = 'with Force' }
             @{ Command = 'Get-OPIMDirectoryRole'; Renewed = 'the Microsoft Graph token'; Arm = 0; Mode = 'the system browser'; DeviceCode = $false; Force = $false; Key = 'Interactive'; Text = 'without Force' }
         ) {
             InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA; DeviceCode = $DeviceCode } {
@@ -4213,7 +4221,8 @@ Describe 'Initialize-OPIMAuth' {
 
             $null = & $Command -ErrorAction Stop
 
-            # No -TenantId and no -DeviceCode: the cmdlet inherits both from the session.
+            # No -TenantId and no -DeviceCode: the cmdlet inherits both from the session, and a device code
+            # request still carries -WarningAction Continue (Review Focus 2).
             Assert-AzTokenCall -Graph 1 -Arm $Arm -Force $Force -Key $Key
             if ($Arm) {
                 Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It
@@ -4228,17 +4237,17 @@ Describe 'Initialize-OPIMAuth' {
         }
 
         It 'renews only the Microsoft Graph token at the start of Get-OPIMAzureRole and keeps an ARM token with more than five minutes left, in <Mode>' -ForEach @(
-            @{ Mode = 'device code mode'; DeviceCode = $true; Force = $true; Key = 'DeviceCode' }
-            @{ Mode = 'the system browser'; DeviceCode = $false; Force = $false; Key = 'Interactive' }
+            @{ Mode = 'device code mode'; DeviceCode = $true; Force = $true; Key = @('DeviceCode', 'WarningAction') }
+            @{ Mode = 'the system browser'; DeviceCode = $false; Force = $false; Key = @('Interactive') }
         ) {
             # The new Graph token is for the same tenant, account and cloud, so the ARM token is carried
             # and, with an hour left, reused without a request (silent reuse).
-            InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA; DeviceCode = $DeviceCode } {
+            $ArmBefore = InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA; DeviceCode = $DeviceCode } {
                 param($TenantA, $DeviceCode)
                 Initialize-OPIMAuth -TenantId $TenantA -IncludeARM -DeviceCode:$DeviceCode
                 $script:_OPIMAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(4)
                 $script:_OPIMAuthState.ArmTokenExpiry = [DateTime]::UtcNow.AddHours(1)
-                $script:_OPIMTestArmBefore = $script:_OPIMAuthState.ArmToken
+                $script:_OPIMAuthState.ArmToken
             }
             $script:AzTokenCalls.Clear()
 
@@ -4246,11 +4255,47 @@ Describe 'Initialize-OPIMAuth' {
 
             Assert-AzTokenCall -Graph 1 -Arm 0 -Force $Force -Key $Key
             Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMArmRequest -Times 1 -Exactly -Scope It
-            $Kept = InModuleScope Omnicit.PIM {
-                [object]::ReferenceEquals($script:_OPIMTestArmBefore, $script:_OPIMAuthState.ArmToken)
-                $script:_OPIMTestArmBefore = $null
+            $Kept = InModuleScope Omnicit.PIM -Parameters @{ ArmBefore = $ArmBefore } {
+                param($ArmBefore)
+                [object]::ReferenceEquals($ArmBefore, $script:_OPIMAuthState.ArmToken)
             }
             $Kept | Should -BeTrue
+        }
+
+        It 'shows the new device code of a renewal once on the Information stream, and no warning, when the host silenced warnings and information' {
+            # Review Focus 2 and R13: the renewal at a command's start is a new device code sign-in, and
+            # the mode comes from the session's state, not from a -DeviceCode on this call. A silenced
+            # host must still see the code, or the command waits for a code nobody can read.
+            $RenewalCodeText = 'To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code RENEWCODE1 to authenticate.'
+            InModuleScope Omnicit.PIM -Parameters @{ TenantA = $TenantA } {
+                param($TenantA)
+                Initialize-OPIMAuth -TenantId $TenantA -DeviceCode
+                $script:_OPIMAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(4)
+            }
+            $script:AzTokenCalls.Clear()
+            $script:GraphWarning = $RenewalCodeText
+            # The automation host, silenced in the global scope and in this one, as in D8; put back in a
+            # finally, so no later test runs silenced.
+            $SavedWarningPreference = $global:WarningPreference
+            $SavedInformationPreference = $global:InformationPreference
+            try {
+                $global:WarningPreference = 'SilentlyContinue'
+                $global:InformationPreference = 'SilentlyContinue'
+                $WarningPreference = 'SilentlyContinue'
+                $InformationPreference = 'SilentlyContinue'
+                $Out = @(Get-OPIMDirectoryRole -ErrorAction Stop 6>&1 3>&1)
+            } finally {
+                $global:WarningPreference = $SavedWarningPreference
+                $global:InformationPreference = $SavedInformationPreference
+            }
+
+            $Information = @($Out | Where-Object { $_ -is [System.Management.Automation.InformationRecord] })
+            $Information.Count | Should -Be 1 -Because 'the renewal shows its one new code'
+            $Information[0].Tags | Should -Contain 'OPIMDeviceCode'
+            [string]$Information[0].MessageData | Should -BeExactly $RenewalCodeText
+            @($Out | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }).Count | Should -Be 0
+            Assert-AzTokenCall -Graph 1 -Arm 0 -Force $true -Key 'DeviceCode', 'WarningAction'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-OPIMGraphRequest -Times 1 -Exactly -Scope It
         }
     }
 
