@@ -52,8 +52,10 @@ fixture's roles, group and resource groups, seconds and True/False.
 - **D. The gates and the documentation** ("test: refuse MSAL reflection and prove the sign-in path
   with each Graph SDK", "docs: describe the Microsoft Graph sign-in through AzAuth", "docs: say in the
   release notes that Microsoft Graph signs in through AzAuth", "docs: name only the commands that sign
-  in, in the 0.7.1 release note", "docs: say that a token Azure rejects signs in to both again"). No
-  live effect; see the next section.
+  in, in the 0.7.1 release note", "docs: say that a token Azure rejects signs in to both again", "test:
+  pin the using namespace shape of the MSAL pass and the string Account of the state", "docs: say that
+  a token Azure rejects signs in to both, and qualify what AzAuth does"). No live effect; see the next
+  section.
 - **E. The fixture's teardown** (step 7, scope 6). Section 4 removes the sprint's fixture, recreated
   for this step, with `Initialize-OpimS2Prereq.ps1 -Teardown` as `oer-live-cc`.
 
@@ -87,6 +89,12 @@ Class B, each proven by the tests named:
   `tests/Unit/Private/Initialize-OPIMAuth.Tests.ps1`.
 - **No MSAL reflection is left in the source** -- `tests/QA/sourcehygiene.tests.ps1` (Describe 'MSAL
   reflection'). S.1 reads the build for the same fact.
+- **A device code sign-in to a tenant that is not the account's home tenant** (a guest account) -- the
+  test tenant is the test user's home tenant, and no second tenant or guest identity exists for this
+  run (G1). The module's tenant lock refuses a token issued for another tenant than the one asked for
+  (`TenantMismatch`, `tests/Unit/Private/Initialize-OPIMAuth.Tests.ps1`), so the risk is a refused
+  sign-in, never one in the wrong tenant; whether AzAuth's device code path honours `-Tenant` for a
+  guest is not known.
 - **The C-check after the merge** -- the operator runs `Connect-OPIM -IncludeARM` with the published
   preview and the operator's own Microsoft Graph SDK, and activates nothing. It runs after the merge
   and is no box here.
