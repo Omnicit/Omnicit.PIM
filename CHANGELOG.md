@@ -5,6 +5,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes to the module since 0.7.1. A preview published from this point differs from 0.7.1 only in documentation, tests or the build.
+
+## [0.7.1] - 2026-10-11
+
 Microsoft Graph now signs in through AzAuth's `Get-AzToken`, as Azure already did, and the module
 builds no MSAL client of its own. 0.7.0 could not sign in when a Microsoft.Graph.Authentication
 newer than 2.36.0 was loaded beside AzAuth: `Connect-OPIM`, `pim` and every other command that signs
