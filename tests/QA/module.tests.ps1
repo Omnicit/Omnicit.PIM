@@ -531,6 +531,288 @@ Import-Module -Name $Manifest -Force
             }
         }
     }
+
+    Context 'The sign-in path in a clean process, beside each Microsoft.Graph.Authentication' {
+        BeforeAll {
+            <#
+                0.7.0 built an MSAL client of its own by reflection into whichever Microsoft.Identity.Client
+                a load context held, and with the newest Microsoft.Graph.Authentication loaded beside
+                AzAuth that sign-in broke. 0.7.1 signs in to Microsoft Graph through AzAuth's
+                Get-AzToken (A16), and tests/QA/sourcehygiene.tests.ps1 refuses MSAL reflection under
+                source/. This is the run-time half: the BUILT module is imported in a clean pwsh beside
+                AzAuth at its pin and Microsoft.Graph.Authentication at its floor and at the newest
+                version on the PowerShell Gallery, in both import orders, and Connect-OPIM is driven,
+                in device code mode and in the system-browser mode, to a stand-in Get-AzToken that
+                records its parameters and throws. Nobody signs in.
+
+                The newest Microsoft.Graph.Authentication is resolved when the test runs (R18): it is
+                saved from the Gallery into the TestDrive. When the Gallery cannot be reached, the two
+                cases that need it go red with the cause, never skip; the two floor cases still run.
+                The save is caught here, not thrown, so an outage reddens those two cases alone.
+            #>
+            $script:AzAuthPin = [string]$script:RequiredModulesData['AzAuth']
+            $script:GraphPin = [string]$script:RequiredModulesData['Microsoft.Graph.Authentication']
+            # -ListAvailable reads the manifests from disk and imports nothing.
+            $script:AzAuthManifest = @(Get-Module -Name 'AzAuth' -ListAvailable | Where-Object { $_.Version -eq [version]$script:AzAuthPin })[0].Path
+            $script:GraphFloorManifest = @(Get-Module -Name 'Microsoft.Graph.Authentication' -ListAvailable | Where-Object { $_.Version -eq [version]$script:GraphPin })[0].Path
+
+            $script:GraphLatestManifest = $null
+            $script:GraphLatestVersion = $null
+            $script:GraphLatestFailure = ''
+            $PSResourceGetName = 'Microsoft.PowerShell.PSResourceGet'
+            $PSResourceGet = $null
+            try {
+                # A PSResourceGet already loaded in this process is used as it is: a second version of
+                # the same binary module cannot be loaded beside it. Otherwise the newest one installed.
+                # The PSResourceGet a process loads can be an old one without -Quiet (measured: 0.5.22
+                # from a profile), so no switch is passed that the loaded version does not know, and the
+                # progress bar is silenced by preference instead. Measured on 2026-10-11 to save the
+                # newest release with 0.5.22, 1.0.1 (the build's resolver) and 1.2.0 (PowerShell 7.6).
+                $PSResourceGet = @(Get-Module -Name $PSResourceGetName | Sort-Object -Property Version -Descending)[0]
+                if (-not $PSResourceGet) {
+                    $Candidate = @(Get-Module -Name $PSResourceGetName -ListAvailable | Sort-Object -Property Version -Descending)[0]
+                    if (-not $Candidate) { throw "$PSResourceGetName is not installed, so the newest Microsoft.Graph.Authentication cannot be saved." }
+                    $PSResourceGet = Import-Module -Name $Candidate.Path -PassThru -ErrorAction Stop
+                }
+                $Save = $PSResourceGet.ExportedCommands['Save-PSResource']
+                if (-not $Save) { throw "$PSResourceGetName $($PSResourceGet.Version) exports no Save-PSResource." }
+                $LatestFolder = Join-Path -Path $TestDrive -ChildPath 'GraphLatest'
+                $null = New-Item -ItemType Directory -Path $LatestFolder -Force
+                $SaveParams = @{
+                    Name            = 'Microsoft.Graph.Authentication'
+                    Repository      = 'PSGallery'
+                    Path            = $LatestFolder
+                    TrustRepository = $true
+                    ErrorAction     = 'Stop'
+                }
+                if ($Save.Parameters.ContainsKey('SkipDependencyCheck')) { $SaveParams.SkipDependencyCheck = $true }
+                $ProgressPreference = 'SilentlyContinue'
+                $null = & $Save @SaveParams
+                $Saved = @(Get-ChildItem -LiteralPath $LatestFolder -Recurse -File -Filter 'Microsoft.Graph.Authentication.psd1')
+                if ($Saved.Count -ne 1) { throw "Save-PSResource left $($Saved.Count) Microsoft.Graph.Authentication manifests in the TestDrive, not one." }
+                $script:GraphLatestManifest = $Saved[0].FullName
+                $script:GraphLatestVersion = [string](Import-PowerShellDataFile -LiteralPath $Saved[0].FullName).ModuleVersion
+            } catch {
+                $script:GraphLatestFailure = '{0} {1}: {2}' -f $PSResourceGetName, $(if ($PSResourceGet) { $PSResourceGet.Version } else { '(none)' }), $PSItem.Exception.Message
+            }
+
+            <#
+                The probe (R19). No request leaves its process: every .NET HTTP client there is sent to
+                a closed local port, set in its environment before it starts and again by the probe
+                before anything is imported, and the probe refuses to import anything unless the
+                default proxy names that port. Get-AzToken is a recording stand-in that throws a
+                sentinel, and Connect-MgGraph, Invoke-MgGraphRequest, Disconnect-MgGraph,
+                Invoke-WebRequest and Invoke-RestMethod are refusing recorders, all global functions,
+                which a command lookup from the module finds before the cmdlets. The system-browser mode
+                runs only after the device code mode has shown that the module's Get-AzToken IS the
+                stand-in, and no mode runs when the module's own .psm1 calls Get-AzToken
+                module-qualified (AzAuth\Get-AzToken), which no stand-in can answer. KNOWN LIMIT: a call
+                of AzAuth's cmdlet that is not written as a qualified command -- found through
+                Get-Command -Module AzAuth, or by a name assembled at run time -- at the system-browser
+                call site alone would still reach AzAuth; review has to keep both call sites plain.
+                -Mode is one string ('DeviceCode,Interactive'), since pwsh -File passes every argument
+                as one string.
+            #>
+            $script:ProbePath = Join-Path -Path $TestDrive -ChildPath 'Connect-OPIMInCleanProcess.ps1'
+            Set-Content -LiteralPath $script:ProbePath -Encoding utf8NoBOM -Value @'
+param(
+    [Parameter(Mandatory)][string]$Manifest,
+    [Parameter(Mandatory)][string]$GraphManifest,
+    [Parameter(Mandatory)][string]$AzAuthManifest,
+    [Parameter(Mandatory)][ValidateSet('GraphFirst', 'AzAuthFirst')][string]$Order,
+    [Parameter(Mandatory)][string]$Mode,
+    [Parameter(Mandatory)][string]$TenantId
+)
+$ErrorActionPreference = 'Stop'
+$Modes = @($Mode -split ',' | ForEach-Object { $_.Trim() })
+foreach ($M in $Modes) { if ($M -cnotin 'DeviceCode', 'Interactive') { throw "Unknown mode '$M'." } }
+# No request leaves this process: every .NET HTTP client here is sent to a closed local port. The lower
+# case names are read first on Linux and macOS; on Windows they are the same variables.
+foreach ($Name in 'https_proxy', 'http_proxy', 'all_proxy', 'HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY') {
+    [System.Environment]::SetEnvironmentVariable($Name, 'http://127.0.0.1:9')
+}
+foreach ($Name in 'no_proxy', 'NO_PROXY') { [System.Environment]::SetEnvironmentVariable($Name, [NullString]::Value) }
+# The default proxy is read once per process: nothing is imported unless it is the closed port.
+$Proxy = [string][System.Net.Http.HttpClient]::DefaultProxy.GetProxy([uri]'https://login.microsoftonline.com/')
+'OPIM-PROBE-PROXY ' + $Proxy
+if ($Proxy -ne 'http://127.0.0.1:9/') { throw "The default proxy is '$Proxy', not the closed local port, so nothing was imported." }
+# Only the modules named here: PowerShell's own folder, nothing from a profile. Importing
+# Microsoft.Graph.Authentication can put the profile's module folders back, so the path is set again
+# after every import.
+$OwnModules = Join-Path -Path $PSHOME -ChildPath 'Modules'
+$env:PSModulePath = $OwnModules
+$Imports = if ($Order -eq 'GraphFirst') { @($GraphManifest, $AzAuthManifest, $Manifest) } else { @($AzAuthManifest, $GraphManifest, $Manifest) }
+foreach ($Import in $Imports) {
+    Import-Module -Name $Import
+    $env:PSModulePath = $OwnModules
+}
+$Graph = @(Get-Module -Name 'Microsoft.Graph.Authentication' | ForEach-Object { $_.Version.ToString() })
+$AzAuth = @(Get-Module -Name 'AzAuth' | ForEach-Object { $_.Version.ToString() })
+$Omnicit = @(Get-Module -Name 'Omnicit.PIM' | ForEach-Object { $_.ModuleBase })
+$global:OPIMProbeCalls = [System.Collections.Generic.List[object]]::new()
+$global:OPIMProbeTransport = [System.Collections.Generic.List[string]]::new()
+function global:Get-AzToken {
+    [CmdletBinding()]
+    param([string]$Resource, [string[]]$Scope, [string]$Tenant, [string]$ClientId, [string]$Claim,
+        [switch]$Interactive, [switch]$DeviceCode, [switch]$Force, [int]$TimeoutSeconds)
+    $global:OPIMProbeCalls.Add([pscustomobject]@{
+            Resource = $Resource; Scope = @($Scope); Tenant = $Tenant; ClientId = $ClientId
+            Interactive = [bool]$Interactive; DeviceCode = [bool]$DeviceCode; Force = [bool]$Force
+        })
+    throw 'OPIM-PROBE-SIGN-IN-PATH-REACHED'
+}
+foreach ($Name in 'Connect-MgGraph', 'Invoke-MgGraphRequest', 'Disconnect-MgGraph', 'Invoke-WebRequest', 'Invoke-RestMethod') {
+    Set-Item -Path "function:global:$Name" -Value ([scriptblock]::Create("`$global:OPIMProbeTransport.Add('$Name'); throw 'OPIM-PROBE-TRANSPORT-REFUSED'"))
+}
+# The module must find the stand-in when it looks Get-AzToken up, or no mode runs; and a module-qualified
+# call (AzAuth\Get-AzToken), which no stand-in can answer, is refused from the module's own text first.
+$Resolved = & (Get-Module -Name 'Omnicit.PIM') { [string](Get-Command -Name 'Get-AzToken').CommandType }
+if ($Resolved -ne 'Function') { throw "Get-AzToken resolves to a $Resolved from Omnicit.PIM, not to the stand-in, so no mode was run." }
+$RootModule = (Get-Module -Name 'Omnicit.PIM').Path
+if ($RootModule -notlike '*.psm1') { throw "Omnicit.PIM was loaded from '$RootModule', not a .psm1, so its calls cannot be read and no mode was run." }
+$Qualified = @([System.Management.Automation.Language.Parser]::ParseFile($RootModule, [ref]$null, [ref]$null).FindAll({
+            $args[0] -is [System.Management.Automation.Language.CommandAst] -and [string]$args[0].GetCommandName() -match '\\Get-AzToken$'
+        }, $true))
+if ($Qualified.Count -gt 0) { throw "Omnicit.PIM calls $($Qualified[0].GetCommandName()), which the stand-in cannot answer, so no mode was run." }
+$ErrorActionPreference = 'Continue'
+$Outcomes = [System.Collections.Generic.List[object]]::new()
+foreach ($M in $Modes) {
+    if ($M -eq 'Interactive' -and @($global:OPIMProbeCalls | Where-Object { $_.DeviceCode }).Count -eq 0) {
+        # The system browser is never risked: no device code run has shown that the stand-in answers.
+        $Outcomes.Add([pscustomobject]@{ Mode = $M; ErrorId = 'NotRun'; Sentinel = $false; Message = '' })
+        continue
+    }
+    & (Get-Module -Name 'Omnicit.PIM') { $script:_OPIMAuthState = $null }
+    $Splat = @{ TenantId = $TenantId; ErrorAction = 'Stop' }
+    if ($M -eq 'DeviceCode') { $Splat.DeviceCode = $true }
+    try {
+        Connect-OPIM @Splat 6>$null 3>$null
+        $Outcomes.Add([pscustomobject]@{ Mode = $M; ErrorId = ''; Sentinel = $false; Message = '' })
+    } catch {
+        # No token exists in this process, so the message holds none; it is cut short for the report.
+        $Message = [string]$PSItem.Exception.Message
+        $Outcomes.Add([pscustomobject]@{
+                Mode = $M; ErrorId = [string]$PSItem.FullyQualifiedErrorId
+                Sentinel = $Message.Contains('OPIM-PROBE-SIGN-IN-PATH-REACHED')
+                Message = $Message.Substring(0, [System.Math]::Min(300, $Message.Length))
+            })
+    }
+}
+'OPIM-PROBE-RESULT ' + ([pscustomobject]@{
+        Proxy = $Proxy; Graph = $Graph; AzAuth = $AzAuth; Omnicit = $Omnicit; Resolved = $Resolved
+        Calls = @($global:OPIMProbeCalls); Transport = @($global:OPIMProbeTransport); Outcomes = @($Outcomes)
+    } | ConvertTo-Json -Compress -Depth 5)
+'@
+
+            function Invoke-OPIMCleanProcessProbe {
+                <#
+                .SYNOPSIS
+                Runs the probe in a clean pwsh with the closed proxy in its environment, kills it after
+                180 seconds, and returns its exit code, whether it timed out, and its output lines.
+                #>
+                param([Parameter(Mandatory)][string[]]$ArgumentList)
+                $StartInfo = [System.Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path)
+                foreach ($Argument in @('-NoProfile', '-NonInteractive', '-File', $script:ProbePath) + $ArgumentList) {
+                    $StartInfo.ArgumentList.Add($Argument)
+                }
+                $StartInfo.UseShellExecute = $false
+                $StartInfo.RedirectStandardOutput = $true
+                $StartInfo.RedirectStandardError = $true
+                foreach ($Name in 'https_proxy', 'http_proxy', 'all_proxy', 'HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY') {
+                    $StartInfo.Environment[$Name] = 'http://127.0.0.1:9'
+                }
+                foreach ($Name in 'no_proxy', 'NO_PROXY') { $null = $StartInfo.Environment.Remove($Name) }
+                # PowerShell's own update check and telemetry stay quiet too.
+                $StartInfo.Environment['POWERSHELL_UPDATECHECK'] = 'Off'
+                $StartInfo.Environment['POWERSHELL_TELEMETRY_OPTOUT'] = '1'
+                $Process = [System.Diagnostics.Process]::Start($StartInfo)
+                try {
+                    $StandardOutput = $Process.StandardOutput.ReadToEndAsync()
+                    $StandardError = $Process.StandardError.ReadToEndAsync()
+                    $TimedOut = -not $Process.WaitForExit(180000)
+                    if ($TimedOut) { $Process.Kill($true) }
+                    $Process.WaitForExit()
+                    [pscustomobject]@{
+                        ExitCode = $Process.ExitCode
+                        TimedOut = $TimedOut
+                        Lines    = @(($StandardOutput.Result + "`n" + $StandardError.Result) -split '\r?\n' | Where-Object { $_ })
+                    }
+                } finally {
+                    $Process.Dispose()
+                }
+            }
+        }
+
+        It 'Should reach Get-AzToken for Microsoft Graph with Microsoft.Graph.Authentication <Graph>, imported <Order>' -ForEach @(
+            @{ Graph = 'floor'; Order = 'GraphFirst' }
+            @{ Graph = 'floor'; Order = 'AzAuthFirst' }
+            @{ Graph = 'latest'; Order = 'GraphFirst' }
+            @{ Graph = 'latest'; Order = 'AzAuthFirst' }
+        ) {
+            $script:AzAuthManifest | Should -Not -BeNullOrEmpty -Because ('AzAuth {0} must be resolved for the build' -f $script:AzAuthPin)
+            if ($Graph -eq 'latest') {
+                $script:GraphLatestFailure | Should -BeNullOrEmpty -Because (
+                    'the newest Microsoft.Graph.Authentication is saved from the PowerShell Gallery when the test runs (R18), and a Gallery that cannot be reached is a red run, never a skipped one')
+                [version]$script:GraphLatestVersion | Should -BeGreaterOrEqual ([version]$script:GraphPin) -Because 'the newest release on the Gallery cannot be older than the floor the module declares'
+                $GraphManifest = $script:GraphLatestManifest
+                $GraphVersion = $script:GraphLatestVersion
+            } else {
+                $script:GraphFloorManifest | Should -Not -BeNullOrEmpty -Because ('Microsoft.Graph.Authentication {0} must be resolved for the build' -f $script:GraphPin)
+                $GraphManifest = $script:GraphFloorManifest
+                $GraphVersion = $script:GraphPin
+            }
+            $TenantId = '00000000-0000-0000-0000-000000000000'
+
+            $Run = Invoke-OPIMCleanProcessProbe -ArgumentList @(
+                '-Manifest', $script:BuiltManifestPath, '-GraphManifest', $GraphManifest, '-AzAuthManifest', $script:AzAuthManifest,
+                '-Order', $Order, '-Mode', 'DeviceCode,Interactive', '-TenantId', $TenantId)
+            $Output = $Run.Lines -join ' | '
+            $Run.TimedOut | Should -BeFalse -Because ('nothing in the probe may wait for a sign-in, so it was killed after 180 seconds: {0}' -f $Output)
+            $Run.ExitCode | Should -Be 0 -Because ('the probe must import the build beside AzAuth {0} and Microsoft.Graph.Authentication {1}, imported {2}, and run to its end: {3}' -f $script:AzAuthPin, $GraphVersion, $Order, $Output)
+            $ResultLine = @($Run.Lines | Where-Object { $_.StartsWith('OPIM-PROBE-RESULT ', [System.StringComparison]::Ordinal) })
+            $ResultLine.Count | Should -Be 1 -Because ('the probe writes one result line: {0}' -f $Output)
+            $Result = $ResultLine[0].Substring('OPIM-PROBE-RESULT '.Length) | ConvertFrom-Json
+
+            # The process the probe ran in: the closed proxy, and exactly the modules asked for.
+            $Result.Proxy | Should -BeExactly 'http://127.0.0.1:9/' -Because 'no request may leave the probe'
+            @($Result.Graph) | Should -Be @($GraphVersion) -Because 'exactly one Microsoft.Graph.Authentication is loaded, the version asked for'
+            @($Result.AzAuth) | Should -Be @($script:AzAuthPin) -Because 'exactly one AzAuth is loaded, the pinned one'
+            @($Result.Omnicit) | Should -Be @($script:moduleUnderTest.ModuleBase) -Because 'the module imported is the build under test'
+            $Result.Resolved | Should -BeExactly 'Function' -Because 'the module must find the stand-in Get-AzToken'
+
+            # One Get-AzToken call per mode, for Microsoft Graph, as the Microsoft Graph Command Line
+            # Tools client with the six PIM scopes: device code with -Force, then the system browser.
+            $Calls = @($Result.Calls)
+            $Calls.Count | Should -Be 2 -Because ('each mode signs in once, through Get-AzToken; the outcomes were: {0}' -f ($Result.Outcomes | ConvertTo-Json -Compress))
+            foreach ($Call in $Calls) {
+                $Call.Resource | Should -BeExactly 'https://graph.microsoft.com/'
+                $Call.ClientId | Should -BeExactly '14d82eec-204b-4c2f-b7e8-296a70dab67e'
+                $Call.Tenant | Should -BeExactly $TenantId
+                @($Call.Scope) | Should -Be @(
+                    'RoleEligibilitySchedule.ReadWrite.Directory'
+                    'RoleAssignmentSchedule.ReadWrite.Directory'
+                    'PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup'
+                    'PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup'
+                    'AdministrativeUnit.Read.All'
+                    'User.Read'
+                )
+            }
+            $Calls[0].DeviceCode | Should -BeTrue
+            $Calls[0].Force | Should -BeTrue -Because 'every device code request carries -Force (A17)'
+            $Calls[0].Interactive | Should -BeFalse -Because 'a device code session never opens the system browser'
+            $Calls[1].Interactive | Should -BeTrue
+            $Calls[1].DeviceCode | Should -BeFalse
+            $Calls[1].Force | Should -BeFalse -Because 'a first system-browser sign-in at the global authority passes no -Force'
+
+            # The failure of each sign-in is the module's own id, carrying AzAuth's message.
+            $Outcomes = @($Result.Outcomes)
+            @($Outcomes | ForEach-Object { '{0} {1} {2}' -f $_.Mode, ([string]$_.ErrorId).Split(',')[0], $_.Sentinel }) | Should -Be @(
+                'DeviceCode DeviceCodeAuthFailed True'
+                'Interactive InteractiveAuthFailed True'
+            )
+            @($Result.Transport) | Should -BeNullOrEmpty -Because 'no Graph request, Graph connection or web request is made before a token exists'
+        }
+    }
 }
 
 BeforeDiscovery {

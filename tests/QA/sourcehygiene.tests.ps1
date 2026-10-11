@@ -6,8 +6,8 @@ BeforeAll {
     #
     # The gate reads files and parses text. It imports nothing and runs no module code.
     #
-    # It holds seven checks, one Describe each, in this order (Pass 1 to Pass 5 below are the steps
-    # of this BeforeAll behind the third, the sixth and the seventh):
+    # It holds eight checks, one Describe each, in this order (Pass 1 to Pass 6 below are the steps
+    # of this BeforeAll behind the third, the sixth, the seventh and the eighth):
     #   Source encoding -- ASCII only and no BOM, in every authored file.
     #   Cmdlet reference hygiene -- every Verb-OPIM name in source/**/*.ps1 names a command.
     #   Bearer-token hygiene -- every catch on a transport path scrubs first (call-edge closure).
@@ -15,6 +15,8 @@ BeforeAll {
     #   Format and type data -- every .ps1xml parses as XML; no ScriptProperty reads its own name.
     #   Az boundary (decision A7) -- no Az command or module, .ps1xml script blocks included.
     #   Cloud hosts (decision A11) -- each cloud host is written only in Get-OPIMCloudEndpoint.
+    #   MSAL reflection (decision A16) -- no reflection into Microsoft.Identity.Client, .ps1xml
+    #     script blocks included.
     #
     # '*.txt' and '*.md' are deliberately NOT in the include list. The about topic
     # (source/en-US/about_Omnicit.PIM.help.txt) belongs to the about-topic check,
@@ -607,11 +609,172 @@ BeforeAll {
     $script:CloudHostFindings = [System.Collections.Generic.List[object]]::new()
     $script:CloudHostParsedFileCount = 0
 
+    <#
+        =====================================================================================
+        MSAL REFLECTION (Pass 6, decision A16, Sprint 2 step 7, hotfix 0.7.1).
+
+        THE PROPERTY. Omnicit.PIM signs in to Microsoft Graph and to Azure Resource Manager through
+        AzAuth's Get-AzToken, and it reaches into no Microsoft.Identity.Client (MSAL) assembly of its
+        own: no assembly lookup, no MSAL type, no builder and no token method. 0.7.0 built an MSAL
+        public client by reflection into whichever copy of the assembly a load context held -- the
+        one Microsoft.Graph.Authentication ships or the one AzAuth ships -- and a newer
+        Microsoft.Graph.Authentication beside AzAuth broke that sign-in. MSAL belongs to the two
+        dependencies that ship it; a module that reflects into it again depends on the build of a copy
+        it does not own. The clean-process test in tests/QA/module.tests.ps1 holds the run-time half:
+        the built module, beside AzAuth and each Microsoft.Graph.Authentication, signs in through
+        Get-AzToken.
+
+        WHY THE AST. A comment is a token and never an AST node, so help and comments that NAME MSAL or
+        one of its methods (Initialize-OPIMAuth's own help says it builds no MSAL client) are never
+        offered to this pass. Every .ps1, .psm1 and .psd1 under source/ is read on the AST Pass 1 has
+        already parsed (each file is parsed once), and so is every script block of the .ps1xml files
+        under source/, through Get-SourceHygieneXmlScriptBlock, as in the Az boundary.
+
+        THREE REFUSED SHAPES. A node is reported once, by the first shape below that it matches.
+          (a) Assembly: a string of any kind -- quoted, here-string, bareword or expandable -- whose
+              text names Microsoft.Identity.Client, also when escaped for a regular expression
+              (Microsoft\.Identity\.Client): an assembly looked up in a load context, a DLL file name,
+              a type found by name (GetType('Microsoft.Identity.Client.<type>')), Add-Type
+              -AssemblyName, New-Object and using namespace.
+          (b) Type: a type literal or a type constraint whose full name lies in
+              Microsoft.Identity.Client ([Microsoft.Identity.Client.PublicClientApplicationBuilder]::Create(...),
+              [Microsoft.Identity.Client.IAccount]$Account), a generic argument included.
+          (c) Member: a member name ($App.AcquireTokenSilent(...)) or any other string constant
+              (GetMethod('WithClaims', ...), $_.Name -eq 'AcquireTokenInteractive') equal, ignoring
+              case, to one of the MSAL method and type names in $script:MsalMemberNames. This is the
+              form 0.7.0's reflection took: a method found by name never names its assembly.
+
+        KNOWN LIMITS, stated rather than papered over. A name assembled at run time
+        ('Microsoft.Identity.' + 'Client', 'Acquire' + 'TokenSilent', a -f format, a [string]
+        built from parts) is invisible to a parser: no node holds the whole name. So is a method found
+        by a computed name ($Type.GetMethods() | Where-Object Name -eq $Name, with the name read from a
+        variable or from data), and a method or type of MSAL that is not on the list (WithBroker,
+        WithTenantId, ExecuteAsync and Build are not, since they are common names). So is MSAL reached
+        through another assembly: a type loaded with Add-Type -Path from a DLL that wraps it, or an
+        assembly the module would load by a name that is not MSAL's. A C# source handed to Add-Type
+        -TypeDefinition is a string, so a using directive or a type name of MSAL in it is shape (a).
+        Review has to catch the shapes above; this pass cannot. Code outside source/ -- AzAuth and
+        Microsoft.Graph.Authentication themselves, which own their MSAL -- is not this pass's concern.
+
+        The positive controls are the two known-answer Its, which run the detector over an in-memory
+        text holding every refused shape (lines lifted from 0.7.0's Get-OPIMMsalApplication,
+        Initialize-OPIMAuth and Invoke-OPIMDeviceCodeAuth) beside the shapes the AzAuth sign-in uses,
+        and over an in-memory Types text; the floors on the files parsed and the nodes walked guard
+        the walk over the real tree, where a clean tree yields no finding at all.
+        =====================================================================================
+    #>
+    $script:MsalNamePattern = '(?i)Microsoft\\?\.Identity\\?\.Client'
+    $script:MsalMemberNames = [System.Collections.Generic.HashSet[string]]::new(
+        [string[]]@(
+            'AcquireTokenSilent', 'AcquireTokenInteractive', 'AcquireTokenWithDeviceCode',
+            'AcquireTokenByRefreshToken', 'AcquireTokenByAuthorizationCode', 'AcquireTokenForClient',
+            'AcquireTokenOnBehalfOf', 'AcquireTokenByUsernamePassword', 'AcquireTokenByIntegratedWindowsAuth',
+            'PublicClientApplicationBuilder', 'ConfidentialClientApplicationBuilder', 'PublicClientApplication',
+            'WithAuthority', 'WithRedirectUri', 'WithForceRefresh', 'WithUseEmbeddedWebView', 'WithLoginHint',
+            'WithClaims', 'GetAccounts', 'GetAccountsAsync'
+        ), [System.StringComparer]::OrdinalIgnoreCase)
+
+    # The nodes the detector reads. Pass 1 counts them through the detector's own -Walked counter, so
+    # a floor holds the walk the detector made, not a second walk beside it.
+    $script:MsalNodePredicate = {
+        $args[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+        $args[0] -is [System.Management.Automation.Language.ExpandableStringExpressionAst] -or
+        $args[0] -is [System.Management.Automation.Language.TypeExpressionAst] -or
+        $args[0] -is [System.Management.Automation.Language.TypeConstraintAst]
+    }
+
+    function Get-SourceHygieneMsalFinding {
+        <#
+        .SYNOPSIS
+        Returns one line per MSAL-shaped node of a parsed file, '<path>:<line>: <reason>', in the
+        order the nodes appear. -LineOffset is added to every line, for a script block of a .ps1xml
+        file, whose own line 1 is the line of its element. -Walked, when given, is raised by the
+        number of nodes the walk offered the detector.
+        #>
+        [OutputType([string])]
+        param(
+            [Parameter(Mandatory)]
+            [System.Management.Automation.Language.Ast]$Ast,
+
+            [Parameter(Mandatory)]
+            [string]$RelativePath,
+
+            [int]$LineOffset = 0,
+
+            [ref]$Walked
+        )
+        $Nodes = @($Ast.FindAll($script:MsalNodePredicate, $true))
+        if ($Walked) { $Walked.Value += $Nodes.Count }
+        foreach ($Node in $Nodes) {
+            $Reason = $null
+            if ($Node -is [System.Management.Automation.Language.TypeExpressionAst] -or
+                $Node -is [System.Management.Automation.Language.TypeConstraintAst]) {
+                # (b) Type: the full name, so a generic argument is read as well.
+                if ($Node.TypeName.FullName -match $script:MsalNamePattern) {
+                    $Reason = 'type [{0}] is in Microsoft.Identity.Client' -f $Node.TypeName.FullName
+                }
+            } elseif ([string]$Node.Value -match $script:MsalNamePattern) {
+                # (a) Assembly: the first line of the node's own text names the string as written.
+                $Reason = 'string names Microsoft.Identity.Client: {0}' -f ($Node.Extent.Text -split "`r?`n")[0].Trim()
+            } elseif ($script:MsalMemberNames.Contains([string]$Node.Value)) {
+                # (c) Member: a member name of a member access or a method call, or any other string.
+                $Reason = if ($Node.Parent -is [System.Management.Automation.Language.MemberExpressionAst] -and
+                    [object]::ReferenceEquals($Node.Parent.Member, $Node)) {
+                    'member .{0} is an MSAL name' -f $Node.Value
+                } else {
+                    'string ''{0}'' is an MSAL name' -f $Node.Value
+                }
+            }
+            if ($Reason) {
+                '{0}:{1}: {2}' -f $RelativePath, ($Node.Extent.StartLineNumber + $LineOffset), $Reason
+            }
+        }
+    }
+
+    function Get-SourceHygieneXmlMsalFinding {
+        <#
+        .SYNOPSIS
+        Returns the findings of Get-SourceHygieneMsalFinding for one script block that
+        Get-SourceHygieneXmlScriptBlock returned, each line counted in the file: the element's line
+        plus the finding's own line in the block, less one. -Walked is handed on.
+        #>
+        [OutputType([string])]
+        param(
+            [Parameter(Mandatory)]
+            [pscustomobject]$Block,
+
+            [ref]$Walked
+        )
+        $Splat = @{ Ast = $Block.Ast; RelativePath = $Block.Path; LineOffset = $Block.Line - 1 }
+        if ($Walked) { $Splat.Walked = $Walked }
+        Get-SourceHygieneMsalFinding @Splat
+    }
+
+    <#
+        The floors sit just under the counts measured on 2026-10-11, of the string and type nodes
+        (StringConstantExpressionAst, ExpandableStringExpressionAst, TypeExpressionAst and
+        TypeConstraintAst) the detector's own walk is offered: 5,576 in the 66 parsed files under
+        source/, and 171 in the 37 script blocks of the two .ps1xml files. They are counted through
+        the detector's -Walked counter, so a Pass 1 that stopped calling the detector, or a walk that
+        lost files or broke its predicate, falls below them; a clean tree alone would look the same as
+        a blind detector. Raise a floor when the tree genuinely grows. The files parsed and the
+        .ps1xml script blocks read are held equal to the Az boundary's own counts, which carry their
+        floors.
+    #>
+    $script:MsalNodeFloor = 5400
+    $script:MsalXmlNodeFloor = 160
+    $script:MsalFindings = [System.Collections.Generic.List[string]]::new()
+    $script:MsalParsedFileCount = 0
+    $script:MsalNodeCount = 0
+    $script:MsalXmlScriptBlockCount = 0
+    $script:MsalXmlNodeCount = 0
+
     # --- Pass 1: parse every PowerShell-syntax source file exactly once. ---
     #
     # A .ps1xml file is XML, which the PowerShell parser would report as errors, so it is never
     # parsed whole: the Az boundary (Pass 4) parses each of its script blocks instead, through
-    # Get-SourceHygieneXmlScriptBlock, and no other pass of this loop reads it.
+    # Get-SourceHygieneXmlScriptBlock, and the MSAL pass (Pass 6) reads those same script blocks; no
+    # other pass of this loop reads it.
     # .psd1 parses cleanly as a hashtable literal.
     $script:SourceUnits = [System.Collections.Generic.List[object]]::new()
     $script:ParseFailures = [System.Collections.Generic.List[string]]::new()
@@ -633,6 +796,7 @@ BeforeAll {
             }
             foreach ($Block in $XmlBlocks) {
                 $script:AzXmlScriptBlockCount++
+                $script:MsalXmlScriptBlockCount++
                 if ($Block.Errors.Count -gt 0) {
                     $script:ParseFailures.Add(('{0}:{1} ({2}) -- {3} parse error(s), first: {4}' -f
                             $Block.Path, $Block.Line, $Block.Element, $Block.Errors.Count, $Block.Errors[0].Message))
@@ -640,6 +804,11 @@ BeforeAll {
                 }
                 foreach ($Finding in @(Get-SourceHygieneXmlAzFinding -Block $Block)) {
                     $script:AzFindings.Add($Finding)
+                }
+                # Pass 6 (MSAL reflection) reads the same script block; a finding's line is counted
+                # in the file, from the line of the block's element.
+                foreach ($Finding in @(Get-SourceHygieneXmlMsalFinding -Block $Block -Walked ([ref]$script:MsalXmlNodeCount))) {
+                    $script:MsalFindings.Add($Finding)
                 }
             }
             continue
@@ -674,6 +843,12 @@ BeforeAll {
         $script:CloudHostParsedFileCount++
         foreach ($Finding in @(Get-SourceHygieneCloudHostFinding -Ast $FileAst -RelativePath $File.RelativePath)) {
             $script:CloudHostFindings.Add($Finding)
+        }
+
+        # Pass 6 (MSAL reflection) reads the same AST too; see its comment above Pass 1.
+        $script:MsalParsedFileCount++
+        foreach ($Finding in @(Get-SourceHygieneMsalFinding -Ast $FileAst -RelativePath $File.RelativePath -Walked ([ref]$script:MsalNodeCount))) {
+            $script:MsalFindings.Add($Finding)
         }
 
         <#
@@ -1620,5 +1795,148 @@ $ArmBaseUrl += if ($A) { 'x' } else { 'https://management.azure.com' }
             'source/Private/Get-OPIMCloudEndpoint.ps1 is the single owner of every Graph, ARM and authority host of the four clouds (A11); ' +
             'a second copy can drift from the table and sends a request or a credential across the wrong cloud boundary on a sovereign tenant. ' +
             'Read the host from Get-OPIMCloudEndpoint instead. The only other exemption is the transport''s documented fallback literal, found by its shape')
+    }
+}
+
+Describe 'MSAL reflection' -Tags 'SourceHygiene' {
+
+    It 'recognises every MSAL shape it refuses, and none of the shapes the AzAuth sign-in uses (known answer)' {
+        # The positive control of the gate: if a shape stops matching, this text no longer yields its
+        # findings. Lines 1-3 and 9-13 are lifted from 0.7.0 (Get-OPIMMsalApplication: the load
+        # context scan, the DLL name, the builder type found by name and WithAuthority found by name;
+        # Initialize-OPIMAuth: AcquireTokenSilent and WithForceRefresh; Invoke-OPIMDeviceCodeAuth:
+        # AcquireTokenWithDeviceCode and WithClaims). Shape (a), a string: line 1 escaped for a
+        # regular expression, lines 2 and 3 quoted, line 4 a bareword and line 5 an expandable
+        # string. Shape (b), a type: line 6 a type literal, line 7 a type constraint and line 8 a
+        # generic argument. Shape (c), an MSAL name: lines 9-13 strings and lines 14 and 15 members
+        # of a method call. Each line is one finding: a node is reported once, by its first shape.
+        $Refused = @'
+$MsalAssembly = [System.Runtime.Loader.AssemblyLoadContext]::All | ForEach-Object { $_.Assemblies } | Where-Object { $_.FullName -match '^Microsoft\.Identity\.Client, Version=[45]' }
+$MsalDll = Get-ChildItem -Path $GraphFolder -Recurse -Filter 'Microsoft.Identity.Client.dll'
+$BuilderType = $MsalAssembly.GetType('Microsoft.Identity.Client.PublicClientApplicationBuilder')
+Add-Type -AssemblyName Microsoft.Identity.Client
+Write-Verbose "Located MSAL assembly: Microsoft.Identity.Client $Version"
+$Builder = [Microsoft.Identity.Client.PublicClientApplicationBuilder]::Create($ClientId)
+[Microsoft.Identity.Client.IAccount]$CachedAccount = $null
+$Accounts = [System.Collections.Generic.List[Microsoft.Identity.Client.IAccount]]::new()
+$WithAuthorityMethod = $Builder.GetType().GetMethods() | Where-Object { $_.Name -eq 'WithAuthority' }
+$SilentMethod = $AppType.GetMethods() | Where-Object { $_.Name -eq 'AcquireTokenSilent' }
+$WithForceRefreshMethod = $SilentBuilder.GetType().GetMethod('WithForceRefresh', [Type[]]@([bool]))
+$DeviceCodeMethod = $MsalApp.GetType().GetMethods() | Where-Object { $_.Name -eq 'AcquireTokenWithDeviceCode' }
+$WithClaimsMethod = $Builder.GetType().GetMethod('WithClaims', [Type[]]@([string]))
+$AuthResult = $MsalApp.AcquireTokenInteractive($GraphScopes).ExecuteAsync().GetAwaiter().GetResult()
+$Accounts = $MsalApp.GetAccountsAsync().GetAwaiter().GetResult()
+'@
+        $Errors = $null
+        $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Refused, [ref]$null, [ref]$Errors)
+        $Errors | Should -BeNullOrEmpty -Because 'the known-answer text must parse, or it proves nothing'
+        @(Get-SourceHygieneMsalFinding -Ast $Ast -RelativePath 'source/Private/Fake.ps1') | Should -Be @(
+            'source/Private/Fake.ps1:1: string names Microsoft.Identity.Client: ''^Microsoft\.Identity\.Client, Version=[45]'''
+            'source/Private/Fake.ps1:2: string names Microsoft.Identity.Client: ''Microsoft.Identity.Client.dll'''
+            'source/Private/Fake.ps1:3: string names Microsoft.Identity.Client: ''Microsoft.Identity.Client.PublicClientApplicationBuilder'''
+            'source/Private/Fake.ps1:4: string names Microsoft.Identity.Client: Microsoft.Identity.Client'
+            'source/Private/Fake.ps1:5: string names Microsoft.Identity.Client: "Located MSAL assembly: Microsoft.Identity.Client $Version"'
+            'source/Private/Fake.ps1:6: type [Microsoft.Identity.Client.PublicClientApplicationBuilder] is in Microsoft.Identity.Client'
+            'source/Private/Fake.ps1:7: type [Microsoft.Identity.Client.IAccount] is in Microsoft.Identity.Client'
+            'source/Private/Fake.ps1:8: type [System.Collections.Generic.List[Microsoft.Identity.Client.IAccount]] is in Microsoft.Identity.Client'
+            'source/Private/Fake.ps1:9: string ''WithAuthority'' is an MSAL name'
+            'source/Private/Fake.ps1:10: string ''AcquireTokenSilent'' is an MSAL name'
+            'source/Private/Fake.ps1:11: string ''WithForceRefresh'' is an MSAL name'
+            'source/Private/Fake.ps1:12: string ''AcquireTokenWithDeviceCode'' is an MSAL name'
+            'source/Private/Fake.ps1:13: string ''WithClaims'' is an MSAL name'
+            'source/Private/Fake.ps1:14: member .AcquireTokenInteractive is an MSAL name'
+            'source/Private/Fake.ps1:15: member .GetAccountsAsync is an MSAL name'
+        )
+
+        # The shapes the AzAuth sign-in uses, which must stay allowed: help and a comment that name
+        # MSAL and its methods (no AST node), the Get-AzToken call with its splat, its result's Token
+        # and Identity, the Graph SDK's module name, a note on Azure.Identity, and a longer name that
+        # merely begins with an MSAL name (the match is equality, not a prefix).
+        $Allowed = @'
+<#
+.SYNOPSIS
+Signs in through AzAuth, which builds its own Microsoft.Identity.Client (MSAL) client: no
+AcquireTokenSilent, no WithClaims and no PublicClientApplicationBuilder here.
+#>
+function Test-MsalAllowedShape {
+    # 0.7.0 called AcquireTokenInteractive on a Microsoft.Identity.Client builder; this calls AzAuth.
+    $GraphTokenParams = @{ Resource = $Endpoint.GraphResource; Scope = $GraphScopes; ClientId = $GraphClientId; TimeoutSeconds = 900 }
+    if ($ClaimsChallenge) { $GraphTokenParams.Claim = $ClaimsChallenge }
+    $GraphResult = Get-AzToken @GraphTokenParams -DeviceCode -Force -ErrorAction Stop
+    $Token = Get-AzToken -Resource $GraphResource -Scope $GraphScopes -ClientId $GraphClientId -Interactive
+    $SecureToken = [System.Net.NetworkCredential]::new('', $GraphResult.Token).SecurePassword
+    [string]$GraphAccount = [string]$GraphResult.Identity
+    Import-Module -Name 'Microsoft.Graph.Authentication'
+    Write-Verbose 'Azure.Identity reads AZURE_AUTHORITY_HOST when AzAuth builds its credential.'
+    $StepUp = 'WithClaimsChallenge'
+}
+'@
+        $Errors = $null
+        $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Allowed, [ref]$null, [ref]$Errors)
+        $Errors | Should -BeNullOrEmpty -Because 'the known-answer text must parse, or it proves nothing'
+        @(Get-SourceHygieneMsalFinding -Ast $Ast -RelativePath 'source/Private/Fake.ps1') | Should -BeNullOrEmpty -Because (
+            'help, comments and the AzAuth sign-in name MSAL without reflecting into it')
+    }
+
+    It 'finds an MSAL shape in a script block of a .ps1xml file, and reads no data element (known answer)' {
+        # The positive control of the .ps1xml walk, run through the functions Pass 1 calls: a type
+        # literal in a GetScriptBlock (line 8) and an MSAL member in a ScriptMethod body (line 13).
+        # The NoteProperty of line 18 names the assembly as data, which is never run, so the walk
+        # does not read it. A finding's line is the line of the file it sits on.
+        $Types = @'
+<?xml version="1.0" encoding="utf-8"?>
+<Types>
+  <Type>
+    <Name>Case.Msal</Name>
+    <Members>
+      <ScriptProperty>
+        <Name>Builder</Name>
+        <GetScriptBlock>[Microsoft.Identity.Client.PublicClientApplicationBuilder]::Create('x')</GetScriptBlock>
+      </ScriptProperty>
+      <ScriptMethod>
+        <Name>Accounts</Name>
+        <Script>
+          $this.App.GetAccountsAsync()
+        </Script>
+      </ScriptMethod>
+      <NoteProperty>
+        <Name>Assembly</Name>
+        <Value>Microsoft.Identity.Client</Value>
+      </NoteProperty>
+    </Members>
+  </Type>
+</Types>
+'@
+        $Blocks = @(Get-SourceHygieneXmlScriptBlock -Text $Types -RelativePath 'source/Formats/Case.Types.ps1xml')
+        $Blocks.Count | Should -Be 2 -Because 'the walk reads the GetScriptBlock and the Script element, and never the NoteProperty'
+        @($Blocks | ForEach-Object { Get-SourceHygieneXmlMsalFinding -Block $_ }) | Should -Be @(
+            'source/Formats/Case.Types.ps1xml:8: type [Microsoft.Identity.Client.PublicClientApplicationBuilder] is in Microsoft.Identity.Client'
+            'source/Formats/Case.Types.ps1xml:13: member .GetAccountsAsync is an MSAL name'
+        )
+    }
+
+    It 'parses every source file and walks a meaningful number of string and type nodes' {
+        # A missing floor would compare with $null, which every count passes. The files and the
+        # .ps1xml script blocks are the Az boundary's: Pass 1 offers both passes the same parsed
+        # files and the same script blocks, so the counts must agree as well. The node counts are the
+        # detector's own walk (-Walked), the only proof on a clean tree that it read anything.
+        $script:MsalNodeFloor | Should -BeGreaterThan 0
+        $script:MsalXmlNodeFloor | Should -BeGreaterThan 0
+        $script:ParseFailures | Should -BeNullOrEmpty
+        $script:MsalParsedFileCount | Should -BeGreaterOrEqual $script:AzParsedFileFloor
+        $script:MsalParsedFileCount | Should -Be $script:AzParsedFileCount -Because 'both passes read the files Pass 1 parsed, so a file one of them lost is a file the loop skipped'
+        $script:MsalXmlScriptBlockCount | Should -BeGreaterOrEqual $script:AzXmlScriptBlockFloor
+        $script:MsalXmlScriptBlockCount | Should -Be $script:AzXmlScriptBlockCount -Because 'both passes read the script blocks of the .ps1xml files'
+        $script:MsalNodeCount | Should -BeGreaterOrEqual $script:MsalNodeFloor -Because (
+            'the detector was offered 5,576 string and type nodes in the parsed files on 2026-10-11; a walk under the floor has broken, and a clean tree would look the same as a blind detector')
+        $script:MsalXmlNodeCount | Should -BeGreaterOrEqual $script:MsalXmlNodeFloor -Because (
+            'the detector was offered 171 string and type nodes in the .ps1xml script blocks on 2026-10-11; a walk under the floor has stopped reading them')
+    }
+
+    It 'reflects into no Microsoft.Identity.Client anywhere under source/' {
+        ($script:MsalFindings -join '; ') | Should -BeNullOrEmpty -Because (
+            'Omnicit.PIM signs in to Microsoft Graph and to Azure through AzAuth''s Get-AzToken (A16); its own MSAL client, ' +
+            'built by reflection into whichever Microsoft.Identity.Client a load context held, broke when a newer ' +
+            'Microsoft.Graph.Authentication was loaded beside AzAuth. MSAL belongs to the dependencies that ship it. The findings')
     }
 }
