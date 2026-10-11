@@ -680,7 +680,7 @@ call it as the first statement of their `process` block (of their `begin` block 
 `Enable-OPIMDirectoryRole` and `Wait-OPIMDirectoryRole`), and the three `*-OPIMAzureRole` cmdlets
 pass `-IncludeARM`. `Connect-OPIM` resolves `-TenantAlias` from `TenantMap.psd1` and passes its
 `-TenantId`, `-IncludeARM`, `-DeviceCode` and the cloud on (`-Environment`, or the cloud the alias
-stores; see **Clouds** below; `Connect-OPIM.ps1:125-177`); it is an optional
+stores; see **Clouds** below; `Connect-OPIM.ps1:127-179`); it is an optional
 pre-authentication shortcut, since every pillar cmdlet authenticates on first use. The pillar
 cmdlets take no `-Environment` and pass none, so they keep the session's cloud. The
 `*-OPIMConfiguration` cmdlets do not authenticate.
@@ -1120,7 +1120,7 @@ Azure, in the PowerShell process until the module's next sign-in rebuilds it or 
 sets `$script:_OPIMAuthState` to `$null` -- which forgets the ARM token, the cloud and a device code
 mode with the rest of the state -- then calls `Disconnect-MgGraph` with
 `-ErrorAction SilentlyContinue` inside a `try` whose `catch` discards the error
-(`Disconnect-OPIM.ps1:41-43`). It leaves `$script:_OPIMLastAuthorityHost` as it is: the tracker
+(`Disconnect-OPIM.ps1:42-44`). It leaves `$script:_OPIMLastAuthorityHost` as it is: the tracker
 records where AzAuth's credential was last built, and that credential outlives the command.
 `Disconnect-MgGraph` ends whatever Graph session the process holds, which is why it is the way out
 of `GraphSessionChanged`. The module calls no Az command, so it ends no Az context, and its ARM token
@@ -1283,7 +1283,7 @@ where a next link's skip token would sit.
 | `Private/Initialize-OPIMAuth.ps1:533` | `Connect-MgGraph -AccessToken` (with `-Environment` off `Global`) |
 | `Private/Initialize-OPIMAuth.ps1:209, 211` | AzAuth's `Get-AzToken`, in the nested `Invoke-OPIMAzTokenCall`, for both sign-ins (the Graph one called at `:461`, the ARM one at `:619`; `:211` in device code mode) |
 | `Private/Invoke-OPIMArmRequest.ps1:224` | `Invoke-WebRequest` -- the ARM transport itself |
-| `Public/Disconnect-OPIM.ps1:43` | `Disconnect-MgGraph` |
+| `Public/Disconnect-OPIM.ps1:44` | `Disconnect-MgGraph` |
 
 `Get-OPIMCurrentTenantInfo` makes its call best-effort, and only under the module's own Graph
 session. `Wait-OPIMDirectoryRole` is not in the table: it polls in sequence through
