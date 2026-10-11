@@ -785,7 +785,7 @@ Describe 'Initialize-OPIMAuth' {
                 $Caught = InModuleScope Omnicit.PIM {
                     $script:_OPIMAuthState = @{
                         TenantId         = 'contoso.onmicrosoft.com'
-                        Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                        Account          = 'user@contoso.com'
                         GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
                         ClaimsSatisfied  = $false
                     }

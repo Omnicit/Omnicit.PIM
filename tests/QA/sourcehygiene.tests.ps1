@@ -658,7 +658,8 @@ BeforeAll {
 
         The positive controls are the two known-answer Its, which run the detector over an in-memory
         text holding every refused shape (lines lifted from 0.7.0's Get-OPIMMsalApplication,
-        Initialize-OPIMAuth and Invoke-OPIMDeviceCodeAuth) beside the shapes the AzAuth sign-in uses,
+        Initialize-OPIMAuth and Invoke-OPIMDeviceCodeAuth), over a one-line using namespace text of its
+        own (a using statement must come first in a script), beside the shapes the AzAuth sign-in uses,
         and over an in-memory Types text; the floors on the files parsed and the nodes walked guard
         the walk over the real tree, where a clean tree yields no finding at all.
         =====================================================================================
@@ -1847,6 +1848,16 @@ $Accounts = $MsalApp.GetAccountsAsync().GetAwaiter().GetResult()
             'source/Private/Fake.ps1:14: member .AcquireTokenInteractive is an MSAL name'
             'source/Private/Fake.ps1:15: member .GetAccountsAsync is an MSAL name'
         )
+
+        # Shape (a) once more, as a using statement: one must come first in a script, so it is a text
+        # of its own. The parser keeps the namespace as a bareword string node, so it is one finding.
+        $Using = 'using namespace Microsoft.Identity.Client'
+        $Errors = $null
+        $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Using, [ref]$null, [ref]$Errors)
+        $Errors | Should -BeNullOrEmpty -Because 'the known-answer text must parse, or it proves nothing'
+        $UsingFindings = @(Get-SourceHygieneMsalFinding -Ast $Ast -RelativePath 'source/Private/Fake.ps1')
+        $UsingFindings.Count | Should -Be 1 -Because 'a using namespace statement that names MSAL is one finding of shape (a)'
+        $UsingFindings[0] | Should -BeExactly 'source/Private/Fake.ps1:1: string names Microsoft.Identity.Client: Microsoft.Identity.Client'
 
         # The shapes the AzAuth sign-in uses, which must stay allowed: help and a comment that name
         # MSAL and its methods (no AST node), the Get-AzToken call with its splat, its result's Token
