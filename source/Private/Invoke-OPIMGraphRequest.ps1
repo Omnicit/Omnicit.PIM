@@ -17,17 +17,21 @@ function Invoke-OPIMGraphRequest {
        list, and the record bound to $PSItem is not the instance PowerShell stored.
 
     2. ACRS claims-challenge retry: when Microsoft Graph returns a 401 response whose
-       WWW-Authenticate header contains a claims="<base64url>" challenge, this function:
-         a. Base64url-decodes the challenge to a JSON string.
-         b. Calls Initialize-OPIMAuth -ClaimsChallenge to perform a one-time interactive
-            step-up authentication.
+       WWW-Authenticate header contains a claims="<base64url>" challenge, or a PIM refusal whose
+       body carries &claims=<URL-encoded JSON>, this function:
+         a. Decodes the challenge to a JSON string.
+         b. Calls Initialize-OPIMAuth -ClaimsChallenge for a one-time step-up: a new Microsoft Graph
+            sign-in through AzAuth's Get-AzToken with the claims passed on as -Claim -- in the
+            system browser, or with a new device code in device code mode, which the auth state
+            remembers.
          c. Retries the original request exactly once.
        A second 401 (after a successful step-up) is surfaced as a normal error. A 401 without a
        challenge, or a message that names a rejected or expired token, calls Initialize-OPIMAuth
-       -ForceRefresh instead and retries exactly once. The status is read from either form the Graph
-       SDK raises a failure in (OPIM-28): an HttpResponseException's Response, or the
-       ResponseStatusCode of the Kiota ApiException inside the AggregateException the SDK's retry
-       handler throws when it gives up.
+       -ForceRefresh instead and retries exactly once. AzAuth has no refresh-token path, so that is a
+       new sign-in too: a browser window, or a new device code in device code mode. The status is
+       read from either form the Graph SDK raises a failure in (OPIM-28): an HttpResponseException's
+       Response, or the ResponseStatusCode of the Kiota ApiException inside the AggregateException
+       the SDK's retry handler throws when it gives up.
 
     3. Error conversion: non-claims errors are run through Convert-GraphHttpException to
        produce structured ErrorRecord objects with the Graph error.code as the
@@ -79,8 +83,8 @@ function Invoke-OPIMGraphRequest {
        the session and latch gates again, and writes one verbose line with the status, the wait, its
        source and the budgets left -- never a header or the uri. When a bound is reached the request
        ends with the error it would have ended with before, Convert-GraphHttpException's record;
-       under -All the list fails, never shorter. The claims step-up and the token refresh still run
-       at most once per request, after the waits, and their retries are single sends.
+       under -All the list fails, never shorter. The claims step-up and the token-rejected sign-in
+       still run at most once per request, after the waits, and their retries are single sends.
 
        Two callers may not wait as long as that (scope 5b), and both rules are read at the decision
        to wait, before the bounds above. During a tab completion -- the module flag
@@ -152,7 +156,8 @@ function Invoke-OPIMGraphRequest {
     #   1. 401 WWW-Authenticate step-up: claims="<base64url-encoded JSON>" (quoted).
     #   2. PIM 400 RoleAssignmentRequestAcrsValidationFailed: the response body carries
     #      &claims=<URL-encoded JSON> (unquoted, e.g. &claims=%7B%22access_token%22...).
-    # The decoded result is always the MSAL claims-request JSON, e.g.
+    # The decoded result is always the claims-request JSON that Initialize-OPIMAuth passes on to
+    # AzAuth's Get-AzToken as -Claim, e.g.
     #   {"access_token":{"acrs":{"essential":true,"value":"c1"}}}
     function Get-ClaimsFromException ([System.Management.Automation.ErrorRecord]$ErrorRecord) {
         # Gather every place the challenge might live, most-reliable first.
@@ -202,7 +207,7 @@ function Invoke-OPIMGraphRequest {
     #      AggregateException around a Microsoft.Kiota.Abstractions.ApiException, which has NO
     #      .Response member. Its HTTP facts are ResponseStatusCode ([int]) and ResponseHeaders.
     # Reading only .Response.StatusCode left the Kiota form with no status at all ([int]$null is 0),
-    # so a 401 in that form was refreshed only when its message happened to name a rejected token.
+    # so a 401 in that form signed in again only when its message happened to name a rejected token.
     # The members are read BY NAME through the property bag, never by a cast to a Graph SDK type, so
     # the module takes no dependency on one, and a missing member reads as $null.
     #
@@ -433,8 +438,8 @@ function Invoke-OPIMGraphRequest {
         # Set by the catch of a failed retry and read straight after its try. Under -ErrorAction
         # SilentlyContinue with no try up the call stack a throw inside a catch resumes after the
         # whole try statement, so without the flag a failed claims retry would fall on into the
-        # token-rejected retry (a refresh and a third send), and a failed refresh retry into a second
-        # error for the first failure.
+        # token-rejected retry (a new sign-in and a third send), and a failed token-rejected retry into
+        # a second error for the first failure.
         [bool]$ClaimsRetryFailed = $false
         [bool]$RefreshRetryFailed = $false
 
@@ -450,9 +455,9 @@ function Invoke-OPIMGraphRequest {
         #     a very short wait.
         # BOTH BOUNDS ARE ENFORCED AT THE DECISION TO WAIT, never by stopping a -All walk between
         # pages: a request that cannot wait ends with its error, and a -All read with it fails whole,
-        # never shorter. The claims step-up and the token refresh below run after the loop, on the
-        # last attempt's failure, at most once each as before: a throttle never spends them, and their
-        # retries are single sends.
+        # never shorter. The claims step-up and the token-rejected sign-in below run after the loop, on
+        # the last attempt's failure, at most once each as before: a throttle never spends them, and
+        # their retries are single sends.
         [int]$ThrottleWaitBudgetSeconds = 300
         [int]$CallDeadlineSeconds = 900
         [int]$ThrottleRetryHardCap = 10
@@ -600,10 +605,11 @@ function Invoke-OPIMGraphRequest {
 
         # -- Token rejected/expired (not a claims challenge) -- re-auth and retry
         # A 401 here means the bearer token is invalid or expired (claims challenges were already
-        # handled above). Force a token refresh (MSAL refresh-token path, usually no prompt) and
-        # retry once instead of surfacing the failure. OPIM-28: the status is read from either form
-        # the Graph SDK raises a failure in (Get-GraphResponseFact), so a 401 in the Kiota form is
-        # refreshed as well.
+        # handled above). Sign in to Microsoft Graph again with -ForceRefresh and retry once instead
+        # of surfacing the failure. AzAuth has no refresh-token path (R13), so this is a new sign-in:
+        # a browser window, or a new device code in device code mode, which the auth state remembers.
+        # OPIM-28: the status is read from either form the Graph SDK raises a failure in
+        # (Get-GraphResponseFact), so a 401 in the Kiota form signs in again as well.
         $StatusCode = (Get-GraphResponseFact $FirstError.Exception).Status
         [bool]$TokenInvalid = $StatusCode -eq 401 -or
             $FirstError.Exception.Message -match 'InvalidAuthenticationToken|CompactToken|token is expired|Lifetime validation failed'
@@ -612,13 +618,13 @@ function Invoke-OPIMGraphRequest {
             Write-Verbose "[Invoke-OPIMGraphRequest] Token rejected (status=$StatusCode). Forcing re-authentication and retrying once..."
             Initialize-OPIMAuth -TenantId $script:_OPIMAuthState.TenantId -ForceRefresh
             # SEC (OPIM-09): the session gate again -- another Connect-MgGraph may have replaced the
-            # session during the refresh, and a refusal by Initialize-OPIMAuth does not stop this
+            # session during the new sign-in, and a refusal by Initialize-OPIMAuth does not stop this
             # function.
             if ((Get-OPIMGraphSessionState) -eq 'Changed') {
                 throw (New-OPIMGraphSessionChangedError)
                 return
             }
-            # SEC (EntraRBAC A19): the latch gate again, for a refresh whose sign-in was refused (a
+            # SEC (EntraRBAC A19): the latch gate again, for a new sign-in that was refused (a
             # token for another tenant, a failed device code) -- it latched this function itself.
             $SignInRefusal = Get-OPIMSignInRefusal
             if ($null -ne $SignInRefusal) {
@@ -632,8 +638,8 @@ function Invoke-OPIMGraphRequest {
                 $RefreshRetryFailed = $true
                 throw Convert-GraphHttpException $PSItem
             }
-            # A failed refresh retry ends the request with its own error, never a second one for the
-            # first failure below.
+            # A failed token-rejected retry ends the request with its own error, never a second one for
+            # the first failure below.
             if ($RefreshRetryFailed) { return }
         }
 
