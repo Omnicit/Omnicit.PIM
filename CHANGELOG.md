@@ -5,6 +5,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes to the module since 0.7.0. A preview published from this point differs from 0.7.0 only in documentation, tests or the build.
+
+## [0.7.0] - 2026-10-11
+
 Azure roles (`Get-`, `Enable-` and `Disable-OPIMAzureRole`, and the Azure part of `pim` and `unpim`)
 now sign in with AzAuth and send their requests themselves. Installing the module brings AzAuth
 (2.9.0 or later) and Microsoft.Graph.Authentication instead of Az.Resources and Az.Accounts,
