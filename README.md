@@ -35,11 +35,12 @@ signs in through AzAuth's `Get-AzToken`, as Azure does: the first sign-in opens 
 or shows a device code with `-DeviceCode` (see below). The Azure role cmdlets also need an Azure
 Resource Manager sign-in of their own, which prompts separately, so a first sign-in with
 `-IncludeARM` asks twice: two browser windows, or two device codes. A token is kept in memory for
-the session and reused without a new prompt while it has more than 5 minutes left. AzAuth has no
-refresh-token path, so a token with 5 minutes or less left when a command starts, and a token that
-Microsoft Graph or Azure Resource Manager rejects, is replaced by a new sign-in -- a browser window,
-or a new device code -- where 0.7.0 often renewed it silently. You never need to call
-`Connect-MgGraph` or any Az sign-in command manually.
+the session and reused without a new prompt while it has more than 5 minutes left. AzAuth, as
+Omnicit.PIM calls it, has no refresh-token path, so a token with 5 minutes or less left when a
+command starts, and a token that Microsoft Graph rejects, is replaced by a new sign-in -- a browser
+window, or a new device code -- where 0.7.0 often renewed it silently. A token that Azure Resource
+Manager rejects signs in to both again, Microsoft Graph and Azure: two browser windows, or two
+device codes. You never need to call `Connect-MgGraph` or any Az sign-in command manually.
 
 `Connect-OPIM` is the module's optional pre-authentication command. Use it when you want the
 sign-in prompt at a predictable time or need to target a specific tenant:
@@ -139,9 +140,10 @@ process, shared by both sign-ins and by any `Get-AzToken` call you make yourself
 AzAuth build a new one (AzAuth's `-Force`) for every device code request -- a reused device code
 credential never returns, so every sign-in in device code mode shows a new code -- for every
 sign-in after a token was rejected, and when a change of cloud moves the sign-in authority, since a
-credential keeps the authority it was built at. A sign-in in the system browser builds a new
-credential in AzAuth anyway. Omnicit.PIM reuses its own tokens, without asking AzAuth, only while
-they are for the session's tenant, account and cloud and have more than 5 minutes left. Whatever
+credential keeps the authority it was built at. As far as Omnicit.PIM can tell (not measured), a
+sign-in in the system browser builds a new credential in AzAuth anyway; either way it opens a
+browser window. Omnicit.PIM reuses its own tokens, without asking AzAuth, only while they are for
+the session's tenant, account and cloud and have more than 5 minutes left. Whatever
 AzAuth answers, every token is checked before anything is sent with it: the Microsoft Graph token
 against the tenant (`tid`) the session is pinned to, and the Azure token against the tenant and the
 account (`oid`) of the Microsoft Graph session.
@@ -255,7 +257,8 @@ that reuses its tokens writes nothing. For `Global` the module writes nothing ei
 set the variable to another authority yourself, both sign-ins follow it and the module warns, once
 per sign-in. The variable is process-wide, so a sign-in through AzAuth that another thread of the same
 PowerShell process starts during a sovereign sign-in reads it too. AzAuth keeps one credential per
-process; on a switch of cloud, Omnicit.PIM makes it rebuild the credential (`-Force`).
+process; when the sign-in authority changes, Omnicit.PIM makes it rebuild the credential (`-Force`).
+`USGov` and `USGovDoD` share one authority, so a switch between those two needs no rebuild.
 
 ### Which clouds are tested live
 

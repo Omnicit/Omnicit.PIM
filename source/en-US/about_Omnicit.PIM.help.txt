@@ -43,13 +43,14 @@ LONG DESCRIPTION
     role cmdlets also sign in to Azure Resource Manager through AzAuth, in a window of its own:
     a first sign-in with -IncludeARM asks twice. Call Connect-OPIM to pre-authenticate or to
     target a specific tenant before running other cmdlets. A token is reused without a prompt
-    while it has more than 5 minutes left. AzAuth has no refresh-token path, so a token with 5
-    minutes or less left when a command starts, and a token that Microsoft Graph or Azure
-    Resource Manager rejects, is replaced by a new sign-in, where 0.7.0 often renewed it
-    silently. Disconnect-OPIM clears the module's tokens, the Azure Resource Manager token
-    included, and disconnects the Microsoft Graph session; AzAuth keeps its own sign-in, for
-    Microsoft Graph and for Azure, in the PowerShell process until the module's next sign-in
-    rebuilds it or the process ends.
+    while it has more than 5 minutes left. AzAuth, as the module calls it, has no refresh-token
+    path, so a token with 5 minutes or less left when a command starts, and a token that
+    Microsoft Graph rejects, is replaced by a new sign-in, where 0.7.0 often renewed it
+    silently; a token that Azure Resource Manager rejects signs in to both again, Microsoft
+    Graph and Azure. Disconnect-OPIM clears the module's tokens, the Azure Resource Manager
+    token included, and disconnects the Microsoft Graph session; AzAuth keeps its own sign-in,
+    for Microsoft Graph and for Azure, in the PowerShell process until the module's next
+    sign-in rebuilds it or the process ends.
 
       Connect-OPIM                                           # home tenant at the first sign-in
       Connect-OPIM -TenantId 'contoso.onmicrosoft.com'      # specific tenant

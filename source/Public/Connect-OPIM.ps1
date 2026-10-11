@@ -18,9 +18,11 @@ function Connect-OPIM {
     sends every Azure request itself with it: no Az context and no subscription choice are involved.
 
     The session state is cached in memory. Subsequent calls are idempotent: while the token for the
-    same tenant and cloud has more than 5 minutes left, no sign-in prompt is shown. AzAuth has no
-    refresh-token path, so a token closer to its expiry, or one that Microsoft Graph or Azure
-    rejects, is replaced by a new sign-in: a browser window, or a new device code.
+    same tenant and cloud has more than 5 minutes left, no sign-in prompt is shown. AzAuth, as the
+    module calls it, has no refresh-token path, so a token closer to its expiry, or one that
+    Microsoft Graph rejects, is replaced by a new sign-in: a browser window, or a new device code.
+    A token that Azure rejects signs in to both again, Microsoft Graph and Azure: two windows, or
+    two codes.
 
     Disconnect-OPIM clears the module's tokens, the Azure Resource Manager token included, and
     disconnects the Microsoft Graph session; AzAuth keeps its own sign-in, for Microsoft Graph and

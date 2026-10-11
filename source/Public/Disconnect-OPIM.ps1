@@ -16,9 +16,10 @@ function Disconnect-OPIM {
     next sign-in uses the system browser unless -DeviceCode is given again.
 
     AzAuth, which signs in to Microsoft Graph and to Azure, keeps a credential of its own in the
-    process, which Disconnect-OPIM cannot clear. AzAuth builds a new credential for every sign-in in
-    the system browser, and the module asks it to rebuild one (Get-AzToken -Force) for every device
-    code sign-in and every switch of cloud; otherwise it ends with the PowerShell process.
+    process, which Disconnect-OPIM cannot clear. As far as the module can tell (not measured),
+    AzAuth builds a new credential for every sign-in in the system browser; the module asks it to
+    rebuild one (Get-AzToken -Force) for every device code sign-in, every sign-in after a rejected
+    token and every change of the sign-in authority; otherwise it ends with the PowerShell process.
 
     After calling Disconnect-OPIM, the next PIM cmdlet (or an explicit Connect-OPIM) will
     trigger a fresh authentication prompt: in the system browser, or with a device code when
