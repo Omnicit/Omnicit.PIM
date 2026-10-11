@@ -8,21 +8,26 @@ function Connect-OPIM {
     All PIM cmdlets sign in automatically on first use, so running Connect-OPIM explicitly
     is optional -- use it when you want to control when the sign-in prompt appears.
 
-    One Microsoft Graph sign-in covers directory roles and Entra ID groups. WAM is never used: the
-    Graph sign-in goes through the system browser, which works identically on Windows, macOS, and
-    Linux, or, with -DeviceCode, through a device code for a machine without a browser. Azure RBAC
-    signs in separately, through AzAuth's Get-AzToken, for the tenant of the Graph session: with
-    -IncludeARM here, or when an Azure role cmdlet first needs it. It opens its own browser window
-    or, in device code mode, shows its own code. Its token must be issued for the tenant and the
-    account of the Graph sign-in (TenantMismatch, AccountMismatch otherwise), and Omnicit.PIM sends
-    every Azure request itself with it: no Az context and no subscription choice are involved.
+    One Microsoft Graph sign-in covers directory roles and Entra ID groups. Microsoft Graph and
+    Azure both sign in through AzAuth's Get-AzToken, in the system browser, which works the same on
+    Windows, macOS and Linux, or, with -DeviceCode, with a device code for a machine without a
+    browser; WAM is never used. Azure RBAC signs in separately, for the tenant of the Graph session:
+    with -IncludeARM here, or when an Azure role cmdlet first needs it. It opens its own browser
+    window or, in device code mode, shows its own code. Its token must be issued for the tenant and
+    the account of the Graph sign-in (TenantMismatch, AccountMismatch otherwise), and Omnicit.PIM
+    sends every Azure request itself with it: no Az context and no subscription choice are involved.
 
-    The session state is cached in memory. Subsequent calls are idempotent -- if a valid token
-    already exists for the same tenant no sign-in prompt is shown.
+    The session state is cached in memory. Subsequent calls are idempotent: while the token for the
+    same tenant and cloud has more than 5 minutes left, no sign-in prompt is shown. AzAuth, as the
+    module calls it, has no refresh-token path, so a token closer to its expiry, or one that
+    Microsoft Graph rejects, is replaced by a new sign-in: a browser window, or a new device code.
+    A token that Azure rejects signs in to both again, Microsoft Graph and Azure: two windows, or
+    two codes.
 
     Disconnect-OPIM clears the module's tokens, the Azure Resource Manager token included, and
-    disconnects the Microsoft Graph session; AzAuth keeps its own sign-in in the PowerShell process
-    until the module's next Azure sign-in rebuilds it or the process ends.
+    disconnects the Microsoft Graph session; AzAuth keeps its own sign-in, for Microsoft Graph and
+    for Azure, in the PowerShell process until the module's next sign-in rebuilds it or the process
+    ends.
 
     .EXAMPLE
     Connect-OPIM -TenantId 'contoso.onmicrosoft.com'
@@ -74,15 +79,16 @@ function Connect-OPIM {
 
     .PARAMETER DeviceCode
     Sign in with a device code instead of the system browser, for a machine without one, such as a
-    cloud PC. The sign-in message goes to the Information stream with the tag OPIMDeviceCode, shown
-    whatever the information preference is. With -IncludeARM, Azure shows a second code, handed over
-    as a warning and written on the Information stream instead, with the same tag, so it shows even
-    where warnings are silenced. A script reads both as they arrive by merging the Information
-    stream into a pipeline that only shows them, for example 6>&1 | ForEach-Object { Write-Host
-    $PSItem.ToString() }. The sign-in waits while the pipeline handles a message, so run the rest of
-    the script after the command has returned. Capturing the output in a variable shows nothing
-    until the flow ends (up to 15 minutes). The mode is remembered until Disconnect-OPIM: the
-    refresh stays silent while it can, and a later prompt, a step-up included, uses a device code.
+    cloud PC. AzAuth hands over the sign-in message, with the code and the address, as a warning;
+    Omnicit.PIM writes it on the Information stream instead, with the tag OPIMDeviceCode, so it
+    shows whatever the information preference is and even where warnings are silenced. With
+    -IncludeARM, Azure shows a second code the same way. A script reads both as they arrive by
+    merging the Information stream into a pipeline that only shows them, for example 6>&1 |
+    ForEach-Object { Write-Host $PSItem.ToString() }. The sign-in waits while the pipeline handles a
+    message, so run the rest of the script after the command has returned. Capturing the output in a
+    variable shows nothing until the flow ends (up to 15 minutes). The mode is remembered until
+    Disconnect-OPIM, and each new sign-in shows a new code: a renewal of a token near its expiry, a
+    sign-in after a token was rejected and an ACRS step-up included.
 
     .PARAMETER Environment
     The cloud to sign in to: 'Global', 'USGov' (US Government, GCC High), 'USGovDoD' (US Government,

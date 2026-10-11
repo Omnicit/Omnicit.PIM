@@ -30,12 +30,17 @@ Import-Module Omnicit.PIM
 
 ## Authentication
 
-All `Get-/Enable-/Disable-OPIM*` cmdlets authenticate automatically on first use. The first
-Microsoft Graph sign-in opens the system browser, or shows a device code with `-DeviceCode` (see
-below); the token is cached via MSAL for the session, and later calls reuse it without a new prompt
-while it can be refreshed silently. The Azure role cmdlets also need an Azure Resource Manager
-sign-in of their own, through AzAuth, which prompts separately the first time (see below). You
-never need to call `Connect-MgGraph` or any Az sign-in command manually.
+All `Get-/Enable-/Disable-OPIM*` cmdlets authenticate automatically on first use. Microsoft Graph
+signs in through AzAuth's `Get-AzToken`, as Azure does: the first sign-in opens the system browser,
+or shows a device code with `-DeviceCode` (see below). The Azure role cmdlets also need an Azure
+Resource Manager sign-in of their own, which prompts separately, so a first sign-in with
+`-IncludeARM` asks twice: two browser windows, or two device codes. A token is kept in memory for
+the session and reused without a new prompt while it has more than 5 minutes left. AzAuth, as
+Omnicit.PIM calls it, has no refresh-token path, so a token with 5 minutes or less left when a
+command starts, and a token that Microsoft Graph rejects, is replaced by a new sign-in -- a browser
+window, or a new device code -- where 0.7.0 often renewed it silently. A token that Azure Resource
+Manager rejects signs in to both again, Microsoft Graph and Azure: two browser windows, or two
+device codes. You never need to call `Connect-MgGraph` or any Az sign-in command manually.
 
 `Connect-OPIM` is the module's optional pre-authentication command. Use it when you want the
 sign-in prompt at a predictable time or need to target a specific tenant:
@@ -68,7 +73,8 @@ session is active; otherwise it reads `N/A`.
 
 A command whose sign-in at its start was refused sends nothing more, even when it carries on past
 the error: every request it would still make is refused with `SignInRefused`. A sign-in refused
-while a failed request is retried -- an ACRS step-up or a token refresh -- fails only that request.
+while a failed request is retried -- an ACRS step-up, or a new sign-in after a rejected token --
+fails only that request.
 Run `Connect-OPIM`, or the command again, once the sign-in can succeed.
 
 Azure signs in separately, through AzAuth's `Get-AzToken`, for the same tenant as the Microsoft
@@ -91,9 +97,9 @@ On a machine without a browser -- a remote session, a container, a cloud PC -- s
 device code instead. The command shows a short code and the address to open (Microsoft Entra
 chooses it, for example `https://login.microsoft.com/device`); open it on any device, enter the code
 and sign in.
-With `-IncludeARM`, Azure shows a second code. The mode is remembered for the session: the refresh
-stays silent while it can, and any later sign-in that needs a prompt uses a device code until
-`Disconnect-OPIM`.
+With `-IncludeARM`, Azure shows a second code. The mode is remembered for the session until
+`Disconnect-OPIM`, and every new sign-in shows a new code: a renewal of a token near its expiry, a
+sign-in after a rejected token, and an ACRS step-up.
 
 ```powershell
 Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -DeviceCode
@@ -101,15 +107,14 @@ Connect-OPIM -TenantAlias corp -DeviceCode -IncludeARM
 pim -TenantAlias corp -DeviceCode                     # Enable-OPIMMyRole and Disable-OPIMMyRole take it too
 ```
 
-The message with the code goes to the Information stream with the tag `OPIMDeviceCode`. AzAuth
-hands over the code Azure shows as a warning; Omnicit.PIM writes it on the Information stream
-instead, with the same tag, so it shows even where warnings are silenced. A script reads both as
-they arrive by merging the Information stream into a pipeline that only shows them. The sign-in
-waits while that pipeline handles a message: a pipeline that also waits for the user, calls
-Omnicit.PIM or waits for the sign-in to finish holds the sign-in up until it returns, and one that
-waits for the sign-in never returns. Run the rest of the script after the command has returned.
-Capturing the output in a variable instead (`$x = Connect-OPIM -DeviceCode 6>&1`) shows nothing
-until the flow ends, which can take 15 minutes.
+AzAuth hands over the message with the code, for Microsoft Graph and for Azure alike, as a warning;
+Omnicit.PIM writes it on the Information stream instead, with the tag `OPIMDeviceCode`, so it shows
+even where warnings are silenced. A script reads both as they arrive by merging the Information
+stream into a pipeline that only shows them. The sign-in waits while that pipeline handles a
+message: a pipeline that also waits for the user, calls Omnicit.PIM or waits for the sign-in to
+finish holds the sign-in up until it returns, and one that waits for the sign-in never returns. Run
+the rest of the script after the command has returned. Capturing the output in a variable instead
+(`$x = Connect-OPIM -DeviceCode 6>&1`) shows nothing until the flow ends, which can take 15 minutes.
 
 ```powershell
 Connect-OPIM -TenantAlias corp -DeviceCode -IncludeARM 6>&1 | ForEach-Object { Write-Host $PSItem.ToString() }
@@ -121,29 +126,31 @@ is also needed. Pass `-IncludeARM` to `Connect-OPIM`, or the cmdlets will acquir
 automatically on first use.
 
 `Disconnect-OPIM` clears the module's tokens, the Azure Resource Manager token included, and
-disconnects the Microsoft Graph session; AzAuth keeps its own sign-in in the PowerShell process until
-the module's next Azure sign-in rebuilds it or the process ends.
+disconnects the Microsoft Graph session; AzAuth keeps its own sign-in, for Microsoft Graph and for
+Azure, in the PowerShell process until the module's next sign-in rebuilds it or the process ends.
 
 ```powershell
 Disconnect-OPIM
 ```
 
-### Azure sign-in and AzAuth's credential
+### AzAuth's credential
 
-AzAuth keeps one credential per PowerShell process, and it is shared with any `Get-AzToken` call
-you make yourself. Omnicit.PIM makes AzAuth rebuild it (AzAuth's `-Force`) on the first Azure
-sign-in of a session -- also after `Disconnect-OPIM`, and after a token the module refused or
-dropped -- so a credential left in the process by another sign-in is not reused for the first
-token, and again on every forced refresh after Azure Resource Manager rejects a token.
-Omnicit.PIM reuses its own Azure token, without asking AzAuth, only while it is for the session's
-tenant and account and has more than 5 minutes left. Whatever AzAuth answers, every token is
-checked against the tenant (`tid`) and the account (`oid`) of the Microsoft Graph session before
-anything is sent with it.
+AzAuth signs in to Microsoft Graph and to Azure, and it keeps one credential per PowerShell
+process, shared by both sign-ins and by any `Get-AzToken` call you make yourself. Omnicit.PIM makes
+AzAuth build a new one (AzAuth's `-Force`) for every device code request -- a reused device code
+credential never returns, so every sign-in in device code mode shows a new code -- for every
+sign-in after a token was rejected, and when a change of cloud moves the sign-in authority, since a
+credential keeps the authority it was built at. As far as Omnicit.PIM can tell (not measured), a
+sign-in in the system browser builds a new credential in AzAuth anyway; either way it opens a
+browser window. Omnicit.PIM reuses its own tokens, without asking AzAuth, only while they are for
+the session's tenant, account and cloud and have more than 5 minutes left. Whatever
+AzAuth answers, every token is checked before anything is sent with it: the Microsoft Graph token
+against the tenant (`tid`) the session is pinned to, and the Azure token against the tenant and the
+account (`oid`) of the Microsoft Graph session.
 
 `Disconnect-OPIM` cannot clear AzAuth's credential: it ends with the PowerShell process, or is
-rebuilt at the module's next Azure sign-in. Omnicit.PIM creates, reads and ends no Az context, so an
-Az PowerShell session you started yourself is left alone, and `Disconnect-OPIM` does not sign it
-out.
+replaced at the module's next sign-in. Omnicit.PIM creates, reads and ends no Az context, so an Az
+PowerShell session you started yourself is left alone, and `Disconnect-OPIM` does not sign it out.
 
 ---
 
@@ -176,9 +183,11 @@ pim -TenantAlias gov                                  # an alias that stores its
 
 The cloud decides three things, and the module reads each from one table:
 
-- **The sign-in authority.** The Microsoft Graph token comes from MSAL, whose application is built for
-  the authority of the cloud, and is handed to the Graph SDK connected to that cloud's environment.
-  The Azure token comes from AzAuth, asked for the Azure Resource Manager of the cloud.
+- **The sign-in authority.** Both tokens come from AzAuth, signed in at the authority of the cloud
+  (see [The sign-in authority and AZURE_AUTHORITY_HOST](#the-sign-in-authority-and-azure_authority_host)):
+  the Microsoft Graph token, asked for the Microsoft Graph of the cloud, is handed to the Graph SDK
+  connected to that cloud's environment, and the Azure token is asked for the Azure Resource
+  Manager of the cloud.
 - **The Microsoft Graph host.** Every request, and every next page of a list, stays on it.
 - **The Azure Resource Manager host.** Every Azure request is sent to it, and only to it.
 
@@ -237,17 +246,19 @@ the global cloud, where a sovereign tenant does not exist, so the sign-in fails.
 file without the key whenever they change it (`Install-`, `Set-` or `Remove-OPIMConfiguration`), so a
 map shared with a 0.6.x module, or with one of those three previews, loses its clouds.
 
-### Azure and AZURE_AUTHORITY_HOST
+### The sign-in authority and AZURE_AUTHORITY_HOST
 
 AzAuth's `Get-AzToken` has no authority parameter. The library under it, Azure.Identity, reads the
 `AZURE_AUTHORITY_HOST` environment variable when AzAuth builds its credential. For a sovereign cloud
-Omnicit.PIM sets the variable to the cloud's sign-in authority only around the Azure sign-in, and puts
-it back afterwards on every path, a failed sign-in included: a value you had set is restored exactly,
-and a variable that was not set is removed again. For `Global` the module writes nothing; if you have
-set the variable to another authority yourself, the Azure sign-in follows it and the module warns. The
-variable is process-wide, so an Azure sign-in that another thread of the same PowerShell process
-starts during a sovereign sign-in reads it too. AzAuth keeps one credential per process; on a switch of
-cloud, Omnicit.PIM makes it rebuild the credential (`-Force`).
+Omnicit.PIM sets the variable to the cloud's sign-in authority only around its own sign-in, for
+Microsoft Graph and for Azure, and puts it back afterwards on every path, a failed sign-in included:
+a value you had set is restored exactly, and a variable that was not set is removed again. A command
+that reuses its tokens writes nothing. For `Global` the module writes nothing either; if you have
+set the variable to another authority yourself, both sign-ins follow it and the module warns, once
+per sign-in. The variable is process-wide, so a sign-in through AzAuth that another thread of the same
+PowerShell process starts during a sovereign sign-in reads it too. AzAuth keeps one credential per
+process; when the sign-in authority changes, Omnicit.PIM makes it rebuild the credential (`-Force`).
+`USGov` and `USGovDoD` share one authority, so a switch between those two needs no rebuild.
 
 ### Which clouds are tested live
 
@@ -426,8 +437,8 @@ Get-OPIMEntraIDGroup -Activated | Disable-OPIMEntraIDGroup
 `Disable-OPIMMyRole` (aliases: `unpim`, `Disable-OPIMMyRoles`) is its counterpart for deactivation.
 
 Both commands reuse an existing sign-in: after `Connect-OPIM` or any role or group cmdlet, they
-start no new Microsoft Graph sign-in for the same tenant while its token can still be used or
-refreshed silently. When Azure roles are part of the run, Azure needs its own sign-in, which is
+start no new Microsoft Graph sign-in for the same tenant while its token has more than 5 minutes
+left. When Azure roles are part of the run, Azure needs its own sign-in, which is
 reused only when it was already made for the same tenant and account (`Connect-OPIM -IncludeARM`,
 or an earlier Azure role cmdlet). With `-DeviceCode`, a sign-in that needs a prompt shows a
 device code instead of opening the browser -- one for Microsoft Graph and, when Azure signs in, a
@@ -821,7 +832,7 @@ are under [Short Aliases](#short-aliases).
 ### Sign-in and configuration (8)
 
 - `Connect-OPIM` (alias `Connect-PIM`) -- signs in to Microsoft Graph, and to Azure with `-IncludeARM`, in the system browser or with `-DeviceCode`, and in a sovereign cloud with `-Environment`; optional, since every cmdlet signs in on first use.
-- `Disconnect-OPIM` (alias `Disconnect-PIM`) -- clears the module's tokens, the Azure Resource Manager token included, and disconnects the Microsoft Graph session; AzAuth keeps its own sign-in in the PowerShell process until the module's next Azure sign-in rebuilds it or the process ends.
+- `Disconnect-OPIM` (alias `Disconnect-PIM`) -- clears the module's tokens, the Azure Resource Manager token included, and disconnects the Microsoft Graph session; AzAuth keeps its own sign-in, for Microsoft Graph and for Azure, in the PowerShell process until the module's next sign-in rebuilds it or the process ends.
 - `Install-OPIMConfiguration` -- creates a tenant alias in `TenantMap.psd1`, with its cloud when you pass `-Environment`.
 - `Get-OPIMConfiguration` -- reads the tenant aliases in `TenantMap.psd1`.
 - `Set-OPIMConfiguration` -- updates an existing tenant alias, its cloud (`-Environment`) included.
@@ -1090,11 +1101,35 @@ time-bound assignments. An always-on assignment is not listed.
 | Dependency | Purpose |
 |---|---|
 | PowerShell 7.4 or later | Core only; AzAuth 2.9.0 requires 7.4 |
-| `Microsoft.Graph.Authentication` 2.36.0+ | Directory roles and Entra ID group PIM (raw `Invoke-MgGraphRequest`), and the Microsoft Graph sign-in |
-| `AzAuth` 2.9.0+ | The Azure Resource Manager sign-in (`Get-AzToken`) |
+| `Microsoft.Graph.Authentication` 2.36.0+ | Directory roles and Entra ID group PIM (raw `Invoke-MgGraphRequest`), and the Microsoft Graph session the module connects with its token (`Connect-MgGraph`) |
+| `AzAuth` 2.9.0+ | Both sign-ins, Microsoft Graph and Azure Resource Manager (`Get-AzToken`) |
 
 No Az PowerShell module is required or loaded; the module sends every Azure Resource Manager
-request itself.
+request itself. Any Microsoft.Graph.Authentication from 2.36.0 on works beside AzAuth, imported
+before or after it: Omnicit.PIM builds no sign-in client of its own (see
+[Troubleshooting](#troubleshooting) for 0.7.0, which did).
+
+---
+
+## Troubleshooting
+
+### 0.7.0: "Could not load file or assembly 'Microsoft.IdentityModel.Abstractions'"
+
+Omnicit.PIM 0.7.0 could not sign in when a Microsoft.Graph.Authentication newer than 2.36.0 was
+loaded beside AzAuth. `Connect-OPIM`, `pim` and every other command that signs in failed with
+"Could not load file or assembly 'Microsoft.IdentityModel.Abstractions, Version=8.14.0.0, ...'" and
+"Failed to build MSAL PublicClientApplication via reflection": 0.7.0 built its own Microsoft Graph
+sign-in client from the MSAL library that a loaded module had brought along, and a newer
+Microsoft.Graph.Authentication beside AzAuth broke it.
+
+0.7.1 fixes it: Microsoft Graph signs in through AzAuth, as Azure does, so update the module. If you
+have to stay on 0.7.0, load Microsoft.Graph.Authentication 2.36.0 before Omnicit.PIM in every new
+PowerShell session (this also holds with AzAuth 2.10.0):
+
+```powershell
+Import-Module Microsoft.Graph.Authentication -RequiredVersion 2.36.0
+Import-Module Omnicit.PIM
+```
 
 ---
 

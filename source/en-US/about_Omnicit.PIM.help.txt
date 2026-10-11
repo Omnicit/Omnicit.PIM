@@ -23,8 +23,11 @@ LONG DESCRIPTION
 
     The module requires:
       - Microsoft.Graph.Authentication (>= 2.36.0) for all Graph API calls
-      - AzAuth (>= 2.9.0) for the Azure sign-in
+      - AzAuth (>= 2.9.0) for the sign-in, to Microsoft Graph and to Azure
       - PowerShell 7.4 or later, which AzAuth requires
+
+    Any Microsoft.Graph.Authentication from 2.36.0 on works beside AzAuth, imported
+    before or after it (see TROUBLESHOOTING NOTE for 0.7.0, which failed there).
 
     No Az PowerShell module is needed or loaded: the module sends every Azure
     Resource Manager request itself, and an Az session you started is left
@@ -35,14 +38,19 @@ LONG DESCRIPTION
 
     CONNECTION AND AUTHENTICATION
 
-    All Get-/Enable-/Disable-OPIM* cmdlets authenticate automatically on first use via a
-    MSAL-based browser prompt (system browser, no WAM); the Azure role cmdlets also sign in to
-    Azure Resource Manager through AzAuth. Call Connect-OPIM to pre-authenticate or to target a
-    specific tenant before running other cmdlets. The tokens are cached for the session --
-    subsequent calls are idempotent. Disconnect-OPIM clears the module's tokens, the Azure
-    Resource Manager token included, and disconnects the Microsoft Graph session; AzAuth keeps
-    its own sign-in in the PowerShell process until the module's next Azure sign-in rebuilds it
-    or the process ends.
+    All Get-/Enable-/Disable-OPIM* cmdlets authenticate automatically on first use. Microsoft
+    Graph signs in through AzAuth's Get-AzToken in the system browser (no WAM), and the Azure
+    role cmdlets also sign in to Azure Resource Manager through AzAuth, in a window of its own:
+    a first sign-in with -IncludeARM asks twice. Call Connect-OPIM to pre-authenticate or to
+    target a specific tenant before running other cmdlets. A token is reused without a prompt
+    while it has more than 5 minutes left. AzAuth, as the module calls it, has no refresh-token
+    path, so a token with 5 minutes or less left when a command starts, and a token that
+    Microsoft Graph rejects, is replaced by a new sign-in, where 0.7.0 often renewed it
+    silently; a token that Azure Resource Manager rejects signs in to both again, Microsoft
+    Graph and Azure. Disconnect-OPIM clears the module's tokens, the Azure Resource Manager
+    token included, and disconnects the Microsoft Graph session; AzAuth keeps its own sign-in,
+    for Microsoft Graph and for Azure, in the PowerShell process until the module's next
+    sign-in rebuilds it or the process ends.
 
       Connect-OPIM                                           # home tenant at the first sign-in
       Connect-OPIM -TenantId 'contoso.onmicrosoft.com'      # specific tenant
@@ -71,13 +79,13 @@ LONG DESCRIPTION
     the error preference is Stop, which ends the command.
 
     On a machine without a browser, sign in with a device code. The command shows a code and
-    the address to open; enter the code there on any device. The message is written to the
-    Information stream with the tag OPIMDeviceCode. With -IncludeARM, Azure shows a second code:
-    AzAuth hands it over as a warning, and the module writes it on the Information stream
-    instead, with the same tag, so it shows even where warnings are silenced. The mode is
-    remembered for the session: the refresh stays silent while it can, and any later sign-in
-    that needs a prompt uses a device code until Disconnect-OPIM. Enable-OPIMMyRole and
-    Disable-OPIMMyRole take -DeviceCode too.
+    the address to open; enter the code there on any device. AzAuth hands the message over as a
+    warning, and the module writes it on the Information stream instead, with the tag
+    OPIMDeviceCode, so it shows even where warnings are silenced. With -IncludeARM, Azure shows a
+    second code the same way. The mode is remembered for the session until Disconnect-OPIM, and
+    every new sign-in shows a new code: a renewal of a token near its expiry, a sign-in after a
+    rejected token, and an ACRS step-up. Enable-OPIMMyRole and Disable-OPIMMyRole take
+    -DeviceCode too.
 
       Connect-OPIM -TenantId 'contoso.onmicrosoft.com' -DeviceCode
 
@@ -104,6 +112,13 @@ LONG DESCRIPTION
     Manager token, acquired automatically on first use or when -IncludeARM is passed to
     Connect-OPIM. Disconnect-OPIM clears it with the rest of the session.
 
+    AzAuth keeps one credential per PowerShell process, shared by both sign-ins and by any
+    Get-AzToken call you make yourself. The module makes AzAuth build a new one (Get-AzToken
+    -Force) for every device code request, so every sign-in in device code mode shows a new
+    code, for every sign-in after a rejected token, and when a change of cloud moves the sign-in
+    authority. Disconnect-OPIM cannot clear that credential; it ends with the PowerShell
+    process, or is replaced at the module's next sign-in.
+
     SOVEREIGN CLOUDS
 
     Connect-OPIM, Enable-OPIMMyRole (pim) and Disable-OPIMMyRole (unpim) take -Environment to sign
@@ -116,9 +131,9 @@ LONG DESCRIPTION
       USGovDoD    US Government, DoD
       China       operated by 21Vianet
 
-    The cloud decides the sign-in authority (Microsoft Graph through MSAL, Azure through AzAuth),
-    the Microsoft Graph host and the Azure Resource Manager host; the Microsoft Graph permissions
-    requested are the same in every cloud. An unknown cloud is an error, never a fallback to Global.
+    The cloud decides the sign-in authority (both sign-ins go through AzAuth), the Microsoft
+    Graph host and the Azure Resource Manager host; the Microsoft Graph permissions requested are
+    the same in every cloud. An unknown cloud is an error, never a fallback to Global.
 
     The cloud follows the tenant. Without -Environment, a command for the tenant the session is
     signed in to, or one that names no tenant, keeps the session's cloud, and a command for any
@@ -142,9 +157,11 @@ LONG DESCRIPTION
     then signs in to Global for those aliases.
 
     AzAuth has no authority parameter; Azure.Identity reads the AZURE_AUTHORITY_HOST environment
-    variable. For a sovereign cloud the module sets it only around the Azure sign-in and puts it
-    back afterwards, a failed sign-in included; for Global it writes nothing. The variable is
-    process-wide, so another thread's Azure sign-in during that call would read it too.
+    variable. For a sovereign cloud the module sets it only around its own sign-in, for
+    Microsoft Graph and for Azure, and puts it back afterwards, a failed sign-in included; for
+    Global it writes nothing, and it warns, once per sign-in, when you have set the variable to
+    another authority, since both sign-ins then follow it. The variable is process-wide, so
+    another thread's sign-in through AzAuth during that call would read it too.
 
     Only Global is verified live. USGov, USGovDoD and China are covered by unit tests only and are
     untested live. For China, Microsoft Learn says that globally registered apps do not replicate
@@ -300,12 +317,12 @@ TROUBLESHOOTING NOTE:
     not satisfy the step-up authentication requirement (ACRS claim 'c1') enforced
     by a Conditional Access policy for PIM operations.
 
-    The module automatically attempts to acquire a new token with the required
-    claims via MSAL interactive authentication (opens a browser window). If
-    this succeeds the request is retried transparently.
+    The module automatically signs in to Microsoft Graph again through AzAuth,
+    with the required claims: a browser window, or a new device code in device
+    code mode. If this succeeds the request is retried once.
 
-    If the automatic recovery fails, the error message directs you to open a
-    new PowerShell session and reconnect:
+    If the automatic recovery fails, the command writes the error. Sign in
+    again, in a new PowerShell session if need be, and run the command again:
 
         # In a fresh PowerShell window:
         Connect-OPIM
@@ -313,6 +330,19 @@ TROUBLESHOOTING NOTE:
 
     If the issue persists, the tenant may require a custom app registration
     for claims-challenge support.
+
+    0.7.0: Could not load file or assembly 'Microsoft.IdentityModel.Abstractions'
+    ------------------------------------------------------------------------------
+    Omnicit.PIM 0.7.0 could not sign in when a Microsoft.Graph.Authentication
+    newer than 2.36.0 was loaded beside AzAuth: every command that signs in
+    failed with "Could not load file or assembly
+    'Microsoft.IdentityModel.Abstractions, Version=8.14.0.0, ...'" and "Failed to
+    build MSAL PublicClientApplication via reflection". 0.7.1 fixes it: Microsoft
+    Graph signs in through AzAuth. To stay on 0.7.0, load the floor version of
+    Microsoft.Graph.Authentication before the module in every new session:
+
+        Import-Module Microsoft.Graph.Authentication -RequiredVersion 2.36.0
+        Import-Module Omnicit.PIM
 
     Bearer token security
     ---------------------

@@ -3,9 +3,8 @@
 # Rule for every test below: a transport name is NEVER called by name. It is resolved first, what it
 # resolved to is asserted, and only the resolved command object is invoked -- so a broken
 # installation fails an assertion and can never reach a real cmdlet. The places that call a
-# transport name themselves from the module's scope (the Get-OPIMMsalApplication test and the
-# module-code-path cases of the first Describe) first assert that the name resolves to the
-# tripwire from the module scope.
+# transport name themselves from the module's scope (the module-code-path cases of the first
+# Describe) first assert that the name resolves to the tripwire from the module scope.
 #
 # The suite holds its OWN expected list, never Get-OPIMTransportTripwireName, so deleting a name from
 # the helper turns it red.
@@ -188,8 +187,6 @@ Describe 'OPIMTransportTripwire module code paths' {
         Test-OPIMTransportTripwireFunction -Command $Resolved | Should -BeTrue -Because 'Get-AzToken must resolve to the tripwire from the module scope before module code calls it'
         $Real = @(Get-TripwireKnownAnswerRealCommand -Name 'Get-AzToken' -Module 'AzAuth')
         $Real.Count | Should -Be 1 -Because 'exactly one real Get-AzToken must exist in AzAuth'
-        # Get-OPIMMsalApplication is never reached with a cached Graph token; the mock keeps it so.
-        Mock -ModuleName Omnicit.PIM Get-OPIMMsalApplication {}
         $Before = $global:OPIMTransportTripwireHits.Count
 
         $Caught = InModuleScope Omnicit.PIM {
@@ -197,8 +194,7 @@ Describe 'OPIMTransportTripwire module code paths' {
             $script:_OPIMAuthState = @{
                 TenantId         = '22222222-2222-2222-2222-222222222222'
                 TokenTenantId    = '22222222-2222-2222-2222-222222222222'
-                AuthorityTenant  = '22222222-2222-2222-2222-222222222222'
-                Account          = [PSCustomObject]@{ Username = 'user@contoso.com' }
+                Account          = 'user@contoso.com'
                 ObjectId         = '33333333-3333-3333-3333-333333333333'
                 GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
                 ClaimsSatisfied  = $false
@@ -494,40 +490,6 @@ Describe 'OPIMTransportTripwire' {
             Unregister-OPIMParallelTransportStandIn
         }
         @(Get-OPIMParallelTransportStandInCall).Count | Should -Be 0 -Because 'Unregister-OPIMParallelTransportStandIn drains the call records'
-    }
-
-    It 'stops Get-OPIMMsalApplication with no cache and no Get-MgContext mock before the MSAL build' {
-        # R3: Get-OPIMMsalApplication reaches the MSAL reflection only after its Get-MgContext call
-        # (Get-OPIMMsalApplication.ps1:46), so an unmocked path stops there.
-        $Resolved = Resolve-TripwireKnownAnswerCommand -Name 'Get-MgContext'
-        Test-OPIMTransportTripwireFunction -Command $Resolved | Should -BeTrue -Because 'Get-MgContext must resolve to the tripwire, unmocked, before module code calls it'
-        $Before = $global:OPIMTransportTripwireHits.Count
-
-        $Outcome = InModuleScope Omnicit.PIM {
-            $script:_OPIMMsalApp = $null
-            $script:_OPIMMsalAppTenantId = $null
-            $Message = try {
-                Get-OPIMMsalApplication -TenantId 'contoso.onmicrosoft.com'
-                'RETURNED'
-            } catch {
-                $_.Exception.Message
-            }
-            [pscustomobject]@{
-                Message   = $Message
-                AppIsNull = $null -eq $script:_OPIMMsalApp
-            }
-        }
-
-        try {
-            $Outcome.Message | Should -BeLike 'OPIM transport tripwire: a unit test reached the real Get-MgContext.*'
-            $Outcome.AppIsNull | Should -BeTrue -Because 'the tripwire must stop the call before the MSAL application is built and cached'
-            $global:OPIMTransportTripwireHits.Count | Should -Be ($Before + 1)
-            $global:OPIMTransportTripwireHits[$global:OPIMTransportTripwireHits.Count - 1].Command | Should -Be 'Get-MgContext'
-        } finally {
-            while ($global:OPIMTransportTripwireHits.Count -gt $Before) {
-                $global:OPIMTransportTripwireHits.RemoveAt($global:OPIMTransportTripwireHits.Count - 1)
-            }
-        }
     }
 
     # Uninstalls too, so it puts the tripwire back in a finally, like the one below. A marked function

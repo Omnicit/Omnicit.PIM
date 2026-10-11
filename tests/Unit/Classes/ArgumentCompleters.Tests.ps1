@@ -104,8 +104,9 @@ Describe 'AzureActivatedRoleCompleter' {
         It 'calls Get-OPIMAzureRole with -WarningAction SilentlyContinue, so the completion prints no warning' {
             # The Azure sign-in behind Get-OPIMAzureRole can warn (AZURE_AUTHORITY_HOST names another
             # authority). The mock body runs in the test scope, so it takes the preference the completer
-            # passed from $PesterBoundParameters. The cmdlet is named with its module, since the build's
-            # own Write-Warning would count it.
+            # passed from $PesterBoundParameters. It writes its warning through
+            # Microsoft.PowerShell.Utility\Write-Warning, so that no module-scoped mock or proxy of
+            # Write-Warning intercepts it.
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole {
                 $WarningPreference = if ($PesterBoundParameters.ContainsKey('WarningAction')) {
                     $PesterBoundParameters['WarningAction']
@@ -247,8 +248,9 @@ Describe 'AzureEligibleRoleCompleter' {
         It 'calls Get-OPIMAzureRole with -WarningAction SilentlyContinue, so the completion prints no warning' {
             # The Azure sign-in behind Get-OPIMAzureRole can warn (AZURE_AUTHORITY_HOST names another
             # authority). The mock body runs in the test scope, so it takes the preference the completer
-            # passed from $PesterBoundParameters. The cmdlet is named with its module, since the build's
-            # own Write-Warning would count it.
+            # passed from $PesterBoundParameters. It writes its warning through
+            # Microsoft.PowerShell.Utility\Write-Warning, so that no module-scoped mock or proxy of
+            # Write-Warning intercepts it.
             Mock -ModuleName Omnicit.PIM Get-OPIMAzureRole {
                 $WarningPreference = if ($PesterBoundParameters.ContainsKey('WarningAction')) {
                     $PesterBoundParameters['WarningAction']
@@ -384,8 +386,9 @@ Describe 'DirectoryActivatedRoleCompleter' {
     Context 'When Get-OPIMDirectoryRole writes a warning' {
         It 'calls Get-OPIMDirectoryRole with -WarningAction SilentlyContinue, so the completion prints no warning' {
             # Get-OPIMDirectoryRole warns about a scope it cannot read. The mock body runs in the test
-            # scope, so it takes the preference the completer passed from $PesterBoundParameters. The
-            # cmdlet is named with its module, since the build's own Write-Warning would count it.
+            # scope, so it takes the preference the completer passed from $PesterBoundParameters. It
+            # writes its warning through Microsoft.PowerShell.Utility\Write-Warning, so that no
+            # module-scoped mock or proxy of Write-Warning intercepts it.
             Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole {
                 $WarningPreference = if ($PesterBoundParameters.ContainsKey('WarningAction')) {
                     $PesterBoundParameters['WarningAction']
@@ -537,8 +540,9 @@ Describe 'DirectoryEligibleRoleCompleter' {
     Context 'When Get-OPIMDirectoryRole writes a warning' {
         It 'calls Get-OPIMDirectoryRole with -WarningAction SilentlyContinue, so the completion prints no warning' {
             # Get-OPIMDirectoryRole warns about a scope it cannot read. The mock body runs in the test
-            # scope, so it takes the preference the completer passed from $PesterBoundParameters. The
-            # cmdlet is named with its module, since the build's own Write-Warning would count it.
+            # scope, so it takes the preference the completer passed from $PesterBoundParameters. It
+            # writes its warning through Microsoft.PowerShell.Utility\Write-Warning, so that no
+            # module-scoped mock or proxy of Write-Warning intercepts it.
             Mock -ModuleName Omnicit.PIM Get-OPIMDirectoryRole {
                 $WarningPreference = if ($PesterBoundParameters.ContainsKey('WarningAction')) {
                     $PesterBoundParameters['WarningAction']
@@ -659,6 +663,31 @@ Describe 'GroupActivatedCompleter' {
         }
     }
 
+    Context 'When Get-OPIMEntraIDGroup writes a warning' {
+        It 'calls Get-OPIMEntraIDGroup with -WarningAction SilentlyContinue, so the completion prints no warning' {
+            # The Microsoft Graph sign-in behind Get-OPIMEntraIDGroup can warn (AZURE_AUTHORITY_HOST names
+            # another authority, R15). The mock body runs in the test scope, so it takes the preference the
+            # completer passed from $PesterBoundParameters. It writes its warning through
+            # Microsoft.PowerShell.Utility\Write-Warning, so that no module-scoped mock or proxy of
+            # Write-Warning intercepts it.
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup {
+                $WarningPreference = if ($PesterBoundParameters.ContainsKey('WarningAction')) {
+                    $PesterBoundParameters['WarningAction']
+                } else { 'Continue' }
+                Microsoft.PowerShell.Utility\Write-Warning 'AZURE_AUTHORITY_HOST names another authority.'
+                [PSCustomObject]@{ group = [PSCustomObject]@{ displayName = 'Finance Team' }; accessId = 'member'; id = 'inst-001' }
+            }
+            $Output = InModuleScope Omnicit.PIM {
+                $Completer = [GroupActivatedCompleter]::new()
+                $Completer.CompleteArgument('Disable-OPIMEntraIDGroup', 'GroupName', '', $null, @{})
+            } 3>&1
+            @($Output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }).Count | Should -Be 0
+            (@($Output | Where-Object { $_ -is [System.Management.Automation.CompletionResult] }).Count) | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Activated -and $PesterBoundParameters['WarningAction'] -eq 'SilentlyContinue'
+            }
+        }
+    }
     Context 'When Get-OPIMEntraIDGroup throws' {
         It 'returns null without propagating the exception' {
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { throw 'API unavailable' }
@@ -768,6 +797,31 @@ Describe 'GroupEligibleCompleter' {
         }
     }
 
+    Context 'When Get-OPIMEntraIDGroup writes a warning' {
+        It 'calls Get-OPIMEntraIDGroup with -WarningAction SilentlyContinue, so the completion prints no warning' {
+            # The Microsoft Graph sign-in behind Get-OPIMEntraIDGroup can warn (AZURE_AUTHORITY_HOST names
+            # another authority, R15). The mock body runs in the test scope, so it takes the preference the
+            # completer passed from $PesterBoundParameters. It writes its warning through
+            # Microsoft.PowerShell.Utility\Write-Warning, so that no module-scoped mock or proxy of
+            # Write-Warning intercepts it.
+            Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup {
+                $WarningPreference = if ($PesterBoundParameters.ContainsKey('WarningAction')) {
+                    $PesterBoundParameters['WarningAction']
+                } else { 'Continue' }
+                Microsoft.PowerShell.Utility\Write-Warning 'AZURE_AUTHORITY_HOST names another authority.'
+                [PSCustomObject]@{ group = [PSCustomObject]@{ displayName = 'Finance Team' }; accessId = 'member'; id = 'elig-001' }
+            }
+            $Output = InModuleScope Omnicit.PIM {
+                $Completer = [GroupEligibleCompleter]::new()
+                $Completer.CompleteArgument('Enable-OPIMEntraIDGroup', 'GroupName', '', $null, @{})
+            } 3>&1
+            @($Output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }).Count | Should -Be 0
+            (@($Output | Where-Object { $_ -is [System.Management.Automation.CompletionResult] }).Count) | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup -Times 1 -Exactly -Scope It -ParameterFilter {
+                -not $Activated -and $PesterBoundParameters['WarningAction'] -eq 'SilentlyContinue'
+            }
+        }
+    }
     Context 'When Get-OPIMEntraIDGroup throws' {
         It 'returns null without propagating the exception' {
             Mock -ModuleName Omnicit.PIM Get-OPIMEntraIDGroup { throw 'API unavailable' }

@@ -26,7 +26,8 @@ function Get-OPIMCloudEndpoint {
                          request is sent to; for Global it is byte-identical to the literal the
                          module used before this table existed.
       - AuthorityHost    the Microsoft Entra ID authority (STS) host for the cloud, with a trailing
-                         slash, so the MSAL authority is this value followed by the tenant.
+                         slash. Off Global, Initialize-OPIMAuth sets AZURE_AUTHORITY_HOST to it
+                         for AzAuth's sign-in, since Get-AzToken has no authority parameter.
 
     GraphResource and GraphServiceRoot are deliberately SEPARATE properties and are not
     interchangeable: conflating them would emit a URL such as
