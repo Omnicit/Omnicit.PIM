@@ -25,7 +25,10 @@ function Invoke-OPIMGraphRequest {
             system browser, or with a new device code in device code mode, which the auth state
             remembers.
          c. Retries the original request exactly once.
-       A second 401 (after a successful step-up) is surfaced as a normal error. A 401 without a
+       A second 401 (after a successful step-up) is surfaced as a normal error. The step-up needs the
+       module's own sign-in: while the auth state records no tenant (no sign-in yet, or a state that
+       holds only DeviceCode) a challenge is not stepped up, and the request ends with its error after
+       the one send (EntraRBAC #67). A 401 without a
        challenge, or a message that names a rejected or expired token, calls Initialize-OPIMAuth
        -ForceRefresh instead and retries exactly once. AzAuth has no refresh-token path, so that is a
        new sign-in too: a browser window, or a new device code in device code mode. The status is
@@ -59,7 +62,11 @@ function Invoke-OPIMGraphRequest {
        (the items of the pages read before it), NextLink (the URI of the failed page) and PageNumber
        (its number, from 1). A later page that comes back with no body is a failed read as well: it
        throws an error with no error id (category InvalidResult) and the same three facts, since the
-       list is incomplete. A first page with no body is an empty list. A next link is followed only
+       list is incomplete. So is a later page without a value member, a next link to a page already
+       requested in this list (never requested again), and a walk past the page limit
+       (Get-OPIMPageWalkLimit, 100000 pages; the page after it is never requested): each throws the
+       same error, with no error id, category InvalidResult and the same three facts (EntraRBAC #67).
+       A first page with no body is an empty list. A next link is followed only
        when it is an absolute https URI on the host of the first request (OPIM-46): the host of -Uri
        when that is an absolute https URI, else the Graph host of the session's cloud
        (graph.microsoft.com in the global cloud; the cloud table, Get-OPIMCloudEndpoint, owns the
@@ -569,7 +576,12 @@ function Invoke-OPIMGraphRequest {
         # below has no loop and a second failure throws), so each command can step up as needed.
         $ClaimsJson = Get-ClaimsFromException $FirstError
 
-        if ($ClaimsJson) {
+        # A step-up needs the module's own sign-in (EntraRBAC #67): it signs in again for the
+        # session's tenant, and without a session there is nothing to step up from -- a sign-in here
+        # would be a first sign-in under 'organizations' made by the transport. A state that holds only
+        # DeviceCode is no sign-in either. Without one the request is not stepped up and its error goes
+        # on to the checks below, after the one request.
+        if ($ClaimsJson -and $script:_OPIMAuthState -is [System.Collections.IDictionary] -and $script:_OPIMAuthState.TenantId) {
             Write-Verbose "[Invoke-OPIMGraphRequest] ACRS claims challenge detected. Performing step-up authentication..."
             Write-Verbose "[Invoke-OPIMGraphRequest] Claims: $ClaimsJson"
 
@@ -662,12 +674,31 @@ function Invoke-OPIMGraphRequest {
     # Invoke-MgGraphRequest returns a Hashtable, so the link is read with the indexer. A failed page
     # throws its own error with what was read before it attached to the Exception (a note property
     # on the ErrorRecord does not survive a throw; on the Exception it does).
-    # No page cap and no loop detection, on purpose (ruling R-T7c): a cap would hand back a list cut
-    # short as if it were complete -- the very defect -All exists to fix. Graph ends every list with
-    # a page that carries no next link.
+    # The walk is bounded, and the bound FAILS it rather than cutting it short (EntraRBAC #67, which
+    # replaces ruling R-T7c's "no cap and no loop detection"; R-T7c's reason -- never a list cut short
+    # as if it were complete -- holds): a walk past the page limit, a next link already requested in
+    # this walk and a later page without a value member are each an incomplete list, raised the way a
+    # later page with no body is, never a shorter list.
     $AllValues = [System.Collections.Generic.List[object]]::new()
     $NextUri = $Uri
     [int]$PageNumber = 0
+    # Read ONCE per call: Get-OPIMPageWalkLimit owns the number.
+    [int]$PageLimit = Get-OPIMPageWalkLimit
+    # Every link this walk requested, -Uri included, compared as the text that was requested. Ordinal:
+    # a skip token is case-sensitive. An absolute link back to page 1, which was requested as a
+    # relative -Uri, is requested once more before the repeat is refused (bounded; the walk still
+    # fails).
+    $RequestedUris = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    # One shape for the four refusals of an incomplete walk: no error id (the form Write-CmdletError
+    # gives without one), category InvalidResult, the same three facts on the Exception as a failed
+    # page carries, and a message that names the page by its number, never by its link (R-T7a).
+    function New-GraphIncompletePageException ([string]$Cause, [int]$AtPage, [string]$AtUri, [object[]]$Aggregated) {
+        $Incomplete = [System.Exception]::new("Page $AtPage`: $Cause, so the list is incomplete.")
+        $Incomplete | Add-Member -NotePropertyName PartialValue -NotePropertyValue $Aggregated -Force
+        $Incomplete | Add-Member -NotePropertyName NextLink -NotePropertyValue $AtUri -Force
+        $Incomplete | Add-Member -NotePropertyName PageNumber -NotePropertyValue $AtPage -Force
+        $Incomplete
+    }
     # OPIM-46 (SEC), ruling P10: the host a next link must stay on is the host of the first request --
     # the host of -Uri when that is an absolute https URI, else the Graph host of the session's cloud.
     # A relative -Uri goes to the Graph SDK session, which Initialize-OPIMAuth connected to the cloud the
@@ -689,6 +720,21 @@ function Invoke-OPIMGraphRequest {
     }
     while ($NextUri) {
         $PageNumber++
+        if ($PageNumber -gt $PageLimit) {
+            Write-CmdletError -Message (New-GraphIncompletePageException `
+                    -Cause "the list reached the limit of $PageLimit pages and the page after it was not requested" `
+                    -AtPage $PageNumber -AtUri $NextUri -Aggregated $AllValues.ToArray()) `
+                -Category InvalidResult -TargetObject $null -Cmdlet $PSCmdlet -Terminating
+            # As for the page with no body below: not reached, and return, never break.
+            return
+        }
+        if (-not $RequestedUris.Add($NextUri)) {
+            Write-CmdletError -Message (New-GraphIncompletePageException `
+                    -Cause 'Microsoft Graph returned a next link to a page already requested in this list, so it was not requested again' `
+                    -AtPage $PageNumber -AtUri $NextUri -Aggregated $AllValues.ToArray()) `
+                -Category InvalidResult -TargetObject $null -Cmdlet $PSCmdlet -Terminating
+            return
+        }
         $PageFailed = $false
         try {
             $Page = Invoke-OPIMGraphSingle -SingleMethod $Method -SingleUri $NextUri -SingleBody $Body -CallBudget $CallBudget -SingleWaitDeadline $WaitDeadline
@@ -722,6 +768,24 @@ function Invoke-OPIMGraphRequest {
             # reached. It stays so the loop can never fall through to a short list: return, never
             # break.
             return
+        }
+        # A later page without a value member is no page of the list (a page whose value is an empty
+        # array is one). Falling through would add nothing and, with no next link, end the walk as
+        # complete. Invoke-MgGraphRequest returns a hashtable; any other page is read through its
+        # properties.
+        if ($PageNumber -gt 1) {
+            [bool]$PageHasValue = if ($Page -is [System.Collections.IDictionary]) {
+                $Page.Contains('value')
+            } else {
+                $null -ne $Page.PSObject.Properties['value']
+            }
+            if (-not $PageHasValue) {
+                Write-CmdletError -Message (New-GraphIncompletePageException `
+                        -Cause 'Microsoft Graph returned a page without a value member' `
+                        -AtPage $PageNumber -AtUri $NextUri -Aggregated $AllValues.ToArray()) `
+                    -Category InvalidResult -TargetObject $null -Cmdlet $PSCmdlet -Terminating
+                return
+            }
         }
         [int]$PageItemCount = 0
         foreach ($Item in @($Page.value)) {

@@ -18,11 +18,21 @@ function Connect-OPIM {
     sends every Azure request itself with it: no Az context and no subscription choice are involved.
 
     The session state is cached in memory. Subsequent calls are idempotent: while the token for the
-    same tenant and cloud has more than 5 minutes left, no sign-in prompt is shown. AzAuth, as the
-    module calls it, has no refresh-token path, so a token closer to its expiry, or one that
-    Microsoft Graph rejects, is replaced by a new sign-in: a browser window, or a new device code.
-    A token that Azure rejects signs in to both again, Microsoft Graph and Azure: two windows, or
-    two codes.
+    same tenant and cloud has more than 5 minutes left, no sign-in prompt is shown. A token closer
+    to its expiry, or one that Microsoft Graph rejects, is replaced by a new sign-in: a browser
+    window, or a new device code. A token that Azure rejects signs in to both again, Microsoft Graph
+    and Azure: two windows, or two codes. A browser session near its expiry is first renewed without
+    a prompt where AzAuth (2.11.0 and later) can answer from the sign-in it already holds, for the
+    same account and tenant only; otherwise the browser opens once. That is read from AzAuth's
+    source, not yet measured, and means fewer prompts, not none: a session that signs in to both
+    Microsoft Graph and Azure still prompts for each renewal.
+
+    A new sign-in that continues the session -- a renewal, a sign-in after a rejected token or an
+    ACRS step-up -- answered by another account than the one the session signed in with is refused
+    with AccountMismatch: the token is not used and the session stays the account it was. Run
+    Disconnect-OPIM first to sign in as another account. In a PowerShell started with
+    pwsh -NonInteractive a sign-in in the system browser is refused with InteractiveSignInUnavailable
+    before any token is requested; use -DeviceCode there.
 
     Disconnect-OPIM clears the module's tokens, the Azure Resource Manager token included, and
     disconnects the Microsoft Graph session; AzAuth keeps its own sign-in, for Microsoft Graph and

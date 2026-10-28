@@ -23,7 +23,7 @@ LONG DESCRIPTION
 
     The module requires:
       - Microsoft.Graph.Authentication (>= 2.36.0) for all Graph API calls
-      - AzAuth (>= 2.9.0) for the sign-in, to Microsoft Graph and to Azure
+      - AzAuth (>= 2.11.0) for the sign-in, to Microsoft Graph and to Azure
       - PowerShell 7.4 or later, which AzAuth requires
 
     Any Microsoft.Graph.Authentication from 2.36.0 on works beside AzAuth, imported
@@ -43,11 +43,19 @@ LONG DESCRIPTION
     role cmdlets also sign in to Azure Resource Manager through AzAuth, in a window of its own:
     a first sign-in with -IncludeARM asks twice. Call Connect-OPIM to pre-authenticate or to
     target a specific tenant before running other cmdlets. A token is reused without a prompt
-    while it has more than 5 minutes left. AzAuth, as the module calls it, has no refresh-token
-    path, so a token with 5 minutes or less left when a command starts, and a token that
-    Microsoft Graph rejects, is replaced by a new sign-in, where 0.7.0 often renewed it
-    silently; a token that Azure Resource Manager rejects signs in to both again, Microsoft
-    Graph and Azure. Disconnect-OPIM clears the module's tokens, the Azure Resource Manager
+    while it has more than 5 minutes left. A token with 5 minutes or less left when a command
+    starts, and a token that Microsoft Graph rejects, is replaced by a new sign-in; a token that
+    Azure Resource Manager rejects signs in to both again, Microsoft Graph and Azure. A browser
+    session near its expiry is first renewed without a prompt where AzAuth (2.11.0 and later)
+    can answer from the sign-in it already holds, for the same account and tenant only, and
+    otherwise the browser opens once; a session that signs in to both Microsoft Graph and Azure
+    still prompts for each renewal. That is read from AzAuth's source, not yet measured, and
+    means fewer prompts, not none. A new sign-in that continues the session -- a renewal, a
+    sign-in after a rejected token, an ACRS step-up -- answered by another account is refused
+    with AccountMismatch and the session stays the account it was; run Disconnect-OPIM first to
+    sign in as another account. In a PowerShell started with pwsh -NonInteractive a sign-in in
+    the browser is refused with InteractiveSignInUnavailable before any token is requested; use
+    -DeviceCode there. Disconnect-OPIM clears the module's tokens, the Azure Resource Manager
     token included, and disconnects the Microsoft Graph session; AzAuth keeps its own sign-in,
     for Microsoft Graph and for Azure, in the PowerShell process until the module's next
     sign-in rebuilds it or the process ends.

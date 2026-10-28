@@ -521,7 +521,7 @@ Import-Module -Name $Manifest -Force
 
     It 'Should require at least PowerShell 7.4, and at least what every declared dependency requires' {
         $Own = [version]$script:BuiltManifest.PowerShellVersion
-        $Own | Should -BeGreaterOrEqual ([version]'7.4') -Because 'AzAuth 2.9.0 requires PowerShell 7.4, and the floor of the module must name that requirement itself, so that an older PowerShell refuses the import with the requirement of Omnicit.PIM named'
+        $Own | Should -BeGreaterOrEqual ([version]'7.4') -Because 'AzAuth 2.11.0 requires PowerShell 7.4, and the floor of the module must name that requirement itself, so that an older PowerShell refuses the import with the requirement of Omnicit.PIM named'
         foreach ($Entry in $script:BuiltManifest.RequiredModules) {
             # -ListAvailable reads the manifest from disk and imports nothing.
             $Dependency = @(Get-Module -Name $Entry.ModuleName -ListAvailable | Where-Object { $_.Version -eq [version]$Entry.ModuleVersion })[0]
@@ -674,6 +674,12 @@ $Qualified = @([System.Management.Automation.Language.Parser]::ParseFile($RootMo
             $args[0] -is [System.Management.Automation.Language.CommandAst] -and [string]$args[0].GetCommandName() -match '\\Get-AzToken$'
         }, $true))
 if ($Qualified.Count -gt 0) { throw "Omnicit.PIM calls $($Qualified[0].GetCommandName()), which the stand-in cannot answer, so no mode was run." }
+# This process runs with -NonInteractive, where the module refuses a sign-in in the system browser
+# (InteractiveSignInUnavailable) before any token request. The host check is answered $false in the
+# module's scope, so the system-browser mode still reaches the stand-in; what the real check said here
+# is reported as NonInteractive.
+$NonInteractive = & (Get-Module -Name 'Omnicit.PIM') { [bool](Test-OPIMHostNonInteractive) }
+& (Get-Module -Name 'Omnicit.PIM') { Set-Item -Path 'function:script:Test-OPIMHostNonInteractive' -Value { $false } }
 $ErrorActionPreference = 'Continue'
 $Outcomes = [System.Collections.Generic.List[object]]::new()
 foreach ($M in $Modes) {
@@ -700,6 +706,7 @@ foreach ($M in $Modes) {
 }
 'OPIM-PROBE-RESULT ' + ([pscustomobject]@{
         Proxy = $Proxy; Graph = $Graph; AzAuth = $AzAuth; Omnicit = $Omnicit; Resolved = $Resolved
+        NonInteractive = $NonInteractive
         Calls = @($global:OPIMProbeCalls); Transport = @($global:OPIMProbeTransport); Outcomes = @($Outcomes)
     } | ConvertTo-Json -Compress -Depth 5)
 '@
@@ -779,6 +786,7 @@ foreach ($M in $Modes) {
             @($Result.AzAuth) | Should -Be @($script:AzAuthPin) -Because 'exactly one AzAuth is loaded, the pinned one'
             @($Result.Omnicit) | Should -Be @($script:moduleUnderTest.ModuleBase) -Because 'the module imported is the build under test'
             $Result.Resolved | Should -BeExactly 'Function' -Because 'the module must find the stand-in Get-AzToken'
+            $Result.NonInteractive | Should -BeTrue -Because 'the probe runs under pwsh -NonInteractive, which the module''s host check must see in the built module (its answer is replaced only after this read, so the system-browser mode still reaches the stand-in)'
 
             # One Get-AzToken call per mode, for Microsoft Graph, as the Microsoft Graph Command Line
             # Tools client with the six PIM scopes: device code with -Force, then the system browser.

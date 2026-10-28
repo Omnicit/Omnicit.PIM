@@ -5,7 +5,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes to the module since 0.7.1. A preview published from this point differs from 0.7.1 only in documentation, tests or the build.
+The sign-in fixes that Omnicit.EntraRBAC published after 0.7.1, and AzAuth 2.11.0 or later is now
+required.
+
+- A session signed in through the system browser is renewed without a prompt when a command starts
+  near the token's expiry, where AzAuth can answer from the sign-in it already holds: for the same
+  account and tenant only, and otherwise the browser opens once, as before. A session that signs in
+  to both Microsoft Graph and Azure, and a token that Microsoft Graph or Azure rejects, still sign in
+  again. This is read from AzAuth's source, not yet measured against a tenant, and it means fewer
+  prompts, not none. Device code sessions are unchanged.
+- A new sign-in that continues the session -- a renewal, a sign-in after a rejected token or an ACRS
+  step-up -- answered by another account than the one the session signed in with is refused with
+  `AccountMismatch`. The token is not used and the session stays the account it was; run
+  `Disconnect-OPIM` first to sign in as another account. Before, the session quietly continued as
+  the account picked in the browser.
+- In a PowerShell started with `pwsh -NonInteractive` a sign-in in the system browser is refused with
+  the new `InteractiveSignInUnavailable` before any token is requested, instead of waiting for a
+  browser. Use `-DeviceCode` there.
+- A Microsoft Graph or Azure listing that cannot be read to its end is an error, never a shorter
+  list: a later Graph page that carries no list at all, a Graph next link back to a page already read and a listing past
+  100000 pages are now refused as well. A claims challenge is stepped up only while the module holds
+  a sign-in.
 
 ## [0.7.1] - 2026-10-11
 

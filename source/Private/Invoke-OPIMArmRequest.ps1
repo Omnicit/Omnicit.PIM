@@ -54,7 +54,9 @@ function Invoke-OPIMArmRequest {
     does not parse or one without value is a failed read (ArmTransportError, category InvalidResult,
     the caller's path as its target, a message naming the page by its number), never an empty or a
     shorter list. So is a next link to a page this call already requested, the first page included:
-    no page is requested twice. Nothing is ever returned for a list that was not read to its end.
+    no page is requested twice. So is a walk past the page limit (Get-OPIMPageWalkLimit, 100000 pages;
+    EntraRBAC #67): the page after it is never requested. Nothing is ever returned for a list that was
+    not read to its end.
 
     A 429, and a 503 that carries a Retry-After header, are retried with a bounded backoff: the
     Retry-After value is honoured in either RFC 9110 form (delta-seconds or an HTTP-date), with an
@@ -589,8 +591,20 @@ function Invoke-OPIMArmRequest {
     # The first page was sent on the uri this builds, so the cast cannot fail here.
     $RequestedPages = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $null = $RequestedPages.Add(([uri]"$ArmBaseUrl$Path").PathAndQuery)
+    # Read ONCE per call (EntraRBAC #67): Get-OPIMPageWalkLimit owns the number. A walk that would
+    # request the page after it fails; it is never cut short and returned as the whole list.
+    [int]$PageLimit = Get-OPIMPageWalkLimit
 
     while ($NextLink) {
+        if ($PageNumber + 1 -gt $PageLimit) {
+            # The caller's path as the target, never the next link. return, never break.
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("Page $($PageNumber + 1): the list reached the limit of $PageLimit pages and the page after it was not requested, so the list is incomplete."),
+                'ArmTransportError',
+                [System.Management.Automation.ErrorCategory]::InvalidResult,
+                $Path)
+            return
+        }
         $NextParsed = $null
         $SameHost = [uri]::TryCreate([string]$NextLink, [UriKind]::Absolute, [ref]$NextParsed) -and
             $NextParsed.Scheme -eq 'https' -and
