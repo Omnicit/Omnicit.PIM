@@ -626,7 +626,10 @@ function Invoke-OPIMGraphRequest {
         [bool]$TokenInvalid = $StatusCode -eq 401 -or
             $FirstError.Exception.Message -match 'InvalidAuthenticationToken|CompactToken|token is expired|Lifetime validation failed'
 
-        if ($TokenInvalid -and $script:_OPIMAuthState) {
+        # The same sign-in condition as the claims step-up above: a renewal of the module's own
+        # session, never a first sign-in under 'organizations' made by the transport (a state that
+        # holds only DeviceCode, or none, records no tenant).
+        if ($TokenInvalid -and $script:_OPIMAuthState -is [System.Collections.IDictionary] -and $script:_OPIMAuthState.TenantId) {
             Write-Verbose "[Invoke-OPIMGraphRequest] Token rejected (status=$StatusCode). Forcing re-authentication and retrying once..."
             Initialize-OPIMAuth -TenantId $script:_OPIMAuthState.TenantId -ForceRefresh
             # SEC (OPIM-09): the session gate again -- another Connect-MgGraph may have replaced the
@@ -692,7 +695,7 @@ function Invoke-OPIMGraphRequest {
     # One shape for the four refusals of an incomplete walk: no error id (the form Write-CmdletError
     # gives without one), category InvalidResult, the same three facts on the Exception as a failed
     # page carries, and a message that names the page by its number, never by its link (R-T7a).
-    function New-GraphIncompletePageException ([string]$Cause, [int]$AtPage, [string]$AtUri, [object[]]$Aggregated) {
+    function Get-GraphIncompletePageException ([string]$Cause, [int]$AtPage, [string]$AtUri, [object[]]$Aggregated) {
         $Incomplete = [System.Exception]::new("Page $AtPage`: $Cause, so the list is incomplete.")
         $Incomplete | Add-Member -NotePropertyName PartialValue -NotePropertyValue $Aggregated -Force
         $Incomplete | Add-Member -NotePropertyName NextLink -NotePropertyValue $AtUri -Force
@@ -721,7 +724,7 @@ function Invoke-OPIMGraphRequest {
     while ($NextUri) {
         $PageNumber++
         if ($PageNumber -gt $PageLimit) {
-            Write-CmdletError -Message (New-GraphIncompletePageException `
+            Write-CmdletError -Message (Get-GraphIncompletePageException `
                     -Cause "the list reached the limit of $PageLimit pages and the page after it was not requested" `
                     -AtPage $PageNumber -AtUri $NextUri -Aggregated $AllValues.ToArray()) `
                 -Category InvalidResult -TargetObject $null -Cmdlet $PSCmdlet -Terminating
@@ -729,8 +732,8 @@ function Invoke-OPIMGraphRequest {
             return
         }
         if (-not $RequestedUris.Add($NextUri)) {
-            Write-CmdletError -Message (New-GraphIncompletePageException `
-                    -Cause 'Microsoft Graph returned a next link to a page already requested in this list, so it was not requested again' `
+            Write-CmdletError -Message (Get-GraphIncompletePageException `
+                    -Cause 'Microsoft Graph returned a next link to a page already requested in this list, which was not requested again' `
                     -AtPage $PageNumber -AtUri $NextUri -Aggregated $AllValues.ToArray()) `
                 -Category InvalidResult -TargetObject $null -Cmdlet $PSCmdlet -Terminating
             return
@@ -780,7 +783,7 @@ function Invoke-OPIMGraphRequest {
                 $null -ne $Page.PSObject.Properties['value']
             }
             if (-not $PageHasValue) {
-                Write-CmdletError -Message (New-GraphIncompletePageException `
+                Write-CmdletError -Message (Get-GraphIncompletePageException `
                         -Cause 'Microsoft Graph returned a page without a value member' `
                         -AtPage $PageNumber -AtUri $NextUri -Aggregated $AllValues.ToArray()) `
                     -Category InvalidResult -TargetObject $null -Cmdlet $PSCmdlet -Terminating
@@ -797,7 +800,14 @@ function Invoke-OPIMGraphRequest {
         # Ruling R-T7a: the page's number and item count only -- never its link, which can carry a
         # skip token.
         Write-Verbose "[Invoke-OPIMGraphRequest] Read page $PageNumber of the list: $PageItemCount item(s)."
-        $NextUri = [string]$Page['@odata.nextLink']
+        # Invoke-MgGraphRequest returns a hashtable; any other page is read through its properties, as
+        # the value check above reads it (EntraRBAC #67), so its next link is never dropped.
+        $NextUri = if ($Page -is [System.Collections.IDictionary]) {
+            [string]$Page['@odata.nextLink']
+        } else {
+            $NextLinkProperty = $Page.PSObject.Properties['@odata.nextLink']
+            if ($null -ne $NextLinkProperty) { [string]$NextLinkProperty.Value } else { '' }
+        }
         if ($NextUri) {
             # OPIM-46 (SEC): follow a next link only to the host of the first request, over https.
             # A link elsewhere would carry the session's token to another host: it is never sent,

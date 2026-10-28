@@ -2132,4 +2132,111 @@ $R
             }
         }
     }
+
+    Context 'When -All reaches the page limit (EntraRBAC #67)' {
+        # The walk reads Get-OPIMPageWalkLimit once per call and refuses the page after the limit
+        # before it is requested: ArmTransportError, category InvalidResult, the caller's path as its
+        # target and a message that names the page and the limit -- never a list cut short. The limit
+        # is mocked in the module scope to the number each test sets. The mock of Invoke-WebRequest
+        # answers request n with the n-th body of $script:_OPIMTestBodies, records every uri, and past
+        # the list answers a last page with no next link, so a walk that goes wrong ends.
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Invoke-WebRequest {
+                    $script:_OPIMTestSent.Add($Uri.OriginalString)
+                    $Index = $script:_OPIMTestSent.Count
+                    $Content = if ($Index -le @($script:_OPIMTestBodies).Count) { $script:_OPIMTestBodies[$Index - 1] } else { '{"value":[{"id":"late"}]}' }
+                    [PSCustomObject]@{ StatusCode = 200; Content = $Content }
+                }
+                Mock Get-OPIMPageWalkLimit { $script:_OPIMTestPageLimit }
+            }
+            $script:LimitBodies = @(
+                '{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=2"}'
+                '{"value":[{"id":"b"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=3"}'
+                '{"value":[{"id":"c"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=4"}'
+                '{"value":[{"id":"d"}]}'
+            )
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM -Parameters @{ Bodies = $script:LimitBodies } {
+                param($Bodies)
+                $script:_OPIMTestSent = [System.Collections.Generic.List[string]]::new()
+                $script:_OPIMTestBodies = @($Bodies)
+                # The real limit unless a test sets a smaller one.
+                $script:_OPIMTestPageLimit = 100000
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMTestSent = $null
+                $script:_OPIMTestBodies = $null
+                $script:_OPIMTestPageLimit = $null
+            }
+        }
+
+        It 'refuses page <Page> at a limit of <Limit> before it is requested' -ForEach @(
+            @{ Limit = 2; Page = 3 }
+            @{ Limit = 1; Page = 2 }
+        ) {
+            $R = InModuleScope Omnicit.PIM -Parameters @{ Limit = $Limit } {
+                param($Limit)
+                $script:_OPIMTestPageLimit = $Limit
+                $Result = $null
+                $Caught = $null
+                try { $Result = Invoke-OPIMArmRequest -Path '/subscriptions?api-version=2022-12-01' -All } catch { $Caught = $PSItem }
+                @{ Result = $Result; Caught = $Caught; Sent = @($script:_OPIMTestSent) }
+            }
+            $R.Result | Should -BeNullOrEmpty
+            $R.Caught | Should -Not -BeNullOrEmpty -Because 'a walk past the limit fails, it is never cut short'
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'ArmTransportError'
+            $R.Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+            $R.Caught.Exception.Message | Should -BeExactly "Page $Page`: the list reached the limit of $Limit pages and the page after it was not requested, so the list is incomplete."
+            $R.Caught.Exception.Message | Should -Not -Match 'skiptoken|://'
+            # The caller's path, never a next link.
+            $R.Caught.TargetObject | Should -BeExactly '/subscriptions?api-version=2022-12-01'
+            @($R.Sent).Count | Should -Be $Limit
+            @($R.Sent | Where-Object { $_ -like "*skiptoken=$Page" }).Count | Should -Be 0 -Because 'the page after the limit is never requested'
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-WebRequest -Times $Limit -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMPageWalkLimit -Times 1 -Exactly -Scope It
+        }
+
+        It 'returns a list of exactly as many pages as the limit' {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMTestPageLimit = 2
+                $script:_OPIMTestBodies = @(
+                    '{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=2"}'
+                    '{"value":[{"id":"b"}]}'
+                )
+                $Result = Invoke-OPIMArmRequest -Path '/subscriptions?api-version=2022-12-01' -All
+                @($Result.value.id) | Should -Be @('a', 'b')
+                Should -Invoke Invoke-WebRequest -Times 2 -Exactly -Scope It
+            }
+        }
+
+        It 'reads the limit once per call, however many pages it reads' {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMTestPageLimit = 5
+                $Result = Invoke-OPIMArmRequest -Path '/subscriptions?api-version=2022-12-01' -All
+                @($Result.value.id) | Should -Be @('a', 'b', 'c', 'd')
+                Should -Invoke Invoke-WebRequest -Times 4 -Exactly -Scope It
+                Should -Invoke Get-OPIMPageWalkLimit -Times 1 -Exactly -Scope It
+            }
+        }
+
+        It 'does not read the limit for a request without -All' {
+            InModuleScope Omnicit.PIM {
+                $null = Invoke-OPIMArmRequest -Path '/subscriptions?api-version=2022-12-01'
+                Should -Invoke Invoke-WebRequest -Times 1 -Exactly -Scope It
+                Should -Invoke Get-OPIMPageWalkLimit -Times 0 -Scope It
+            }
+        }
+
+        It 'returns nothing outside any try at the page limit, and leaves ArmTransportError as the only record' {
+            InModuleScope Omnicit.PIM { $script:_OPIMTestPageLimit = 1 }
+            $Run = Invoke-OutsideAnyTry -Script '$R = Invoke-OPIMArmRequest -Path ''/subscriptions?api-version=2022-12-01'' -All -ErrorAction SilentlyContinue; $R'
+            $Run.Output.Count | Should -Be 0
+            $Run.ErrorIds | Should -Be @('ArmTransportError')
+            Should -Invoke -ModuleName Omnicit.PIM Invoke-WebRequest -Times 1 -Exactly -Scope It
+        }
+    }
 }

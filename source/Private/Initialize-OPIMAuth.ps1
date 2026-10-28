@@ -146,8 +146,8 @@ function Initialize-OPIMAuth {
     no -DeviceCode -- until Disconnect-OPIM clears the state. A device code session never falls back
     to the system browser. With no state, -DeviceCode creates one holding only DeviceCode until a
     sign-in succeeds. It is no sign-in (no TenantId, no GraphTokenExpiry), so a failed first sign-in
-    keeps the mode. A latched command sends nothing (SignInRefused), though the token-rejected and 401
-    retries check only that a state exists.
+    keeps the mode. A latched command sends nothing (SignInRefused), and the Graph transport's
+    token-rejected retry and claims step-up sign in again only for a state that records a tenant.
 
     The cloud (OPIM-29) is a property of the tenant, so it follows the tenant. -Environment names it:
     Global, USGov, USGovDoD or China, in any letter case, resolved by Get-OPIMCloudEndpoint, which
@@ -282,7 +282,8 @@ function Initialize-OPIMAuth {
     # carries an AuthenticationRecord once it has signed in, so it answers from MSAL's cache without a
     # prompt. Every interactive call builds a NEW credential holding only its client id, which is why
     # the tracker names the client id and the tenant of the call that built it, and why the silent
-    # request names the same tenant and carries no -ClientId (refused in that parameter set).
+    # request names the same tenant and carries no -ClientId (refused at run time in that parameter
+    # set, GetAzToken.cs, as read in EntraRBAC; the parameter metadata lists it).
     #
     # WHAT IT CANNOT PROMISE. A stored credential whose refresh token no longer works can still open the
     # browser from this very call, so "non-interactive" means "no prompt when MSAL can answer". Every
@@ -295,7 +296,8 @@ function Initialize-OPIMAuth {
     # predicate at the call site, and only an equal pair is accepted. Each half is its own term.
     #
     # The catch scrubs first and writes only a verbose line that names the exception TYPE: no error
-    # record, no warning, no message (a failed token request's message can quote the request). The
+    # record of its own (a caller's -ErrorVariable still collects the caught, scrubbed record, as the
+    # engine collects every caught nested record), no warning, no message (a failed token request's message can quote the request). The
     # silent request leaves the tracker as it is: the credential AzAuth holds is still the one it was
     # built from.
     function Invoke-OPIMSilentRenewal ([hashtable]$SilentParameter) {
@@ -393,8 +395,8 @@ function Initialize-OPIMAuth {
     # -DeviceCode. A cached token that is still valid stays in use; only the mode changes.
     # With no state, -DeviceCode creates one holding only DeviceCode until a sign-in succeeds. The
     # session and cache checks need TenantId and GraphTokenExpiry, so it never counts and a failed
-    # first sign-in keeps the mode until Disconnect-OPIM. The token-rejected and 401 retries check
-    # only that a state exists, though a latched command sends nothing.
+    # first sign-in keeps the mode until Disconnect-OPIM. The Graph transport's retries sign in again
+    # only for a state that records a tenant, and a latched command sends nothing.
     if ($DeviceCode) {
         if ($script:_OPIMAuthState) {
             $script:_OPIMAuthState.DeviceCode = $true
@@ -580,7 +582,9 @@ function Initialize-OPIMAuth {
             # SEC (EntraRBAC A22, BL-115): renew a system-browser session without a prompt where AzAuth
             # can answer from the interactive credential it holds; see Invoke-OPIMSilentRenewal for the
             # evidence and for what it cannot promise. Evaluated HERE, directly before the call it may
-            # replace. Every term on its own line, so each can be proven by deleting it:
+            # replace. Every term on its own line. Two are implied by others and kept so the rule reads
+            # here (deleting either changes nothing a test can see): the system browser, by "no -Force"
+            # (device code mode always passes -Force), and "the tracker exists", by the -ceq terms.
             #   - the system browser: a device code session never takes this path.
             #   - a renewal: the state is a dictionary and the request is for the session's own tenant
             #     and cloud ($SessionMatches); a first sign-in has nothing to renew and no account to
@@ -605,7 +609,7 @@ function Initialize-OPIMAuth {
                 (Test-OPIMGuidText -Value $script:_OPIMAuthState.ObjectId) -and
                 (Test-OPIMGuidText -Value $script:_OPIMAuthState.TokenTenantId)
             if ($SilentGraph) {
-                # The interactive request without -Interactive and -ClientId (refused in AzAuth's
+                # The interactive request without -Interactive and -ClientId (refused at run time in AzAuth's
                 # NonInteractive parameter set); Resource, Scope, Tenant and TimeoutSeconds as before.
                 # CredentialPrecedence Environment: the one allowed source that sends nothing unless
                 # AZURE_* variables are set.
@@ -713,7 +717,8 @@ function Initialize-OPIMAuth {
             # oids must be GUIDs: a token without one, on either side, proves nothing and never refuses.
             # Placed after the tenant check and before Connect-MgGraph: the token is not used, and the
             # state, the Graph SDK session and the cached ARM token stay as they were. Each term on its
-            # own line, so each can be proven by deleting it.
+            # own line; the GUID test of the state's TokenTenantId is implied by its equality with the
+            # new token's tid (Get-OPIMTokenTenantId returns only a GUID) and kept so the rule reads here.
             [string]$GraphObjectId = Get-OPIMTokenObjectId -AccessToken $SecureToken
             $PreviousState = $script:_OPIMAuthState
             [bool]$ContinuesSession = ($PreviousState -is [System.Collections.IDictionary]) -and

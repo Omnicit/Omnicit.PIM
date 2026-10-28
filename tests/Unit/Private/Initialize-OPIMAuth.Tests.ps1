@@ -87,6 +87,122 @@ BeforeAll {
         # first request), as a cancelled prompt or a failed sign-in would.
         $script:AzTokenThrowAt = @()
         $script:AzTokenCalls = [System.Collections.Generic.List[object]]::new()
+        # How the stand-in answers a SILENT request (EntraRBAC A22: one that carries
+        # CredentialPrecedence and neither Interactive nor DeviceCode): 'Token' answers like the
+        # interactive request of its kind, 'Throw' throws $script:SilentFailure (or an
+        # InvalidOperationException), 'Nothing' returns nothing and 'NoToken' a result without a
+        # token. $script:SilentOid and $script:SilentTid, when set, replace the oid and the tid of the
+        # silent token only, and $script:SilentExpiresOn its expiry.
+        $script:SilentAnswer = 'Token'
+        $script:SilentFailure = $null
+        $script:SilentOid = $null
+        $script:SilentTid = $null
+        $script:SilentExpiresOn = $null
+    }
+
+    # The Microsoft Graph Command Line Tools public client id, which the module signs in to Microsoft
+    # Graph as (A16), and so the client id the interactive-credential tracker names after an
+    # interactive Microsoft Graph request (EntraRBAC A22).
+    $GraphClientId = '14d82eec-204b-4c2f-b7e8-296a70dab67e'
+
+    # Sets the module's record of the interactive credential AzAuth holds (EntraRBAC A22). $null
+    # clears it.
+    function Set-InteractiveCredential {
+        param([AllowNull()][hashtable]$Credential)
+        InModuleScope Omnicit.PIM -Parameters @{ Credential = $Credential } {
+            param($Credential)
+            $script:_OPIMInteractiveCredential = $Credential
+        }
+    }
+
+    # Reads the module's record of the interactive credential AzAuth holds.
+    function Get-InteractiveCredential {
+        InModuleScope Omnicit.PIM { $script:_OPIMInteractiveCredential }
+    }
+
+    # A session in the system browser as a Microsoft Graph sign-in in the global cloud leaves it: the
+    # session's tenant and account are GUIDs, and the Graph SDK session is the one it connected. Its
+    # Graph token has expired unless -Valid is given, so a call renews it.
+    function New-RenewalState {
+        param([switch]$Valid)
+        $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -ObjectId $SessionOid -Expired:(-not $Valid)
+        $State.DeviceCode = $false
+        $State.Environment = 'Global'
+        $State.GraphSessionFingerprint = 'fp'
+        $State
+    }
+
+    # The record of the interactive credential AzAuth holds, by a short code the -ForEach tables of
+    # this file use (they are read at discovery, before the values above exist).
+    function New-TestTracker {
+        param([string]$Code)
+        switch ($Code) {
+            'None' { $null }
+            'Graph' { @{ ClientId = $GraphClientId; Tenant = $TenantA } }
+            'GraphTenantB' { @{ ClientId = $GraphClientId; Tenant = $TenantB } }
+            'GraphDomain' { @{ ClientId = $GraphClientId; Tenant = 'contoso.onmicrosoft.com' } }
+            'GraphUpperClient' { @{ ClientId = $GraphClientId.ToUpperInvariant(); Tenant = $TenantA } }
+            'GraphUpperTenant' { @{ ClientId = $GraphClientId; Tenant = $TenantA.ToUpperInvariant() } }
+            'OtherClient' { @{ ClientId = '11111111-1111-1111-1111-111111111111'; Tenant = $TenantA } }
+            'Arm' { @{ ClientId = ''; Tenant = $TenantA } }
+            'ArmTenantB' { @{ ClientId = ''; Tenant = $TenantB } }
+            default { throw "Unknown tracker code '$Code'." }
+        }
+    }
+
+    # The state a -ForEach row names: 'None' (no state), 'Expired' or 'Valid' (New-RenewalState), or
+    # 'Object' (an expired renewal state that is not a dictionary); $Set overrides keys of it.
+    function New-TestState {
+        param([string]$Shape, [AllowNull()][hashtable]$Set)
+        if ($Shape -eq 'None') { return $null }
+        $State = New-RenewalState -Valid:($Shape -eq 'Valid')
+        if ($Set) {
+            foreach ($Entry in $Set.GetEnumerator()) { $State[$Entry.Key] = $Entry.Value }
+        }
+        if ($Shape -eq 'Object') { return [pscustomobject]$State }
+        $State
+    }
+
+    # Signs in from $State with the interactive-credential record $Tracker (and, when given, the
+    # authority AzAuth was last asked for), inside a command that carries on past a terminating error,
+    # and returns what a test reads: the error it raised, the latch of the command, the state, the
+    # record afterwards and whether it is the object passed in, the authority recorded, the verbose
+    # lines Initialize-OPIMAuth wrote, the warnings and the error variable.
+    function Invoke-RenewalSignIn {
+        param(
+            [AllowNull()][object]$State,
+            [hashtable]$Arguments = @{},
+            [AllowNull()][hashtable]$Tracker,
+            [string]$LastAuthorityHost
+        )
+        InModuleScope Omnicit.PIM -Parameters @{ State = $State; Arguments = $Arguments; Tracker = $Tracker; LastAuthorityHost = $LastAuthorityHost } {
+            param($State, $Arguments, $Tracker, $LastAuthorityHost)
+            $script:_OPIMAuthState = $State
+            $script:_OPIMInteractiveCredential = $Tracker
+            if ($LastAuthorityHost) { $script:_OPIMLastAuthorityHost = $LastAuthorityHost }
+            function Invoke-RenewalCommand {
+                $Result = @{ Caught = $null; Verbose = @() }
+                $Warned = $null
+                $Errored = $null
+                try {
+                    $Streams = @(Initialize-OPIMAuth @Arguments -Verbose -WarningVariable Warned -WarningAction SilentlyContinue -ErrorVariable Errored 4>&1)
+                    $Result.Verbose = @($Streams | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } |
+                            ForEach-Object { [string]$_.Message } | Where-Object { $_.StartsWith('[Initialize-OPIMAuth]') })
+                } catch {
+                    $Result.Caught = $PSItem
+                }
+                $Result.Warnings = @($Warned | ForEach-Object { [string]$_.Message })
+                $Result.Errors = @($Errored)
+                $Result.Refusal = Get-OPIMSignInRefusal
+                $Result
+            }
+            $Result = Invoke-RenewalCommand
+            $Result.State = $script:_OPIMAuthState
+            $Result.Tracker = $script:_OPIMInteractiveCredential
+            $Result.SameTracker = [object]::ReferenceEquals($Tracker, $script:_OPIMInteractiveCredential)
+            $Result.LastAuthorityHost = $script:_OPIMLastAuthorityHost
+            $Result
+        }
     }
 
     # The one Get-AzToken stand-in of this file (A16): AzAuth signs in to Microsoft Graph and to Azure
@@ -98,30 +214,48 @@ BeforeAll {
     # -WarningAction sets no preference inside a mock body, which runs in the test scope, so the body
     # takes it from $PesterBoundParameters, as the compiled cmdlet honours it.
     $script:AzTokenMock = {
-        param($Resource, $Tenant, $Scope, $ClientId, $Claim, $TimeoutSeconds, [switch]$DeviceCode, [switch]$Interactive, [switch]$Force)
+        param($Resource, $Tenant, $Scope, $ClientId, $Claim, $TimeoutSeconds, $CredentialPrecedence, [switch]$DeviceCode, [switch]$Interactive, [switch]$Force)
         if ($PesterBoundParameters.ContainsKey('WarningAction')) {
             $WarningPreference = $PesterBoundParameters['WarningAction']
         }
         $Seen = [System.Environment]::GetEnvironmentVariable('AZURE_AUTHORITY_HOST')
         [bool]$IsGraph = [string]$Resource -like '*graph*'
+        # A silent request (EntraRBAC A22) is the one that names CredentialPrecedence; it is still
+        # counted as a request of its kind, and Assert-AzTokenCall counts it apart.
+        [bool]$IsSilent = $PesterBoundParameters.ContainsKey('CredentialPrecedence')
         $script:AzTokenCalls.Add([pscustomobject]@{
-                Kind      = if ($IsGraph) { 'Graph' } else { 'Arm' }
-                Resource  = [string]$Resource
-                Keys      = @($PesterBoundParameters.Keys)
-                Authority = $Seen
+                Kind                 = if ($IsGraph) { 'Graph' } else { 'Arm' }
+                Silent               = $IsSilent
+                Resource             = [string]$Resource
+                Tenant               = [string]$Tenant
+                CredentialPrecedence = @($CredentialPrecedence)
+                Keys                 = @($PesterBoundParameters.Keys)
+                Authority            = $Seen
             })
         if ($script:AzTokenCalls.Count -in $script:AzTokenThrowAt) {
             throw [System.InvalidOperationException]::new('AzAuth sign-in failure')
+        }
+        if ($IsSilent) {
+            switch ($script:SilentAnswer) {
+                'Throw' {
+                    if ($script:SilentFailure) { $PSCmdlet.ThrowTerminatingError($script:SilentFailure) }
+                    throw [System.InvalidOperationException]::new('AzAuth silent failure')
+                }
+                'Nothing' { return }
+                'NoToken' { return [PSCustomObject]@{ ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'user@contoso.com' } }
+            }
         }
         if ($IsGraph) {
             $script:SeenGraphAuthorityHost = $Seen
             if ($script:GraphWarning) { Microsoft.PowerShell.Utility\Write-Warning $script:GraphWarning }
             $GraphTokenArgs = @{ TenantId = $script:GraphTid; ObjectId = $script:GraphOid }
+            if ($IsSilent -and $script:SilentTid) { $GraphTokenArgs.TenantId = $script:SilentTid }
+            if ($IsSilent -and $script:SilentOid) { $GraphTokenArgs.ObjectId = $script:SilentOid }
             if ($script:GraphNoTid) { $GraphTokenArgs.NoTenant = $true }
             if ($script:GraphNoOid) { $GraphTokenArgs.NoObjectId = $true }
             [PSCustomObject]@{
                 Token     = New-OPIMTestAccessToken @GraphTokenArgs
-                ExpiresOn = $script:GraphExpiresOn
+                ExpiresOn = if ($IsSilent -and $script:SilentExpiresOn) { $script:SilentExpiresOn } else { $script:GraphExpiresOn }
                 Identity  = $script:GraphIdentity
                 TenantId  = $script:GraphTid
             }
@@ -131,27 +265,32 @@ BeforeAll {
             $script:SeenAuthorityHost = $Seen
             if ($script:ArmWarning) { Microsoft.PowerShell.Utility\Write-Warning $script:ArmWarning }
             $ArmTokenArgs = @{ TenantId = $script:ArmTid; ObjectId = $script:ArmOid }
+            if ($IsSilent -and $script:SilentTid) { $ArmTokenArgs.TenantId = $script:SilentTid }
+            if ($IsSilent -and $script:SilentOid) { $ArmTokenArgs.ObjectId = $script:SilentOid }
             if ($script:ArmNoTid) { $ArmTokenArgs.NoTenant = $true }
             if ($script:ArmNoOid) { $ArmTokenArgs.NoObjectId = $true }
             [PSCustomObject]@{
                 Token     = New-OPIMTestAccessToken @ArmTokenArgs
-                ExpiresOn = $script:ArmExpiresOn
+                ExpiresOn = if ($IsSilent -and $script:SilentExpiresOn) { $script:SilentExpiresOn } else { $script:ArmExpiresOn }
                 TenantId  = $script:ArmTid
                 Identity  = 'user@contoso.com'
             }
         }
     }
 
-    # The recorded token requests of one kind.
+    # The recorded token requests of one kind; -Silent $true or $false keeps only the silent requests
+    # or only the others.
     function Get-AzTokenCall {
-        param([ValidateSet('Graph', 'Arm')][string]$Kind)
-        @($script:AzTokenCalls | Where-Object { $_.Kind -eq $Kind })
+        param([ValidateSet('Graph', 'Arm')][string]$Kind, [Nullable[bool]]$Silent)
+        @($script:AzTokenCalls | Where-Object { $_.Kind -eq $Kind -and ($null -eq $Silent -or $_.Silent -eq $Silent) })
     }
 
-    # Exactly $Graph Microsoft Graph and $Arm Azure Resource Manager token requests and no other. Each
-    # Graph request carries Force when $GraphForce is $true and none when it is $false, each ARM
-    # request likewise by $ArmForce, and -Force sets both; every request carries each parameter named
-    # in $Key. The counts come first, so a missing Force never passes on a request that was not made.
+    # Exactly $Graph Microsoft Graph and $Arm Azure Resource Manager token requests that are NOT
+    # silent, exactly $SilentGraph and $SilentArm silent ones (EntraRBAC A22; none unless named), and
+    # no other. Each Graph request that is not silent carries Force when $GraphForce is $true and none
+    # when it is $false, each ARM request likewise by $ArmForce, and -Force sets both; every request
+    # that is not silent carries each parameter named in $Key. The counts come first, so a missing
+    # Force never passes on a request that was not made.
     function Assert-AzTokenCall {
         param(
             [int]$Graph,
@@ -159,13 +298,17 @@ BeforeAll {
             [Nullable[bool]]$Force,
             [Nullable[bool]]$GraphForce,
             [Nullable[bool]]$ArmForce,
-            [string[]]$Key = @()
+            [string[]]$Key = @(),
+            [int]$SilentGraph = 0,
+            [int]$SilentArm = 0
         )
         if ($null -eq $GraphForce) { $GraphForce = $Force }
         if ($null -eq $ArmForce) { $ArmForce = $Force }
-        $GraphCalls = @(Get-AzTokenCall -Kind Graph)
-        $ArmCalls = @(Get-AzTokenCall -Kind Arm)
-        @($script:AzTokenCalls).Count | Should -Be ($Graph + $Arm) -Because 'every token request is recorded, each for Microsoft Graph or Azure Resource Manager'
+        $GraphCalls = @(Get-AzTokenCall -Kind Graph -Silent $false)
+        $ArmCalls = @(Get-AzTokenCall -Kind Arm -Silent $false)
+        @($script:AzTokenCalls).Count | Should -Be ($Graph + $Arm + $SilentGraph + $SilentArm) -Because 'every token request is recorded, each for Microsoft Graph or Azure Resource Manager'
+        @(Get-AzTokenCall -Kind Graph -Silent $true).Count | Should -Be $SilentGraph -Because 'the silent Microsoft Graph token requests are counted exactly'
+        @(Get-AzTokenCall -Kind Arm -Silent $true).Count | Should -Be $SilentArm -Because 'the silent Azure Resource Manager token requests are counted exactly'
         $GraphCalls.Count | Should -Be $Graph -Because 'the Microsoft Graph token requests are counted exactly'
         $ArmCalls.Count | Should -Be $Arm -Because 'the Azure Resource Manager token requests are counted exactly'
         foreach ($Call in $GraphCalls) {
@@ -192,12 +335,25 @@ AfterAll {
 }
 
 Describe 'Initialize-OPIMAuth' {
+    BeforeAll {
+        # EntraRBAC BL-100: a sign-in in the system browser is refused in a host started with
+        # -NonInteractive. The answer is pinned here, for every It, so the suite gives the same result
+        # in a pwsh started with -NonInteractive as in an interactive one; the contexts that prove the
+        # refusal answer $true themselves.
+        Mock -ModuleName Omnicit.PIM Test-OPIMHostNonInteractive { $false }
+    }
     BeforeEach {
         Reset-ArmTestFixture
         # $script:_OPIMLastAuthorityHost is never cleared by Disconnect-OPIM, since AzAuth's
         # process-wide credential outlives it, so nothing in the module resets it. Reset it here, or a
         # sovereign test leaks its authority into the next test, which would then gain a -Force.
-        InModuleScope Omnicit.PIM { $script:_OPIMLastAuthorityHost = $null }
+        # $script:_OPIMInteractiveCredential (EntraRBAC A22) is the module's record of the interactive
+        # credential AzAuth holds, which an interactive request in one test would leave behind for
+        # the next, where it would turn a renewal into a silent request.
+        InModuleScope Omnicit.PIM {
+            $script:_OPIMLastAuthorityHost = $null
+            $script:_OPIMInteractiveCredential = $null
+        }
         # AZURE_AUTHORITY_HOST is process-wide state that a sign-in reads, sets around the token calls
         # for a sovereign cloud and warns about in the Global cloud (OPIM-29). Every It starts with it
         # absent and puts the operator's own value back afterwards, so no test leaks it, none depends
@@ -606,7 +762,7 @@ Describe 'Initialize-OPIMAuth' {
             }
             $Result = Invoke-FailedGraphSignIn -DeviceCode $DeviceCode -TenantId $TenantA
             $Result.SignIn.FullyQualifiedErrorId | Should -BeLike "$ErrorId*"
-            $Result.SignIn.Exception.Message | Should -BeExactly "${Prefix}: the AzAuth module is not installed or could not be loaded. Install AzAuth 2.9.0 from the PowerShell Gallery; it needs PowerShell 7.4 or later."
+            $Result.SignIn.Exception.Message | Should -BeExactly "${Prefix}: the AzAuth module is not installed or could not be loaded. Install AzAuth 2.11.0 or later from the PowerShell Gallery; it needs PowerShell 7.4 or later."
             $Result.SignIn.Exception.InnerException | Should -BeNullOrEmpty
             Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
         }
@@ -1399,7 +1555,7 @@ Describe 'Initialize-OPIMAuth' {
                 }
                 ($Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'AzureConnectFailed'
                 $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
-                $Caught.Exception.Message | Should -BeExactly 'Azure connection failed: the AzAuth module is not installed or could not be loaded. Install AzAuth 2.9.0 from the PowerShell Gallery; it needs PowerShell 7.4 or later.'
+                $Caught.Exception.Message | Should -BeExactly 'Azure connection failed: the AzAuth module is not installed or could not be loaded. Install AzAuth 2.11.0 or later from the PowerShell Gallery; it needs PowerShell 7.4 or later.'
                 $Caught.Exception.InnerException | Should -BeNullOrEmpty
                 $Caught.TargetObject | Should -BeExactly $TenantA
                 Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It
@@ -1554,21 +1710,33 @@ Describe 'Initialize-OPIMAuth' {
                 $Result.State.ArmResourceUrl | Should -BeExactly 'https://management.azure.com'
             }
 
-            It 'drops the cached ARM token when the new Graph token is for another account' {
+            It 'refuses a forced Graph refresh answered by another account, and keeps the session and its cached ARM token as they were' {
+                # SEC (EntraRBAC BL-119): a renewal of the session that another account answered never
+                # makes the session that account's. AccountMismatch before Connect-MgGraph; the state,
+                # its ARM token included, is the object it was, with every key unchanged.
                 $script:GraphOid = $OtherOid
                 $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -ObjectId $SessionOid
                 $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
-                $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                $State.GraphSessionFingerprint = 'fp-before'
+                $Snapshot = @{} + $State
+                $Result = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
                     param($State)
                     $script:_OPIMAuthState = $State
-                    Initialize-OPIMAuth -ForceRefresh
-                    $script:_OPIMAuthState
+                    $Caught = $null
+                    try { Initialize-OPIMAuth -ForceRefresh } catch { $Caught = $PSItem }
+                    @{ Caught = $Caught; State = $script:_OPIMAuthState }
                 }
-                $After.ObjectId | Should -BeExactly $OtherOid
-                foreach ($Key in 'ArmToken', 'ArmTokenExpiry', 'ArmTokenTenantId', 'ArmTokenObjectId', 'ArmResourceUrl') {
-                    $After.ContainsKey($Key) | Should -BeTrue
-                    $After[$Key] | Should -BeNullOrEmpty -Because "the ARM token of another account must be dropped ($Key)"
+                ($Result.Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'AccountMismatch'
+                $Result.Caught.Exception.Message | Should -BeLike "The new Microsoft Graph sign-in in '$TenantA' was answered by another account than the one this session signed in with.*"
+                [object]::ReferenceEquals($State, $Result.State) | Should -BeTrue -Because 'the refused token writes no new state'
+                @($Result.State.Keys).Count | Should -Be $Snapshot.Count
+                foreach ($Key in $Snapshot.Keys) {
+                    ([object]::ReferenceEquals($Snapshot[$Key], $Result.State[$Key]) -or ($Snapshot[$Key] -eq $Result.State[$Key])) |
+                        Should -BeTrue -Because "the refused token changes no key of the session ($Key)"
                 }
+                $Result.State.ObjectId | Should -BeExactly $SessionOid
+                $Result.State.ArmTokenObjectId | Should -BeExactly $SessionOid
+                Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
                 Assert-AzTokenCall -Graph 1 -Arm 0
             }
 
@@ -1588,32 +1756,54 @@ Describe 'Initialize-OPIMAuth' {
                 }
             }
 
-            It 'acquires a new ARM token with -Force in the same call after <Name>' -ForEach @(
-                @{ Name = 'the Graph account changed'; Account = $true }
-                @{ Name = 'the session moved to another tenant'; Account = $false }
-            ) {
-                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -ObjectId $SessionOid -Expired:$Account
+            It 'acquires a new ARM token with -Force in the same call after the session moved to another tenant' {
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -ObjectId $SessionOid
                 $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
-                if ($Account) {
-                    # An expired Graph token: a new sign-in without -ForceRefresh, answered by another account.
-                    $script:GraphOid = $OtherOid
-                    $script:ArmOid = $OtherOid
-                    $Parameters = @{ IncludeARM = $true }
-                } else {
-                    $script:GraphTid = $TenantB
-                    $script:ArmTid = $TenantB
-                    $Parameters = @{ IncludeARM = $true; TenantId = $TenantB }
-                }
-                $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State; P = $Parameters } {
-                    param($State, $P)
+                $script:GraphTid = $TenantB
+                $script:ArmTid = $TenantB
+                $After = InModuleScope Omnicit.PIM -Parameters @{ State = $State; TenantB = $TenantB } {
+                    param($State, $TenantB)
                     $script:_OPIMAuthState = $State
-                    Initialize-OPIMAuth @P
+                    Initialize-OPIMAuth -IncludeARM -TenantId $TenantB
                     $script:_OPIMAuthState
                 }
                 # Device code mode: both requests carry -Force (A17).
                 Assert-AzTokenCall -Graph 1 -Arm 1 -Force $true -Key 'DeviceCode'
-                $After.ArmTokenObjectId | Should -BeExactly $script:ArmOid
-                $After.ArmTokenTenantId | Should -BeExactly $script:ArmTid
+                $After.ArmTokenObjectId | Should -BeExactly $SessionOid
+                $After.ArmTokenTenantId | Should -BeExactly $TenantB
+            }
+
+            It 'asks for no ARM token in the same call after a Graph renewal answered by another account, and keeps the session' {
+                # SEC (EntraRBAC BL-119): an expired Graph token, so a new sign-in without -ForceRefresh,
+                # answered by another account of the session's tenant. AccountMismatch ends the call
+                # before Connect-MgGraph and before the Azure step: no ARM token is asked for, and the
+                # session keeps its account and its cached ARM token.
+                $State = New-PinState -TenantId $TenantA -TokenTenantId $TenantA -ObjectId $SessionOid -Expired
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
+                $ArmBefore = $State.ArmToken
+                $script:GraphOid = $OtherOid
+                $script:ArmOid = $OtherOid
+                $Result = InModuleScope Omnicit.PIM -Parameters @{ State = $State } {
+                    param($State)
+                    $script:_OPIMAuthState = $State
+                    function Invoke-ArmSignInCommand {
+                        $Result = @{}
+                        try { Initialize-OPIMAuth -IncludeARM } catch { $Result.SignIn = $PSItem }
+                        $Result.Refusal = Get-OPIMSignInRefusal
+                        $Result.State = $script:_OPIMAuthState
+                        $Result
+                    }
+                    Invoke-ArmSignInCommand
+                }
+                ($Result.SignIn.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'AccountMismatch'
+                $Result.Refusal | Should -BeExactly 'Invoke-ArmSignInCommand'
+                # Device code mode: the one Graph request carries -Force (A17).
+                Assert-AzTokenCall -Graph 1 -Arm 0 -Force $true -Key 'DeviceCode'
+                Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
+                [object]::ReferenceEquals($State, $Result.State) | Should -BeTrue
+                [object]::ReferenceEquals($ArmBefore, $Result.State.ArmToken) | Should -BeTrue
+                $Result.State.ObjectId | Should -BeExactly $SessionOid
+                $Result.State.ArmTokenObjectId | Should -BeExactly $SessionOid
             }
 
             It 'drops a cached ARM token that records no account when the new Graph token carries none either' {
@@ -3202,7 +3392,9 @@ Describe 'Initialize-OPIMAuth' {
             # reaches .NET (the SecureString is what commands receive). The only reads of .Token
             # anywhere in the function -- in a hashtable that is splatted, behind a variable or in a
             # method call as much as in a command's own arguments -- are the NetworkCredential
-            # constructor (once for each token) and a truthiness test in an if (once for each token);
+            # constructor and a truthiness test in an if, once each for the Microsoft Graph token, the
+            # ARM token and the token of the silent renewal (EntraRBAC A22, Invoke-OPIMSilentRenewal,
+            # which reads the oid and tid claims of its token through the SecureString as well);
             # .AccessToken, the MSAL result's member, is read nowhere; and the constructor's result is
             # read only through .SecurePassword, never .Password.
             $Ast = InModuleScope Omnicit.PIM { (Get-Command Initialize-OPIMAuth).ScriptBlock.Ast }
@@ -3215,16 +3407,17 @@ Describe 'Initialize-OPIMAuth' {
             $Hits | Should -BeNullOrEmpty
 
             $Uses = @(Get-PlaintextTokenUse -Ast $Ast)
-            @($Uses | Where-Object { $_ -ieq 'NetworkCredential:Token' }).Count | Should -Be 2 -Because 'the Graph token and the ARM token each reach .NET through the NetworkCredential constructor exactly once'
-            @($Uses | Where-Object { $_ -ieq 'IfTest:Token' }).Count | Should -Be 2 -Because 'the walk must find the one test, for each token, that the result carries a Token'
+            @($Uses | Where-Object { $_ -ieq 'NetworkCredential:Token' }).Count | Should -Be 3 -Because 'the Graph token, the ARM token and the token of the silent renewal each reach .NET through the NetworkCredential constructor exactly once'
+            @($Uses | Where-Object { $_ -ieq 'IfTest:Token' }).Count | Should -Be 3 -Because 'the walk must find the one test, for each of the three results (Graph, ARM, silent renewal), that the result carries a Token'
+            @($Uses).Count | Should -Be 6 -Because 'the six reads above are every read of a token member in the function'
             @($Uses | Where-Object { $_ -ilike '*AccessToken*' }) | Should -BeNullOrEmpty -Because 'no MSAL result is read any more'
             @($Uses | Where-Object { $_ -inotmatch '^(NetworkCredential|IfTest):(AccessToken|Token)$' }) | Should -BeNullOrEmpty
 
-            # Every constructor in the function is held to .SecurePassword, not only the two that take a
+            # Every constructor in the function is held to .SecurePassword, not only the three that take a
             # token member.
             $Reads = @(Get-NetworkCredentialRead -Ast $Ast)
-            $Reads.Count | Should -Be 2 -Because 'the Graph token and the ARM token each become a SecureString through one constructor'
-            @($Reads | Where-Object { $_ -ceq 'SecurePassword' }).Count | Should -Be 2
+            $Reads.Count | Should -Be 3 -Because 'the Graph token, the ARM token and the token of the silent renewal each become a SecureString through one constructor'
+            @($Reads | Where-Object { $_ -ceq 'SecurePassword' }).Count | Should -Be 3
             @($Reads | Where-Object { $_ -cne 'SecurePassword' }) | Should -BeNullOrEmpty
         }
 
@@ -4404,6 +4597,670 @@ Describe 'Initialize-OPIMAuth' {
             foreach ($Call in $script:AzTokenCalls) {
                 $Call.Keys | Should -Not -Contain 'WarningAction'
             }
+        }
+    }
+
+    Context 'When a system-browser session is renewed silently (EntraRBAC A22)' {
+        # Before the interactive request, a renewal of the session's own tenant and cloud in the system
+        # browser asks AzAuth once without -Interactive and without -ClientId, with
+        # CredentialPrecedence Environment, when the module's record of the interactive credential
+        # AzAuth holds names the client id and the tenant the interactive request would pass. Its token
+        # is accepted only for the session's account and tenant, and takes every check an interactive
+        # token takes. The silent request leaves the record as it is.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Get-AzToken -MockWith $script:AzTokenMock
+            Mock -ModuleName Omnicit.PIM Connect-MgGraph {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionFingerprint { 'fp' }
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionState { 'Own' }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMSignInLatch = $null
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMSignInLatch = $null
+                $script:_OPIMInteractiveCredential = $null
+            }
+        }
+
+        It 'renews the Microsoft Graph token with one silent request: no Interactive, no ClientId, CredentialPrecedence Environment' {
+            $script:SilentExpiresOn = [DateTimeOffset]::new(2031, 2, 3, 12, 0, 0, [TimeSpan]::FromHours(1))
+            $Expected = @($GraphScopeList)
+            $Result = Invoke-RenewalSignIn -State (New-RenewalState) -Tracker (New-TestTracker -Code Graph)
+
+            $Result.Caught | Should -BeNullOrEmpty
+            Assert-AzTokenCall -Graph 0 -Arm 0 -SilentGraph 1
+            $Call = (Get-AzTokenCall -Kind Graph -Silent $true)[0]
+            foreach ($Absent in 'Interactive', 'ClientId', 'DeviceCode', 'Force', 'Claim') {
+                $Call.Keys | Should -Not -Contain $Absent -Because "the silent request carries no $Absent"
+            }
+            ($Call.CredentialPrecedence -join ',') | Should -BeExactly 'Environment'
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Resource -ceq 'https://graph.microsoft.com/' -and
+                $Tenant -ceq 'aaaaaaaa-0000-0000-0000-00000000000a' -and
+                $TimeoutSeconds -eq 900 -and
+                (@($Scope) -join ',') -ceq ($Expected -join ',') -and
+                (@($CredentialPrecedence) -join ',') -ceq 'Environment'
+            }
+            # The accepted token takes the path an interactive one takes: Connect-MgGraph, then the state.
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Exactly -Scope It
+            $Result.State.GraphTokenExpiry | Should -Be ([datetime]::new(2031, 2, 3, 11, 0, 0, [System.DateTimeKind]::Utc))
+            $Result.State.ObjectId | Should -BeExactly $SessionOid
+            $Result.State.TokenTenantId | Should -BeExactly $TenantA
+            $Result.State.DeviceCode | Should -BeFalse
+            # The record of the credential AzAuth holds is left as it was, and the command released.
+            $Result.SameTracker | Should -BeTrue
+            $Result.Tracker.ClientId | Should -BeExactly $GraphClientId
+            $Result.Tracker.Tenant | Should -BeExactly $TenantA
+            $Result.Refusal | Should -BeNullOrEmpty
+            $Result.Warnings | Should -BeNullOrEmpty
+            $Result.Verbose | Should -Contain '[Initialize-OPIMAuth] Renewed the session silently.'
+        }
+
+        It 'renews the ARM token with one silent request beside a cached Microsoft Graph token when the record names the Azure credential' {
+            $Result = Invoke-RenewalSignIn -State (New-RenewalState -Valid) -Tracker (New-TestTracker -Code Arm) -Arguments @{ IncludeARM = $true }
+
+            $Result.Caught | Should -BeNullOrEmpty
+            Assert-AzTokenCall -Graph 0 -Arm 0 -SilentArm 1
+            $Call = (Get-AzTokenCall -Kind Arm -Silent $true)[0]
+            foreach ($Absent in 'Interactive', 'ClientId', 'DeviceCode', 'Force', 'Scope') {
+                $Call.Keys | Should -Not -Contain $Absent -Because "the silent request carries no $Absent"
+            }
+            ($Call.CredentialPrecedence -join ',') | Should -BeExactly 'Environment'
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 1 -Exactly -Scope It -ParameterFilter {
+                $Resource -ceq 'https://management.azure.com' -and
+                $Tenant -ceq 'aaaaaaaa-0000-0000-0000-00000000000a' -and
+                $TimeoutSeconds -eq 900 -and
+                (@($CredentialPrecedence) -join ',') -ceq 'Environment'
+            }
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
+            $Result.State.ArmToken | Should -BeOfType [securestring]
+            $Result.State.ArmTokenTenantId | Should -BeExactly $TenantA
+            $Result.State.ArmTokenObjectId | Should -BeExactly $SessionOid
+            $Result.State.ArmResourceUrl | Should -BeExactly 'https://management.azure.com'
+            $Result.SameTracker | Should -BeTrue
+            $Result.Refusal | Should -BeNullOrEmpty
+        }
+
+        It 'asks for the ARM token interactively after <Name> in the same call, since the record then names the Microsoft Graph credential' -ForEach @(
+            @{ Name = 'an interactive Microsoft Graph renewal'; Tracker = 'Arm'; Graph = 1; SilentGraph = 0 }
+            @{ Name = 'a silent Microsoft Graph renewal'; Tracker = 'Graph'; Graph = 0; SilentGraph = 1 }
+        ) {
+            $Result = Invoke-RenewalSignIn -State (New-RenewalState) -Tracker (New-TestTracker -Code $Tracker) -Arguments @{ IncludeARM = $true }
+
+            $Result.Caught | Should -BeNullOrEmpty
+            Assert-AzTokenCall -Graph $Graph -SilentGraph $SilentGraph -Arm 1 -SilentArm 0 -Force $false
+            (Get-AzTokenCall -Kind Arm)[0].Keys | Should -Contain 'Interactive'
+            # The interactive ARM request now holds AzAuth's credential: no client id, the session tenant.
+            $Result.Tracker.ClientId | Should -BeExactly ''
+            $Result.Tracker.Tenant | Should -BeExactly $TenantA
+            $Result.State.ArmTokenObjectId | Should -BeExactly $SessionOid
+        }
+    }
+
+    Context 'When a term of the silent Microsoft Graph renewal does not hold (EntraRBAC A22)' {
+        # One row per term of the predicate: each row breaks that term and keeps every other one, so
+        # no silent request is made and the interactive request (or the device code request) runs
+        # exactly once. A row whose term is redundant with another says so.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Get-AzToken -MockWith $script:AzTokenMock
+            Mock -ModuleName Omnicit.PIM Connect-MgGraph {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionFingerprint { 'fp' }
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionState { 'Own' }
+            $UsGovAuthority = InModuleScope Omnicit.PIM { (Get-OPIMCloudEndpoint -Environment 'USGov').AuthorityHost }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMSignInLatch = $null
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMSignInLatch = $null
+                $script:_OPIMInteractiveCredential = $null
+            }
+        }
+
+        It 'makes no silent request and one <Key> request when <Name>' -ForEach @(
+            # Also excluded by the -Force term: every device code request carries -Force (A17).
+            @{ Name = 'the session is in device code mode'; Shape = 'Expired'; Set = @{ DeviceCode = $true }; Tracker = 'Graph'; Arguments = @{}; Moved = $false; Fixture = @{}; Key = 'DeviceCode'; Force = $true }
+            # Also excluded by the dictionary and the account terms: there is no state at all.
+            @{ Name = 'there is no session yet (a first sign-in)'; Shape = 'None'; Set = @{}; Tracker = 'Graph'; Arguments = @{ TenantId = 'aaaaaaaa-0000-0000-0000-00000000000a' }; Moved = $false; Fixture = @{}; Key = 'Interactive'; Force = $false }
+            @{ Name = 'the state is not a dictionary'; Shape = 'Object'; Set = @{}; Tracker = 'Graph'; Arguments = @{}; Moved = $false; Fixture = @{}; Key = 'Interactive'; Force = $false }
+            @{ Name = 'a claims challenge is answered'; Shape = 'Valid'; Set = @{}; Tracker = 'Graph'; Arguments = @{ ClaimsChallenge = '{"access_token":{"acrs":{"essential":true,"value":"c1"}}}' }; Moved = $false; Fixture = @{}; Key = 'Interactive'; Force = $false }
+            @{ Name = '-ForceRefresh is given'; Shape = 'Valid'; Set = @{}; Tracker = 'Graph'; Arguments = @{ ForceRefresh = $true }; Moved = $false; Fixture = @{}; Key = 'Interactive'; Force = $true }
+            @{ Name = 'the authority moved since the last token request'; Shape = 'Expired'; Set = @{}; Tracker = 'Graph'; Arguments = @{}; Moved = $true; Fixture = @{}; Key = 'Interactive'; Force = $true }
+            @{ Name = 'no interactive credential is recorded'; Shape = 'Expired'; Set = @{}; Tracker = 'None'; Arguments = @{}; Moved = $false; Fixture = @{}; Key = 'Interactive'; Force = $false }
+            @{ Name = 'the record names another client id'; Shape = 'Expired'; Set = @{}; Tracker = 'OtherClient'; Arguments = @{}; Moved = $false; Fixture = @{}; Key = 'Interactive'; Force = $false }
+            @{ Name = 'the record names the Azure credential, with no client id'; Shape = 'Expired'; Set = @{}; Tracker = 'Arm'; Arguments = @{}; Moved = $false; Fixture = @{}; Key = 'Interactive'; Force = $false }
+            @{ Name = 'the record names the client id in another letter case'; Shape = 'Expired'; Set = @{}; Tracker = 'GraphUpperClient'; Arguments = @{}; Moved = $false; Fixture = @{}; Key = 'Interactive'; Force = $false }
+            @{ Name = 'the record names another tenant'; Shape = 'Expired'; Set = @{}; Tracker = 'GraphTenantB'; Arguments = @{}; Moved = $false; Fixture = @{}; Key = 'Interactive'; Force = $false }
+            @{ Name = 'the record names the tenant in another letter case'; Shape = 'Expired'; Set = @{}; Tracker = 'GraphUpperTenant'; Arguments = @{}; Moved = $false; Fixture = @{}; Key = 'Interactive'; Force = $false }
+            @{ Name = 'the session account is not a GUID'; Shape = 'Expired'; Set = @{ ObjectId = 'session-account' }; Tracker = 'Graph'; Arguments = @{}; Moved = $false; Fixture = @{}; Key = 'Interactive'; Force = $false }
+            @{ Name = 'the session token tenant is not a GUID'; Shape = 'Expired'; Set = @{ TenantId = 'contoso.onmicrosoft.com'; TokenTenantId = $null }; Tracker = 'GraphDomain'; Arguments = @{}; Moved = $false; Fixture = @{}; Key = 'Interactive'; Force = $false }
+            @{ Name = 'the call names another tenant than the session''s'; Shape = 'Expired'; Set = @{}; Tracker = 'GraphTenantB'; Arguments = @{ TenantId = 'bbbbbbbb-0000-0000-0000-00000000000b' }; Moved = $false; Fixture = @{ GraphTid = 'bbbbbbbb-0000-0000-0000-00000000000b' }; Key = 'Interactive'; Force = $false }
+        ) {
+            foreach ($Entry in $Fixture.GetEnumerator()) {
+                Set-Variable -Scope Script -Name $Entry.Key -Value $Entry.Value
+            }
+            $Last = if ($Moved) { $UsGovAuthority } else { $null }
+            $Result = Invoke-RenewalSignIn -State (New-TestState -Shape $Shape -Set $Set) -Tracker (New-TestTracker -Code $Tracker) -Arguments $Arguments -LastAuthorityHost $Last
+
+            $Result.Caught | Should -BeNullOrEmpty -Because 'the interactive request answers and the sign-in completes'
+            Assert-AzTokenCall -Graph 1 -Arm 0 -SilentGraph 0 -Force $Force -Key $Key
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Exactly -Scope It
+        }
+    }
+
+    Context 'When a term of the silent ARM renewal does not hold (EntraRBAC A22)' {
+        # The Microsoft Graph token is cached, so the one request is the ARM one.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Get-AzToken -MockWith $script:AzTokenMock
+            Mock -ModuleName Omnicit.PIM Connect-MgGraph {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionFingerprint { 'fp' }
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionState { 'Own' }
+            $UsGovAuthority = InModuleScope Omnicit.PIM { (Get-OPIMCloudEndpoint -Environment 'USGov').AuthorityHost }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMSignInLatch = $null
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMSignInLatch = $null
+                $script:_OPIMInteractiveCredential = $null
+            }
+        }
+
+        It 'makes no silent ARM request and one <Key> ARM request when <Name>' -ForEach @(
+            @{ Name = 'no interactive credential is recorded'; Set = @{}; Tracker = 'None'; Moved = $false; Key = 'Interactive'; Force = $false }
+            @{ Name = 'the record names the Microsoft Graph credential'; Set = @{}; Tracker = 'Graph'; Moved = $false; Key = 'Interactive'; Force = $false }
+            @{ Name = 'the record names another tenant'; Set = @{}; Tracker = 'ArmTenantB'; Moved = $false; Key = 'Interactive'; Force = $false }
+            @{ Name = 'the authority moved since the last token request'; Set = @{}; Tracker = 'Arm'; Moved = $true; Key = 'Interactive'; Force = $true }
+            # Also excluded by the -Force term: every device code request carries -Force (A17).
+            @{ Name = 'the session is in device code mode'; Set = @{ DeviceCode = $true }; Tracker = 'Arm'; Moved = $false; Key = 'DeviceCode'; Force = $true }
+        ) {
+            $Last = if ($Moved) { $UsGovAuthority } else { $null }
+            $Result = Invoke-RenewalSignIn -State (New-TestState -Shape Valid -Set $Set) -Tracker (New-TestTracker -Code $Tracker) -Arguments @{ IncludeARM = $true } -LastAuthorityHost $Last
+
+            $Result.Caught | Should -BeNullOrEmpty
+            Assert-AzTokenCall -Graph 0 -Arm 1 -SilentArm 0 -Force $Force -Key $Key
+            $Result.State.ArmTokenObjectId | Should -BeExactly $SessionOid
+        }
+    }
+
+    Context 'When the silent renewal does not answer for the session (EntraRBAC A22)' {
+        # Every failure is treated alike: discarded with one verbose line, no error record and no
+        # warning, and the interactive request runs exactly once after it.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Get-AzToken -MockWith $script:AzTokenMock
+            Mock -ModuleName Omnicit.PIM Connect-MgGraph {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionFingerprint { 'fp' }
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionState { 'Own' }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMSignInLatch = $null
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMSignInLatch = $null
+                $script:_OPIMInteractiveCredential = $null
+            }
+        }
+
+        It 'signs in interactively exactly once when the silent Microsoft Graph request <Name>' -ForEach @(
+            @{ Name = 'throws'; Answer = 'Throw'; Oid = $null; Tid = $null; Verbose = '[Initialize-OPIMAuth] The silent renewal failed (HttpResponseException); signing in interactively.' }
+            @{ Name = 'returns nothing'; Answer = 'Nothing'; Oid = $null; Tid = $null; Verbose = '[Initialize-OPIMAuth] The silent renewal returned no token; signing in interactively.' }
+            @{ Name = 'returns a result without a token'; Answer = 'NoToken'; Oid = $null; Tid = $null; Verbose = '[Initialize-OPIMAuth] The silent renewal returned no token; signing in interactively.' }
+            @{ Name = 'returns a token of another account'; Answer = 'Token'; Oid = '33333333-3333-3333-3333-333333333333'; Tid = $null; Verbose = '[Initialize-OPIMAuth] The silent renewal returned a token for another account or tenant; discarded, signing in interactively.' }
+            @{ Name = 'returns a token for another tenant'; Answer = 'Token'; Oid = $null; Tid = 'bbbbbbbb-0000-0000-0000-00000000000b'; Verbose = '[Initialize-OPIMAuth] The silent renewal returned a token for another account or tenant; discarded, signing in interactively.' }
+        ) {
+            $script:SilentAnswer = $Answer
+            $script:SilentOid = $Oid
+            $script:SilentTid = $Tid
+            $Fixture = $null
+            if ($Answer -eq 'Throw') {
+                # The record AzAuth throws can carry the request it failed on, and that request a bearer token.
+                $Fixture = New-ScrubFixture
+                $Fixture.Request.Headers.Contains('Authorization') | Should -BeTrue -Because 'the fixture must carry the header the scrub removes'
+                $script:SilentFailure = $Fixture.Record
+            }
+            $Result = Invoke-RenewalSignIn -State (New-RenewalState) -Tracker (New-TestTracker -Code Graph)
+
+            $Result.Caught | Should -BeNullOrEmpty
+            Assert-AzTokenCall -Graph 1 -Arm 0 -SilentGraph 1 -Force $false -Key 'Interactive'
+            $script:AzTokenCalls[0].Silent | Should -BeTrue -Because 'the silent request comes first'
+            $script:AzTokenCalls[1].Silent | Should -BeFalse
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Exactly -Scope It
+            $Result.Warnings | Should -BeNullOrEmpty
+            if ($Fixture) {
+                # The engine also hands a caller's -ErrorVariable the record a nested frame threw and a
+                # catch caught (measured 2026-10-10, see Testing Conventions), so the error variable can
+                # hold the silent request's own record -- scrubbed, below. Initialize-OPIMAuth writes no
+                # record of its own: every entry is the fixture's.
+                foreach ($Entry in $Result.Errors) {
+                    $Inner = if ($Entry -is [System.Management.Automation.ErrorRecord]) { $Entry.Exception } else { $Entry }
+                    ([object]::ReferenceEquals($Inner, $Fixture.Exception) -or [object]::ReferenceEquals($Inner.InnerException, $Fixture.Exception)) |
+                        Should -BeTrue -Because 'no error record other than the caught silent failure reaches the caller'
+                }
+            } else {
+                $Result.Errors | Should -BeNullOrEmpty
+            }
+            $Lines =@($Result.Verbose | Where-Object { $_ -like '*silent renewal*' })
+            $Lines.Count | Should -Be 1 -Because 'the failure writes one verbose line'
+            $Lines[0] | Should -BeExactly $Verbose
+            ($Result.Verbose -join "`n") | Should -Not -BeLike '*NOT-A-REAL-TOKEN*'
+            ($Result.Verbose -join "`n") | Should -Not -BeLike '*Response status code*'
+            # The session is the interactive token's: the session's account, and the record of the
+            # credential the interactive request built.
+            $Result.State.ObjectId | Should -BeExactly $SessionOid
+            $Result.State.TokenTenantId | Should -BeExactly $TenantA
+            $Result.Tracker.ClientId | Should -BeExactly $GraphClientId
+            $Result.Tracker.Tenant | Should -BeExactly $TenantA
+            $Result.Refusal | Should -BeNullOrEmpty
+            if ($Fixture) {
+                $Fixture.Request.Headers.Contains('Authorization') | Should -BeFalse -Because 'the catch scrubs the record first'
+                @($global:Error | Where-Object {
+                        $_ -is [System.Management.Automation.ErrorRecord] -and (
+                            [object]::ReferenceEquals($_.Exception, $Fixture.Exception) -or
+                            [object]::ReferenceEquals($_.Exception.InnerException, $Fixture.Exception))
+                    }).Count |
+                    Should -Be 0 -Because 'the scrub removes the record of the silent request from $global:Error'
+            }
+        }
+
+        It 'signs in to Azure interactively exactly once when the silent ARM request returns a token of another account' {
+            $script:SilentOid = $OtherOid
+            $Result = Invoke-RenewalSignIn -State (New-RenewalState -Valid) -Tracker (New-TestTracker -Code Arm) -Arguments @{ IncludeARM = $true }
+
+            $Result.Caught | Should -BeNullOrEmpty
+            Assert-AzTokenCall -Graph 0 -Arm 1 -SilentArm 1 -Force $false -Key 'Interactive'
+            $script:AzTokenCalls[0].Silent | Should -BeTrue
+            $Result.Warnings | Should -BeNullOrEmpty
+            $Result.Errors | Should -BeNullOrEmpty
+            $Result.State.ArmTokenObjectId | Should -BeExactly $SessionOid
+            $Result.Tracker.ClientId | Should -BeExactly ''
+            $Result.Tracker.Tenant | Should -BeExactly $TenantA
+        }
+    }
+
+    Context 'When the record of the interactive credential is kept (EntraRBAC A22)' {
+        # $script:_OPIMInteractiveCredential names the client id and the tenant of the interactive
+        # credential AzAuth holds: cleared before every request but the silent one, set after a request
+        # in the system browser returned, never set in device code mode, and cleared again when a
+        # returned token is refused.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Get-AzToken -MockWith $script:AzTokenMock
+            Mock -ModuleName Omnicit.PIM Connect-MgGraph {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionFingerprint { 'fp' }
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionState { 'Own' }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMSignInLatch = $null
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMSignInLatch = $null
+                $script:_OPIMInteractiveCredential = $null
+            }
+        }
+
+        It 'records the Microsoft Graph client id and <Name> after an interactive Microsoft Graph request' -ForEach @(
+            @{ Name = 'the tenant asked for by GUID'; Arguments = @{ TenantId = 'aaaaaaaa-0000-0000-0000-00000000000a' }; Tenant = 'aaaaaaaa-0000-0000-0000-00000000000a' }
+            @{ Name = 'the tenant asked for by domain'; Arguments = @{ TenantId = 'contoso.onmicrosoft.com' }; Tenant = 'contoso.onmicrosoft.com' }
+            @{ Name = 'no tenant for a first sign-in under organizations'; Arguments = @{}; Tenant = '' }
+        ) {
+            $Result = Invoke-RenewalSignIn -State $null -Tracker $null -Arguments $Arguments
+
+            $Result.Caught | Should -BeNullOrEmpty
+            Assert-AzTokenCall -Graph 1 -Arm 0 -Key 'Interactive'
+            @($Result.Tracker.Keys).Count | Should -Be 2
+            $Result.Tracker.ClientId | Should -BeExactly $GraphClientId
+            $Result.Tracker.Tenant | Should -BeExactly $Tenant
+        }
+
+        It 'records no client id and the tenant of the session token after an interactive ARM request' {
+            # A session pinned by domain: the ARM request names the GUID its Graph token was issued for.
+            $State = New-RenewalState -Valid
+            $State.TenantId = 'contoso.onmicrosoft.com'
+            $Result = Invoke-RenewalSignIn -State $State -Tracker $null -Arguments @{ IncludeARM = $true }
+
+            $Result.Caught | Should -BeNullOrEmpty
+            Assert-AzTokenCall -Graph 0 -Arm 1 -Key 'Interactive'
+            @($Result.Tracker.Keys).Count | Should -Be 2
+            $Result.Tracker.ClientId | Should -BeExactly ''
+            $Result.Tracker.Tenant | Should -BeExactly $TenantA
+        }
+
+        It 'clears the record and records none after a device code <Name> request' -ForEach @(
+            @{ Name = 'Microsoft Graph'; Shape = 'Expired'; Tracker = 'Graph'; Arguments = @{}; Graph = 1; Arm = 0 }
+            @{ Name = 'ARM'; Shape = 'Valid'; Tracker = 'Arm'; Arguments = @{ IncludeARM = $true }; Graph = 0; Arm = 1 }
+        ) {
+            $Result = Invoke-RenewalSignIn -State (New-TestState -Shape $Shape -Set @{ DeviceCode = $true }) -Tracker (New-TestTracker -Code $Tracker) -Arguments $Arguments
+
+            $Result.Caught | Should -BeNullOrEmpty
+            Assert-AzTokenCall -Graph $Graph -Arm $Arm -Force $true -Key 'DeviceCode'
+            $Result.Tracker | Should -BeNullOrEmpty
+        }
+
+        It 'clears the record when the interactive <Name> request throws' -ForEach @(
+            @{ Name = 'Microsoft Graph'; Shape = 'Expired'; Tracker = 'OtherClient'; Arguments = @{}; ErrorId = 'InteractiveAuthFailed'; Graph = 1; Arm = 0 }
+            @{ Name = 'ARM'; Shape = 'Valid'; Tracker = 'Graph'; Arguments = @{ IncludeARM = $true }; ErrorId = 'AzureConnectFailed'; Graph = 0; Arm = 1 }
+        ) {
+            # The record names a credential the request would not use, so no silent request is made.
+            $script:AzTokenThrowAt = @(1)
+            $Result = Invoke-RenewalSignIn -State (New-TestState -Shape $Shape) -Tracker (New-TestTracker -Code $Tracker) -Arguments $Arguments
+
+            ($Result.Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly $ErrorId
+            Assert-AzTokenCall -Graph $Graph -Arm $Arm -Key 'Interactive'
+            $Result.Tracker | Should -BeNullOrEmpty
+        }
+
+        It 'clears the record when <ErrorId> refuses the new token: <Name>' -ForEach @(
+            @{ Name = 'a Microsoft Graph token for another tenant'; Shape = 'None'; Arguments = @{ TenantId = 'aaaaaaaa-0000-0000-0000-00000000000a' }; Fixture = @{ GraphTid = 'bbbbbbbb-0000-0000-0000-00000000000b' }; ErrorId = 'TenantMismatch'; Graph = 1; Arm = 0 }
+            @{ Name = 'a Microsoft Graph token whose tenant cannot be read'; Shape = 'None'; Arguments = @{ TenantId = 'aaaaaaaa-0000-0000-0000-00000000000a' }; Fixture = @{ GraphNoTid = $true }; ErrorId = 'TenantMismatch'; Graph = 1; Arm = 0 }
+            @{ Name = 'a Microsoft Graph renewal answered by another account'; Shape = 'Expired'; Arguments = @{}; Fixture = @{ GraphOid = '33333333-3333-3333-3333-333333333333' }; ErrorId = 'AccountMismatch'; Graph = 1; Arm = 0 }
+            @{ Name = 'an ARM token for another tenant'; Shape = 'Valid'; Arguments = @{ IncludeARM = $true }; Fixture = @{ ArmTid = 'bbbbbbbb-0000-0000-0000-00000000000b' }; ErrorId = 'TenantMismatch'; Graph = 0; Arm = 1 }
+            @{ Name = 'an ARM token of another account'; Shape = 'Valid'; Arguments = @{ IncludeARM = $true }; Fixture = @{ ArmOid = '33333333-3333-3333-3333-333333333333' }; ErrorId = 'AccountMismatch'; Graph = 0; Arm = 1 }
+        ) {
+            # No record before the call: the interactive request records its credential, and the
+            # refusal of its token clears that record again.
+            foreach ($Entry in $Fixture.GetEnumerator()) {
+                Set-Variable -Scope Script -Name $Entry.Key -Value $Entry.Value
+            }
+            $Result = Invoke-RenewalSignIn -State (New-TestState -Shape $Shape) -Tracker $null -Arguments $Arguments
+
+            ($Result.Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly $ErrorId
+            Assert-AzTokenCall -Graph $Graph -Arm $Arm -Key 'Interactive'
+            $Result.Tracker | Should -BeNullOrEmpty
+            $Result.Refusal | Should -BeExactly 'Invoke-RenewalCommand'
+        }
+    }
+
+    Context 'When the host was started with -NonInteractive (EntraRBAC BL-100)' {
+        # A sign-in in the system browser is refused with InteractiveSignInUnavailable after the cached
+        # return and before the AZURE_AUTHORITY_HOST block, the authority tracker and every token
+        # request, the silent one included. The calling command stays latched. Device code mode is not
+        # affected.
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Test-OPIMHostNonInteractive { $true }
+            Mock -ModuleName Omnicit.PIM Get-AzToken -MockWith $script:AzTokenMock
+            Mock -ModuleName Omnicit.PIM Connect-MgGraph {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionFingerprint { 'fp' }
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionState { 'Own' }
+            $GlobalAuthority = InModuleScope Omnicit.PIM { (Get-OPIMCloudEndpoint -Environment 'Global').AuthorityHost }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMSignInLatch = $null
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMSignInLatch = $null
+                $script:_OPIMInteractiveCredential = $null
+            }
+        }
+
+        It 'refuses <Name> with InteractiveSignInUnavailable before any token request, and keeps the caller latched' -ForEach @(
+            @{ Name = 'a renewal of a Global session whose record would allow a silent request'; Shape = 'Expired'; Tracker = 'Graph'; Arguments = @{}; Target = 'aaaaaaaa-0000-0000-0000-00000000000a' }
+            @{ Name = 'a first sign-in in USGov'; Shape = 'None'; Tracker = 'None'; Arguments = @{ TenantId = 'contoso.onmicrosoft.com'; Environment = 'USGov' }; Target = 'contoso.onmicrosoft.com' }
+            @{ Name = 'an Azure sign-in beside a cached Microsoft Graph token'; Shape = 'Valid'; Tracker = 'Arm'; Arguments = @{ IncludeARM = $true }; Target = 'aaaaaaaa-0000-0000-0000-00000000000a' }
+            @{ Name = 'a first sign-in that names no tenant'; Shape = 'None'; Tracker = 'None'; Arguments = @{}; Target = 'organizations' }
+        ) {
+            $State = New-TestState -Shape $Shape
+            $Tracker = New-TestTracker -Code $Tracker
+            $Result = Invoke-RenewalSignIn -State $State -Tracker $Tracker -Arguments $Arguments -LastAuthorityHost $GlobalAuthority
+
+            ($Result.Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'InteractiveSignInUnavailable'
+            $Result.Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+            $Result.Caught.TargetObject | Should -BeExactly $Target
+            $Result.Caught.Exception.Message | Should -BeLike "*-NonInteractive*'$Target'*"
+            $Result.Caught.Exception.Message | Should -BeLike '*Connect-OPIM -DeviceCode*'
+            $Result.Caught.Exception.InnerException | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Test-OPIMHostNonInteractive -Times 1 -Exactly -Scope It
+            $Result.Refusal | Should -BeExactly 'Invoke-RenewalCommand'
+            # Before the authority tracker and the AZURE_AUTHORITY_HOST block: nothing is recorded or written.
+            $Result.LastAuthorityHost | Should -BeExactly $GlobalAuthority
+            [System.Environment]::GetEnvironmentVariable('AZURE_AUTHORITY_HOST') | Should -BeNullOrEmpty
+            $Result.Warnings | Should -BeNullOrEmpty
+            if ($null -ne $State) { [object]::ReferenceEquals($State, $Result.State) | Should -BeTrue }
+            $Result.SameTracker | Should -BeTrue
+        }
+
+        It 'leaves an operator''s AZURE_AUTHORITY_HOST as it is and warns about nothing when it refuses a Global sign-in' {
+            # Inside the try the Global sign-in would warn about this value; the refusal comes first.
+            [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', 'https://login.example.com/')
+            $Result = Invoke-RenewalSignIn -State (New-RenewalState) -Tracker $null
+
+            ($Result.Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'InteractiveSignInUnavailable'
+            $Result.Warnings | Should -BeNullOrEmpty
+            [System.Environment]::GetEnvironmentVariable('AZURE_AUTHORITY_HOST') | Should -BeExactly 'https://login.example.com/'
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 0 -Scope It
+        }
+
+        It 'answers a cached session without asking the host question' {
+            $Result = Invoke-RenewalSignIn -State (New-RenewalState -Valid) -Tracker $null
+
+            $Result.Caught | Should -BeNullOrEmpty
+            $Result.Refusal | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName Omnicit.PIM Get-AzToken -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Test-OPIMHostNonInteractive -Times 0 -Scope It
+        }
+
+        It 'does not refuse a sign-in in device code mode' {
+            $State = New-RenewalState
+            $State.DeviceCode = $true
+            $Result = Invoke-RenewalSignIn -State $State -Tracker $null -Arguments @{ IncludeARM = $true }
+
+            $Result.Caught | Should -BeNullOrEmpty
+            $Result.Refusal | Should -BeNullOrEmpty
+            Assert-AzTokenCall -Graph 1 -Arm 1 -Force $true -Key 'DeviceCode'
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Exactly -Scope It
+        }
+    }
+
+    Context 'When a Microsoft Graph sign-in continues the session (EntraRBAC BL-119)' {
+        # A new Graph token for the tenant of the session's Graph token, in the session's cloud, never
+        # makes the session another account's: when both oids are GUIDs and differ, the sign-in ends
+        # with AccountMismatch (-Source Graph) before Connect-MgGraph, and the state stays the object it
+        # was. A token without an oid never refuses and keeps the session's account (D2).
+        BeforeAll {
+            Mock -ModuleName Omnicit.PIM Get-AzToken -MockWith $script:AzTokenMock
+            Mock -ModuleName Omnicit.PIM Connect-MgGraph {}
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionFingerprint { 'fp-after' }
+            Mock -ModuleName Omnicit.PIM Get-OPIMGraphSessionState { 'Own' }
+            # A session pinned by domain, with an ARM token and a recorded Graph SDK session, whose
+            # Graph token has expired unless -Valid is given.
+            function New-ContinuedState {
+                param([switch]$Valid)
+                $State = New-RenewalState -Valid:$Valid
+                $State.TenantId = 'contoso.onmicrosoft.com'
+                $State.GraphSessionFingerprint = 'fp-before'
+                $null = Add-ArmTestToken -State $State -TenantId $TenantA -ObjectId $SessionOid
+                $State
+            }
+            # Every key of the state after the call holds what it held before, by reference or value.
+            function Assert-StateUnchanged {
+                param([hashtable]$Before, [hashtable]$Snapshot, [object]$After)
+                [object]::ReferenceEquals($Before, $After) | Should -BeTrue -Because 'the refused token writes no new state'
+                @($After.Keys).Count | Should -Be $Snapshot.Count
+                foreach ($Key in $Snapshot.Keys) {
+                    ([object]::ReferenceEquals($Snapshot[$Key], $After[$Key]) -or ($Snapshot[$Key] -eq $After[$Key])) |
+                        Should -BeTrue -Because "the refused token changes no key of the session ($Key)"
+                }
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMSignInLatch = $null
+            }
+            $script:GraphIdentity = 'other@contoso.com'
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMSignInLatch = $null
+                $script:_OPIMInteractiveCredential = $null
+            }
+        }
+
+        It 'refuses <Name> answered by another account with AccountMismatch, connects nothing and keeps the session as it was' -ForEach @(
+            @{ Name = 'a renewal at a command''s start'; Valid = $false; DeviceCode = $false; Arguments = @{}; Key = 'Interactive' }
+            @{ Name = 'a forced refresh'; Valid = $true; DeviceCode = $false; Arguments = @{ ForceRefresh = $true }; Key = 'Interactive' }
+            @{ Name = 'a claims step-up'; Valid = $true; DeviceCode = $false; Arguments = @{ ClaimsChallenge = '{"access_token":{"acrs":{"essential":true,"value":"c1"}}}' }; Key = 'Claim' }
+            @{ Name = 'a renewal in device code mode'; Valid = $false; DeviceCode = $true; Arguments = @{}; Key = 'DeviceCode' }
+            @{ Name = 'a renewal with -IncludeARM'; Valid = $false; DeviceCode = $false; Arguments = @{ IncludeARM = $true }; Key = 'Interactive' }
+        ) {
+            $script:GraphOid = $OtherOid
+            $script:ArmOid = $OtherOid
+            $State = New-ContinuedState -Valid:$Valid
+            $State.DeviceCode = $DeviceCode
+            $Snapshot = @{} + $State
+            $Expected = InModuleScope Omnicit.PIM { (New-OPIMAccountMismatchError -RequestedTenant 'contoso.onmicrosoft.com' -Source Graph).Exception.Message }
+            $Result = Invoke-RenewalSignIn -State $State -Tracker $null -Arguments $Arguments
+
+            ($Result.Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'AccountMismatch'
+            $Result.Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+            $Result.Caught.TargetObject | Should -BeExactly 'contoso.onmicrosoft.com'
+            $Result.Caught.Exception.Message | Should -BeExactly $Expected
+            $Result.Caught.Exception.Message | Should -Not -BeLike '*33333333*'
+            $Result.Caught.Exception.Message | Should -Not -BeLike '*22222222*'
+            $Result.Caught.Exception.Message | Should -Not -BeLike '*other@contoso.com*'
+            $Result.Caught.Exception.InnerException | Should -BeNullOrEmpty
+            # One Microsoft Graph request, and none for Azure: the refusal ends the call before it.
+            Assert-AzTokenCall -Graph 1 -Arm 0 -Key $Key
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
+            Should -Invoke -ModuleName Omnicit.PIM Get-OPIMGraphSessionFingerprint -Times 0 -Scope It
+            Assert-StateUnchanged -Before $State -Snapshot $Snapshot -After $Result.State
+            $Result.State.ObjectId | Should -BeExactly $SessionOid
+            $Result.State.Account | Should -BeExactly 'user@contoso.com'
+            $Result.State.GraphSessionFingerprint | Should -BeExactly 'fp-before'
+            $Result.Refusal | Should -BeExactly 'Invoke-RenewalCommand'
+        }
+
+        It 'checks the account when the call names the session''s tenant by its GUID while the session was pinned by domain' {
+            $script:GraphOid = $OtherOid
+            $State = New-ContinuedState
+            $Snapshot = @{} + $State
+            $Result = Invoke-RenewalSignIn -State $State -Tracker $null -Arguments @{ TenantId = $TenantA }
+
+            ($Result.Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'AccountMismatch'
+            $Result.Caught.TargetObject | Should -BeExactly $TenantA
+            $Result.Caught.Exception.Message | Should -BeLike "The new Microsoft Graph sign-in in '$TenantA' was answered by another account*"
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 0 -Scope It
+            Assert-StateUnchanged -Before $State -Snapshot $Snapshot -After $Result.State
+        }
+
+        It 'checks the account of a later sign-in of a session first signed in under organizations' {
+            $First = Invoke-RenewalSignIn -State $null -Tracker $null
+            $First.Caught | Should -BeNullOrEmpty
+            $First.State.TenantId | Should -BeExactly $TenantA
+            $First.State.ObjectId | Should -BeExactly $SessionOid
+
+            # The session's Graph token expires, and the renewal is answered by another account.
+            $First.State.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(-1)
+            $Snapshot = @{} + $First.State
+            $script:GraphOid = $OtherOid
+            $Second = Invoke-RenewalSignIn -State $First.State -Tracker $First.Tracker
+
+            ($Second.Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'AccountMismatch'
+            $Second.Caught.TargetObject | Should -BeExactly $TenantA
+            Assert-AzTokenCall -Graph 2 -Arm 0 -Key 'Interactive'
+            (Get-AzTokenCall -Kind Graph)[1].Tenant | Should -BeExactly $TenantA -Because 'the renewal names the tenant the session was pinned to'
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Exactly -Scope It
+            Assert-StateUnchanged -Before $First.State -Snapshot $Snapshot -After $Second.State
+        }
+
+        It 'signs in as the account of a new token that does not continue the session: <Name>' -ForEach @(
+            @{ Name = 'another tenant'; Shape = 'Hashtable'; Set = @{}; Arguments = @{ TenantId = 'bbbbbbbb-0000-0000-0000-00000000000b' }; Fixture = @{ GraphTid = 'bbbbbbbb-0000-0000-0000-00000000000b' }; Environment = 'Global'; TokenTenant = 'bbbbbbbb-0000-0000-0000-00000000000b' }
+            @{ Name = 'another cloud for the same tenant'; Shape = 'Hashtable'; Set = @{}; Arguments = @{ TenantId = 'aaaaaaaa-0000-0000-0000-00000000000a'; Environment = 'USGov' }; Fixture = @{}; Environment = 'USGov'; TokenTenant = 'aaaaaaaa-0000-0000-0000-00000000000a' }
+            @{ Name = 'a session that records no token tenant'; Shape = 'Hashtable'; Set = @{ TokenTenantId = $null }; Arguments = @{}; Fixture = @{}; Environment = 'Global'; TokenTenant = 'aaaaaaaa-0000-0000-0000-00000000000a' }
+            @{ Name = 'a state that is not a dictionary'; Shape = 'Object'; Set = @{}; Arguments = @{}; Fixture = @{}; Environment = 'Global'; TokenTenant = 'aaaaaaaa-0000-0000-0000-00000000000a' }
+        ) {
+            $script:GraphOid = $OtherOid
+            foreach ($Entry in $Fixture.GetEnumerator()) {
+                Set-Variable -Scope Script -Name $Entry.Key -Value $Entry.Value
+            }
+            $State = New-ContinuedState
+            foreach ($Entry in $Set.GetEnumerator()) { $State[$Entry.Key] = $Entry.Value }
+            if ($Shape -eq 'Object') { $State = [pscustomobject]$State }
+            $Result = Invoke-RenewalSignIn -State $State -Tracker $null -Arguments $Arguments
+
+            $Result.Caught | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Exactly -Scope It
+            $Result.State.ObjectId | Should -BeExactly $OtherOid
+            $Result.State.TokenTenantId | Should -BeExactly $TokenTenant
+            $Result.State.Environment | Should -BeExactly $Environment
+            $Result.Refusal | Should -BeNullOrEmpty
+        }
+
+        It 'never refuses when the session account is not a GUID, and records the account of the new token' {
+            $script:GraphOid = $OtherOid
+            $State = New-ContinuedState
+            $State.ObjectId = 'session-account'
+            $Result = Invoke-RenewalSignIn -State $State -Tracker $null
+
+            $Result.Caught | Should -BeNullOrEmpty
+            $Result.State.ObjectId | Should -BeExactly $OtherOid
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Exactly -Scope It
+        }
+
+        It 'signs in the same account again, and records it' {
+            # The account check refuses only another account: the session's own renewal goes through.
+            $Result = Invoke-RenewalSignIn -State (New-ContinuedState) -Tracker $null
+
+            $Result.Caught | Should -BeNullOrEmpty
+            $Result.State.ObjectId | Should -BeExactly $SessionOid
+            $Result.State.GraphSessionFingerprint | Should -BeExactly 'fp-after'
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Exactly -Scope It
+        }
+
+        It 'never refuses a renewal whose new token carries no oid, and keeps the session''s ObjectId (D2)' {
+            $script:GraphNoOid = $true
+            $Result = Invoke-RenewalSignIn -State (New-ContinuedState) -Tracker $null
+
+            $Result.Caught | Should -BeNullOrEmpty
+            $Result.State.ObjectId | Should -BeExactly $SessionOid
+            $Result.State.TokenTenantId | Should -BeExactly $TenantA
+            Should -Invoke -ModuleName Omnicit.PIM Connect-MgGraph -Times 1 -Exactly -Scope It
+        }
+
+        It 'records no ObjectId for a new token without an oid that does not continue the session: <Name>' -ForEach @(
+            @{ Name = 'another tenant'; Arguments = @{ TenantId = 'bbbbbbbb-0000-0000-0000-00000000000b' }; Fixture = @{ GraphTid = 'bbbbbbbb-0000-0000-0000-00000000000b' } }
+            @{ Name = 'another cloud for the same tenant'; Arguments = @{ TenantId = 'aaaaaaaa-0000-0000-0000-00000000000a'; Environment = 'USGov' }; Fixture = @{} }
+        ) {
+            $script:GraphNoOid = $true
+            foreach ($Entry in $Fixture.GetEnumerator()) {
+                Set-Variable -Scope Script -Name $Entry.Key -Value $Entry.Value
+            }
+            $Result = Invoke-RenewalSignIn -State (New-ContinuedState) -Tracker $null -Arguments $Arguments
+
+            $Result.Caught | Should -BeNullOrEmpty
+            $Result.State.ContainsKey('ObjectId') | Should -BeTrue
+            $Result.State.ObjectId | Should -BeNullOrEmpty
         }
     }
 }
