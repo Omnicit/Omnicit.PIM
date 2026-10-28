@@ -1415,6 +1415,118 @@ Describe 'Invoke-OPIMGraphRequest' {
         }
     }
 
+    Context 'When a claims challenge arrives without a sign-in of the module''s own' {
+        # EntraRBAC #67. A step-up signs in again for the session's tenant, so it needs a state that
+        # records one: with no auth state, or a state that holds only DeviceCode (as before a first
+        # sign-in in device code mode), the challenge is not stepped up and no Initialize-OPIMAuth
+        # -ClaimsChallenge is made. The first send fails with the challenge, as the SDK throws it
+        # (New-ScrubFixture), and every later send answers, so a step-up or a retry that ran shows as
+        # a result and a second send instead of the converted error.
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Initialize-OPIMAuth {}
+                Mock Invoke-MgGraphRequest {
+                    $script:_OPIMTestSends++
+                    if ($script:_OPIMTestSends -eq 1) { $PSCmdlet.ThrowTerminatingError($script:_OPIMTestChallenge) }
+                    return @{ id = 'after-retry' }
+                }
+            }
+            # The PIM 400 body form: URL-encoded claims in the error message. It is no 401 and names no
+            # rejected token, so the token-rejected retry does not take it either.
+            $script:BodyFormContent = '{"error":{"code":"RoleAssignmentRequestAcrsValidationFailed",' +
+            '"message":"...&claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%20%22value%22%3A%22c1%22%7D%7D%7D"}}'
+            # A 401 that carries a claims challenge: the token-rejected test matches it too.
+            $script:UnauthorizedFormContent = '{"error":{"code":"InvalidAuthenticationToken",' +
+            '"message":"...&claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%20%22value%22%3A%22c1%22%7D%7D%7D"}}'
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMTestChallenge = $null
+                $script:_OPIMTestSends = $null
+            }
+        }
+
+        It 'does not step up a 400 body-form challenge for <Name>, and ends with the converted error after one send' -ForEach @(
+            @{ Name = 'no auth state'; State = $null }
+            @{ Name = 'a state that holds only DeviceCode'; State = @{ DeviceCode = $true } }
+            @{ Name = 'a state whose TenantId is empty'; State = @{ TenantId = ''; DeviceCode = $true } }
+        ) {
+            $Challenge = New-ScrubFixture -Status 400 -Content $script:BodyFormContent
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Record = $Challenge.Record } {
+                param($State, $Record)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestChallenge = $Record
+                $script:_OPIMTestSends = 0
+                $Result = $null
+                $Caught = $null
+                try { $Result = Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{} } catch { $Caught = $PSItem }
+                $Result | Should -BeNullOrEmpty
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'RoleAssignmentRequestAcrsValidationFailed'
+                $Caught.Exception.InnerException | Should -BeNullOrEmpty
+                $script:_OPIMTestSends | Should -Be 1
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                Should -Invoke Initialize-OPIMAuth -Times 0 -Scope It
+            }
+            $Challenge.Request.Headers.Contains('Authorization') | Should -BeFalse
+        }
+
+        It 'does not step up or refresh a 401 challenge with no auth state, and ends with the converted error after one send' {
+            $Challenge = New-ScrubFixture -Status 401 -Content $script:UnauthorizedFormContent
+            InModuleScope Omnicit.PIM -Parameters @{ Record = $Challenge.Record } {
+                param($Record)
+                $script:_OPIMAuthState = $null
+                $script:_OPIMTestChallenge = $Record
+                $script:_OPIMTestSends = 0
+                $Caught = $null
+                try { $null = Invoke-OPIMGraphRequest -Uri 'v1.0/me' } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'InvalidAuthenticationToken'
+                $script:_OPIMTestSends | Should -Be 1
+                Should -Invoke Initialize-OPIMAuth -Times 0 -Scope It
+            }
+        }
+
+        It 'neither steps up nor signs in again on a 401 challenge for a state that holds only <Name>, and ends with the converted error after one send' -ForEach @(
+            @{ Name = 'DeviceCode'; State = @{ DeviceCode = $true } }
+            @{ Name = 'an empty TenantId'; State = @{ TenantId = ''; DeviceCode = $true } }
+        ) {
+            # The claims guard skips the step-up, and the token-rejected retry asks for the same sign-in
+            # (a dictionary that records a tenant), so the transport never makes a first sign-in under
+            # 'organizations' with -ForceRefresh. A pillar cmdlet would not get here on such a state
+            # anyway: its own failed first sign-in left it latched.
+            $Challenge = New-ScrubFixture -Status 401 -Content $script:UnauthorizedFormContent
+            InModuleScope Omnicit.PIM -Parameters @{ State = $State; Record = $Challenge.Record } {
+                param($State, $Record)
+                $script:_OPIMAuthState = $State
+                $script:_OPIMTestChallenge = $Record
+                $script:_OPIMTestSends = 0
+                $Caught = $null
+                try { $null = Invoke-OPIMGraphRequest -Uri 'v1.0/me' } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'InvalidAuthenticationToken'
+                $script:_OPIMTestSends | Should -Be 1
+                Should -Invoke Initialize-OPIMAuth -Times 0 -Scope It
+            }
+            $Challenge.Request.Headers.Contains('Authorization') | Should -BeFalse
+        }
+        It 'still steps up a 400 body-form challenge for a state that records a tenant' {
+            # The control: the same challenge, with the module's own sign-in.
+            $Challenge = New-ScrubFixture -Status 400 -Content $script:BodyFormContent
+            InModuleScope Omnicit.PIM -Parameters @{ Record = $Challenge.Record } {
+                param($Record)
+                $script:_OPIMAuthState = @{ TenantId = 'contoso.onmicrosoft.com'; DeviceCode = $true }
+                $script:_OPIMTestChallenge = $Record
+                $script:_OPIMTestSends = 0
+                $Result = Invoke-OPIMGraphRequest -Method POST -Uri 'v1.0/some/requests' -Body @{}
+                $Result.id | Should -BeExactly 'after-retry'
+                $script:_OPIMTestSends | Should -Be 2
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It
+                Should -Invoke Initialize-OPIMAuth -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $ClaimsChallenge -match 'acrs' -and $TenantId -eq 'contoso.onmicrosoft.com'
+                }
+            }
+        }
+    }
+
     Context 'When the Graph SDK session has changed' {
         # OPIM-09 (EntraRBAC A18). Get-OPIMGraphSessionState answers what the test sets in
         # $script:_OPIMTestSessionState; the Initialize-OPIMAuth mock of a retry test changes it, as a
@@ -2361,6 +2473,313 @@ Describe 'Invoke-OPIMGraphRequest' {
                     @($Caught.Exception.PartialValue).Count | Should -Be 1
                 }
                 Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+            }
+        }
+    }
+
+    Context 'When -All walks a list that does not end as a list should (EntraRBAC #67)' {
+        # A walk past the page limit, a next link already requested in this walk and a later page
+        # without a value member each leave the list incomplete. Each is a terminating error with no
+        # error id (the record's id is only the name of the command), category InvalidResult, no
+        # target object, a message that names the page by its number, and PartialValue, NextLink and
+        # PageNumber on its Exception -- never a shorter list. The mock answers send n with the n-th
+        # entry of $script:_OPIMTestPages, as it is, and records every uri it is asked for; a send
+        # past the list fails, so a walk that goes wrong ends instead of hanging.
+        BeforeAll {
+            InModuleScope Omnicit.PIM {
+                Mock Initialize-OPIMAuth {}
+                Mock Invoke-MgGraphRequest {
+                    param($Method, $Uri)
+                    $script:_OPIMTestSent.Add($(if ($Uri -is [uri]) { $Uri.OriginalString } else { [string]$Uri }))
+                    $Index = $script:_OPIMTestSent.Count
+                    if ($Index -gt @($script:_OPIMTestPages).Count) { throw "The mock answers no send number $Index." }
+                    return $script:_OPIMTestPages[$Index - 1]
+                }
+                Mock Get-OPIMPageWalkLimit { $script:_OPIMTestPageLimit }
+            }
+        }
+        BeforeEach {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMAuthState = $null
+                $script:_OPIMTestSent = [System.Collections.Generic.List[string]]::new()
+                $script:_OPIMTestPages = @()
+                # The real limit unless a test sets a smaller one.
+                $script:_OPIMTestPageLimit = 100000
+            }
+        }
+        AfterAll {
+            InModuleScope Omnicit.PIM {
+                $script:_OPIMTestSent = $null
+                $script:_OPIMTestPages = $null
+                $script:_OPIMTestPageLimit = $null
+            }
+        }
+
+        Context 'When a next link names a page already requested in this walk' {
+            It 'refuses <Name> before it is sent again' -ForEach @(
+                @{ Name = 'the link of the page just read'; FirstUri = 'v1.0/x'; Page = 3; Sends = 2; Partial = '1,2'; Link = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2'
+                    Pages = @(
+                        @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                        @{ value = @(@{ id = '2' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                    ) }
+                @{ Name = 'the link of a page read two pages earlier'; FirstUri = 'v1.0/x'; Page = 4; Sends = 3; Partial = '1,2,3'; Link = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2'
+                    Pages = @(
+                        @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                        @{ value = @(@{ id = '2' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=3' }
+                        @{ value = @(@{ id = '3' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                    ) }
+                @{ Name = 'a link equal to the absolute -Uri'; FirstUri = 'https://graph.microsoft.com/v1.0/x'; Page = 2; Sends = 1; Partial = '1'; Link = 'https://graph.microsoft.com/v1.0/x'
+                    Pages = @(
+                        @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x' }
+                    ) }
+                @{ Name = 'an absolute link back to a relative -Uri, the second time it comes'; FirstUri = 'v1.0/x'; Page = 3; Sends = 2; Partial = '1,2'; Link = 'https://graph.microsoft.com/v1.0/x'
+                    Pages = @(
+                        @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x' }
+                        @{ value = @(@{ id = '2' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x' }
+                    ) }
+            ) {
+                InModuleScope Omnicit.PIM -Parameters @{ FirstUri = $FirstUri; Pages = $Pages; Page = $Page; Sends = $Sends; Partial = $Partial; Link = $Link } {
+                    param($FirstUri, $Pages, $Page, $Sends, $Partial, $Link)
+                    $script:_OPIMTestPages = @($Pages)
+                    $Result = $null
+                    $Caught = $null
+                    try { $Result = Invoke-OPIMGraphRequest -Uri $FirstUri -All } catch { $Caught = $PSItem }
+                    $Result | Should -BeNullOrEmpty
+                    $Caught | Should -Not -BeNullOrEmpty -Because 'a walk that points back into itself leaves the list incomplete'
+                    $Caught.Exception.Message | Should -BeExactly "Page $Page`: Microsoft Graph returned a next link to a page already requested in this list, which was not requested again, so the list is incomplete."
+                    $Caught.Exception.Message | Should -Not -Match 'skiptoken|://'
+                    $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+                    # No error id: the record's id is only the name of the command that raised it.
+                    $Caught.FullyQualifiedErrorId | Should -BeExactly 'Invoke-OPIMGraphRequest'
+                    $Caught.TargetObject | Should -BeNullOrEmpty
+                    , $Caught.Exception.PartialValue | Should -BeOfType ([object[]])
+                    (@($Caught.Exception.PartialValue) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly $Partial
+                    $Caught.Exception.NextLink | Should -BeExactly $Link
+                    $Caught.Exception.PageNumber | Should -Be $Page
+                    $Caught.Exception.PageNumber | Should -BeOfType ([int])
+                    Should -Invoke Invoke-MgGraphRequest -Times $Sends -Exactly -Scope It
+                    @($script:_OPIMTestSent).Count | Should -Be $Sends
+                    @($script:_OPIMTestSent | Select-Object -Unique).Count | Should -Be @($script:_OPIMTestSent).Count -Because 'no uri is sent twice'
+                }
+            }
+
+            It 'compares links ordinally, so a skip token that differs only in letter case is another page' {
+                InModuleScope Omnicit.PIM {
+                    $script:_OPIMTestPages = @(
+                        @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=abc' }
+                        @{ value = @(@{ id = '2' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=ABC' }
+                        @{ value = @(@{ id = '3' }) }
+                    )
+                    $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All
+                    (@($Result.value) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1,2,3'
+                    Should -Invoke Invoke-MgGraphRequest -Times 3 -Exactly -Scope It
+                }
+            }
+
+            It 'returns nothing outside any try when a next link repeats' {
+                InModuleScope Omnicit.PIM {
+                    $script:_OPIMTestPages = @(
+                        @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                        @{ value = @(@{ id = '2' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                    )
+                }
+                $Run = Invoke-OutsideAnyTry -Script '$ErrorActionPreference = ''SilentlyContinue''; $R = Invoke-OPIMGraphRequest -Uri ''v1.0/x'' -All; $R'
+                $Run.Output.Count | Should -Be 0
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+            }
+        }
+
+        Context 'When a page has no value member' {
+            It 'refuses <Name> as an incomplete list' -ForEach @(
+                @{ Name = 'a later page with a next link but no value'
+                    Second = @{ '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=3' } }
+                @{ Name = 'a last page with neither a value nor a next link'
+                    Second = @{ '@odata.context' = 'https://graph.microsoft.com/v1.0/$metadata#x' } }
+                @{ Name = 'a later object page without a value property'
+                    Second = [PSCustomObject]@{ '@odata.context' = 'https://graph.microsoft.com/v1.0/$metadata#x' } }
+            ) {
+                InModuleScope Omnicit.PIM -Parameters @{ Second = $Second } {
+                    param($Second)
+                    $script:_OPIMTestPages = @(
+                        @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                        $Second
+                        @{ value = @(@{ id = '3' }) }
+                    )
+                    $Result = $null
+                    $Caught = $null
+                    try { $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All } catch { $Caught = $PSItem }
+                    $Result | Should -BeNullOrEmpty
+                    $Caught | Should -Not -BeNullOrEmpty -Because 'a later page without a value member is no page of the list'
+                    $Caught.Exception.Message | Should -BeExactly 'Page 2: Microsoft Graph returned a page without a value member, so the list is incomplete.'
+                    $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+                    $Caught.FullyQualifiedErrorId | Should -BeExactly 'Invoke-OPIMGraphRequest'
+                    $Caught.TargetObject | Should -BeNullOrEmpty
+                    , $Caught.Exception.PartialValue | Should -BeOfType ([object[]])
+                    (@($Caught.Exception.PartialValue) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1'
+                    $Caught.Exception.NextLink | Should -BeExactly 'https://graph.microsoft.com/v1.0/x?$skiptoken=2'
+                    $Caught.Exception.PageNumber | Should -Be 2
+                    Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                }
+            }
+
+            It 'reads a later page whose value is an empty array as a page of the list' {
+                InModuleScope Omnicit.PIM {
+                    $script:_OPIMTestPages = @(
+                        @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                        @{ value = @(); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=3' }
+                        @{ value = @(@{ id = '3' }) }
+                    )
+                    $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All
+                    (@($Result.value) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1,3'
+                    Should -Invoke Invoke-MgGraphRequest -Times 3 -Exactly -Scope It
+                }
+            }
+
+            It 'reads a later object page that has a value property' {
+                InModuleScope Omnicit.PIM {
+                    $script:_OPIMTestPages = @(
+                        @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                        [PSCustomObject]@{ value = @(@{ id = '2' }) }
+                    )
+                    $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All
+                    (@($Result.value) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1,2'
+                    Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                }
+            }
+
+            It 'follows the next link of a later object page, never reading the list as ended there' {
+                # An object page's @odata.nextLink is read through its properties; the hashtable
+                # indexer alone returned nothing for it, so the walk ended after it as if complete.
+                InModuleScope Omnicit.PIM {
+                    $script:_OPIMTestPages = @(
+                        @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                        [PSCustomObject]@{ value = @(@{ id = '2' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=3' }
+                        @{ value = @(@{ id = '3' }) }
+                    )
+                    $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All
+                    (@($Result.value) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1,2,3'
+                    Should -Invoke Invoke-MgGraphRequest -Times 3 -Exactly -Scope It
+                }
+            }
+
+            It 'returns an empty value when the first and only page has no value member, as before' {
+                InModuleScope Omnicit.PIM {
+                    $script:_OPIMTestPages = @(
+                        @{ '@odata.context' = 'https://graph.microsoft.com/v1.0/$metadata#x' }
+                    )
+                    $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All
+                    $Result | Should -BeOfType ([hashtable])
+                    $Result.ContainsKey('value') | Should -BeTrue
+                    @($Result.value).Count | Should -Be 0
+                    Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                }
+            }
+
+            It 'follows the next link of a first page that has no value member, as before' {
+                InModuleScope Omnicit.PIM {
+                    $script:_OPIMTestPages = @(
+                        @{ '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                        @{ value = @(@{ id = '2' }) }
+                    )
+                    $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All
+                    (@($Result.value) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '2'
+                    Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                }
+            }
+
+            It 'returns nothing outside any try when a later page has no value member' {
+                InModuleScope Omnicit.PIM {
+                    $script:_OPIMTestPages = @(
+                        @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                        @{ '@odata.context' = 'https://graph.microsoft.com/v1.0/$metadata#x' }
+                    )
+                }
+                $Run = Invoke-OutsideAnyTry -Script '$ErrorActionPreference = ''SilentlyContinue''; $R = Invoke-OPIMGraphRequest -Uri ''v1.0/x'' -All; $R'
+                $Run.Output.Count | Should -Be 0
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+            }
+        }
+
+        Context 'When the walk reaches the page limit' {
+            # Get-OPIMPageWalkLimit is mocked in the module scope to the number each test sets.
+            It 'refuses the page after the limit before it is requested' {
+                InModuleScope Omnicit.PIM {
+                    $script:_OPIMTestPageLimit = 2
+                    $script:_OPIMTestPages = @(
+                        @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                        @{ value = @(@{ id = '2' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=3' }
+                        @{ value = @(@{ id = '3' }) }
+                    )
+                    $Result = $null
+                    $Caught = $null
+                    try { $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All } catch { $Caught = $PSItem }
+                    $Result | Should -BeNullOrEmpty
+                    $Caught | Should -Not -BeNullOrEmpty -Because 'a walk past the limit fails, it is never cut short'
+                    $Caught.Exception.Message | Should -BeExactly 'Page 3: the list reached the limit of 2 pages and the page after it was not requested, so the list is incomplete.'
+                    $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+                    $Caught.FullyQualifiedErrorId | Should -BeExactly 'Invoke-OPIMGraphRequest'
+                    $Caught.TargetObject | Should -BeNullOrEmpty
+                    , $Caught.Exception.PartialValue | Should -BeOfType ([object[]])
+                    (@($Caught.Exception.PartialValue) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1,2'
+                    $Caught.Exception.NextLink | Should -BeExactly 'https://graph.microsoft.com/v1.0/x?$skiptoken=3'
+                    $Caught.Exception.PageNumber | Should -Be 3
+                    Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                    Should -Invoke Invoke-MgGraphRequest -Times 0 -Scope It -ParameterFilter { "$Uri" -like '*skiptoken=3*' }
+                    Should -Invoke Get-OPIMPageWalkLimit -Times 1 -Exactly -Scope It
+                }
+            }
+
+            It 'returns a list of exactly as many pages as the limit' {
+                InModuleScope Omnicit.PIM {
+                    $script:_OPIMTestPageLimit = 2
+                    $script:_OPIMTestPages = @(
+                        @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                        @{ value = @(@{ id = '2' }) }
+                    )
+                    $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All
+                    (@($Result.value) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1,2'
+                    Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly -Scope It
+                }
+            }
+
+            It 'reads the limit once per call, however many pages it reads' {
+                InModuleScope Omnicit.PIM {
+                    $script:_OPIMTestPageLimit = 5
+                    $script:_OPIMTestPages = @(
+                        @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                        @{ value = @(@{ id = '2' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=3' }
+                        @{ value = @(@{ id = '3' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=4' }
+                        @{ value = @(@{ id = '4' }) }
+                    )
+                    $Result = Invoke-OPIMGraphRequest -Uri 'v1.0/x' -All
+                    (@($Result.value) | ForEach-Object { $_.id }) -join ',' | Should -BeExactly '1,2,3,4'
+                    Should -Invoke Get-OPIMPageWalkLimit -Times 1 -Exactly -Scope It
+                    Should -Invoke Invoke-MgGraphRequest -Times 4 -Exactly -Scope It
+                }
+            }
+
+            It 'does not read the limit for a request without -All' {
+                InModuleScope Omnicit.PIM {
+                    $script:_OPIMTestPages = @(
+                        @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                    )
+                    $null = Invoke-OPIMGraphRequest -Uri 'v1.0/x'
+                    Should -Invoke Get-OPIMPageWalkLimit -Times 0 -Scope It
+                    Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
+                }
+            }
+
+            It 'returns nothing outside any try at the page limit' {
+                InModuleScope Omnicit.PIM {
+                    $script:_OPIMTestPageLimit = 1
+                    $script:_OPIMTestPages = @(
+                        @{ value = @(@{ id = '1' }); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=2' }
+                        @{ value = @(@{ id = '2' }) }
+                    )
+                }
+                $Run = Invoke-OutsideAnyTry -Script '$ErrorActionPreference = ''SilentlyContinue''; $R = Invoke-OPIMGraphRequest -Uri ''v1.0/x'' -All; $R'
+                $Run.Output.Count | Should -Be 0
+                Should -Invoke -ModuleName Omnicit.PIM Invoke-MgGraphRequest -Times 1 -Exactly -Scope It
             }
         }
     }

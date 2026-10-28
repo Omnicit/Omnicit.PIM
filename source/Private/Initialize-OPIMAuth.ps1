@@ -18,9 +18,45 @@ function Initialize-OPIMAuth {
     the system browser or, in device code mode, with a device code. A claims challenge is passed on as
     -Claim, so an ACRS step-up happens in the same single sign-in. The token is then handed to
     Connect-MgGraph as a SecureString. The module builds no MSAL client of its own and reflects into
-    no MSAL assembly. AzAuth has no refresh-token path: a renewal near the token's expiry, the
-    token-rejected retry (-ForceRefresh) and an ACRS step-up sign in again -- a browser window, or a
-    new device code.
+    no MSAL assembly. A renewal near the token's expiry, the token-rejected retry (-ForceRefresh) and
+    an ACRS step-up sign in again -- a browser window, or a new device code -- except where AzAuth can
+    renew a browser session silently, as below.
+
+    A system-browser session is renewed without a prompt where AzAuth can answer from the interactive
+    credential it already holds (ported from Omnicit.EntraRBAC A22). As READ in EntraRBAC from the
+    AzAuth 2.11.0 and Azure.Identity 1.21.0 sources, not measured against a tenant, Get-AzToken
+    (AzAuth 2.11.0 and later) accepts a non-interactive request that tries that credential first when
+    the request is for the tenant of the last token call: the renewal is sent without -Interactive and
+    without -ClientId, with -CredentialPrecedence Environment, so AzAuth's chain holds the stored
+    interactive credential and the one source that sends nothing unless AZURE_* variables are set. It
+    is tried only for a renewal of the session's own tenant and cloud in the system browser, only when
+    the module's own record of the interactive credential AzAuth holds ($script:_OPIMInteractiveCredential,
+    a client id and a tenant, never a token) names the client id and tenant the interactive request
+    would pass, and never for a first sign-in, a device code session, -ForceRefresh, a claims
+    challenge or a moved authority (each of which passes -Force, which clears the stored credential).
+    Its token is accepted only when its oid and tid claims are the session's account and tenant;
+    otherwise, or when the request fails, it is discarded and the interactive request runs exactly
+    once, as before. An accepted token takes every check an interactive token takes. A token this
+    function refuses (TenantMismatch, AccountMismatch) clears the record, so the next sign-in is
+    interactive. AzAuth holds one
+    interactive credential, the one the last interactive request built, so a session that signs in to
+    Microsoft Graph and Azure alternates it between the two and still prompts for each renewal. A
+    stored credential whose refresh token no longer works can still open the browser from this request,
+    so the renewal means fewer prompts, not none.
+
+    A sign-in in the system browser in a console host started with pwsh -NonInteractive is refused
+    with the terminating InteractiveSignInUnavailable (EntraRBAC BL-100), after the cached return and
+    before any token request, the silent renewal included: -NonInteractive declares that nobody can
+    answer a prompt. Test-OPIMHostNonInteractive decides it. Device code mode is not affected.
+
+    A new Microsoft Graph sign-in that continues the session -- a token issued for the session's tenant
+    (the tid of its Graph token) in the session's cloud, however the tenant was named -- never makes
+    the session another account's (EntraRBAC BL-119). When the oid of the new token and the session's
+    account (ObjectId) are both GUIDs and differ, the sign-in ends with the terminating AccountMismatch
+    (New-OPIMAccountMismatchError -Source Graph) before Connect-MgGraph: the token is not used and the
+    state, the Graph SDK session and the cached ARM token stay as they were. A token without an oid
+    never refuses, and a continuation whose token carries none keeps the session's ObjectId. Signing in
+    as another account takes Disconnect-OPIM first.
 
     The session is pinned to one tenant. A call that names no tenant keeps the tenant the session
     is signed in to; 'organizations' is used only for a first sign-in that names none, and the
@@ -80,7 +116,7 @@ function Initialize-OPIMAuth {
     tenant or another account drops the cached ARM token, so the next -IncludeARM acquires a new one.
     A failed Get-AzToken ends this function with the terminating AzureConnectFailed, which keeps the
     AzAuth message but neither its exception nor its record; when Get-AzToken cannot be found at all,
-    its message says that AzAuth is not installed or could not be loaded (AzAuth 2.9.0 needs
+    its message says that AzAuth is not installed or could not be loaded (AzAuth 2.11.0 needs
     PowerShell 7.4 or later).
 
     AzAuth keeps one credential per process, keyed on neither the tenant nor the authority, and
@@ -110,8 +146,8 @@ function Initialize-OPIMAuth {
     no -DeviceCode -- until Disconnect-OPIM clears the state. A device code session never falls back
     to the system browser. With no state, -DeviceCode creates one holding only DeviceCode until a
     sign-in succeeds. It is no sign-in (no TenantId, no GraphTokenExpiry), so a failed first sign-in
-    keeps the mode. A latched command sends nothing (SignInRefused), though the token-rejected and 401
-    retries check only that a state exists.
+    keeps the mode. A latched command sends nothing (SignInRefused), and the Graph transport's
+    token-rejected retry and claims step-up sign in again only for a state that records a tenant.
 
     The cloud (OPIM-29) is a property of the tenant, so it follows the tenant. -Environment names it:
     Global, USGov, USGovDoD or China, in any letter case, resolved by Get-OPIMCloudEndpoint, which
@@ -226,6 +262,67 @@ function Initialize-OPIMAuth {
             ([string]$Record.FullyQualifiedErrorId).StartsWith('CommandNotFoundException', [System.StringComparison]::Ordinal)
     }
 
+    # True for a value that parses as a GUID: the account and tenant checks below compare only GUIDs, so
+    # a value that is missing or unreadable proves nothing and never refuses.
+    function Test-OPIMGuidText ($Value) {
+        $Parsed = [guid]::Empty
+        [guid]::TryParse([string]$Value, [ref]$Parsed)
+    }
+
+    # SEC (EntraRBAC A22, BL-115): the silent renewal of a system-browser session, sent and judged here
+    # for both resources; the predicate that decides whether to try stands at each call site, where the
+    # tracker and the request of that resource are known. It answers one question: did the
+    # non-interactive request return a token for the account and tenant the session already holds? It
+    # returns that token, or $null, and the caller then runs the interactive request exactly once.
+    #
+    # WHY IT CAN WORK. Read in EntraRBAC in the AzAuth 2.11.0 and Azure.Identity 1.21.0 sources (not
+    # measured against a tenant): Get-AzToken's NonInteractive parameter set puts the stored credential
+    # FIRST in its chain when that credential is an InteractiveBrowserCredential and the request names
+    # the tenant of the LAST token call (TokenManager.NonInteractive.cs:71). The stored credential
+    # carries an AuthenticationRecord once it has signed in, so it answers from MSAL's cache without a
+    # prompt. Every interactive call builds a NEW credential holding only its client id, which is why
+    # the tracker names the client id and the tenant of the call that built it, and why the silent
+    # request names the same tenant and carries no -ClientId (refused at run time in that parameter
+    # set, GetAzToken.cs, as read in EntraRBAC; the parameter metadata lists it).
+    #
+    # WHAT IT CANNOT PROMISE. A stored credential whose refresh token no longer works can still open the
+    # browser from this very call, so "non-interactive" means "no prompt when MSAL can answer". Every
+    # failure is treated alike: discarded, and the interactive request runs once.
+    #
+    # WHY THE IDENTITY CHECK. The chain's other source, Environment, answers when AZURE_CLIENT_ID and
+    # its siblings are set in the process, and a browser opened from this call could be answered by
+    # another account. So the token's own oid and tid claims (R10: never the TenantId AzAuth reports
+    # beside it) are compared with the session's ObjectId and TokenTenantId, both GUIDs by the
+    # predicate at the call site, and only an equal pair is accepted. Each half is its own term.
+    #
+    # The catch scrubs first and writes only a verbose line that names the exception TYPE: no error
+    # record of its own (a caller's -ErrorVariable still collects the caught, scrubbed record, as the
+    # engine collects every caught nested record), no warning, no message (a failed token request's message can quote the request). The
+    # silent request leaves the tracker as it is: the credential AzAuth holds is still the one it was
+    # built from.
+    function Invoke-OPIMSilentRenewal ([hashtable]$SilentParameter) {
+        try {
+            $SilentResult = Invoke-OPIMAzTokenCall -TokenParameter $SilentParameter
+            if (-not $SilentResult -or -not $SilentResult.Token) {
+                Write-Verbose '[Initialize-OPIMAuth] The silent renewal returned no token; signing in interactively.'
+                return $null
+            }
+            $SilentSecure = [System.Net.NetworkCredential]::new('', $SilentResult.Token).SecurePassword
+            [bool]$SameAccount = (Get-OPIMTokenObjectId -AccessToken $SilentSecure) -eq [string]$script:_OPIMAuthState.ObjectId
+            [bool]$SameTenant = (Get-OPIMTokenTenantId -AccessToken $SilentSecure) -eq [string]$script:_OPIMAuthState.TokenTenantId
+        } catch {
+            Remove-OPIMErrorRecord -Record $PSItem
+            Write-Verbose "[Initialize-OPIMAuth] The silent renewal failed ($($PSItem.Exception.GetType().Name)); signing in interactively."
+            return $null
+        }
+        if (-not $SameAccount -or -not $SameTenant) {
+            Write-Verbose '[Initialize-OPIMAuth] The silent renewal returned a token for another account or tenant; discarded, signing in interactively.'
+            return $null
+        }
+        Write-Verbose '[Initialize-OPIMAuth] Renewed the session silently.'
+        return $SilentResult
+    }
+
     # SEC (EntraRBAC BL-74): a sign-in under a command whose own sign-in was refused is refused before
     # any prompt. Only a frame OUTSIDE the calling command counts (Get-OPIMSignInRefusal
     # -OutsideCaller): the caller's own latched frame, from an earlier refused sign-in in the same
@@ -298,8 +395,8 @@ function Initialize-OPIMAuth {
     # -DeviceCode. A cached token that is still valid stays in use; only the mode changes.
     # With no state, -DeviceCode creates one holding only DeviceCode until a sign-in succeeds. The
     # session and cache checks need TenantId and GraphTokenExpiry, so it never counts and a failed
-    # first sign-in keeps the mode until Disconnect-OPIM. The token-rejected and 401 retries check
-    # only that a state exists, though a latched command sends nothing.
+    # first sign-in keeps the mode until Disconnect-OPIM. The Graph transport's retries sign in again
+    # only for a state that records a tenant, and a latched command sends nothing.
     if ($DeviceCode) {
         if ($script:_OPIMAuthState) {
             $script:_OPIMAuthState.DeviceCode = $true
@@ -398,6 +495,30 @@ function Initialize-OPIMAuth {
     }
     [bool]$AuthorityMoved = $EffectiveAuthorityHost -ne $script:_OPIMLastAuthorityHost
 
+    # SEC (EntraRBAC BL-100): -NonInteractive declares that nobody can answer a prompt, so a sign-in in
+    # the system browser is not started in such a host (a policy; whether a browser could be completed
+    # there is not measured), and AzAuth would still open the browser from the token request. Refused
+    # here, once, for every token request below -- Microsoft Graph, Azure and the silent renewal alike:
+    # after the cached return (a session that needs no token is answered) and BEFORE the
+    # AZURE_AUTHORITY_HOST block, the authority tracker and every token call, so nothing is requested or
+    # written. The calling command stays latched, like every refusal. Device code mode is not affected.
+    # Test-OPIMHostNonInteractive is the single owner of the host question.
+    if (-not $UseDeviceCode -and (Test-OPIMHostNonInteractive)) {
+        Write-CmdletError `
+            -Message ([System.Exception]::new(
+                "This PowerShell host was started with -NonInteractive, which declares that nobody can answer a " +
+                "prompt, so Omnicit.PIM does not start a sign-in in the system browser here, and no token was " +
+                "requested for tenant '$EffectiveTenant'. Sign in with a device code instead (Connect-OPIM -DeviceCode, " +
+                "or -DeviceCode on Enable-OPIMMyRole and Disable-OPIMMyRole), or run the command in an interactive " +
+                'PowerShell.')) `
+            -ErrorId 'InteractiveSignInUnavailable' `
+            -Category AuthenticationError `
+            -TargetObject $EffectiveTenant `
+            -Cmdlet $PSCmdlet `
+            -Terminating
+        return
+    }
+
     # AzAuth's Get-AzToken has no authority parameter: Azure.Identity reads AZURE_AUTHORITY_HOST when it
     # builds the credential. Set ONCE around both token calls, only off Global, and put back in the
     # finally on every path -- every terminating error included -- so the process is never left pinned
@@ -457,32 +578,88 @@ function Initialize-OPIMAuth {
             if ($UseDeviceCode) { $GraphTokenParams.DeviceCode = $true } else { $GraphTokenParams.Interactive = $true }
             # ORed, not overwritten: each reason is its own term (R8).
             if ($ForceRefresh -or $DeviceCodeForced -or $AuthorityMoved) { $GraphTokenParams.Force = $true }
-            try {
-                $GraphResult = Invoke-OPIMAzTokenCall -TokenParameter $GraphTokenParams -DeviceCodeFlow:$UseDeviceCode
-            } catch {
-                Remove-OPIMErrorRecord -Record $PSItem
-                # R6: the module's own ids -- DeviceCodeAuthFailed in device code mode,
-                # InteractiveAuthFailed in the system browser. Terminating, and the calling command stays
-                # latched (EntraRBAC A19). AzAuth's message only: no inner exception, and the tenant
-                # asked for as the target object.
-                [string]$GraphFailureId = if ($UseDeviceCode) { 'DeviceCodeAuthFailed' } else { 'InteractiveAuthFailed' }
-                [string]$GraphFailurePrefix = if ($UseDeviceCode) { 'Device code authentication failed' } else { 'Interactive authentication failed' }
-                [string]$GraphFailure = if (Test-OPIMAzAuthMissing -Record $PSItem) {
-                    "${GraphFailurePrefix}: the AzAuth module is not installed or could not be loaded. Install AzAuth 2.9.0 from the PowerShell Gallery; it needs PowerShell 7.4 or later."
-                } elseif ($UseDeviceCode) {
-                    "${GraphFailurePrefix}: $($PSItem.Exception.Message) A device code expires after about 15 minutes; run the command again for a new code."
-                } else {
-                    "${GraphFailurePrefix}: $($PSItem.Exception.Message). On headless systems (Linux without a display server) " +
-                    'the system browser cannot be launched. Run this command on a desktop system.'
+
+            # SEC (EntraRBAC A22, BL-115): renew a system-browser session without a prompt where AzAuth
+            # can answer from the interactive credential it holds; see Invoke-OPIMSilentRenewal for the
+            # evidence and for what it cannot promise. Evaluated HERE, directly before the call it may
+            # replace. Every term on its own line. Two are implied by others and kept so the rule reads
+            # here (deleting either changes nothing a test can see): the system browser, by "no -Force"
+            # (device code mode always passes -Force), and "the tracker exists", by the -ceq terms.
+            #   - the system browser: a device code session never takes this path.
+            #   - a renewal: the state is a dictionary and the request is for the session's own tenant
+            #     and cloud ($SessionMatches); a first sign-in has nothing to renew and no account to
+            #     compare a token with.
+            #   - no claims challenge: an ACRS step-up needs the user to answer the challenge.
+            #   - no -Force (-ForceRefresh, a device code, a moved authority): -Force clears the
+            #     credential AzAuth holds, which the silent request depends on.
+            #   - the tracker names the client id and the tenant the interactive request below would
+            #     pass, compared ordinally: a credential another request built (the Azure one, another
+            #     tenant) is not the one this request would use.
+            #   - the session's account and token tenant are GUIDs, so the identity check has something
+            #     to compare with.
+            $GraphResult = $null
+            [bool]$SilentGraph = -not $UseDeviceCode -and
+                ($script:_OPIMAuthState -is [System.Collections.IDictionary]) -and
+                $SessionMatches -and
+                -not $ClaimsChallenge -and
+                -not $GraphTokenParams.ContainsKey('Force') -and
+                $script:_OPIMInteractiveCredential -and
+                $script:_OPIMInteractiveCredential.ClientId -ceq [string]$GraphTokenParams.ClientId -and
+                $script:_OPIMInteractiveCredential.Tenant -ceq [string]$GraphTokenParams.Tenant -and
+                (Test-OPIMGuidText -Value $script:_OPIMAuthState.ObjectId) -and
+                (Test-OPIMGuidText -Value $script:_OPIMAuthState.TokenTenantId)
+            if ($SilentGraph) {
+                # The interactive request without -Interactive and -ClientId (refused at run time in AzAuth's
+                # NonInteractive parameter set); Resource, Scope, Tenant and TimeoutSeconds as before.
+                # CredentialPrecedence Environment: the one allowed source that sends nothing unless
+                # AZURE_* variables are set.
+                $SilentGraphParams = $GraphTokenParams.Clone()
+                $SilentGraphParams.Remove('Interactive')
+                $SilentGraphParams.Remove('ClientId')
+                $SilentGraphParams.CredentialPrecedence = @('Environment')
+                $GraphResult = Invoke-OPIMSilentRenewal -SilentParameter $SilentGraphParams
+            }
+            if ($null -eq $GraphResult) {
+                # SEC (A22): the tracker is cleared directly before every token request but the silent
+                # one -- AzAuth's credential is replaced by it -- and set again only after a request in
+                # the system browser returned. A request that throws leaves it cleared, so the next
+                # renewal is interactive.
+                $script:_OPIMInteractiveCredential = $null
+                try {
+                    $GraphResult = Invoke-OPIMAzTokenCall -TokenParameter $GraphTokenParams -DeviceCodeFlow:$UseDeviceCode
+                } catch {
+                    Remove-OPIMErrorRecord -Record $PSItem
+                    # R6: the module's own ids -- DeviceCodeAuthFailed in device code mode,
+                    # InteractiveAuthFailed in the system browser. Terminating, and the calling command stays
+                    # latched (EntraRBAC A19). AzAuth's message only: no inner exception, and the tenant
+                    # asked for as the target object.
+                    [string]$GraphFailureId = if ($UseDeviceCode) { 'DeviceCodeAuthFailed' } else { 'InteractiveAuthFailed' }
+                    [string]$GraphFailurePrefix = if ($UseDeviceCode) { 'Device code authentication failed' } else { 'Interactive authentication failed' }
+                    [string]$GraphFailure = if (Test-OPIMAzAuthMissing -Record $PSItem) {
+                        "${GraphFailurePrefix}: the AzAuth module is not installed or could not be loaded. Install AzAuth 2.11.0 or later from the PowerShell Gallery; it needs PowerShell 7.4 or later."
+                    } elseif ($UseDeviceCode) {
+                        "${GraphFailurePrefix}: $($PSItem.Exception.Message) A device code expires after about 15 minutes; run the command again for a new code."
+                    } else {
+                        "${GraphFailurePrefix}: $($PSItem.Exception.Message). On headless systems (Linux without a display server) " +
+                        'the system browser cannot be launched. Run this command on a desktop system.'
+                    }
+                    Write-CmdletError `
+                        -Message ([System.Exception]::new($GraphFailure)) `
+                        -ErrorId $GraphFailureId `
+                        -Category AuthenticationError `
+                        -TargetObject $EffectiveTenant `
+                        -Cmdlet $PSCmdlet `
+                        -Terminating
+                    return
                 }
-                Write-CmdletError `
-                    -Message ([System.Exception]::new($GraphFailure)) `
-                    -ErrorId $GraphFailureId `
-                    -Category AuthenticationError `
-                    -TargetObject $EffectiveTenant `
-                    -Cmdlet $PSCmdlet `
-                    -Terminating
-                return
+                # SEC (A22): AzAuth now holds the interactive credential this request built, for this client
+                # id and tenant. A device code request replaced the stored credential and records nothing.
+                if (-not $UseDeviceCode) {
+                    $script:_OPIMInteractiveCredential = @{
+                        ClientId = [string]$GraphTokenParams.ClientId
+                        Tenant   = [string]$GraphTokenParams.Tenant
+                    }
+                }
             }
             if (-not $GraphResult -or -not $GraphResult.Token) {
                 Write-CmdletError `
@@ -512,15 +689,56 @@ function Initialize-OPIMAuth {
             # request.
             [string]$TokenTenant = Get-OPIMTokenTenantId -AccessToken $SecureToken
             if (-not $TokenTenant) {
+                # SEC (A22): AzAuth's credential just answered for another tenant or account, so no silent
+                # renewal is tried from it; the next sign-in is interactive.
+                $script:_OPIMInteractiveCredential = $null
                 Write-CmdletError -ErrorRecord (New-OPIMTenantMismatchError -RequestedTenant $EffectiveTenant -Unreadable) -Cmdlet $PSCmdlet -Terminating
                 return
             }
             if ($ExpectedTenant -and $TokenTenant -ne $ExpectedTenant) {
+                # SEC (A22): AzAuth's credential just answered for another tenant or account, so no silent
+                # renewal is tried from it; the next sign-in is interactive.
+                $script:_OPIMInteractiveCredential = $null
                 Write-CmdletError -ErrorRecord (New-OPIMTenantMismatchError -RequestedTenant $EffectiveTenant) -Cmdlet $PSCmdlet -Terminating
                 return
             }
 
             Write-Verbose "[Initialize-OPIMAuth] Graph token acquired. Account: $GraphAccount. Expiry (UTC): $GraphTokenExpiry."
+
+            # -- Account check (EntraRBAC BL-119) -------------------------------
+            # A sign-in that CONTINUES the session never makes it another account's. Without this, a
+            # renewal near the expiry, the token-rejected retry or a step-up could be answered in the
+            # browser by another account of the same tenant, and every command after it -- the one that
+            # asked included -- would activate and deactivate as that account under the session the
+            # user began. A continuation is a new Graph token issued for the tenant the session's Graph
+            # token was (both tids, so a domain against its tenant ID, or any label after a first
+            # sign-in under 'organizations', counts) in the session's cloud; the client is always the
+            # same and the sign-in mode is the session's. Switching account is Disconnect-OPIM's. Both
+            # oids must be GUIDs: a token without one, on either side, proves nothing and never refuses.
+            # Placed after the tenant check and before Connect-MgGraph: the token is not used, and the
+            # state, the Graph SDK session and the cached ARM token stay as they were. Each term on its
+            # own line; the GUID test of the state's TokenTenantId is implied by its equality with the
+            # new token's tid (Get-OPIMTokenTenantId returns only a GUID) and kept so the rule reads here.
+            [string]$GraphObjectId = Get-OPIMTokenObjectId -AccessToken $SecureToken
+            $PreviousState = $script:_OPIMAuthState
+            [bool]$ContinuesSession = ($PreviousState -is [System.Collections.IDictionary]) -and
+                (Test-OPIMGuidText -Value $PreviousState['TokenTenantId']) -and
+                [string]$PreviousState['TokenTenantId'] -eq $TokenTenant -and
+                $StateEnvironment -eq $EffectiveEnvironment
+            [bool]$AccountChanged = $ContinuesSession -and
+                (Test-OPIMGuidText -Value $GraphObjectId) -and
+                (Test-OPIMGuidText -Value $PreviousState['ObjectId']) -and
+                $GraphObjectId -ne [string]$PreviousState['ObjectId']
+            if ($AccountChanged) {
+                # Terminating, and the calling command stays latched (EntraRBAC A19), as for every
+                # refusal. The SecureString is dropped first.
+                $SecureToken = $null
+                # SEC (A22): AzAuth's credential just answered for another tenant or account, so no silent
+                # renewal is tried from it; the next sign-in is interactive.
+                $script:_OPIMInteractiveCredential = $null
+                Write-CmdletError -ErrorRecord (New-OPIMAccountMismatchError -RequestedTenant $EffectiveTenant -Source Graph) -Cmdlet $PSCmdlet -Terminating
+                return
+            }
 
             # -- Wire Graph token into Connect-MgGraph -------------------------
             # The same SecureString as the tenant check. A failure is scrubbed first, as on every
@@ -547,13 +765,22 @@ function Initialize-OPIMAuth {
             # ObjectId is the oid of the Graph token, the account every ARM token must be issued to. The
             # state holds no Graph token, and the ARM token only as a SecureString (A6), with its expiry,
             # tenant, account and resource.
-            # A3: the Graph token's own object id, compared with every ARM token's oid.
-            [string]$GraphObjectId = Get-OPIMTokenObjectId -AccessToken $SecureToken
+            # A3: the Graph token's own object id ($GraphObjectId, read by the account check above),
+            # compared with every ARM token's oid. SEC (EntraRBAC BL-119, D2): a continuation whose new
+            # token carries no readable oid never replaces the session's account -- it is carried over,
+            # so the next continuation is still compared with the known account instead of with
+            # nothing. Any other sign-in records its own token's oid, or none.
+            $NewObjectId = if ($GraphObjectId) {
+                $GraphObjectId
+            } elseif ($ContinuesSession -and (Test-OPIMGuidText -Value $PreviousState['ObjectId'])) {
+                [string]$PreviousState['ObjectId']
+            } else {
+                $null
+            }
             # SEC (A3): an ARM token survives a new Graph token only when it was issued for the same
             # tenant and the same account; otherwise it is dropped, never carried, and -IncludeARM
             # acquires a new one. OPIM-29: and only in the same cloud -- a token minted in another cloud
             # is never carried.
-            $PreviousState = $script:_OPIMAuthState
             [bool]$KeepArmToken = ($PreviousState -is [System.Collections.IDictionary]) -and
                 ($null -ne $PreviousState['ArmToken']) -and
                 [bool]$GraphObjectId -and
@@ -565,7 +792,7 @@ function Initialize-OPIMAuth {
                 TokenTenantId           = $TokenTenant
                 Environment             = $EffectiveEnvironment
                 Account                 = $GraphAccount
-                ObjectId                = if ($GraphObjectId) { $GraphObjectId } else { $null }
+                ObjectId                = $NewObjectId
                 GraphTokenExpiry        = $GraphTokenExpiry
                 ClaimsSatisfied         = [bool]$ClaimsChallenge
                 DeviceCode              = $UseDeviceCode
@@ -615,27 +842,66 @@ function Initialize-OPIMAuth {
                 # R8: the same three reasons as the Graph request; after a Graph sign-in the move of the
                 # authority is already done.
                 if ($ForceRefresh -or $DeviceCodeForced -or $AuthorityMoved) { $ArmTokenParams.Force = $true }
-                try {
-                    $ArmResult = Invoke-OPIMAzTokenCall -TokenParameter $ArmTokenParams -DeviceCodeFlow:$UseDeviceCode
-                } catch {
-                    Remove-OPIMErrorRecord -Record $PSItem
-                    # Terminating, and the calling command stays latched (EntraRBAC A19), so its ARM
-                    # requests are refused with SignInRefused. The AzAuth message only: no inner
-                    # exception, and the session tenant as the target object. A Get-AzToken that cannot be
-                    # found at all means AzAuth is missing, or did not load, and the message says so.
-                    $AzureFailure = if (Test-OPIMAzAuthMissing -Record $PSItem) {
-                        'Azure connection failed: the AzAuth module is not installed or could not be loaded. Install AzAuth 2.9.0 from the PowerShell Gallery; it needs PowerShell 7.4 or later.'
-                    } else {
-                        "Azure connection failed: $($PSItem.Exception.Message)"
+
+                # SEC (EntraRBAC A22, BL-115): the same silent renewal for the Azure Resource Manager token,
+                # with the same terms as the Microsoft Graph one, each on its own line. The difference is
+                # the client id the interactive request would pass: none, so the tracker must name the
+                # empty client id -- the Azure credential, not the Graph one an interactive Graph request
+                # just above this made AzAuth hold. Evaluated here, after that request, for exactly that
+                # reason. The account and tenant are the state's as they stand now: after a Graph sign-in
+                # above they are the new Graph token's, which the account check held to the same account.
+                $ArmResult = $null
+                [bool]$SilentArm = -not $UseDeviceCode -and
+                    ($script:_OPIMAuthState -is [System.Collections.IDictionary]) -and
+                    $SessionMatches -and
+                    -not $ClaimsChallenge -and
+                    -not $ArmTokenParams.ContainsKey('Force') -and
+                    $script:_OPIMInteractiveCredential -and
+                    $script:_OPIMInteractiveCredential.ClientId -ceq [string]$ArmTokenParams.ClientId -and
+                    $script:_OPIMInteractiveCredential.Tenant -ceq [string]$ArmTokenParams.Tenant -and
+                    (Test-OPIMGuidText -Value $script:_OPIMAuthState.ObjectId) -and
+                    (Test-OPIMGuidText -Value $script:_OPIMAuthState.TokenTenantId)
+                if ($SilentArm) {
+                    # No Remove('ClientId'): the Azure request carries none.
+                    $SilentArmParams = $ArmTokenParams.Clone()
+                    $SilentArmParams.Remove('Interactive')
+                    $SilentArmParams.CredentialPrecedence = @('Environment')
+                    $ArmResult = Invoke-OPIMSilentRenewal -SilentParameter $SilentArmParams
+                }
+                if ($null -eq $ArmResult) {
+                    # SEC (A22): cleared before every token request but the silent one, set again only
+                    # after a request in the system browser returned; see the Graph request above.
+                    $script:_OPIMInteractiveCredential = $null
+                    try {
+                        $ArmResult = Invoke-OPIMAzTokenCall -TokenParameter $ArmTokenParams -DeviceCodeFlow:$UseDeviceCode
+                    } catch {
+                        Remove-OPIMErrorRecord -Record $PSItem
+                        # Terminating, and the calling command stays latched (EntraRBAC A19), so its ARM
+                        # requests are refused with SignInRefused. The AzAuth message only: no inner
+                        # exception, and the session tenant as the target object. A Get-AzToken that cannot be
+                        # found at all means AzAuth is missing, or did not load, and the message says so.
+                        $AzureFailure = if (Test-OPIMAzAuthMissing -Record $PSItem) {
+                            'Azure connection failed: the AzAuth module is not installed or could not be loaded. Install AzAuth 2.11.0 or later from the PowerShell Gallery; it needs PowerShell 7.4 or later.'
+                        } else {
+                            "Azure connection failed: $($PSItem.Exception.Message)"
+                        }
+                        Write-CmdletError `
+                            -Message ([System.Exception]::new($AzureFailure)) `
+                            -ErrorId 'AzureConnectFailed' `
+                            -Category AuthenticationError `
+                            -TargetObject $ArmTenant `
+                            -Cmdlet $PSCmdlet `
+                            -Terminating
+                        return
                     }
-                    Write-CmdletError `
-                        -Message ([System.Exception]::new($AzureFailure)) `
-                        -ErrorId 'AzureConnectFailed' `
-                        -Category AuthenticationError `
-                        -TargetObject $ArmTenant `
-                        -Cmdlet $PSCmdlet `
-                        -Terminating
-                    return
+                    # SEC (A22): AzAuth now holds the interactive credential this request built: no client
+                    # id (the Azure request names none) and the session tenant.
+                    if (-not $UseDeviceCode) {
+                        $script:_OPIMInteractiveCredential = @{
+                            ClientId = [string]$ArmTokenParams.ClientId
+                            Tenant   = [string]$ArmTokenParams.Tenant
+                        }
+                    }
                 }
                 if (-not $ArmResult -or -not $ArmResult.Token) {
                     Write-CmdletError `
@@ -676,6 +942,9 @@ function Initialize-OPIMAuth {
                     foreach ($ArmKey in 'ArmToken', 'ArmTokenExpiry', 'ArmTokenTenantId', 'ArmTokenObjectId', 'ArmResourceUrl') {
                         $script:_OPIMAuthState[$ArmKey] = $null
                     }
+                    # SEC (A22): AzAuth's credential just answered for another tenant or account, so no silent
+                    # renewal is tried from it; the next sign-in is interactive.
+                    $script:_OPIMInteractiveCredential = $null
                     Write-CmdletError -ErrorRecord $ArmTokenRefusal -Cmdlet $PSCmdlet -Terminating
                     return
                 }

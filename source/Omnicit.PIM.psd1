@@ -53,7 +53,7 @@ PowerShellVersion = '7.4'
 # Modules that must be imported into the global environment prior to importing this module
     RequiredModules  = @(
         @{ ModuleName = 'Microsoft.Graph.Authentication'; ModuleVersion = '2.36.0' }
-        @{ ModuleName = 'AzAuth'; ModuleVersion = '2.9.0' }
+        @{ ModuleName = 'AzAuth'; ModuleVersion = '2.11.0' }
     )
 
 # Assemblies that must be loaded prior to importing this module

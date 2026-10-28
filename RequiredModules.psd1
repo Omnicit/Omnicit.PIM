@@ -36,7 +36,7 @@
     # import); tests/QA/sourcehygiene.tests.ps1 holds that source/ calls and declares none, as far
     # as its Az boundary can see in the source text.
     'Microsoft.Graph.Authentication'  = '2.36.0'
-    'AzAuth'                          = '2.9.0'
+    'AzAuth'                          = '2.11.0'
 
 
 }

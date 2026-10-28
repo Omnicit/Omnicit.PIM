@@ -128,7 +128,9 @@ function New-OPIMScheduleNameError {
                     if ($StatusProperty) { [string]$StatusProperty.Value } else { '' }
                 })
             foreach ($Group in $ByState) {
-                $Values = @($Group.Group | ForEach-Object { $PSItem.$Property })
+                # A foreach statement, not ForEach-Object: PSScriptAnalyzer 1.25.0 does not see a
+                # parameter read inside a nested script block and reports it as unused.
+                $Values = @(foreach ($Entry in $Group.Group) { $Entry.$Property })
                 if (@($Values | Sort-Object -Unique).Count -ne $Values.Count) { return $false }
             }
             $true

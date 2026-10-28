@@ -76,4 +76,93 @@ Describe 'New-OPIMAccountMismatchError' {
             $Unreadable.Exception.Message | Should -Not -Be $Mismatch.Exception.Message
         }
     }
+
+    Context 'When a Microsoft Graph sign-in that continues the session is answered by another account (-Source Graph)' {
+        # EntraRBAC BL-119: Initialize-OPIMAuth refuses a new Microsoft Graph token for the session's
+        # tenant and cloud that another account answered.
+        BeforeAll {
+            $Graph = InModuleScope Omnicit.PIM {
+                New-OPIMAccountMismatchError -RequestedTenant 'contoso.onmicrosoft.com' -Source Graph
+            }
+        }
+
+        It 'returns a record with the id AccountMismatch, the category AuthenticationError and the requested tenant as its target' {
+            $Graph | Should -BeOfType [System.Management.Automation.ErrorRecord]
+            $Graph.FullyQualifiedErrorId | Should -BeExactly 'AccountMismatch'
+            $Graph.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+            $Graph.TargetObject | Should -BeExactly 'contoso.onmicrosoft.com'
+            $Graph.Exception.InnerException | Should -BeNullOrEmpty
+        }
+
+        It 'says the sign-in was answered by another account, that nothing was used, and to run Disconnect-OPIM' {
+            $Graph.Exception.Message | Should -BeExactly ("The new Microsoft Graph sign-in in 'contoso.onmicrosoft.com' was answered by another account than " +
+                "the one this session signed in with. Omnicit.PIM did not use the token and sent nothing, and the session stays " +
+                "signed in as it was. Sign in with the session's account, or run Disconnect-OPIM and then sign in again to use " +
+                'another account.')
+        }
+
+        It 'names the requested tenant and nothing that identifies an account' {
+            $Message = $Graph.Exception.Message
+            $Message | Should -BeLike "*'contoso.onmicrosoft.com'*"
+            $Message | Should -Not -Match '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+            $Message | Should -Not -BeLike '*@*'
+            $Message | Should -Not -BeLike '*Azure Resource Manager*'
+        }
+
+        It 'gives the same message with -Unreadable, which belongs to the Azure source only' {
+            $GraphUnreadable = InModuleScope Omnicit.PIM {
+                New-OPIMAccountMismatchError -RequestedTenant 'contoso.onmicrosoft.com' -Source Graph -Unreadable
+            }
+            $GraphUnreadable.Exception.Message | Should -BeExactly $Graph.Exception.Message
+        }
+
+        It 'differs from both Azure messages for the same tenant' {
+            $Azure = InModuleScope Omnicit.PIM {
+                @(
+                    New-OPIMAccountMismatchError -RequestedTenant 'contoso.onmicrosoft.com'
+                    New-OPIMAccountMismatchError -RequestedTenant 'contoso.onmicrosoft.com' -Unreadable
+                )
+            }
+            foreach ($Record in $Azure) {
+                $Record.Exception.Message | Should -Not -Be $Graph.Exception.Message
+            }
+        }
+    }
+
+    Context 'When -Source is not given or names another source' {
+        It 'gives the Azure messages by default, for <Name>' -ForEach @(
+            @{ Name = 'another account'; Unreadable = $false }
+            @{ Name = 'an account that cannot be read'; Unreadable = $true }
+        ) {
+            $Records = InModuleScope Omnicit.PIM -Parameters @{ Unreadable = $Unreadable } {
+                param($Unreadable)
+                @{
+                    Default = New-OPIMAccountMismatchError -RequestedTenant 'contoso.onmicrosoft.com' -Unreadable:$Unreadable
+                    Azure   = New-OPIMAccountMismatchError -RequestedTenant 'contoso.onmicrosoft.com' -Unreadable:$Unreadable -Source Azure
+                }
+            }
+            $Records.Default.Exception.Message | Should -BeExactly $Records.Azure.Exception.Message
+            $Records.Default.Exception.Message | Should -BeLike '*Azure Resource Manager token*'
+        }
+
+        It 'reads the source in any letter case' {
+            $Graph = InModuleScope Omnicit.PIM {
+                New-OPIMAccountMismatchError -RequestedTenant 'contoso.onmicrosoft.com' -Source graph
+            }
+            $Graph.Exception.Message | Should -BeLike 'The new Microsoft Graph sign-in in *'
+        }
+
+        It 'refuses a source other than Azure or Graph at binding' {
+            $Caught = InModuleScope Omnicit.PIM {
+                try {
+                    New-OPIMAccountMismatchError -RequestedTenant 'contoso.onmicrosoft.com' -Source 'Arm'
+                    $null
+                } catch {
+                    $PSItem
+                }
+            }
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -BeLike 'ParameterArgumentValidationError*'
+        }
+    }
 }

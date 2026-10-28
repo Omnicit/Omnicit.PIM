@@ -35,12 +35,28 @@ signs in through AzAuth's `Get-AzToken`, as Azure does: the first sign-in opens 
 or shows a device code with `-DeviceCode` (see below). The Azure role cmdlets also need an Azure
 Resource Manager sign-in of their own, which prompts separately, so a first sign-in with
 `-IncludeARM` asks twice: two browser windows, or two device codes. A token is kept in memory for
-the session and reused without a new prompt while it has more than 5 minutes left. AzAuth, as
-Omnicit.PIM calls it, has no refresh-token path, so a token with 5 minutes or less left when a
-command starts, and a token that Microsoft Graph rejects, is replaced by a new sign-in -- a browser
-window, or a new device code -- where 0.7.0 often renewed it silently. A token that Azure Resource
-Manager rejects signs in to both again, Microsoft Graph and Azure: two browser windows, or two
-device codes. You never need to call `Connect-MgGraph` or any Az sign-in command manually.
+the session and reused without a new prompt while it has more than 5 minutes left. A token with 5
+minutes or less left when a command starts, and a token that Microsoft Graph rejects, is replaced by
+a new sign-in -- a browser window, or a new device code. A token that Azure Resource Manager rejects
+signs in to both again, Microsoft Graph and Azure: two browser windows, or two device codes. You
+never need to call `Connect-MgGraph` or any Az sign-in command manually.
+
+A browser session near its expiry is first renewed without a prompt where AzAuth (2.11.0 and later)
+can answer from the sign-in it already holds, for the same account and tenant only; otherwise the
+browser opens once, as before. AzAuth holds one such sign-in, the one the last browser window made,
+so a session that signs in to both Microsoft Graph and Azure still prompts for each renewal, and a
+token that Microsoft Graph or Azure rejects always signs in again. This is read from AzAuth's
+source, not yet measured against a tenant, and it means fewer prompts, not none.
+
+A new sign-in that continues the session -- a renewal, a sign-in after a rejected token, an ACRS
+step-up -- must be answered by the account the session signed in with. The account picker also
+offers other accounts; one of those is refused with `AccountMismatch`, its token is not used, and
+the session stays the account it was. To use another account, run `Disconnect-OPIM` and sign in
+again.
+
+In a PowerShell started with `pwsh -NonInteractive` (a scheduled task, for example) nobody can
+answer a browser, so a sign-in there is refused with `InteractiveSignInUnavailable` before any token
+is requested. Use `-DeviceCode` instead.
 
 `Connect-OPIM` is the module's optional pre-authentication command. Use it when you want the
 sign-in prompt at a predictable time or need to target a specific tenant:
@@ -1100,9 +1116,9 @@ time-bound assignments. An always-on assignment is not listed.
 
 | Dependency | Purpose |
 |---|---|
-| PowerShell 7.4 or later | Core only; AzAuth 2.9.0 requires 7.4 |
+| PowerShell 7.4 or later | Core only; AzAuth 2.11.0 requires 7.4 |
 | `Microsoft.Graph.Authentication` 2.36.0+ | Directory roles and Entra ID group PIM (raw `Invoke-MgGraphRequest`), and the Microsoft Graph session the module connects with its token (`Connect-MgGraph`) |
-| `AzAuth` 2.9.0+ | Both sign-ins, Microsoft Graph and Azure Resource Manager (`Get-AzToken`) |
+| `AzAuth` 2.11.0+ | Both sign-ins, Microsoft Graph and Azure Resource Manager (`Get-AzToken`) |
 
 No Az PowerShell module is required or loaded; the module sends every Azure Resource Manager
 request itself. Any Microsoft.Graph.Authentication from 2.36.0 on works beside AzAuth, imported
