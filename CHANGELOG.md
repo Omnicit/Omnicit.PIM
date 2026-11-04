@@ -5,6 +5,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes to the module since 0.7.2. A preview published from this point differs from 0.7.2 only in documentation, tests or the build.
+
+## [0.7.2] - 2026-11-04
+
 The sign-in fixes that Omnicit.EntraRBAC published after 0.7.1, and AzAuth 2.11.0 or later is now
 required.
 
