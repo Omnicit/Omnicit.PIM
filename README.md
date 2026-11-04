@@ -46,7 +46,8 @@ can answer from the sign-in it already holds, for the same account and tenant on
 browser opens once, as before. AzAuth holds one such sign-in, the one the last browser window made,
 so a session that signs in to both Microsoft Graph and Azure still prompts for each renewal, and a
 token that Microsoft Graph or Azure rejects always signs in again. This is read from AzAuth's
-source, not yet measured against a tenant, and it means fewer prompts, not none.
+source and was measured for a Microsoft Graph renewal in the global cloud (the Azure renewal is not
+measured yet), and it means fewer prompts, not none.
 
 A new sign-in that continues the session -- a renewal, a sign-in after a rejected token, an ACRS
 step-up -- must be answered by the account the session signed in with. The account picker also

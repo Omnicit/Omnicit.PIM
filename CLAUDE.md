@@ -729,8 +729,14 @@ token cache is never asked for: it would put tokens on disk (SECURITY 5).
 **The silent renewal (EntraRBAC A22, BL-115).** In the system browser, before the interactive
 request for either token, `Initialize-OPIMAuth` tries ONE non-interactive `Get-AzToken` (its nested
 `Invoke-OPIMSilentRenewal`) that AzAuth 2.11.0 and later answer from the interactive credential it
-already holds -- read in EntraRBAC from the AzAuth 2.11.0 and Azure.Identity 1.21.0 sources, NOT
-measured against a tenant, there or here. The request is the interactive one without `-Interactive`
+already holds -- read in EntraRBAC from the AzAuth 2.11.0 and Azure.Identity 1.21.0 sources, and
+MEASURED LIVE for Microsoft Graph on 2026-11-04 (0.7.2-preview0002, the global cloud, a
+system-browser session, AzAuth 2.11.0, run by the operator): with `GraphTokenExpiry` moved to two
+minutes ahead in the module scope, `Get-OPIMDirectoryRole -Verbose` wrote `Renewed the session
+silently.`, opened no browser and returned a new token with about 77 minutes left, AzAuth's verbose
+stream naming only the `Environment` source. The silent ARM renewal, a stored credential whose
+refresh token no longer works and the sovereign clouds are not measured. The request is the
+interactive one without `-Interactive`
 and `-ClientId` and with `-CredentialPrecedence Environment`, so AzAuth's chain holds the stored
 credential and the one source that sends nothing unless `AZURE_*` variables are set -- never the
 default chain, which could answer as another identity (Azure CLI, Azure PowerShell, a managed
